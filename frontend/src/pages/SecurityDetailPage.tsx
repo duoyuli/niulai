@@ -9,6 +9,7 @@ import { COST_DEFAULTS, CostFields, costParams, Loaded, Result, RulesNote } from
 import { DiagnosisCard } from "../components/DiagnosisCard";
 import { MaControls } from "../components/MaControls";
 import { PriceChart } from "../components/PriceChart";
+import { RangePicker, rangeQuery } from "../components/RangePicker";
 import {
   Badge,
   Card,
@@ -73,7 +74,7 @@ export function SecurityDetailPage() {
       ) : (
         <>
           <DiagnosisCard thscode={thscode} />
-          <ChartCard thscode={thscode} />
+          <ChartCard thscode={thscode} earliest={sec?.first_bar} />
           {sec && (
             <p className="text-xs text-zinc-400">
               上市 {sec.list_date ?? "—"} · 本地日线 {sec.first_bar ?? "—"} 至 {sec.last_bar ?? "—"}，共{" "}
@@ -96,26 +97,26 @@ export function SecurityDetailPage() {
   );
 }
 
-function ChartCard({ thscode }: { thscode: string }) {
-  const [s, set] = useSearchState({ adjust: "qfq", range: "3", fast: "15", slow: "30" });
+function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string | null }) {
+  const [s, set] = useSearchState({ adjust: "qfq", range: "3", from: "", to: "", fast: "15", slow: "30" });
   const adjust = s.adjust as Adjust;
   const fast = Number(s.fast) || 15;
   const slow = Number(s.slow) || 30;
-  const start = rangeStart(s.range);
+  const { start, end } = rangeQuery(s);
   const bars = useSecurityBars(
     thscode,
-    { adjust, start, limit: 10000 },
+    { adjust, start, end, limit: 10000 },
     { query: { placeholderData: keepPreviousData } },
   );
   // 均线和交叉信号固定按等比前复权计算，与 K 线口径无关
-  const ma = useSecurityMa(thscode, { fast, slow, start }, { query: { placeholderData: keepPreviousData } });
+  const ma = useSecurityMa(thscode, { fast, slow, start, end }, { query: { placeholderData: keepPreviousData } });
   const maOverlay = adjust === "qfq" && ma.data ? { points: ma.data.points, fast, slow } : undefined;
   return (
     <Card
       title="K 线"
       extra={
         <div className="flex flex-wrap items-end gap-3">
-          <Segmented value={s.range} options={RANGES} onChange={(range) => set({ range })} />
+          <RangePicker value={s} earliest={earliest} loading={bars.isPlaceholderData} onChange={set} />
           <MaControls fast={fast} slow={slow} onChange={(f, sl) => set({ fast: String(f), slow: String(sl) })} />
         </div>
       }

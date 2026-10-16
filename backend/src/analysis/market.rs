@@ -39,7 +39,7 @@ pub fn calendar_days_for(bars: u32) -> i64 {
     bars as i64 * 3 / 2 + 30
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, Clone)]
 pub struct Overview {
     pub trade_date: NaiveDate,
     /// 当天有日线的股票数
@@ -153,4 +153,33 @@ pub async fn stocks_in_top_sectors(pool: &PgPool, category: &str, days: u32, top
         .fetch_all(pool)
         .await?;
     Ok(members.into_iter().collect())
+}
+
+/// 市场概况的缓存：要把全市场的日线算一遍（约 1 秒），结果只在有新日线后才变。
+/// 以交易日和 `ops.derived_version` 中 adj_factor 的时间戳为键，每次同步写入行情后时间戳更新，旧结果不再命中
+#[derive(Default)]
+pub struct OverviewCache {
+    entries: std::sync::Mutex<Vec<OverviewEntry>>,
+}
+
+/// (交易日, 数据版本, 结果)
+type OverviewEntry = (NaiveDate, Option<chrono::DateTime<chrono::Utc>>, Overview);
+
+impl OverviewCache {
+    pub async fn get(&self, pool: &PgPool, date: Option<NaiveDate>) -> anyhow::Result<Option<Overview>> {
+        let Some(date) = resolve_date(pool, date).await? else { return Ok(None) };
+        let version: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT updated_at FROM ops.derived_version WHERE name = 'adj_factor'").fetch_optional(pool).await?;
+        if let Some(hit) = self.entries.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, v, _)| *d == date && *v == version) {
+            return Ok(Some(hit.2.clone()));
+        }
+        let Some(o) = overview(pool, Some(date)).await? else { return Ok(None) };
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        entries.retain(|(_, v, _)| *v == version);
+        entries.push((date, version, o.clone()));
+        if entries.len() > 16 {
+            entries.remove(0);
+        }
+        Ok(Some(o))
+    }
 }

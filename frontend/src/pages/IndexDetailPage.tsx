@@ -3,29 +3,22 @@ import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { useIndexBars, useIndexMembers, useListIndices } from "../api/generated/market/market";
 import { PriceChart } from "../components/PriceChart";
-import {
-  Badge,
-  Card,
-  Empty,
-  ErrorState,
-  inputClass,
-  PageHeader,
-  QueryView,
-  Segmented,
-  Spinner,
-  Table,
-} from "../components/ui";
+import { RangePicker, rangeQuery } from "../components/RangePicker";
+import { Badge, Card, Empty, ErrorState, inputClass, PageHeader, QueryView, Spinner, Table } from "../components/ui";
 import { useSearchState } from "../hooks/useSearchState";
-import { fmtInt, RANGES, rangeStart } from "../lib/format";
+import { fmtInt } from "../lib/format";
 import { INDEX_CATEGORIES } from "../lib/labels";
+
+/** 供应商的指数和板块日线从这一天开始 */
+const INDEX_EARLIEST = "2022-01-04";
 
 export function IndexDetailPage() {
   const { thscode = "" } = useParams();
-  const [s, set] = useSearchState({ range: "3" });
+  const [s, set] = useSearchState({ range: "3", from: "", to: "" });
   const info = useListIndices({ q: thscode }, { query: { select: (rows) => rows.find((r) => r.thscode === thscode) } });
   const bars = useIndexBars(
     thscode,
-    { start: rangeStart(s.range), limit: 10000 },
+    { ...rangeQuery(s), limit: 10000 },
     { query: { placeholderData: keepPreviousData } },
   );
   const members = useIndexMembers(thscode);
@@ -47,7 +40,10 @@ export function IndexDetailPage() {
           </Link>
         }
       />
-      <Card title="日 K 线" extra={<Segmented value={s.range} options={RANGES} onChange={(range) => set({ range })} />}>
+      <Card
+        title="日 K 线"
+        extra={<RangePicker value={s} earliest={INDEX_EARLIEST} loading={bars.isPlaceholderData} onChange={set} />}
+      >
         <p className="mb-3 text-xs text-zinc-500">指数没有除权，不需要复权。供应商的指数日线从 2022-01-04 开始。</p>
         {bars.error ? (
           <ErrorState error={bars.error} onRetry={() => bars.refetch()} />

@@ -5,6 +5,7 @@ import {
   fmtDuration,
   fmtPercent,
   fmtPrice,
+  monthsBefore,
   rangeStart,
   todayCn,
   upDownClass,
@@ -51,4 +52,13 @@ it("upDownClass 红涨绿跌", () => {
 it("rangeStart 全部不限制", () => {
   expect(rangeStart("all")).toBeUndefined();
   expect(rangeStart("1")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+});
+
+it("月份区间：月末对齐，年份跨越", () => {
+  expect(monthsBefore("2026-10-16", 1)).toBe("2026-09-16");
+  expect(monthsBefore("2026-03-31", 1)).toBe("2026-02-28");
+  expect(monthsBefore("2026-01-15", 3)).toBe("2025-10-15");
+  expect(rangeStart("6m", "2026-10-16")).toBe("2026-04-16");
+  expect(rangeStart("1", "2026-10-16")).toBe("2025-10-16");
+  expect(rangeStart("custom")).toBeUndefined();
 });

@@ -43,7 +43,7 @@ pub struct OverviewQuery {
 #[utoipa::path(get, path = "/market/overview", tag = "market", params(OverviewQuery),
     responses((status = 200, description = "成功", body = Overview), (status = 404, description = "本地还没有日线", body = crate::error::ErrorBody)))]
 async fn market_overview(State(s): State<AppState>, Query(q): Query<OverviewQuery>) -> ApiResult<Json<Overview>> {
-    market::overview(&s.pool, q.date).await?.map(Json).ok_or_else(|| ApiError::NotFound("本地还没有日线".into()))
+    s.overview.get(&s.pool, q.date).await?.map(Json).ok_or_else(|| ApiError::NotFound("本地还没有日线".into()))
 }
 
 #[derive(Deserialize, IntoParams)]

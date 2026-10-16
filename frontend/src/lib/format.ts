@@ -89,7 +89,27 @@ export function upDownClass(v: number | null | undefined): string {
   return v === null || v === undefined ? "" : v >= 0 ? "text-up" : "text-down";
 }
 
-/** K 线和回测的时间区间选项 */
+/** yyyy-MM-dd 往前推 months 个月；目标月份没有这一天时取月末 */
+export function monthsBefore(date: string, months: number): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  const first = new Date(Date.UTC(y, m - 1 - months, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, last))).toISOString().slice(0, 10);
+}
+
+/** K 线图的时间区间：月和年两种粒度；「自定义」由 RangePicker 另外处理 */
+export const CHART_RANGES = [
+  { value: "1m", label: "1 月" },
+  { value: "3m", label: "3 月" },
+  { value: "6m", label: "6 月" },
+  { value: "1", label: "1 年" },
+  { value: "3", label: "3 年" },
+  { value: "5", label: "5 年" },
+  { value: "10", label: "10 年" },
+  { value: "all", label: "全部" },
+] as const;
+
+/** 回测的时间区间（按年） */
 export const RANGES = [
   { value: "1", label: "1 年" },
   { value: "3", label: "3 年" },
@@ -98,9 +118,11 @@ export const RANGES = [
   { value: "all", label: "全部" },
 ] as const;
 
-/** 区间对应的开始日期；「全部」不限制 */
-export function rangeStart(range: string): string | undefined {
-  return range === "all" ? undefined : yearsBefore(todayCn(), Number(range));
+/** 区间对应的开始日期：「1m」是 1 个月，「3」是 3 年；「全部」和「自定义」在这里不限制 */
+export function rangeStart(range: string, today = todayCn()): string | undefined {
+  if (range === "all" || range === "custom") return undefined;
+  if (range.endsWith("m")) return monthsBefore(today, Number(range.slice(0, -1)));
+  return yearsBefore(today, Number(range));
 }
 
 /** 已经是百分数的值（5 表示 5%），例如策略接口里的涨跌幅 */

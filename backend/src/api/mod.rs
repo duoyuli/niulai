@@ -39,6 +39,8 @@ pub struct AppState {
     pub session_secret: Arc<tokio::sync::OnceCell<Vec<u8>>>,
     /// GitHub 上最新版本的查询结果
     pub latest: Arc<system::LatestCache>,
+    /// 市场概况，有新日线后失效
+    pub overview: Arc<crate::analysis::market::OverviewCache>,
 }
 
 #[derive(OpenApi)]
@@ -59,7 +61,7 @@ pub struct ApiDoc;
 
 // @project-doc docs/interfaces/rest_api.md#conventions
 pub fn router(engine: Arc<Engine>) -> Router {
-    let state = AppState { pool: engine.pool.clone(), engine, scans: Arc::new(ScanCache::default()), session_secret: Arc::default(), latest: Arc::default() };
+    let state = AppState { pool: engine.pool.clone(), engine, scans: Arc::new(ScanCache::default()), session_secret: Arc::default(), latest: Arc::default(), overview: Arc::default() };
     let st = &state.engine.settings;
     if st.admin_user == crate::config::DEFAULT_ADMIN_USER && st.admin_password == crate::config::DEFAULT_ADMIN_PASSWORD {
         tracing::warn!("网页登录仍在使用默认账号密码 niulai / niulai，请设置 NIULAI_ADMIN_USER 和 NIULAI_ADMIN_PASSWORD");

@@ -134,7 +134,7 @@ export function Segmented<V extends string>({
   onChange,
 }: {
   value: V;
-  options: readonly { value: V; label: string; hint?: string }[];
+  options: readonly { value: V; label: string; hint?: string; disabled?: boolean }[];
   onChange: (v: V) => void;
 }) {
   return (
@@ -144,12 +144,13 @@ export function Segmented<V extends string>({
           key={o.value}
           type="button"
           title={o.hint}
+          disabled={o.disabled}
           onClick={() => onChange(o.value)}
           className={clsx(
-            "rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition",
+            "rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition disabled:cursor-not-allowed disabled:opacity-40",
             o.value === value
               ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
-              : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200",
+              : "text-zinc-500 hover:text-zinc-800 enabled:hover:text-zinc-800 dark:hover:text-zinc-200",
           )}
         >
           {o.label}
