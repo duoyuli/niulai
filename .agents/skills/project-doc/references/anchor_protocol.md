@@ -1,44 +1,44 @@
-# Anchor protocol
+# 锚点协议
 
-## Navigation
+## 导航
 
-- [Syntax](#syntax)
-- [Comment forms](#comment-forms)
-- [Placement](#placement)
-- [Reading behavior](#reading-behavior)
-- [Change rules](#change-rules)
-- [Checks](#checks)
+- [语法](#语法)
+- [注释形式](#注释形式)
+- [放置位置](#放置位置)
+- [阅读行为](#阅读行为)
+- [变更规则](#变更规则)
+- [检查](#检查)
 
-## Syntax
+## 语法
 
-A code anchor is a fixed, searchable marker on a single line:
+代码锚点是单行上固定的、可检索的标记：
 
 ```text
 @project-doc docs/<path>.md#<section_id>
 ```
 
-`docs/` is the default documentation root. If the project uses another root, use its actual path relative to the repository root. Absolute paths, `../`, editor URIs, remote repository URLs, and paths relative to the current file break when the environment or file location changes.
+`docs/` 是默认文档根目录。若项目使用其他根目录，使用其相对于仓库根目录的实际路径。绝对路径、`../`、编辑器 URI、远程仓库 URL 以及相对于当前文件的相对路径，在环境或文件位置发生变化时都会失效。
 
-Each anchor follows these rules:
+每个锚点必须遵守以下规则：
 
-- Write the marker as lowercase `@project-doc`.
-- Use a repository-root-relative path to an indexed Markdown document.
-- Use lowercase `snake_case` for filenames and directories in the path.
-- Match `section_id` to `[a-z][a-z0-9_]*`.
-- Put one target on each line. Use multiple anchor lines when an entry point depends on several sections.
+- 标记写作小写的 `@project-doc`。
+- 使用相对于仓库根目录、指向已索引 Markdown 文档的路径。
+- 路径中的文件名与目录名使用小写 `snake_case`。
+- `section_id` 匹配 `[a-z][a-z0-9_]*`。
+- 每行放置一个目标。当一个入口点依赖多个章节时，使用多行锚点。
 
-Place an HTML ID before the target heading:
+在目标标题前放置 HTML ID：
 
 ```markdown
 <a id="account_selection"></a>
 ## Account selection
 ```
 
-Use this ID in the anchor. Markdown renderers derive heading slugs from wording. Improve heading wording as needed; change a stable ID when the section's subject changes.
+在锚点中使用此 ID。Markdown 渲染器根据文字生成标题 slug。标题用词可按需润色；仅在章节主题发生变化时才修改稳定 ID。
 
-## Comment forms
+## 注释形式
 
-Wrap the anchor in the target language's comment syntax. Keep the anchor on its own comment line:
+使用目标语言的注释语法包裹锚点。将锚点单独放在一行注释中：
 
 ```go
 // @project-doc docs/architecture/request_routing.md#account_selection
@@ -65,58 +65,58 @@ CREATE TABLE usage_records (...);
 <LoginForm />
 ```
 
-An anchor is a protocol marker. Put additional explanations on a separate line in the repository's required comment language.
+锚点是协议标记。附加说明应使用仓库要求的注释语言写在单独的一行中。
 
-## Placement
+## 放置位置
 
-Place anchors where readers need documentation to understand the code, in this order of preference:
+优先将锚点放置在读者需要借助文档才能理解代码的位置，优先级如下：
 
-1. A handwritten entry point for a subsystem or cross-module flow.
-2. A type, interface, or state machine that owns a core invariant.
-3. A code entry point that implements a public contract.
-4. The handwritten code nearest the rule's implementation when there is no single entry point.
+1. 子系统或跨模块流程的手写入口点。
+2. 承载核心不变量的类型、接口或状态机。
+3. 实现公开约定的代码入口点。
+4. 无单一入口点时，最接近规则实现的手写代码。
 
-Place the anchor beside its symbol or configuration block. Anchors grouped at the file header obscure which code they describe. Several actual entry points may reference one section. Copying the anchor into every related file creates many references to maintain.
+将锚点放置在其修饰的符号或配置块旁。集中在文件头的锚点无法明确其描述的具体代码。多个实际入口点可以引用同一个章节。将锚点复制到每一个相关文件中会产生过多的维护负担。
 
-Skip these locations by default:
+默认跳过以下位置：
 
-- Generated code, vendor code, minified files, and lockfiles.
-- Formats without comments, such as JSON.
-- Migration files, which record historical steps while current rules live elsewhere.
-- Ordinary tests that verify the same rule as production code.
+- 生成代码、第三方代码、压缩文件和 lockfile。
+- 不支持注释的文件格式，例如 JSON。
+- 迁移文件（迁移记录的是历史步骤，而当前规则存在于别处）。
+- 与生产代码验证同一规则的常规测试。
 
-If the target file cannot contain comments, place the anchor in its generation source, schema, loader, validator, or nearest handwritten entry point. A test may carry an anchor when the test itself defines a cross-module contract and no production entry point is more suitable.
+若目标文件无法包含注释，将锚点放置在其生成源、schema、加载器、校验器或最近的手写入口点中。当测试本身定义了跨模块契约且没有更合适的生产入口点时，测试可以携带锚点。
 
-## Reading behavior
+## 阅读行为
 
-When an agent encounters an anchor in code:
+当智能体在代码中遇到锚点时：
 
-1. Resolve its repository-root-relative path and section ID.
-2. Before explaining, reviewing, or changing the code, read or reuse the target section under [Reading and context reuse](../SKILL.md#reading-and-context-reuse). Reuse it when encountering the same anchor again.
-3. Read the scope and direct dependencies needed to understand the section. Read the whole document as needed.
-4. Record an invalid path or ID as a documentation/code inconsistency.
+1. 解析其相对于仓库根目录的路径与章节 ID。
+2. 在解释、审查或修改代码之前，按 [阅读与上下文复用](../SKILL.md#reading-and-context-reuse) 阅读或复用目标章节。再次遇到相同锚点时予以复用。
+3. 阅读理解该章节所需的范围与直接依赖。按需阅读整篇文档。
+4. 将无效路径或 ID 记录为文档与代码的不一致。
 
-Report broken anchors and their locations in read-only tasks. When changes are authorized, repair the anchor, documentation, or both. Choose a replacement target from evidence. Guessing a section from a similar name can direct readers to the wrong rule.
+在只读任务中报告损坏的锚点及其位置。在获得修改授权时，修复锚点、文档或两者。依据可靠证据选择替换目标。仅凭相似名称猜测章节可能会将读者引向错误的规则。
 
-## Change rules
+## 变更规则
 
-- Rewording a heading: preserve its ID and code anchors while the subject stays the same.
-- Reorganizing sections: move the existing ID with the same subject. After a split, create IDs for new content and assess each old anchor's destination.
-- Replacing section content: create a new ID, update all code anchors, then remove obsolete sections once they have no references.
-- Moving code: move the anchor with the code implementing its rule and remove it from the old location.
-- Moving or renaming documents: update all anchors, indexes, and ordinary links in the same change.
-- Merging documents: map every old anchor to a specific section in the new document.
-- Removing a feature: preserve any valid knowledge first, then remove related anchors, sections, and index entries.
+- 修改标题用词：在主题保持不变时，保留其 ID 与代码锚点。
+- 重组章节：将现有 ID 与相同主题一同移动。拆分章节后，为新内容创建 ID 并评估每个旧锚点的去向。
+- 替换章节内容：创建新 ID，更新所有代码锚点，在废弃章节不再被引用后将其移除。
+- 移动代码：将锚点随实现该规则的代码一同移动，并从旧位置删除。
+- 移动或重命名文档：在同一次变更中更新所有锚点、索引和普通链接。
+- 合并文档：将每个旧锚点映射到新文档中的特定章节。
+- 移除功能：先保留仍然有效的知识，再移除相关锚点、章节和索引条目。
 
-## Checks
+## 检查
 
-List anchors with `rg -n '@project-doc'` and check each one:
+使用 `rg -n '@project-doc'` 列出所有锚点并检查每一项：
 
-- The path exists and belongs to the library.
-- The target contains an exact matching `<a id="..."></a>`.
-- IDs are unique within the file.
-- Paths and IDs follow naming rules.
-- The anchor sits beside handwritten code that implements the rule.
-- Old paths and IDs have been removed after moves or deletions.
+- 路径存在且属于文档库成员。
+- 目标包含完全匹配的 `<a id="..."></a>`。
+- ID 在文件内唯一。
+- 路径与 ID 遵循命名规范。
+- 锚点位于实现该规则的手写代码旁。
+- 移动或删除后已清理旧路径和旧 ID。
 
-Search backward from referenced sections to their code references and confirm that important entry points still have anchors after refactoring. Assess coverage by whether those entry points are anchored.
+从被引用的章节向后检索其代码引用，确认重构后重要入口点仍然保留锚点。根据这些入口点是否带有锚点来评估覆盖情况。

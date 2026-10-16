@@ -1,159 +1,159 @@
-# Documentation library protocol
+# 文档库协议
 
-## Navigation
+## 导航
 
-- [Location and membership](#location-and-membership)
-- [Index hierarchy](#index-hierarchy)
-- [Document content and granularity](#document-content-and-granularity)
-- [Reading rules](#reading-rules)
-- [Update rules](#update-rules)
-- [Deleting, moving, and merging](#deleting-moving-and-merging)
-- [ADRs](#adrs)
-- [Evidence and conflicts](#evidence-and-conflicts)
-- [Structural checks](#structural-checks)
+- [位置与成员](#位置与成员)
+- [索引层级](#索引层级)
+- [文档内容与粒度](#文档内容与粒度)
+- [阅读规则](#阅读规则)
+- [更新规则](#更新规则)
+- [删除、移动与合并](#删除移动与合并)
+- [ADR](#adr)
+- [证据与冲突](#证据与冲突)
+- [结构检查](#结构检查)
 
-## Location and membership
+## 位置与成员
 
-Choose the documentation root in this order:
+按以下顺序选择文档根目录：
 
-1. A path explicitly specified by the user.
-2. The root `index.md` path declared in the project-level skill gate.
-3. The repository's single existing documentation root with a clear purpose.
-4. `docs/` if none of the above applies.
+1. 用户明确指定的路径。
+2. 项目级 skill gate 中声明的根 `index.md` 路径。
+3. 仓库中唯一意图明确的既有文档根目录。
+4. 若以上均不适用，使用 `docs/`。
 
-Place category directories directly under the documentation root. A generic intermediate directory such as `project/` adds a level to every path without conveying useful information. If several roots are plausible and project instructions do not resolve the choice, ask the user during initial setup.
+将分类目录直接放置在文档根目录下。像 `project/` 这样无具体含义的中间目录只会给所有路径增加层级，而不传递任何有用信息。若有多个合理的根目录且项目指令未作出决断，在初始搭建时向用户请示。
 
-A document belongs to Project Doc when the root or a category `index.md` lists it as a canonical entry. Membership comes from the index. READMEs, legal materials, marketing materials, generated documentation, and temporary plans remain outside the library even when stored in the same directory.
+当文档被根目录或分类目录下的 `index.md` 列为规范条目时，该文档即属于 Project Doc。成员资格由索引赋予。README、法律声明、宣传材料、生成文档和临时方案即使存放在同一目录下，也不属于文档库。
 
-Name library members as follows:
+文档库成员命名规范如下：
 
-- Use lowercase `snake_case` for Markdown filenames: `[a-z][a-z0-9_]*.md`.
-- Use lowercase `snake_case` for directory names: `[a-z][a-z0-9_]*`.
-- Name each index `index.md`.
-- Name the bootstrap memo `.project_doc_bootstrap.md`. It is the library's only working file whose name starts with a dot.
-- Rename adopted legacy files or directories that do not follow these rules, and repair every reference within the repository.
-- Keep names of documents outside the library unchanged.
+- Markdown 文件名使用小写 `snake_case`：`[a-z][a-z0-9_]*.md`。
+- 目录名使用小写 `snake_case`：`[a-z][a-z0-9_]*`。
+- 每个索引文件均命名为 `index.md`。
+- 初始化备忘录命名为 `.project_doc_bootstrap.md`。它是文档库中唯一以点开头的工作文件。
+- 重命名收纳进来的不符合上述规则的遗留文件或目录，并修复仓库内的所有引用。
+- 保持文档库外部的文件名不变。
 
-Determine the primary language from existing documentation and project instructions. Preserve the established division by language. Use one primary language per document by default, and create bilingual copies only when requested.
+根据既有文档与项目指令确定主要语言。保持既有的语言分工。每篇文档默认使用一种主要语言，仅在明确要求时才创建双语副本。
 
-## Index hierarchy
+## 索引层级
 
-The root `index.md` routes repository tasks to documentation. Reuse it after the first read under the reading rules. Keep it compact and limit it to:
+根 `index.md` 负责将仓库任务路由到相应文档。在遵守阅读规则的前提下，首次阅读后予以复用。保持根索引精炼，仅包含：
 
-- The library's purpose and current coverage.
-- A one-sentence summary and reading conditions for each root-level document.
-- A one-sentence summary, applicable scenarios, and `index.md` link for each existing category.
-- Incomplete-status notices during setup.
+- 文档库的目标与当前覆盖范围。
+- 针对每个根级文档的一句话摘要与阅读时机。
+- 针对每个既有分类的一句话摘要、适用场景与 `index.md` 链接。
+- 搭建过程中的未完成状态说明。
 
-Create categories from this fixed set as needed, with at least one document per category:
+按需从以下固定分类集合中创建分类，每个分类至少包含一篇文档：
 
-- `architecture/`: system components, their relationships, cross-module data flows, and important invariants.
-- `domains/`: domain concepts, business rules, state machines, and core terminology.
-- `interfaces/`: public APIs, events, data formats, configuration formats, and third-party integrations.
-- `operations/`: deployment, migration, recovery, observability, operational security, and maintenance.
-- `decisions/`: architectural decision records that preserve reasons, tradeoffs, and consequences.
+- `architecture/`：系统组件、组件间关系、跨模块数据流及重要不变量。
+- `domains/`：领域概念、业务规则、状态机与核心术语。
+- `interfaces/`：公开 API、事件、数据格式、配置格式与第三方集成。
+- `operations/`：部署、迁移、恢复、可观测性、运维安全与维护流程。
+- `decisions/`：记录原因、权衡与后果的架构决策记录（ADR）。
 
-Each category's `index.md` lists every document in that category. Give each document one canonical entry in a category index. Use ordinary related-document links elsewhere. Maintaining the same entry in multiple indexes causes their descriptions to drift.
+每个分类的 `index.md` 列出该分类下的所有文档。每篇文档在分类索引中只保留一个规范条目。在其他地方使用常规关联文档链接。在多个索引中维护相同条目会导致描述漂移。
 
-Each index entry contains three pieces of information:
+每个索引条目包含三部分信息：
 
 ```markdown
-- [Document title](relative_path.md): One-sentence summary. Read when: tasks, code areas, or concepts that require this document.
+- [文档标题](relative_path.md)：一句话摘要。阅读时机：需要阅读本文档的任务、代码区域或概念。
 ```
 
-During setup, entries may use `[planned]`, `[in_progress]`, `[verified]`, or `[blocked]` prefixes. If the target file does not exist yet, show the planned path as code and add a link after creating the file. Remove temporary statuses when setup is complete.
+在搭建期间，条目可以使用 `[planned]`、`[in_progress]`、`[verified]` 或 `[blocked]` 前缀。若目标文件尚不存在，将计划路径显示为行内代码，并在创建文件后再添加链接。搭建完成后移除临时状态标记。
 
-## Document content and granularity
+## 文档内容与粒度
 
-Each current-state document contains:
+每篇现状文档包含：
 
-- One H1 title.
-- An opening scope paragraph that names what the document covers and which documents own adjacent topics.
-- Facts verified against current code, tests, configuration, or operational constraints.
-- Sections organized by topic. Sections referenced by code anchors need stable IDs; add IDs elsewhere as needed.
-- Necessary related-document links. Link to facts already recorded in other documents.
+- 一个一级标题（H1）。
+- 开篇范围段落，说明文档涵盖的内容以及相邻主题归属于哪些文档。
+- 依据当前代码、测试、配置或运维约束核实的事实。
+- 按主题组织的章节。被代码锚点引用的章节必须具备稳定 ID；其余位置按需添加 ID。
+- 必要的关联文档链接。链接到已在其他文档中记录的事实。
 
-Add brief section navigation near the start when a document has more than five major sections or readers often need only part of it. List section names and reading conditions there; keep details in the body.
+当文档包含 5 个以上的主要章节，或者读者通常只需要其中一部分时，在开篇附近添加简要的章节导航。在此列出章节名称与阅读时机；将详细内容保留在正文中。
 
-Extend an existing section when new knowledge shares its topic, audience, and update cycle. Create a new document when all of these conditions hold:
+当新知识与现有章节的主题、受众和更新周期相同时，扩展现有章节。只有当以下所有条件均满足时才创建新文档：
 
-1. The knowledge remains useful after the current task.
-2. Understanding it requires multiple files, modules, interfaces, or operational procedures.
-3. It has a scope and reading conditions that can be described independently.
-4. Adding it to an existing document would mix topics, audiences, or update cycles.
+1. 该知识在当前任务结束后仍然长期有用。
+2. 理解该知识需要跨多个文件、模块、接口或运维流程。
+3. 拥有可以被独立描述的范围和阅读时机。
+4. 将其合并到现有文档中会混淆主题、受众或更新周期。
 
-Keep facts evident from a single function, mechanical refactoring, test fixtures, generated code, temporary experiments, implementation plans, and work progress in code, commit history, or plan files.
+单个函数即可明了的事实、机械重构、测试 fixture、生成代码、临时实验、实现方案以及工作进度，应保留在代码、提交历史或方案文件中。
 
-## Reading rules
+## 阅读规则
 
-Follow [Reading and context reuse in SKILL.md](../SKILL.md#reading-and-context-reuse). Use task keywords, code paths, and "Read when" entries in known indexes to select a category index and then a document. Additional reads cover content that has not been obtained, has been lost, or needs refreshing.
+遵守 [SKILL.md 中的阅读与上下文复用](../SKILL.md#reading-and-context-reuse)。利用任务关键词、代码路径和已知索引中的「阅读时机」条目，先选择分类索引，再选择文档。补充阅读仅用于未获取、已丢失或需要刷新的内容。
 
-Read enough of a document to complete the task:
+阅读足以完成任务的文档内容：
 
-- Start with the section targeted by the anchor.
-- Read the scope, terminology, and directly dependent sections needed to understand it.
-- Expand the reading scope for cross-domain tasks or when indexes cannot route the task.
-- If a bootstrap memo exists, read it immediately after the root index and resume from its recorded next step.
+- 从锚点所指向的目标章节开始。
+- 阅读理解该章节所需的范围、术语和直接依赖章节。
+- 对于跨领域任务或索引无法直接路由的任务，扩大阅读范围。
+- 若存在初始化备忘录，在阅读根索引后立即阅读备忘录，并从记录的下一步继续执行。
 
-## Update rules
+## 更新规则
 
-Reassess and synchronize relevant documentation when:
+在以下情况重新评估并同步相关文档：
 
-- External or cross-module behavior, interfaces, events, or error handling change.
-- Domain rules, state transitions, invariants, permissions, or security restrictions change.
-- Configuration, data models, migrations, deployment, recovery, or observability procedures change.
-- Code or documentation moves and changes paths, symbol locations, ordinary links, or anchors.
-- Work reveals a discrepancy between documentation and verified current behavior.
+- 外部或跨模块行为、接口、事件或错误处理发生变更。
+- 领域规则、状态转移、不变量、权限或安全限制发生变更。
+- 配置、数据模型、迁移、部署、恢复或可观测性流程发生变更。
+- 代码或文档移动导致路径、符号位置、普通链接或锚点发生变更。
+- 工作中发现文档与已验证的当前行为之间存在分歧。
 
-For internal refactoring that preserves documented behavior, keep the prose unchanged and repair references and anchors affected by moves.
+对于保持已记录行为不变的内部重构，保持正文不变，仅修复因移动受影响的引用与锚点。
 
-## Deleting, moving, and merging
+## 删除、移动与合并
 
-Delete a current-state document or section only when all three conditions hold: its topic has disappeared from the current system, no supported consumers remain, and no other document needs its valid knowledge.
+仅在满足以下全部三项条件时，才删除现状文档或章节：该主题已从当前系统中彻底消失、不再存在受支持的使用方，且没有其他文档需要其有效知识。
 
-Before deletion:
+删除前：
 
-1. Search the root index, category indexes, other documents, and all `@project-doc` anchors.
-2. Decide whether to delete valid content, move it, or merge it into another document.
-3. Update indexes, ordinary links, anchors, and related explanations in the same change.
-4. Search again for old paths and section IDs to confirm that references have been removed.
+1. 检索根索引、分类索引、其他文档及所有 `@project-doc` 锚点。
+2. 决定是将有效内容删除、移动还是合并到其他文档中。
+3. 在同一次变更中更新索引、普通链接、锚点及相关说明。
+4. 再次检索旧路径和章节 ID，确认引用已被清理干净。
 
-For deprecated features that remain supported, retain their status, alternatives, and migration paths. Keep documentation for temporarily disabled features and features whose flags are off by default.
+对于仍受支持的已废弃特性，保留其状态、替代方案与迁移路径。为临时禁用的特性以及默认关闭特性的功能保留文档。
 
-When moving a document, preserve its content and section IDs where possible, and update all paths in the same change. When merging documents, choose a specific destination section for each referenced topic and map old anchors individually. Pointing every anchor at the whole new document loses the original location.
+移动文档时，尽可能保留其内容与章节 ID，并在同一次变更中更新所有路径。合并文档时，为每个被引用的主题指定具体的目标章节，并逐个映射旧锚点。将所有锚点泛泛指向新文档会丢失原始位置信息。
 
-## ADRs
+## ADR
 
-Record consequential design tradeoffs that may be questioned again in `decisions/`. An ADR includes at least its status, context, decision, tradeoffs, consequences, and related documents.
+在 `decisions/` 中记录可能被再次讨论的重要架构权衡。ADR 至少包含状态、背景、决策、权衡、后果和关联文档。
 
-Preserve the historical context of accepted ADRs. Update current-state documents with the implementation. When a new decision replaces an old one:
+保留已采纳 ADR 的历史背景。现状文档则随具体实现同步更新。当新决策取代旧决策时：
 
-- Create an ADR that identifies the decision it supersedes.
-- Mark the old ADR `superseded` and link to the new one.
-- Point current code anchors and current-state documents to the applicable decision or explanation.
+- 创建新的 ADR，并在其中指明被取代的决策。
+- 将旧 ADR 标记为 `superseded`，并链接到新 ADR。
+- 将当前代码锚点与现状文档指向适用的新决策或现状说明。
 
-## Evidence and conflicts
+## 证据与冲突
 
-When code, tests, and documentation disagree, record an unresolved inconsistency. Either side may be wrong. Verify intent using:
+当代码、测试与文档不一致时，记录未解决的分歧。任何一方都可能存在错误。使用以下依据核实设计意图：
 
-- The user's current request and explicit public conventions.
-- Executable tests, schemas, configuration validation, and interface definitions.
-- Callers, data flows, and actual error handling.
-- Current-state documents, ADRs, and available change history.
+- 用户当前的需求与明确的公开约定。
+- 可执行测试、schema、配置校验与接口定义。
+- 调用方、数据流与实际错误处理逻辑。
+- 现状文档、ADR 与可查阅的变更历史。
 
-When evidence establishes intent, fix the incorrect side within the user's authorized scope and synchronize remaining references. Pause the affected changes and ask the user if a consequential ambiguity cannot be resolved.
+当证据明确了设计意图时，在用户授权范围内修正错误的一方，并同步其余引用。若无法解决关键歧义，暂停受影响的变更并向用户请示。
 
-## Structural checks
+## 结构检查
 
-Before finishing a write task, use the diff to check affected documents, their index entries, and relevant incoming and outgoing references. Reuse existing check results while the relevant content remains unchanged. Choose checks below according to impact. Reserve root-index rereads, reading all category indexes, and whole-library scans for initial acceptance or an explicitly requested library audit:
+在完成写任务之前，利用 diff 检查受影响的文档、其索引条目以及相关的出入引用。在相关内容未发生变更时复用已有检查结果。根据影响范围选择以下检查项。将重新阅读根索引、阅读所有分类索引以及全库扫描留给初次验收或明确要求的文档库审计任务：
 
-- Link targets in the root and category indexes exist.
-- Every Project Doc document has exactly one canonical index entry.
-- Files, directories, and stable section IDs use lowercase `snake_case`.
-- Section IDs are unique within each document.
-- Every `@project-doc` path and section ID exists.
-- Old paths, old IDs, and broken links have been removed after moves or deletions.
-- Temporary statuses and the bootstrap memo have been removed after setup.
-- Git diff has no whitespace errors, and tests required by code changes have run.
+- 根索引与分类索引中的链接目标均存在。
+- 每个 Project Doc 文档在索引中有且仅有一个规范条目。
+- 文件、目录与稳定章节 ID 均采用小写 `snake_case`。
+- 章节 ID 在所属文档内唯一。
+- 每个 `@project-doc` 路径与章节 ID 均存在。
+- 移动或删除后已清理旧路径、旧 ID 和损坏链接。
+- 搭建完成后已移除临时状态标记与初始化备忘录。
+- Git diff 无空白字符错误，且代码变更要求的测试已全部运行。
 
-Use existing repository tools, `rg`, focused reads, and Git diff. After moving or deleting content, search the repository for old paths and IDs to find all references. Add project scripts and CI only when requested.
+使用既有仓库工具、`rg`、针对性阅读与 Git diff。移动或删除内容后，在仓库中检索旧路径与旧 ID 以找到所有引用。仅在明确要求时才添加项目脚本与 CI。

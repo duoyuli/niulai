@@ -1,58 +1,58 @@
-# Project Doc bootstrap memo
+# Project Doc 初始化备忘录
 
-> Keep this file during initial setup. Update it immediately after each unit of work and delete it once all completion criteria are met.
+> 在初始搭建期间保留本文件。每次完成一个工作单元后立即更新，所有完成标准达成后删除。
 
-## Current state
+## 当前状态
 
-- Repository: <code>{{repository_root}}</code>
-- Documentation root: <code>{{doc_root}}</code>
-- Primary language: <code>{{primary_language}}</code>
-- Overall status: <code>{{planned|in_progress|blocked}}</code>
-- Current item: <code>{{current_item_or_none}}</code>
-- Next step: {{next_action}}
-- Last updated: <code>{{timestamp_with_timezone}}</code>
+- 仓库：<code>{{repository_root}}</code>
+- 文档根目录：<code>{{doc_root}}</code>
+- 主语言：<code>{{primary_language}}</code>
+- 整体状态：<code>{{planned|in_progress|blocked}}</code>
+- 当前处理项：<code>{{current_item_or_none}}</code>
+- 下一步：{{next_action}}
+- 最后更新时间：<code>{{timestamp_with_timezone}}</code>
 
-## Structural decisions
+## 结构决策
 
 - {{decision_and_reason}}
 
-## Index plan
+## 索引规划
 
-| Path | Category | Scope and reading conditions | Authoritative sources | Legacy disposition | Status | Next step |
+| 路径 | 分类 | 范围与阅读时机 | 权威代码源 | 遗留处置 | 状态 | 下一步 |
 | --- | --- | --- | --- | --- | --- | --- |
 | <code>{{document_path}}</code> | <code>{{category}}</code> | {{scope_and_read_when}} | <code>{{source_paths}}</code> | <code>{{adopt|update|merge|split|new}}</code> | <code>{{planned|in_progress|verified|blocked}}</code> | {{item_next_action}} |
 
-## Anchor plan
+## 锚点规划
 
-| Document section | Stable ID | Code entry point | Status |
+| 文档章节 | 稳定 ID | 代码入口点 | 状态 |
 | --- | --- | --- | --- |
 | <code>{{document_path}}#{{section_id}}</code> | <code>{{section_id}}</code> | <code>{{code_path_or_symbol}}</code> | <code>{{planned|in_progress|verified|blocked}}</code> |
 
-## Legacy documents
+## 既有文档
 
-| Original path | Disposition | Target path or reason | Reference repair status |
+| 原始路径 | 处置方式 | 目标路径或原因 | 引用修复状态 |
 | --- | --- | --- | --- |
 | <code>{{legacy_path}}</code> | <code>{{adopt|update|merge|split|exclude}}</code> | {{target_or_reason}} | <code>{{planned|in_progress|verified|blocked}}</code> |
 
 ## Skill gate
 
-| Agent entry point | Action | Status |
+| 智能体入口点 | 操作 | 状态 |
 | --- | --- | --- |
 | <code>{{instruction_path}}</code> | <code>{{create|update|unchanged}}</code> | <code>{{planned|in_progress|verified|blocked}}</code> |
 
-## Blockers and open questions
+## 阻塞项与待确认问题
 
 - <code>{{blocked_or_none}}</code>
 
-## Validation record
+## 验证记录
 
-| Time | Scope | Check | Result |
+| 时间 | 范围 | 检查项 | 结果 |
 | --- | --- | --- | --- |
 | <code>{{timestamp}}</code> | <code>{{scope}}</code> | {{validation}} | {{result}} |
 
-## Handoff notes
+## 交接说明
 
-- Verified: {{verified_summary}}
-- Completed work to preserve: {{completed_work_to_preserve}}
-- Resume at: {{exact_file_symbol_or_command_to_inspect_next}}
-- Current risk: {{known_risk_or_none}}
+- 已验证：{{verified_summary}}
+- 需保留的已完成工作：{{completed_work_to_preserve}}
+- 恢复入口：{{exact_file_symbol_or_command_to_inspect_next}}
+- 当前风险：{{known_risk_or_none}}
