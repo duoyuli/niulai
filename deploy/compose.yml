@@ -1,11 +1,11 @@
 # niulai 的 Docker 部署（默认方式）：使用 CI 构建好的镜像，运行 PostgreSQL 和 niulai 两个容器。
-# 对外只暴露 niulai 的 HTTP 端口（默认 127.0.0.1:8080）；HTTPS、域名和登录由前面的反向代理负责。
+# 对外只暴露 niulai 的一个 HTTP 端口（默认 127.0.0.1:8080），页面和 API 都在这个端口上。
 #
 #   cp .env.example .env     # 填写 .env，说明见文件内
 #   docker compose up -d     # 在本目录执行；之后打开网页，按引导配置 API Key
 #
-# 从源码构建镜像（不使用镜像仓库）时，叠加 compose.source.yml，见那个文件开头。
-# 升级、备份、恢复见 docs/operations/runbook.md#deployment。
+# 使用本机构建的镜像时，把 .env 中的 NIULAI_IMAGE 改成那个镜像（构建命令见 Dockerfile 开头）。
+# 不用 Docker、直接编译运行的方式见 docs/operations/runbook.md#source_deploy；升级、备份、恢复见同一文档的「部署」一节。
 name: niulai
 
 x-logging: &logging
@@ -42,7 +42,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy, required: false }
     # 对外只有这一个 HTTP 端口：页面 /，接口 /api/v1/*，健康检查 /api/v1/health、/api/v1/ready。
-    # 默认只监听本机，由同机的反向代理（例如 Nginx）转发；HTTPS、登录、访问控制都在反向代理上做
+    # 服务本身没有登录和访问控制，默认只监听本机
     ports: ["${NIULAI_LISTEN:-127.0.0.1:8080}:8080"]
     restart: unless-stopped
     stop_grace_period: 2m      # 停机时等正在执行的任务结束

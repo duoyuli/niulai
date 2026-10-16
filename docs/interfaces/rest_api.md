@@ -6,7 +6,7 @@
 ## 通用约定
 
 - 所有接口都在 `/api/v1` 下，响应是 JSON。默认监听 `127.0.0.1:8080`（`NIULAI_API_BIND`）。同一端口的其他路径是前端页面（配置了 `NIULAI_WEB_DIR` 时），未匹配的 `/api/` 路径返回 JSON 404，见 [由 niulai serve 提供](../architecture/frontend.md#serving)。
-- **程序本身没有认证**。Docker 部署默认只监听本机端口，HTTPS、登录和访问控制由前面的反向代理负责，见 [部署](../operations/runbook.md#deployment)。不要不经代理直接把端口暴露到网络上。
+- **程序本身没有登录和访问控制**。默认只监听本机端口（`127.0.0.1:8080`），见 [部署](../operations/runbook.md#deployment)。
 - 请求标识：每个响应都带 `x-request-id` 头。请求中带了这个头时沿用，否则生成一个 UUID；日志中的 `request_id` 与它一致。
 - 超时：单个请求超过 120 秒返回 408。
 - 数值格式：

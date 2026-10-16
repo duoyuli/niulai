@@ -33,7 +33,7 @@ niulai 是面向 A 股的个股诊断工作台。数据来自同花顺金融数�
 | `backend/` | Rust 后端。`src/` 源码，`migrations/` 数据库迁移（表结构的唯一来源），`config/datasets.yaml` 数据集注册表，`tests/` 集成测试，`.env` 本地配置（不提交） |
 | `frontend/` | 前端：React 单页应用，`src/` 源码，`openapi.json` 是生成接口客户端用的后端规范，见 [前端](architecture/frontend.md) |
 | `docs/` | 本文档库；`docs/research/` 是早期调研笔记，不属于文档库 |
-| `deploy/` | CD：`Dockerfile`（同时构建后端和前端）、`compose.yml`（Docker 部署，内置 PostgreSQL 和 niulai）、`compose.source.yml`（源码部署）、`.env.example`，见 [部署](operations/runbook.md#deployment) |
+| `deploy/` | CD：`Dockerfile`（同时构建后端和前端）、`compose.yml`（Docker 部署，内置 PostgreSQL 和 niulai）、`.env.example`；源码部署不用 Docker，直接编译运行，见 [部署](operations/runbook.md#deployment) |
 | `.github/workflows/ci.yml` | CI：检查代码，构建多架构镜像并推送到 GitHub 镜像仓库 |
 | `.agents/skills/project-doc/` | 维护本文档库所用的 skill；`.claude/skills/project-doc` 是指向它的符号链接 |
 | `AGENTS.md` | 仓库说明与工作约定；`CLAUDE.md` 是指向它的符号链接 |

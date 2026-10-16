@@ -7,7 +7,7 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 - `backend/`：Rust 后端（Axum、SQLx、Tokio），只有一个程序 `niulai`：`niulai serve` 是常驻服务，其余子命令是运维命令。迁移在 `backend/migrations/`，数据集配置在 `backend/config/datasets.yaml`，本地配置在 `backend/.env`（不提交）。
 - `frontend/`：前端（React 19、TypeScript 6、Vite、TanStack Query、React Router、Tailwind CSS、Lightweight Charts），包管理用 pnpm。接口类型和 hooks 由 orval 从 `frontend/openapi.json` 生成在 `src/api/generated/`，不手工修改。
 - `docs/`：Project Doc 文档库；`docs/research/` 是调研笔记，不属于文档库。
-- `deploy/`：CD。`Dockerfile`（构建上下文是仓库根目录，同时构建前端和后端）、`compose.yml`（Docker 部署）、`compose.source.yml`（源码部署）；部署配置在 `deploy/.env`（不提交）。
+- `deploy/`：CD。`Dockerfile`（构建上下文是仓库根目录，同时构建前端和后端）、`compose.yml`（Docker 部署）；部署配置在 `deploy/.env`（不提交）。源码部署不用 Docker，直接编译运行，见运维手册。
 - `.github/workflows/ci.yml`：CI。检查代码；`main` 有合并或推送 `v*` 标签时构建 amd64、arm64 镜像并推送到 GHCR。
 - `.agents/skills/project-doc/`：本仓库使用的 project-doc skill；`.claude/skills/project-doc` 是指向它的符号链接。
 - `CLAUDE.md`：指向本文件的符号链接，供只读取 CLAUDE.md 的工具使用。
@@ -31,8 +31,9 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 
 在仓库根目录执行：
 
-- 源码部署（本机开发环境也用这种方式）：`docker compose -f deploy/compose.yml -f deploy/compose.source.yml up -d --build`
-- Docker 部署、升级、备份恢复：见 `docs/operations/runbook.md` 的「部署」
+- 构建镜像：`docker build -f deploy/Dockerfile -t niulai:local .`
+- 本机 Docker 部署：`docker compose -f deploy/compose.yml up -d`（`deploy/.env` 中 `NIULAI_IMAGE=niulai:local`）
+- Docker 部署、源码部署（直接编译运行）、升级、备份恢复：见 `docs/operations/runbook.md` 的「部署」
 
 ## 工作约定
 

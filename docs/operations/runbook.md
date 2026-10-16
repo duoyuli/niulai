@@ -11,7 +11,7 @@
 - [查看进度](#monitoring)：确认同步是否正常时阅读。
 - [处理失败任务](#failure_handling)：出现 `dead` 任务时阅读。
 - [修改配置](#config_changes)：修改 `datasets.yaml` 或环境变量时阅读。
-- [部署](#deployment)：CI 构建镜像，Docker 部署或源码部署，升级与回滚，备份与恢复时阅读。
+- [部署](#deployment)：CI 构建镜像，Docker 部署或源码部署（直接编译运行），升级与回滚，备份与恢复时阅读。
 - [测试](#testing)：提交代码前阅读。
 
 <a id="local_setup"></a>
@@ -145,9 +145,13 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 <a id="deployment"></a>
 ## 部署
 
-分两部分：CI 在 GitHub 上检查代码并构建镜像；CD 是把服务跑起来，有 Docker 部署（默认，使用 CI 构建的镜像）和源码部署（在本机从源码构建镜像）两种。两种部署都只运行 PostgreSQL 和 niulai 两个容器，配置都在 `deploy/.env` 一个文件中，变量见 [部署配置](../interfaces/configuration.md#deploy_env)，取舍见 [ADR：CI 构建镜像，部署只交付服务本身](../decisions/ci_cd.md)。
+分两部分：CI 在 GitHub 上检查代码并构建镜像；CD 是把服务运行起来，有两种方式：
+- **Docker 部署**（默认）：使用 CI 构建的镜像，用 `deploy/compose.yml` 运行 PostgreSQL 和 niulai 两个容器，配置在 `deploy/.env`。
+- **源码部署**：不用 Docker，在服务器上编译前端和后端，直接运行编译出的程序 `niulai`，配置在 `backend/.env`，数据库自己准备。
 
-服务对外只有一个 HTTP 端口，默认 `127.0.0.1:8080`（`NIULAI_LISTEN`）：
+两种方式运行的是同一个程序，行为相同。环境变量见 [配置](../interfaces/configuration.md)，取舍见 [ADR：CI 构建镜像，部署只交付服务本身](../decisions/ci_cd.md)。
+
+服务对外只有一个 HTTP 端口，默认 `127.0.0.1:8080`：
 
 | 路径 | 内容 |
 | --- | --- |
@@ -156,7 +160,9 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 | `/api/v1/health` | 存活检查，进程在运行就返回 200 |
 | `/api/v1/ready` | 就绪检查，能连上数据库时返回 200 |
 
-HTTPS、域名、登录和访问控制由前面的反向代理（例如 Nginx）负责，把请求转发到这个端口即可。服务本身没有认证，不要不经代理直接把端口暴露到网络上。
+服务本身没有登录和访问控制。
+
+第一次打开网页时进入引导页：到 <https://fuyao.aicubes.cn/admin/> 生成 API Key，粘贴后点「验证并保存」。验证通过后同步开始，并自动规划全量回补（约 51 小时，期间每日同步照常进行）。在此之前同步处于暂停状态。
 
 <a id="release_image"></a>
 ### CI：构建镜像
@@ -166,7 +172,7 @@ HTTPS、域名、登录和访问控制由前面的反向代理（例如 Nginx）
 - `main` 有合并：检查通过后构建 amd64 和 arm64 镜像，推送为 `ghcr.io/duoyuli/niulai:latest`。
 - 推送版本标签：`git tag v0.1.0 && git push origin v0.1.0`，得到 `0.1.0` 和 `0.1`。服务器上建议固定版本号。
 
-预期结果：GitHub Actions 中 `ci` 工作流成功；`docker buildx imagetools inspect ghcr.io/duoyuli/niulai:latest` 列出 `linux/amd64` 和 `linux/arm64`。镜像包已设为公开，服务器上不需要 `docker login`。
+预期结果：GitHub Actions 中 `ci` 工作流成功；`docker buildx imagetools inspect ghcr.io/duoyuli/niulai:latest` 列出 `linux/amd64` 和 `linux/arm64`。镜像包是公开的，拉取不需要 `docker login`。
 
 <a id="server_install"></a>
 ### CD：Docker 部署
@@ -175,10 +181,10 @@ HTTPS、域名、登录和访问控制由前面的反向代理（例如 Nginx）
 
 步骤：
 1. 把 `deploy/compose.yml` 和 `deploy/.env.example` 放到服务器的一个目录中，例如 `/opt/niulai/`。
-2. `cp .env.example .env`，填写 `POSTGRES_PASSWORD`（可以用 `openssl rand -hex 16` 生成），需要时修改 `NIULAI_IMAGE` 和 `NIULAI_LISTEN`。
+2. `cp .env.example .env`，填写 `POSTGRES_PASSWORD`（可以用 `openssl rand -hex 16` 生成），需要时修改 `NIULAI_IMAGE` 和 `NIULAI_LISTEN`。变量见 [部署配置](../interfaces/configuration.md#deploy_env)。
 3. `docker compose up -d`。
 4. 预期结果：`docker compose ps` 中 `niulai` 显示 `healthy`；`curl http://127.0.0.1:8080/api/v1/ready` 返回 `{"status":"ready"}`。
-5. 配置反向代理转发到 `NIULAI_LISTEN`，打开网页。第一次打开时进入引导页：到 <https://fuyao.aicubes.cn/admin/> 生成 API Key，粘贴后点「验证并保存」。验证通过后同步开始，并自动规划全量回补（约 51 小时，期间每日同步照常进行）。
+5. 打开网页，按引导配置 API Key。
 
 常用命令（在 `compose.yml` 所在目录执行）：
 - 状态和日志：`docker compose ps`、`docker compose logs -f niulai`。
@@ -187,25 +193,34 @@ HTTPS、域名、登录和访问控制由前面的反向代理（例如 Nginx）
 
 使用已有的 PostgreSQL（16 或以上）：在 `.env` 中把 `COMPOSE_PROFILES` 改成空，填写 `DATABASE_URL`。库要先建好，主机要能从容器访问（宿主机上的数据库写 `host.docker.internal`）。
 
-同一个 API Key 不要同时用在两套部署上：两边的请求会叠加，超过供应商的频率上限。
+使用本机构建的镜像：在仓库根目录执行 `docker build -f deploy/Dockerfile -t niulai:local .`，把 `.env` 中的 `NIULAI_IMAGE` 改成 `niulai:local`，再执行 `docker compose up -d`。
 
 <a id="source_deploy"></a>
 ### CD：源码部署
 
-不使用镜像仓库，在本机用同一个 `deploy/Dockerfile` 从源码构建镜像。前提条件：除 Docker 部署的条件外，构建需要约 4 GB 内存，并能访问 Docker Hub、npm、crates.io。
+不用 Docker，直接编译运行。前提条件：
+- Rust 工具链：安装 rustup，版本由 `backend/rust-toolchain.toml` 固定（1.99.0），首次编译时自动安装。
+- Node.js 24 和 pnpm 12（`corepack enable` 后自动使用 `frontend/package.json` 中指定的版本）。
+- PostgreSQL 16 或以上，建好一个空库。
+- 编译需要约 4 GB 内存，并能访问 npm 和 crates.io。
 
-1. `git clone https://github.com/duoyuli/niulai.git && cd niulai`。
-2. `cp deploy/.env.example deploy/.env`，按 Docker 部署的第 2 步填写。
-3. 在仓库根目录执行 `docker compose -f deploy/compose.yml -f deploy/compose.source.yml up -d --build`。之后的 `ps`、`logs`、`exec`、`down` 也带上这两个 `-f`。
-4. 更新：`git pull` 后再执行一次第 3 步。
+步骤：
+1. 获取源码：`git clone https://github.com/duoyuli/niulai.git && cd niulai`。
+2. 编译前端：`cd frontend && pnpm install --frozen-lockfile && pnpm build`，产物在 `frontend/dist/`。
+3. 编译后端：`cd ../backend && cargo build --release --locked`，产物是 `backend/target/release/niulai`，数据库迁移已编译在里面。
+4. 配置：`cp .env.example .env`，填写 `DATABASE_URL`，并设置 `NIULAI_WEB_DIR=../frontend/dist`（让程序同时提供网页）。其他变量见 [环境变量](../interfaces/configuration.md#settings)。
+5. 运行：在 `backend/` 下执行 `./target/release/niulai serve`。启动时自动执行数据库迁移。
+6. 预期结果：日志出现「niulai 服务已启动」；`curl http://127.0.0.1:8080/api/v1/ready` 返回 `{"status":"ready"}`。打开网页，按引导配置 API Key。
 
-本机开发环境就是这种方式：`deploy/.env` 中 `COMPOSE_PROFILES` 为空，`DATABASE_URL` 指向 `host.docker.internal:5432` 上的 dev-postgresql，API Key 用 `HITHINK_FINANCE_API_KEY` 提供。
+程序要在 `backend/` 下运行：`.env`、`config/datasets.yaml` 和 `NIULAI_WEB_DIR` 的相对路径都按当前目录查找。长期运行时交给系统的进程管理（例如 systemd）：工作目录设为 `backend/`，启动命令是 `target/release/niulai serve`，异常退出时自动重启；停止时发送 SIGTERM，并留出 2 分钟，等正在执行的任务结束。
+
+更新：`git pull`，重新执行第 2、3 步，再重启程序。
 
 <a id="upgrade"></a>
 ### 升级与回滚
 
 1. 先备份数据库，见下一节。
-2. Docker 部署：把 `.env` 中的 `NIULAI_IMAGE` 改成新版本号，执行 `docker compose pull && docker compose up -d`。源码部署：`git pull` 后重新构建。
+2. Docker 部署：把 `.env` 中的 `NIULAI_IMAGE` 改成新版本号，执行 `docker compose pull && docker compose up -d`。源码部署：`git pull`，重新编译前端和后端，再重启程序。
 3. 新版本启动时自动执行数据库迁移。预期结果：`niulai` 恢复为 `healthy`。
 
 回滚：迁移只能向前执行，旧版本程序不一定能用新的表结构，所以要同时回滚数据库：把 `NIULAI_IMAGE` 改回旧版本，再用升级前的备份恢复。
@@ -213,7 +228,7 @@ HTTPS、域名、登录和访问控制由前面的反向代理（例如 Nginx）
 <a id="backup_restore"></a>
 ### 备份与恢复
 
-以下命令在 `compose.yml` 所在目录执行，适用于内置数据库。使用外部数据库时，对那个库执行同样的 `pg_dump`、`pg_restore`。
+以下命令在 `compose.yml` 所在目录执行，适用于 Docker 部署的内置数据库。源码部署或使用外部数据库时，对那个库直接执行同样的 `pg_dump`、`psql`、`pg_restore`，停止和启动 niulai 换成停止和启动程序。
 
 备份（pg_dump 自定义格式，已压缩）：
 

@@ -46,7 +46,7 @@
 | --- | --- | --- | --- |
 | `POSTGRES_PASSWORD` | 使用内置数据库时 | — | 内置数据库的密码；`DATABASE_URL` 未设置时，niulai 用它连接内置数据库 |
 | `NIULAI_IMAGE` | 否 | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；服务器上建议固定版本号，例如 `ghcr.io/duoyuli/niulai:0.1.0` |
-| `NIULAI_LISTEN` | 否 | `127.0.0.1:8080` | niulai 在宿主机上监听的地址和端口，反向代理转发到这里 |
+| `NIULAI_LISTEN` | 否 | `127.0.0.1:8080` | niulai 在宿主机上监听的地址和端口；要从其他机器访问时改成 `0.0.0.0:8080` |
 | `COMPOSE_PROFILES` | 否 | 空 | `db` 表示启动内置 PostgreSQL；使用已有的数据库时留空，并设置 `DATABASE_URL` |
 
 API Key 一般不写在这里，而是第一次打开网页时配置，见 [首次登录引导](rest_api.md#setup)。
@@ -66,5 +66,4 @@ API Key 一般不写在这里，而是第一次打开网页时配置，见 [首�
 | `deploy/Dockerfile` | 镜像构建：先构建前端，再编译后端，构建上下文是仓库根目录（`.dockerignore` 在根目录） |
 | `.github/workflows/ci.yml` | CI：检查代码，`main` 有合并或推送版本标签时构建 amd64、arm64 镜像并推送到 GHCR，见 [CI：构建镜像](../operations/runbook.md#release_image) |
 | `deploy/compose.yml` | Docker 部署：内置 PostgreSQL 和 niulai，读取 `deploy/.env` |
-| `deploy/compose.source.yml` | 源码部署时叠加使用：在本机从源码构建镜像 |
 | `deploy/.env` | 部署配置，见 [部署配置](#deploy_env)；含密码，不提交 |
