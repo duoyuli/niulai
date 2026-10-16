@@ -27,6 +27,8 @@
 | `POST /auth/login` | 登录，成功时设置登录 Cookie | 请求体 `{username, password}`；见 [登录](#auth) |
 | `POST /auth/logout` | 退出登录，清除 Cookie；返回 204 | — |
 | `GET /auth/me` | 当前登录的账号，以及是否仍在使用默认账号密码 | 没有登录时返回 401 |
+| `GET /system/version` | 当前版本、GitHub 上的最新版本、一键升级的状态（upgrader 是否在运行、进度、失败时的日志） | `refresh=true` 时不用 6 小时的缓存，立即查询；见 [一键升级](../operations/runbook.md#one_click_upgrade) |
+| `POST /system/upgrade` | 一键升级：把版本号交给 upgrader 容器，返回 202 | 请求体 `{version}`，为空时升级到最新版本；只接受 `X.Y.Z` 且高于当前版本；upgrader 没有运行或正在升级时返回 409 |
 | `GET /setup` | 首次登录引导的状态：API Key 是否已配置、来源、末尾 4 位、生成 Key 的网址、是否已规划回补 | 见 [首次登录引导](#setup) |
 | `PUT /setup/api-key` | 验证并保存 API Key，立即生效 | 请求体 `{api_key}`；见 [首次登录引导](#setup) |
 | `GET /securities` | 证券列表 | `q`（代码或名称片段）、`board`；`limit` 默认 50、最大 500；`offset` |
@@ -39,7 +41,7 @@
 | `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金和成本同上；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
 | `GET /strategies/catalog` | 指标、信号（含白话说明）、模板目录和默认股票池，前端据此生成策略编辑器和「指标与信号」页 | — |
 | `GET /strategies` | 全部策略，含白话说明（`explained`）和最近一次巡检的数量 | — |
-| `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, template}`；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |
+| `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, show_on_today, template}`，`screening`、`show_on_today` 默认 true；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |
 | `GET` / `PUT` / `DELETE /strategies/{id}` | 读取、修改（请求体同新建）、删除策略；删除返回 204 | 不存在时返回 404 |
 | `POST /strategies/preview` | 试算：不保存，在某个交易日上执行一个策略定义 | 请求体 `{definition, date}`，`date` 默认最新交易日 |
 | `GET /strategies/{id}/results` | 某次巡检的结果：入选股票、命中条件、是否新入选、上次入选这次不在的股票，以及有结果的交易日 | `date` 默认最近一次巡检 |

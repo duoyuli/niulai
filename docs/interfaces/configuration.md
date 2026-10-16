@@ -22,6 +22,8 @@
 | `HITHINK_FINANCE_API_KEY` | 否 | — | 同花顺金融数据服务 API Key（在 <https://fuyao.aicubes.cn/admin/> 生成）。一般不设置，在网页的首次登录引导中配置，保存在数据库；设置后优先使用它，网页上不能修改，见 [ADR：API Key 在首次登录引导中配置](../decisions/api_key_setup.md)。空值按未设置处理 |
 | `NIULAI_ADMIN_USER` | 否 | `niulai` | 网页登录的管理员账号，见 [登录](rest_api.md#auth) |
 | `NIULAI_ADMIN_PASSWORD` | 否 | `niulai` | 网页登录的密码。修改账号或密码并重启后，之前的登录状态全部失效。仍用默认值时启动日志有警告，页面顶部提示修改 |
+| `NIULAI_UPGRADE_DIR` | 否 | 无；Docker 部署的 `compose.yml` 中是 `/upgrade` | 与 upgrader 容器共享的目录，为空时不能一键升级，见 [一键升级](../operations/runbook.md#one_click_upgrade) |
+| `NIULAI_UPDATE_REPO` | 否 | `duoyuli/niulai` | 到哪个 GitHub 仓库查新版本；设为空时不检查 |
 | `NIULAI_API_BIND` | 否 | `127.0.0.1:8080` | API 监听地址；Docker 镜像中默认 `0.0.0.0:8080` |
 | `NIULAI_DATASETS_PATH` | 否 | 依次查找 `config/datasets.yaml`、`backend/config/datasets.yaml` | 数据集注册表路径；Docker 镜像中是 `/app/config/datasets.yaml` |
 | `NIULAI_DB_MAX_CONNECTIONS` | 否 | `10` | 数据库连接池上限 |
@@ -46,7 +48,8 @@ Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.examp
 
 | 变量 | 默认值 | 含义 |
 | --- | --- | --- |
-| `NIULAI_IMAGE` | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；建议固定版本号，例如 `ghcr.io/duoyuli/niulai:0.1.0` |
+| `COMPOSE_PROFILES` | `upgrader` | 启用一键升级助手 upgrader 容器；删掉这一行即关闭，见 [一键升级](../operations/runbook.md#one_click_upgrade) |
+| `NIULAI_IMAGE` | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；建议固定版本号，例如 `ghcr.io/duoyuli/niulai:1.2.0`。一键升级会改写这一行 |
 | `NIULAI_LISTEN_ADDR`、`NIULAI_PORT` | `127.0.0.1`、`8080` | niulai 在宿主机上监听的地址和端口；端口被占用时改 `NIULAI_PORT`，要从其他机器访问时把地址改成 `0.0.0.0` |
 | `POSTGRES_PASSWORD` | `niulai` | 内置数据库的密码，要与 `DATABASE_URL` 中的一致；只在第一次启动（创建数据卷）之前修改才生效 |
 
@@ -66,5 +69,6 @@ Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.examp
 | `frontend/vite.config.ts` | Vite 配置；开发时把 `/api` 转发到 `NIULAI_API_URL`（默认 `http://127.0.0.1:8080`） |
 | `deploy/Dockerfile` | 镜像构建：先构建前端，再编译后端，构建上下文是仓库根目录（`.dockerignore` 在根目录） |
 | `.github/workflows/ci.yml` | CI：PR 和推送到 `main` 只检查代码，推送 `v*` 标签时才构建 amd64、arm64 镜像并推送到 GHCR，见 [CI：构建镜像](../operations/runbook.md#release_image) |
-| `deploy/compose.yml` | Docker 部署：内置 PostgreSQL 和 niulai，配置读取 `deploy/.env` |
+| `deploy/compose.yml` | Docker 部署：内置 PostgreSQL、niulai 和一键升级助手 upgrader，配置读取 `deploy/.env` |
+| `deploy/upgrader.sh` | 一键升级助手的脚本，在 upgrader 容器中运行，见 [一键升级](../operations/runbook.md#one_click_upgrade) |
 | `deploy/.env`、`deploy/.env.example` | Docker 部署的配置和模板，见 [部署配置](#deploy_env)；`.env` 含密码，不提交 |

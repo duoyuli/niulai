@@ -114,7 +114,8 @@ function Sectors() {
 /** 每个开启巡检的策略今天选出的股票，新入选的排在前面 */
 function Picks() {
   const list = useListStrategies();
-  const active = (list.data ?? []).filter((s) => s.screening && s.latest);
+  // 只为测试建的策略可以关掉「在今日展示」
+  const active = (list.data ?? []).filter((s) => s.screening && s.show_on_today && s.latest);
   const results = useQueries({ queries: active.map((s) => getResultsQueryOptions(s.strategy_id)) });
   return (
     <Card
@@ -129,7 +130,7 @@ function Picks() {
         <Spinner />
       ) : active.length === 0 ? (
         <Empty>
-          还没有开启每日巡检的策略。
+          没有要在这里展示的策略（需要开启每日巡检和「在今日展示」）。
           <Link to="/strategies/new" className="text-accent hover:underline">
             新建一个
           </Link>

@@ -148,6 +148,8 @@ async fn adjustment_and_api_end_to_end() {
         web_dir: Some(web.clone()),
         admin_user: "admin".into(),
         admin_password: "secret-pass".into(),
+        upgrade_dir: None,
+        update_repo: String::new(),
     };
     let limiter = RateLimiter::new(1);
     let client = HithinkClient::new("http://127.0.0.1:1", Some("test"), Duration::from_secs(1), limiter).unwrap();
@@ -384,6 +386,8 @@ fn bare_settings(vendor: &str, api_key: Option<&str>) -> Settings {
         web_dir: None,
         admin_user: "admin".into(),
         admin_password: "secret-pass".into(),
+        upgrade_dir: None,
+        update_repo: String::new(),
     }
 }
 
@@ -466,6 +470,47 @@ async fn login_is_required_and_lasts_30_days() {
     changed.admin_password = "new-pass".into();
     let app3 = niulai::api::router(Engine::new(changed, db.pool.clone()).await.unwrap());
     assert_eq!(app3.oneshot(with("/api/v1/auth/me", &cookie)).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn one_click_upgrade_hands_request_to_upgrader() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("niulai_upgrade_it_{}_{}", std::process::id(), rand_suffix()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut settings = bare_settings("http://127.0.0.1:1", Some("test"));
+    settings.upgrade_dir = Some(dir.clone());
+    let app = logged_in(niulai::api::router(Engine::new(settings, db.pool.clone()).await.unwrap())).await;
+
+    // 没有心跳：不能一键升级
+    let (st, v) = call(&app, "GET", "/api/v1/system/version", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v["current"], "dev");
+    assert_eq!(v["upgrade"]["available"], false);
+    let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "1.2.0"}))).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+
+    // upgrader 在运行：提交请求，写入版本号
+    std::fs::write(dir.join("heartbeat"), chrono::Utc::now().timestamp().to_string()).unwrap();
+    let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "1.2.0; rm -rf /"}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "只接受 X.Y.Z");
+    let (st, body) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "v1.2.0"}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["state"], "requested");
+    assert_eq!(std::fs::read_to_string(dir.join("request")).unwrap(), "1.2.0");
+    let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "1.2.0"}))).await;
+    assert_eq!(st, StatusCode::CONFLICT, "正在升级时不能再提交");
+
+    // upgrader 接手并报告进度
+    std::fs::remove_file(dir.join("request")).unwrap();
+    std::fs::write(dir.join("status"), r#"{"state":"running","target":"1.2.0","message":"拉取镜像","at":1}"#).unwrap();
+    let (_, v) = call(&app, "GET", "/api/v1/system/version", None).await;
+    assert_eq!(v["upgrade"]["state"], "running");
+    assert_eq!(v["upgrade"]["message"], "拉取镜像");
+    std::fs::remove_dir_all(&dir).unwrap();
     db.drop().await;
 }
 
@@ -595,6 +640,11 @@ async fn strategies_screening_diagnosis_and_backtests() {
     assert_eq!(res["trade_date"], "2026-06-19");
     assert_eq!(res["hits"][0]["is_new"], true);
     assert_eq!(res["dates"].as_array().unwrap().len(), 2);
+    assert_eq!(created["show_on_today"], true, "默认在今日展示");
+    let (st, upd) = call(&app, "PUT", &format!("/api/v1/strategies/{id}"), Some(json!({"name": "放量站上均线", "definition": def, "show_on_today": false}))).await;
+    assert_eq!(st, StatusCode::OK, "{upd}");
+    assert_eq!(upd["show_on_today"], false);
+    assert_eq!(upd["screening"], true, "不在今日展示，照常巡检");
     let (st, _) = call(&app, "PUT", &format!("/api/v1/strategies/{id}"), Some(json!({"name": "", "definition": def}))).await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "名称不能为空");
 

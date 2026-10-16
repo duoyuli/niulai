@@ -89,6 +89,8 @@ pub struct StrategyItem {
     pub description: String,
     /// 是否参加每日巡检
     pub screening: bool,
+    /// 是否在「今日」页展示选出的股票
+    pub show_on_today: bool,
     pub template: Option<String>,
     pub definition: Definition,
     pub explained: Explained,
@@ -97,11 +99,11 @@ pub struct StrategyItem {
     pub updated_at: DateTime<Utc>,
 }
 
-type StrategyRow = (i64, String, String, bool, Option<String>, serde_json::Value, DateTime<Utc>);
+type StrategyRow = (i64, String, String, bool, bool, Option<String>, serde_json::Value, DateTime<Utc>);
 
 async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem>> {
     let rows: Vec<StrategyRow> = sqlx::query_as(
-        "SELECT strategy_id, name, description, screening, template, definition, updated_at FROM app.strategy
+        "SELECT strategy_id, name, description, screening, show_on_today, template, definition, updated_at FROM app.strategy
          WHERE ($1::bigint IS NULL OR strategy_id = $1) ORDER BY strategy_id",
     )
     .bind(id)
@@ -117,13 +119,13 @@ async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem
     .fetch_all(&s.pool)
     .await?;
     let mut out = vec![];
-    for (strategy_id, name, description, screening, template, v, updated_at) in rows {
+    for (strategy_id, name, description, screening, show_on_today, template, v, updated_at) in rows {
         let definition: Definition = serde_json::from_value(v).map_err(|e| ApiError::Internal(e.into()))?;
         let latest = latest
             .iter()
             .find(|l| l.0 == strategy_id)
             .map(|&(_, trade_date, matched, hits, new_hits)| LatestRun { trade_date, matched, hits, new_hits });
-        out.push(StrategyItem { strategy_id, name, description, screening, template, explained: explain(&definition), definition, latest, updated_at });
+        out.push(StrategyItem { strategy_id, name, description, screening, show_on_today, template, explained: explain(&definition), definition, latest, updated_at });
     }
     Ok(out)
 }
@@ -143,6 +145,9 @@ pub struct StrategyInput {
     /// 是否参加每日巡检，默认 true
     #[serde(default = "yes")]
     pub screening: bool,
+    /// 是否在「今日」页展示，默认 true。只为测试建的策略可以关掉
+    #[serde(default = "yes")]
+    pub show_on_today: bool,
     /// 由哪个模板创建（只作记录）
     #[serde(default)]
     pub template: Option<String>,
@@ -166,13 +171,14 @@ fn check(input: &StrategyInput) -> ApiResult<()> {
 async fn create_strategy(State(s): State<AppState>, Json(input): Json<StrategyInput>) -> ApiResult<(StatusCode, Json<StrategyItem>)> {
     check(&input)?;
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO app.strategy (name, description, definition, screening, template) VALUES ($1, $2, $3, $4, $5) RETURNING strategy_id",
+        "INSERT INTO app.strategy (name, description, definition, screening, template, show_on_today) VALUES ($1, $2, $3, $4, $5, $6) RETURNING strategy_id",
     )
     .bind(input.name.trim())
     .bind(input.description.trim())
     .bind(serde_json::to_value(&input.definition).map_err(|e| ApiError::Internal(e.into()))?)
     .bind(input.screening)
     .bind(&input.template)
+    .bind(input.show_on_today)
     .fetch_one(&s.pool)
     .await?;
     let item = load_items(&s, Some(id)).await?.pop().ok_or_else(|| ApiError::NotFound("策略不存在".into()))?;
@@ -193,12 +199,13 @@ async fn get_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResu
               (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
 async fn update_strategy(State(s): State<AppState>, Path(id): Path<i64>, Json(input): Json<StrategyInput>) -> ApiResult<Json<StrategyItem>> {
     check(&input)?;
-    let n = sqlx::query("UPDATE app.strategy SET name = $2, description = $3, definition = $4, screening = $5, updated_at = now() WHERE strategy_id = $1")
+    let n = sqlx::query("UPDATE app.strategy SET name = $2, description = $3, definition = $4, screening = $5, show_on_today = $6, updated_at = now() WHERE strategy_id = $1")
         .bind(id)
         .bind(input.name.trim())
         .bind(input.description.trim())
         .bind(serde_json::to_value(&input.definition).map_err(|e| ApiError::Internal(e.into()))?)
         .bind(input.screening)
+        .bind(input.show_on_today)
         .execute(&s.pool)
         .await?
         .rows_affected();

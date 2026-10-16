@@ -72,7 +72,10 @@ function StrategyCard({ s }: { s: StrategyItem }) {
     >
       <div className="flex items-start justify-between gap-2">
         <span className="font-medium">{s.name}</span>
-        {s.screening ? <Badge tone="info">每日巡检</Badge> : <Badge>已暂停</Badge>}
+        <span className="flex shrink-0 gap-1">
+          {!s.show_on_today && <Badge>不在今日</Badge>}
+          {s.screening ? <Badge tone="info">每日巡检</Badge> : <Badge>已暂停</Badge>}
+        </span>
       </div>
       <p className="line-clamp-2 text-xs text-zinc-500">{s.description || s.explained.all.join("，并且")}</p>
       <div className="mt-auto flex items-baseline gap-2 text-sm">

@@ -56,7 +56,8 @@ export function StrategyPage() {
   if (strategy.isPending) return <Spinner />;
   if (strategy.error) return <ErrorState error={strategy.error} onRetry={() => strategy.refetch()} />;
   const st = strategy.data;
-  const toggle = () =>
+  // 修改接口要提交完整的策略，这里只改其中一个开关
+  const save = (patch: { screening?: boolean; show_on_today?: boolean }) =>
     update.mutate({
       strategyId: id,
       data: {
@@ -64,7 +65,9 @@ export function StrategyPage() {
         description: st.description,
         definition: st.definition,
         template: st.template,
-        screening: !st.screening,
+        screening: st.screening,
+        show_on_today: st.show_on_today,
+        ...patch,
       },
     });
 
@@ -78,6 +81,7 @@ export function StrategyPage() {
           <h1 className="mt-1 flex flex-wrap items-center gap-2 text-xl font-semibold">
             {st.name}
             {st.screening ? <Badge tone="info">每日巡检</Badge> : <Badge>已暂停巡检</Badge>}
+            {!st.show_on_today && <Badge>不在今日展示</Badge>}
           </h1>
           <Conditions e={st.explained} />
         </div>
@@ -89,9 +93,18 @@ export function StrategyPage() {
             type="button"
             className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
             disabled={update.isPending}
-            onClick={toggle}
+            onClick={() => save({ screening: !st.screening })}
           >
             {st.screening ? "暂停巡检" : "开启巡检"}
+          </button>
+          <button
+            type="button"
+            className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+            disabled={update.isPending}
+            title="只是试试的策略可以不在「今日」页出现，照常巡检"
+            onClick={() => save({ show_on_today: !st.show_on_today })}
+          >
+            {st.show_on_today ? "不在今日展示" : "在今日展示"}
           </button>
           <button
             type="button"

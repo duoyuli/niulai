@@ -20,6 +20,9 @@ RUN mkdir -p src/bin && echo 'fn main() {}' > src/bin/niulai.rs && echo '' > src
     && cargo build --release --locked && rm -rf src
 COPY backend/src/ src/
 COPY backend/migrations/ migrations/
+# 版本号编译进程序（CI 传入 git 标签，例如 v1.2.0；本机构建是 dev），页面据此判断有没有新版本
+ARG NIULAI_VERSION=dev
+ENV NIULAI_VERSION=${NIULAI_VERSION}
 RUN touch src/lib.rs && cargo build --release --locked
 
 # 3. 运行镜像：只包含程序、前端静态文件和数据集配置，不含编译工具和源码

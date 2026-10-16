@@ -4,6 +4,7 @@ import { useLogout, useMe } from "../api/generated/auth/auth";
 import { useGetSetup } from "../api/generated/setup/setup";
 import { useReady } from "../api/generated/system/system";
 import { SecuritySearch } from "./SecuritySearch";
+import { VersionBadge } from "./VersionBadge";
 
 /** 主导航只放三件事：今天看什么、我的选股方法、我关注的股票。个股从页头搜索进入 */
 const NAV = [
@@ -36,6 +37,7 @@ export function Layout() {
             <img src="/favicon.svg" alt="" className="size-6" />
             <span className="hidden sm:inline">牛来</span>
           </NavLink>
+          {me.isSuccess && <VersionBadge />}
           <nav className="flex min-w-0 gap-1 overflow-x-auto">
             {NAV.map((n) => (
               <NavLink

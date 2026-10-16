@@ -97,6 +97,8 @@ jobs:
           context: .
           file: deploy/Dockerfile
           platforms: ${{ matrix.platform }}
+          # 版本号编译进程序，页面据此检测新版本
+          build-args: NIULAI_VERSION=${{ github.ref_name }}
           labels: ${{ steps.meta.outputs.labels }}
           # 只按摘要推送，标签在 merge 中统一打
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true

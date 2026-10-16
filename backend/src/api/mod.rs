@@ -7,6 +7,7 @@ pub mod strategy;
 pub mod backtest;
 pub mod insight;
 pub mod sync;
+pub mod system;
 pub mod watchlist;
 mod web;
 
@@ -36,13 +37,15 @@ pub struct AppState {
     pub scans: Arc<ScanCache>,
     /// 登录状态的签名密钥，第一次用到时从数据库读取
     pub session_secret: Arc<tokio::sync::OnceCell<Vec<u8>>>,
+    /// GitHub 上最新版本的查询结果
+    pub latest: Arc<system::LatestCache>,
 }
 
 #[derive(OpenApi)]
 #[openapi(
     info(title = "niulai API", version = "0.1.0", description = "A 股数据工作台：行情、复权、均线信号与数据同步"),
     tags(
-        (name = "system", description = "健康检查"),
+        (name = "system", description = "健康检查、版本与一键升级"),
         (name = "auth", description = "登录"),
         (name = "setup", description = "首次登录引导：配置 API Key"),
         (name = "market", description = "证券、日线、指数与均线信号"),
@@ -56,7 +59,7 @@ pub struct ApiDoc;
 
 // @project-doc docs/interfaces/rest_api.md#conventions
 pub fn router(engine: Arc<Engine>) -> Router {
-    let state = AppState { pool: engine.pool.clone(), engine, scans: Arc::new(ScanCache::default()), session_secret: Arc::default() };
+    let state = AppState { pool: engine.pool.clone(), engine, scans: Arc::new(ScanCache::default()), session_secret: Arc::default(), latest: Arc::default() };
     let st = &state.engine.settings;
     if st.admin_user == crate::config::DEFAULT_ADMIN_USER && st.admin_password == crate::config::DEFAULT_ADMIN_PASSWORD {
         tracing::warn!("网页登录仍在使用默认账号密码 niulai / niulai，请设置 NIULAI_ADMIN_USER 和 NIULAI_ADMIN_PASSWORD");
@@ -92,6 +95,7 @@ fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(health))
         .routes(routes!(ready))
         .merge(auth::routes())
+        .merge(system::routes())
         .merge(setup::routes())
         .merge(market::routes())
         .merge(insight::routes())

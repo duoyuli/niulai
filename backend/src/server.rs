@@ -54,6 +54,7 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
         anyhow::bail!("--no-api、--no-worker、--no-scheduler 不能同时使用");
     }
     tracing::info!(
+        version = crate::api::system::current_version(),
         api = opts.api,
         worker = opts.worker,
         concurrency = engine.settings.worker_concurrency,

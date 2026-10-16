@@ -6,23 +6,31 @@
  * OpenAPI spec version: 0.1.0
  */
 import {
+  useMutation,
   useQuery
 } from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
   DefinedUseQueryResult,
+  MutationFunction,
   QueryClient,
   QueryFunction,
   QueryKey,
   UndefinedInitialDataOptions,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult
 } from '@tanstack/react-query';
 
 import type {
   ErrorBody,
-  Health
+  Health,
+  UpgradeInput,
+  UpgradeStatus,
+  VersionInfo,
+  VersionParams
 } from '../model';
 
 import { apiFetch } from '../../fetcher';
@@ -236,6 +244,200 @@ export function useReady<TData = Awaited<ReturnType<typeof ready>>, TError = Err
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getReadyQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getUpgradeUrl = () => {
+
+
+
+
+  return `/api/v1/system/upgrade`
+}
+
+/**
+ * @summary 一键升级：交给 upgrader 容器执行。它会先备份内置数据库，再拉取新镜像并重建 niulai 容器，期间服务中断约一分钟
+ */
+export const upgrade = async (upgradeInput: UpgradeInput, options?: Parameters<typeof apiFetch>[1]): Promise<UpgradeStatus> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return apiFetch<UpgradeStatus>(getUpgradeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(upgradeInput)
+  }
+);}
+
+
+
+
+
+export const getUpgradeMutationKey = () => ['upgrade'] as const;
+
+export const getUpgradeMutationOptions = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upgrade>>, TError,UpgradeMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof upgrade>>, TError,UpgradeMutationVariables, TContext> => {
+
+const mutationKey = getUpgradeMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof upgrade>>, UpgradeMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  upgrade(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpgradeMutationResult = NonNullable<Awaited<ReturnType<typeof upgrade>>>
+    export type UpgradeMutationBody = UpgradeInput
+    export type UpgradeMutationError = ErrorBody
+    export type UpgradeMutationVariables = {data: UpgradeInput}
+
+    /**
+ * @summary 一键升级：交给 upgrader 容器执行。它会先备份内置数据库，再拉取新镜像并重建 niulai 容器，期间服务中断约一分钟
+ */
+export const useUpgrade = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upgrade>>, TError,UpgradeMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof upgrade>>,
+        TError,
+        UpgradeMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpgradeMutationOptions(options), queryClient);
+    }
+    export const getVersionUrl = (params?: VersionParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/system/version?${stringifiedParams}` : `/api/v1/system/version`
+}
+
+/**
+ * @summary 当前版本、最新版本和一键升级的状态
+ */
+export const version = async (params?: VersionParams, options?: Parameters<typeof apiFetch>[1]): Promise<VersionInfo> => {
+
+  return apiFetch<VersionInfo>(getVersionUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getVersionQueryKey = (params?: VersionParams,) => {
+    return [
+    `/api/v1/system/version`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getVersionQueryOptions = <TData = Awaited<ReturnType<typeof version>>, TError = unknown>(params?: VersionParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof version>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getVersionQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof version>>> = ({ signal }) => version(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof version>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type VersionQueryResult = NonNullable<Awaited<ReturnType<typeof version>>>
+export type VersionQueryError = unknown
+
+
+export function useVersion<TData = Awaited<ReturnType<typeof version>>, TError = unknown>(
+ params: undefined |  VersionParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof version>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof version>>,
+          TError,
+          Awaited<ReturnType<typeof version>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useVersion<TData = Awaited<ReturnType<typeof version>>, TError = unknown>(
+ params?: VersionParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof version>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof version>>,
+          TError,
+          Awaited<ReturnType<typeof version>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useVersion<TData = Awaited<ReturnType<typeof version>>, TError = unknown>(
+ params?: VersionParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof version>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 当前版本、最新版本和一键升级的状态
+ */
+
+export function useVersion<TData = Awaited<ReturnType<typeof version>>, TError = unknown>(
+ params?: VersionParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof version>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getVersionQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

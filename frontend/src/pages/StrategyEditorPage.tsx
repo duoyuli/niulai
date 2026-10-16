@@ -63,6 +63,7 @@ function toDraft(catalog: Catalog, x: StrategyInput): Draft {
     name: x.name,
     description: x.description ?? "",
     screening: x.screening ?? true,
+    show_on_today: x.show_on_today ?? true,
     template: x.template ?? null,
     definition: {
       universe: { ...catalog.default_universe, ...d.universe },
@@ -224,6 +225,17 @@ function Editor({
               onChange={(e) => setDraft({ ...draft, screening: e.target.checked })}
             />
             每天收盘后自动巡检
+          </label>
+          <label
+            className="flex items-center gap-2 pb-1.5 text-sm"
+            title="只是试试的策略可以不勾，它照常巡检，但不出现在「今日」页"
+          >
+            <input
+              type="checkbox"
+              checked={draft.show_on_today ?? true}
+              onChange={(e) => setDraft({ ...draft, show_on_today: e.target.checked })}
+            />
+            在「今日」展示
           </label>
         </div>
       </Card>

@@ -36,6 +36,10 @@ services:
     command: ["niulai", "serve"]
     # .env 中的 DATABASE_URL、NIULAI_* 等变量传给 niulai
     env_file: .env
+    environment:
+      NIULAI_UPGRADE_DIR: /upgrade
+    # 与 upgrader 共享：niulai 在这里写「要升级到的版本号」，upgrader 写进度
+    volumes: [upgrade:/upgrade]
     depends_on:
       postgres: { condition: service_healthy }
     # 对外只有这一个 HTTP 端口：页面 /，接口 /api/v1/*，健康检查 /api/v1/health、/api/v1/ready。
@@ -51,5 +55,21 @@ services:
       start_period: 60s
     logging: *logging
 
+  # 一键升级助手：网页上点「一键升级」后，由它备份内置数据库、拉取新镜像并重建 niulai 容器，脚本是同目录的 upgrader.sh。
+  # 它挂载 Docker 的控制接口，能管理这台机器上的容器；niulai 没有这个权限，只能通过共享卷 upgrade 提交一个版本号。
+  # .env 中的 COMPOSE_PROFILES=upgrader 启用它，删掉这一行即可关闭一键升级
+  upgrader:
+    image: docker:29.8.2-cli
+    profiles: [upgrader]
+    # 缺少 upgrader.sh 时只打印提示、不反复重启；页面上显示「没有启用一键升级」
+    command: ["sh", "-c", "[ -f /deploy/upgrader.sh ] && exec sh /deploy/upgrader.sh; echo '缺少 upgrader.sh：把它下载到 compose.yml 所在目录后执行 docker compose up -d'; exec sleep infinity"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/deploy
+      - upgrade:/upgrade
+    restart: unless-stopped
+    logging: *logging
+
 volumes:
   pgdata:
+  upgrade:

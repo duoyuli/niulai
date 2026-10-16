@@ -1974,6 +1974,89 @@
         }
       }
     },
+    "/system/upgrade": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "一键升级：交给 upgrader 容器执行。它会先备份内置数据库，再拉取新镜像并重建 niulai 容器，期间服务中断约一分钟",
+        "operationId": "upgrade",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "已提交",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "版本号不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "不能升级：没有运行 upgrader、已是最新或正在升级",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/version": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "当前版本、最新版本和一键升级的状态",
+        "operationId": "version",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "description": "为 true 时不用缓存，立即查询 GitHub",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/watchlist": {
       "get": {
         "tags": [
@@ -4493,6 +4576,10 @@
             "type": "boolean",
             "description": "是否参加每日巡检，默认 true"
           },
+          "show_on_today": {
+            "type": "boolean",
+            "description": "是否在「今日」页展示，默认 true。只为测试建的策略可以关掉"
+          },
           "template": {
             "type": [
               "string",
@@ -4509,6 +4596,7 @@
           "name",
           "description",
           "screening",
+          "show_on_today",
           "definition",
           "explained",
           "updated_at"
@@ -4540,6 +4628,10 @@
           "screening": {
             "type": "boolean",
             "description": "是否参加每日巡检"
+          },
+          "show_on_today": {
+            "type": "boolean",
+            "description": "是否在「今日」页展示选出的股票"
           },
           "strategy_id": {
             "type": "integer",
@@ -4933,6 +5025,72 @@
           }
         }
       },
+      "UpgradeInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "要升级到的版本，例如 1.2.0；为空时升级到最新版本"
+          }
+        }
+      },
+      "UpgradeState": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "requested",
+          "running",
+          "done",
+          "failed"
+        ]
+      },
+      "UpgradeStatus": {
+        "type": "object",
+        "required": [
+          "available",
+          "state"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "upgrader 容器在运行，可以一键升级"
+          },
+          "log_tail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "失败时 upgrader 日志的最后几行"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "当前步骤或结果，例如「拉取镜像」「已升级到 1.2.0」"
+          },
+          "state": {
+            "$ref": "#/components/schemas/UpgradeState"
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "正在升级或最近一次升级的目标版本"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "Verdict": {
         "type": "string",
         "enum": [
@@ -4940,6 +5098,54 @@
           "neutral",
           "weak"
         ]
+      },
+      "VersionInfo": {
+        "type": "object",
+        "required": [
+          "current",
+          "has_update",
+          "upgrade"
+        ],
+        "properties": {
+          "changes_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "两个版本之间改了什么（GitHub 对比页面）"
+          },
+          "check_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "查询失败的原因"
+          },
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "current": {
+            "type": "string",
+            "description": "正在运行的版本，例如 1.1.0；本机编译的是 dev"
+          },
+          "has_update": {
+            "type": "boolean"
+          },
+          "latest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "GitHub 上最新的正式版本；还没查到或查询失败时为空"
+          },
+          "upgrade": {
+            "$ref": "#/components/schemas/UpgradeStatus"
+          }
+        }
       },
       "WatchDiagnosis": {
         "type": "object",
@@ -5068,7 +5274,7 @@
   "tags": [
     {
       "name": "system",
-      "description": "健康检查"
+      "description": "健康检查、版本与一键升级"
     },
     {
       "name": "auth",

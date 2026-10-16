@@ -37,7 +37,7 @@
 
 | 路径 | 页面 | 接口 |
 | --- | --- | --- |
-| `/` | 今日：大盘涨跌概况、近 5 日最强的行业、每个开启巡检的策略今天选出的股票（新入选的在前）、自选股的最近信号 | `GET /market/overview`、`GET /market/sectors`、`GET /strategies`、`GET /strategies/{id}/results`、`GET /watchlist` |
+| `/` | 今日：大盘涨跌概况、近 5 日最强的行业、每个开启巡检并且「在今日展示」的策略今天选出的股票（新入选的在前）、自选股的最近信号 | `GET /market/overview`、`GET /market/sectors`、`GET /strategies`、`GET /strategies/{id}/results`、`GET /watchlist` |
 | `/strategies` | 策略列表：每个策略最近一次选出的数量，可立即巡检、新建 | `GET /strategies`、`POST /screening/run` |
 | `/strategies/:id` | 策略详情：条件写成一段话；「选出的股票」标签页按交易日看结果（新入选、不再符合）；「过去表现如何」标签页做全市场组合回测，点「开始回测」才计算 | `GET /strategies/{id}`、`/results`、`PUT` / `DELETE /strategies/{id}`、`POST /screening/run`、`GET /backtest/portfolio` |
 | `/strategies/new`、`/strategies/:id/edit` | 策略编辑器：从模板或空白开始，设置股票池、条件、排序和卖出规则，可预览结果 | `GET /strategies/catalog`、`POST /strategies/preview`、`POST /strategies`、`PUT /strategies/{id}` |
@@ -55,7 +55,7 @@
 
 页面里常用的展示原则：每页先给一句白话结论，再给最多四个关键数字，其余数字、明细表和规则说明折叠起来。
 
-任何请求收到 401 时，`apiFetch` 把页面整页跳转到 `/login?next=<当前地址>`；`Layout` 请求 `GET /auth/me` 确认已登录，页头右侧有「退出」，仍在使用默认账号密码时页面顶部有提示。登录之后，还没有配置 API Key 时（`GET /setup` 的 `api_key_configured` 为 false），`Layout` 把所有页面跳转到 `/setup`；页头右侧的「设置」也进入这个页面。页头右侧的服务状态每 30 秒请求一次 `GET /ready`。数据同步页每 5 秒刷新运行列表，运行详情在运行进行中时每 5 秒刷新。
+任何请求收到 401 时，`apiFetch` 把页面整页跳转到 `/login?next=<当前地址>`；`Layout` 请求 `GET /auth/me` 确认已登录，页头右侧有「退出」；logo 后面的版本号（`VersionBadge`）每 30 分钟请求一次 `GET /system/version`，有新版本时亮红点，点开可以一键升级，升级期间每 2 秒刷新，运行的版本变成目标版本后整页刷新；仍在使用默认账号密码时页面顶部有提示。登录之后，还没有配置 API Key 时（`GET /setup` 的 `api_key_configured` 为 false），`Layout` 把所有页面跳转到 `/setup`；页头右侧的「设置」也进入这个页面。页头右侧的服务状态每 30 秒请求一次 `GET /ready`。数据同步页每 5 秒刷新运行列表，运行详情在运行进行中时每 5 秒刷新。
 
 <a id="api_client"></a>
 ## 接口客户端

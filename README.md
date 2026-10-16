@@ -24,6 +24,7 @@ A 股个股诊断工作台。把同花顺金融数据服务的行情、公司行
 ```bash
 mkdir niulai && cd niulai
 curl -O https://raw.githubusercontent.com/duoyuli/niulai/main/deploy/compose.yml
+curl -O https://raw.githubusercontent.com/duoyuli/niulai/main/deploy/upgrader.sh
 curl -o .env https://raw.githubusercontent.com/duoyuli/niulai/main/deploy/.env.example
 # .env 中都是可以直接使用的默认值；端口等按需修改
 docker compose up -d
@@ -31,14 +32,14 @@ docker compose up -d
 
 打开 <http://127.0.0.1:8080/>。第一次打开时会进入引导页，按提示到 <https://fuyao.aicubes.cn/admin/> 生成同花顺金融数据服务的 API Key（免费即可），粘贴保存后自动开始同步。全量历史约需 51 小时，期间可以正常使用，数据陆续出现。
 
-服务默认只监听 `127.0.0.1:8080`。打开网页先要登录，账号密码默认都是 `niulai`，在 `deploy/.env` 中用 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD` 修改。不用 Docker、直接编译运行（源码部署），以及升级、备份与恢复，见 [运维手册](docs/operations/runbook.md#deployment)。
+服务默认只监听 `127.0.0.1:8080`。打开网页先要登录，账号密码默认都是 `niulai`，在 `deploy/.env` 中用 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD` 修改。有新版本时，页面左上角的版本号旁边会亮红点，点开可以一键升级（会先备份数据库）。不用 Docker、直接编译运行（源码部署），以及手动升级、备份与恢复，见 [运维手册](docs/operations/runbook.md#deployment)。
 
 ## 组成
 
 ```
 backend/    Rust 后端（Axum、SQLx、Tokio）：一个程序 niulai，niulai serve 同时提供网页、REST API、同步任务执行和定时调度
 frontend/   React 前端（TypeScript、Vite、TanStack Query、Tailwind CSS、Lightweight Charts）
-deploy/     Dockerfile 和 Docker Compose 部署文件
+deploy/     Dockerfile、Docker Compose 部署文件和一键升级脚本 upgrader.sh
 docs/       工程文档：架构、业务规则、接口、运维手册、架构决策记录
 .github/    CI：检查代码；推送 v* 标签时构建多架构镜像并推送到 ghcr.io/duoyuli/niulai
 ```
