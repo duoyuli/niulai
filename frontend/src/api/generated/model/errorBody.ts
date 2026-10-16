@@ -10,7 +10,7 @@
  * 错误响应体
  */
 export interface ErrorBody {
-  /** 稳定错误码：not_found / bad_request / conflict / unavailable / internal */
+  /** 稳定错误码：not_found / bad_request / unauthorized / conflict / unavailable / internal */
   code: string;
   message: string;
 }

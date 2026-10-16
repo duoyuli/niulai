@@ -44,6 +44,21 @@ pub struct Settings {
     /// 前端构建产物目录（frontend/dist）；配置后 `niulai serve` 在 API 之外同时提供前端页面
     #[serde(default)]
     pub web_dir: Option<PathBuf>,
+    /// 网页登录的管理员账号和密码；没有配置时都是 niulai
+    #[serde(default = "default_admin_user")]
+    pub admin_user: String,
+    #[serde(default = "default_admin_password")]
+    pub admin_password: String,
+}
+
+pub const DEFAULT_ADMIN_USER: &str = "niulai";
+pub const DEFAULT_ADMIN_PASSWORD: &str = "niulai";
+
+fn default_admin_user() -> String {
+    DEFAULT_ADMIN_USER.into()
+}
+fn default_admin_password() -> String {
+    DEFAULT_ADMIN_PASSWORD.into()
 }
 
 fn default_base_url() -> String {

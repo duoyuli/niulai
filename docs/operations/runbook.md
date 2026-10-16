@@ -160,7 +160,7 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 | `/api/v1/health` | 存活检查，进程在运行就返回 200 |
 | `/api/v1/ready` | 就绪检查，能连上数据库时返回 200 |
 
-服务本身没有登录和访问控制。
+打开网页先要登录，账号密码是 `deploy/.env` 中的 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD`，没有设置时都是 `niulai`。部署后先改掉默认密码；登录状态在浏览器保存 30 天，见 [登录](../interfaces/rest_api.md#auth)。
 
 第一次打开网页时进入引导页：到 <https://fuyao.aicubes.cn/admin/> 生成 API Key，粘贴后点「验证并保存」。验证通过后同步开始，并自动规划全量回补（约 51 小时，期间每日同步照常进行）。在此之前同步处于暂停状态。
 

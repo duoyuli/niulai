@@ -1,5 +1,6 @@
 //! REST API：`/api/v1/*`。接口规范由 utoipa 从代码生成，地址 `/api/v1/openapi.json`。
 
+pub mod auth;
 pub mod market;
 pub mod setup;
 pub mod strategy;
@@ -33,6 +34,8 @@ pub struct AppState {
     pub engine: Arc<Engine>,
     pub pool: sqlx::PgPool,
     pub scans: Arc<ScanCache>,
+    /// 登录状态的签名密钥，第一次用到时从数据库读取
+    pub session_secret: Arc<tokio::sync::OnceCell<Vec<u8>>>,
 }
 
 #[derive(OpenApi)]
@@ -40,6 +43,7 @@ pub struct AppState {
     info(title = "niulai API", version = "0.1.0", description = "A 股数据工作台：行情、复权、均线信号与数据同步"),
     tags(
         (name = "system", description = "健康检查"),
+        (name = "auth", description = "登录"),
         (name = "setup", description = "首次登录引导：配置 API Key"),
         (name = "market", description = "证券、日线、指数与均线信号"),
         (name = "watchlist", description = "自选股与快速诊断"),
@@ -52,12 +56,19 @@ pub struct ApiDoc;
 
 // @project-doc docs/interfaces/rest_api.md#conventions
 pub fn router(engine: Arc<Engine>) -> Router {
-    let state = AppState { pool: engine.pool.clone(), engine, scans: Arc::new(ScanCache::default()) };
+    let state = AppState { pool: engine.pool.clone(), engine, scans: Arc::new(ScanCache::default()), session_secret: Arc::default() };
+    let st = &state.engine.settings;
+    if st.admin_user == crate::config::DEFAULT_ADMIN_USER && st.admin_password == crate::config::DEFAULT_ADMIN_PASSWORD {
+        tracing::warn!("网页登录仍在使用默认账号密码 niulai / niulai，请设置 NIULAI_ADMIN_USER 和 NIULAI_ADMIN_PASSWORD");
+    }
     let (api, openapi) = routes().split_for_parts();
     let openapi = Arc::new(openapi);
     let request_id = HeaderName::from_static("x-request-id");
     let web_dir = state.engine.settings.web_dir.clone();
-    let app = Router::new().nest("/api/v1", api.route("/openapi.json", axum::routing::get(move || async move { Json(openapi.as_ref().clone()) })));
+    let api = api
+        .route("/openapi.json", axum::routing::get(move || async move { Json(openapi.as_ref().clone()) }))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), auth::require_login));
+    let app = Router::new().nest("/api/v1", api);
     let app = match web_dir {
         Some(dir) => app.fallback_service(web::service(&dir)),
         None => app,
@@ -80,6 +91,7 @@ fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health))
         .routes(routes!(ready))
+        .merge(auth::routes())
         .merge(setup::routes())
         .merge(market::routes())
         .merge(insight::routes())

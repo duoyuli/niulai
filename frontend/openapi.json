@@ -9,6 +9,92 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "登录：账号密码正确时设置 Cookie，保存 30 天",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "登录成功，响应带 Set-Cookie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "账号或密码不对",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "退出登录：清除 Cookie",
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "已退出"
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "当前登录状态；没有登录时返回 401",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "已登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "没有登录或登录已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/backtest/ma-cross": {
       "get": {
         "tags": [
@@ -2039,6 +2125,22 @@
           "database"
         ]
       },
+      "AuthStatus": {
+        "type": "object",
+        "required": [
+          "username",
+          "default_credentials"
+        ],
+        "properties": {
+          "default_credentials": {
+            "type": "boolean",
+            "description": "仍在使用默认账号密码（niulai / niulai）：页面上提醒修改"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "BTreeMap": {
         "type": "object",
         "additionalProperties": {
@@ -2588,7 +2690,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "稳定错误码：not_found / bad_request / conflict / unavailable / internal"
+            "description": "稳定错误码：not_found / bad_request / unauthorized / conflict / unavailable / internal"
           },
           "message": {
             "type": "string"
@@ -2984,6 +3086,21 @@
           "price": {
             "type": "number",
             "format": "double"
+          }
+        }
+      },
+      "LoginInput": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
           }
         }
       },
@@ -4952,6 +5069,10 @@
     {
       "name": "system",
       "description": "健康检查"
+    },
+    {
+      "name": "auth",
+      "description": "登录"
     },
     {
       "name": "setup",

@@ -9,6 +9,7 @@
 export * from './apiKeyInput';
 export * from './apiKeySaved';
 export * from './apiKeySource';
+export * from './authStatus';
 export * from './backtestCosts';
 export * from './backtestResult';
 export * from './bar';
@@ -46,6 +47,7 @@ export * from './listIndicesParams';
 export * from './listRunsParams';
 export * from './listSecuritiesParams';
 export * from './listWatchlistParams';
+export * from './loginInput';
 export * from './maCrossBacktestParams';
 export * from './maCrossScanParams';
 export * from './maPoint';

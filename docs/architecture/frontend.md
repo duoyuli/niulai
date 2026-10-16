@@ -48,13 +48,14 @@
 | `/indices/:thscode` | 指数详情：K 线、当前成分股 | `GET /indices`、`/indices/{thscode}/bars`、`/members` |
 | `/sync` | 数据同步：待执行和失败任务数、最近的运行、数据集状态，发起运行 | `GET /datasets`、`GET /sync/runs`、`POST /sync/runs` |
 | `/sync/runs/:runId` | 运行详情：各数据集进度、失败任务 | `GET /sync/runs/{run_id}` |
-| `/setup` | 首次登录引导和数据源设置：说明去哪里生成 API Key，验证并保存；已配置时显示来源和末尾 4 位，可以更换 | `GET /setup`、`PUT /setup/api-key` |
+| `/login` | 登录：输入管理员账号密码，成功后回到原来要打开的页面（`next` 参数）；不在 `Layout` 中 | `POST /auth/login` |
+| `/setup` | 首次配置引导和数据源设置：说明去哪里生成 API Key，验证并保存；已配置时显示来源和末尾 4 位，可以更换 | `GET /setup`、`PUT /setup/api-key` |
 
 旧地址 `/securities`、`/signals`、`/backtest`、`/screener/...` 跳转到对应的新页面。全市场均线扫描接口 `GET /signals/ma-cross` 仍然保留，但没有页面使用；同样的需求用「均线金叉」策略。
 
 页面里常用的展示原则：每页先给一句白话结论，再给最多四个关键数字，其余数字、明细表和规则说明折叠起来。
 
-还没有配置 API Key 时（`GET /setup` 的 `api_key_configured` 为 false），`Layout` 把所有页面跳转到 `/setup`；页头右侧的「设置」也进入这个页面。页头右侧的服务状态每 30 秒请求一次 `GET /ready`。数据同步页每 5 秒刷新运行列表，运行详情在运行进行中时每 5 秒刷新。
+任何请求收到 401 时，`apiFetch` 把页面整页跳转到 `/login?next=<当前地址>`；`Layout` 请求 `GET /auth/me` 确认已登录，页头右侧有「退出」，仍在使用默认账号密码时页面顶部有提示。登录之后，还没有配置 API Key 时（`GET /setup` 的 `api_key_configured` 为 false），`Layout` 把所有页面跳转到 `/setup`；页头右侧的「设置」也进入这个页面。页头右侧的服务状态每 30 秒请求一次 `GET /ready`。数据同步页每 5 秒刷新运行列表，运行详情在运行进行中时每 5 秒刷新。
 
 <a id="api_client"></a>
 ## 接口客户端

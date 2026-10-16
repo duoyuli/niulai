@@ -1,6 +1,6 @@
 # ADR：CI 构建镜像，部署只交付服务本身
 
-- 状态：已采纳（accepted），2026-10-16。取代 [ADR：部署方案](deployment.md)。同日修订：决策第 3 条从「源码部署也用 Docker 构建镜像」改为「直接编译运行，不用 Docker」，删除了 `deploy/compose.source.yml`；决策第 2 条改为数据库始终内置、`.env.example` 列出全部配置并给出可直接使用的默认值。决策第 1 条中「`main` 有合并时构建镜像」和后果「合并到 `main` 得到 `latest`」已被 [ADR：只在发布版本标签时构建镜像](image_on_tag.md) 取代。
+- 状态：已采纳（accepted），2026-10-16。取代 [ADR：部署方案](deployment.md)。同日修订：决策第 3 条从「源码部署也用 Docker 构建镜像」改为「直接编译运行，不用 Docker」，删除了 `deploy/compose.source.yml`；决策第 2 条改为数据库始终内置、`.env.example` 列出全部配置并给出可直接使用的默认值。决策第 1 条中「`main` 有合并时构建镜像」和后果「合并到 `main` 得到 `latest`」已被 [ADR：只在发布版本标签时构建镜像](image_on_tag.md) 取代。决策第 4 条「项目中不包含登录」、取舍「去掉内置登录」和后果「服务没有登录和访问控制」已被 [ADR：网页登录](web_login.md) 取代；HTTPS 和域名仍不在项目范围内。
 - 相关文档：[部署](../operations/runbook.md#deployment)、[部署配置](../interfaces/configuration.md#deploy_env)、[ADR：API Key 在首次登录引导中配置](api_key_setup.md)、[ADR：单进程服务](single_process_service.md)。
 
 ## 背景

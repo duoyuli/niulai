@@ -39,7 +39,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     # 对外只有这一个 HTTP 端口：页面 /，接口 /api/v1/*，健康检查 /api/v1/health、/api/v1/ready。
-    # 服务本身没有登录和访问控制，默认只监听本机
+    # 打开网页先要登录（.env 中的 NIULAI_ADMIN_USER、NIULAI_ADMIN_PASSWORD）；默认只监听本机
     ports: ["${NIULAI_LISTEN_ADDR:-127.0.0.1}:${NIULAI_PORT:-8080}:8080"]
     restart: unless-stopped
     stop_grace_period: 2m      # 停机时等正在执行的任务结束

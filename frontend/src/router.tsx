@@ -3,6 +3,7 @@ import { Layout } from "./components/Layout";
 import { GuidePage } from "./pages/GuidePage";
 import { IndexDetailPage } from "./pages/IndexDetailPage";
 import { IndicesPage } from "./pages/IndicesPage";
+import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { RunDetailPage } from "./pages/RunDetailPage";
 import { SecurityDetailPage } from "./pages/SecurityDetailPage";
@@ -30,6 +31,7 @@ function LegacyScreener({ edit = false }: { edit?: boolean }) {
 }
 
 export const router = createBrowserRouter([
+  { path: "/login", element: <LoginPage /> },
   {
     element: <Layout />,
     children: [

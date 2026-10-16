@@ -11,7 +11,8 @@
 - [技术栈](technology_stack.md)：后端 Rust（Axum、SQLx、Tokio）、PostgreSQL 18、前端 React 与 orval，以及各组件的维护状况核查。状态：已采纳，§4 的多进程部分和 §8.1 第 4 条（Redis）已被取代。阅读时机：引入、升级或替换依赖，或评估前端、登录、消息队列等扩展。
 - [前端技术选型](frontend_stack.md)：React Router、Tailwind CSS、Lightweight Charts、orval、Biome、pnpm 的选择与维护状况，前端由 `niulai serve` 提供。状态：已采纳。阅读时机：引入或升级前端依赖，或考虑更换图表、组件库、部署方式。
 - [API Key 在首次登录引导中配置](api_key_setup.md)：Key 不在部署时提供，第一次打开网页时配置并验证，保存在 `app.setting`，环境变量优先；第一次配置后规划全量回补。状态：已采纳。阅读时机：修改 `backend/src/setup.rs`、引导页，或考虑加密保存 Key、增加其他网页设置。
-- [CI 构建镜像，部署只交付服务本身](ci_cd.md)：CI 检查代码并构建多架构镜像推送到 GHCR（构建时机已被取代）；CD 分 Docker 部署和源码部署（直接编译运行）；只交付服务本身，对外一个 HTTP 端口。状态：已采纳。阅读时机：修改 `deploy/` 或 `.github/workflows/`，或考虑在项目中加入登录。
+- [CI 构建镜像，部署只交付服务本身](ci_cd.md)：CI 检查代码并构建多架构镜像推送到 GHCR（构建时机和「不包含登录」已被取代）；CD 分 Docker 部署和源码部署（直接编译运行）；只交付服务本身，对外一个 HTTP 端口。状态：已采纳。阅读时机：修改 `deploy/` 或 `.github/workflows/`，或考虑在项目中加入登录。
+- [网页登录](web_login.md)：一个管理员账户（环境变量，默认 niulai / niulai），后端统一拦截接口，登录状态是保存 30 天的签名 Cookie。状态：已采纳。阅读时机：修改 `backend/src/api/auth.rs`、登录页，或考虑多用户、HTTPS、单点登录之前。
 - [只在发布版本标签时构建镜像](image_on_tag.md)：`main` 和 PR 只做检查，推送 `v*` 标签才构建多架构镜像；`latest` 指向最近一次正式发布。状态：已采纳。阅读时机：修改 `.github/workflows/ci.yml` 的触发条件或镜像标签，或发布新版本时。
 - [部署方案](deployment.md)：第一版部署方案：Caddy 做 HTTPS 和基本认证、安装升级备份恢复脚本。状态：已被取代。阅读时机：想了解为什么项目里不包含 HTTPS、登录和运维脚本。
 - [单进程服务](single_process_service.md)：三个程序合并为一个，`niulai serve` 同时运行 API、任务执行和调度。状态：已采纳，「扩容」一条已被取代。阅读时机：考虑拆分进程、调整部署方式或扩容。

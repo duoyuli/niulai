@@ -20,6 +20,11 @@ export class ApiError extends Error {
 export async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const text = await res.text();
+  // 没有登录或登录已过期：除登录请求本身外，转到登录页，登录后回到原来的页面
+  if (res.status === 401 && !url.includes("/auth/login") && window.location.pathname !== "/login") {
+    const next = window.location.pathname + window.location.search;
+    window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+  }
   if (!res.ok) {
     let body: Partial<ApiErrorBody> = {};
     try {

@@ -1,3 +1,4 @@
+export * from './auth/auth';
 export * from './backtest/backtest';
 export * from './market/market';
 export * from './setup/setup';

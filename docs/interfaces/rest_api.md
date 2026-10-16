@@ -1,12 +1,12 @@
 # REST API
 
-本文说明 `niulai serve` 对外提供的 REST API：通用约定、接口清单、复权参数和错误格式。字段级的定义以 OpenAPI 规范为准（`GET /api/v1/openapi.json`，或运行 `niulai openapi`），本文只记录跨接口的约定和不容易从规范看出的行为。实现在 `backend/src/api/`。
+本文说明 `niulai serve` 对外提供的 REST API：通用约定、登录、接口清单、复权参数和错误格式。字段级的定义以 OpenAPI 规范为准（`GET /api/v1/openapi.json`，或运行 `niulai openapi`），本文只记录跨接口的约定和不容易从规范看出的行为。实现在 `backend/src/api/`。
 
 <a id="conventions"></a>
 ## 通用约定
 
 - 所有接口都在 `/api/v1` 下，响应是 JSON。默认监听 `127.0.0.1:8080`（`NIULAI_API_BIND`）。同一端口的其他路径是前端页面（配置了 `NIULAI_WEB_DIR` 时），未匹配的 `/api/` 路径返回 JSON 404，见 [由 niulai serve 提供](../architecture/frontend.md#serving)。
-- **程序本身没有登录和访问控制**。默认只监听本机端口（`127.0.0.1:8080`），见 [部署](../operations/runbook.md#deployment)。
+- **要先登录**：除健康检查和登录本身，所有接口都要带登录 Cookie，否则返回 401，见 [登录](#auth)。默认只监听本机端口（`127.0.0.1:8080`），见 [部署](../operations/runbook.md#deployment)。
 - 请求标识：每个响应都带 `x-request-id` 头。请求中带了这个头时沿用，否则生成一个 UUID；日志中的 `request_id` 与它一致。
 - 超时：单个请求超过 120 秒返回 408。
 - 数值格式：
@@ -24,6 +24,9 @@
 | --- | --- | --- |
 | `GET /health` | 存活检查 | — |
 | `GET /ready` | 就绪检查，能连上数据库时返回 200 | — |
+| `POST /auth/login` | 登录，成功时设置登录 Cookie | 请求体 `{username, password}`；见 [登录](#auth) |
+| `POST /auth/logout` | 退出登录，清除 Cookie；返回 204 | — |
+| `GET /auth/me` | 当前登录的账号，以及是否仍在使用默认账号密码 | 没有登录时返回 401 |
 | `GET /setup` | 首次登录引导的状态：API Key 是否已配置、来源、末尾 4 位、生成 Key 的网址、是否已规划回补 | 见 [首次登录引导](#setup) |
 | `PUT /setup/api-key` | 验证并保存 API Key，立即生效 | 请求体 `{api_key}`；见 [首次登录引导](#setup) |
 | `GET /securities` | 证券列表 | `q`（代码或名称片段）、`board`；`limit` 默认 50、最大 500；`offset` |
@@ -58,6 +61,20 @@
 
 `POST /sync/runs` 返回的 `run_id` 是第一个波次。后续波次是新的运行，`params.root_run` 指向它，见 [波次规划](../architecture/sync_pipeline.md#waves)。
 
+<a id="auth"></a>
+## 登录
+
+网页只有一个管理员账户，账号和密码来自环境变量 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD`，没有设置时都是 `niulai`。实现在 `backend/src/api/auth.rs`。
+
+- **哪些接口要登录：** 除 `/health`、`/ready`、`/auth/login`、`/auth/logout`、`/openapi.json` 外的全部 `/api/v1/*` 接口。前端页面本身（`/` 和静态文件）不需要登录，页面在收到 401 时转到登录页。
+- **登录状态：** 登录成功后设置 Cookie `niulai_session`，`HttpOnly`、`SameSite=Lax`、`Path=/`，保存 30 天（`Max-Age=2592000`）。到期后要重新登录，期间使用不会延长。
+- **Cookie 的内容：** 到期时间加上 HMAC-SHA256 签名，签名内容包括账号、密码和到期时间。签名密钥第一次用到时随机生成，保存在 `app.setting` 的 `session_secret`，所以重启后登录状态仍然有效；修改账号或密码后，之前的登录状态全部失效。服务端不保存会话列表，退出登录只是清除这台浏览器的 Cookie。
+- **账号密码不对：** 等待约 0.8 秒后返回 401，放慢猜密码的速度。
+- **默认账号密码：** 仍在使用 `niulai` / `niulai` 时，启动日志有一条警告，`GET /auth/me` 的 `default_credentials` 为 true，页面顶部提示修改。
+- Cookie 没有 `Secure` 属性，通过 HTTP 访问也能登录。直接暴露在公网时，密码会以明文在网络上传输。
+
+为什么这样设计，见 [ADR：网页登录](../decisions/web_login.md)。
+
 <a id="setup"></a>
 ## 首次登录引导
 
@@ -83,6 +100,7 @@
 | HTTP 状态 | `code` | 含义 |
 | --- | --- | --- |
 | 400 | `bad_request` | 参数不合法，`message` 说明原因，例如 `adjust` 取值不对、`fast` 不小于 `slow`、回测区间内没有日线、策略定义没有通过校验 |
+| 401 | `unauthorized` | 没有登录、登录已过期，或账号密码不对 |
 | 404 | `not_found` | 证券、数据集、运行或策略不存在 |
 | 409 | `conflict` | 与当前状态冲突，例如 API Key 由环境变量提供时在网页上修改 |
 | 500 | `internal` | 服务器内部错误；详细原因只写日志，响应中不包含 |

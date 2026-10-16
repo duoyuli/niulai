@@ -31,7 +31,7 @@ docker compose up -d
 
 打开 <http://127.0.0.1:8080/>。第一次打开时会进入引导页，按提示到 <https://fuyao.aicubes.cn/admin/> 生成同花顺金融数据服务的 API Key（免费即可），粘贴保存后自动开始同步。全量历史约需 51 小时，期间可以正常使用，数据陆续出现。
 
-服务默认只监听 `127.0.0.1:8080`，本身没有登录和访问控制。不用 Docker、直接编译运行（源码部署），以及升级、备份与恢复，见 [运维手册](docs/operations/runbook.md#deployment)。
+服务默认只监听 `127.0.0.1:8080`。打开网页先要登录，账号密码默认都是 `niulai`，在 `deploy/.env` 中用 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD` 修改。不用 Docker、直接编译运行（源码部署），以及升级、备份与恢复，见 [运维手册](docs/operations/runbook.md#deployment)。
 
 ## 组成
 

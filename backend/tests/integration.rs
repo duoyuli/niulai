@@ -146,11 +146,13 @@ async fn adjustment_and_api_end_to_end() {
         schedule_after_close: "18:00".into(),
         scheduler_enabled: false,
         web_dir: Some(web.clone()),
+        admin_user: "admin".into(),
+        admin_password: "secret-pass".into(),
     };
     let limiter = RateLimiter::new(1);
     let client = HithinkClient::new("http://127.0.0.1:1", Some("test"), Duration::from_secs(1), limiter).unwrap();
     let engine = Arc::new(Engine { settings, pool: db.pool.clone(), client: Arc::new(client), registry: Arc::new(reg) });
-    let app = niulai::api::router(engine.clone());
+    let app = logged_in(niulai::api::router(engine.clone())).await;
 
     // 同一时刻只有一个进程能执行同步任务；持有者释放后其他进程才能取得
     let lock = engine.lock_executor().await.unwrap();
@@ -380,7 +382,27 @@ fn bare_settings(vendor: &str, api_key: Option<&str>) -> Settings {
         schedule_after_close: "18:00".into(),
         scheduler_enabled: false,
         web_dir: None,
+        admin_user: "admin".into(),
+        admin_password: "secret-pass".into(),
     }
+}
+
+/// 登录后返回带登录 Cookie 的路由，之后的请求都自动带上它
+async fn logged_in(app: axum::Router) -> axum::Router {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"username": "admin", "password": "secret-pass"}).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "测试账号登录失败");
+    let set = resp.headers()["set-cookie"].to_str().unwrap();
+    let cookie = axum::http::HeaderValue::from_str(set.split(';').next().unwrap()).unwrap();
+    app.layer(tower::util::MapRequestLayer::new(move |mut req: Request<Body>| {
+        req.headers_mut().insert("cookie", cookie.clone());
+        req
+    }))
 }
 
 async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -390,6 +412,61 @@ async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) 
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn login_is_required_and_lasts_30_days() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let engine = Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), db.pool.clone()).await.unwrap();
+    let app = niulai::api::router(engine.clone());
+
+    // 健康检查不用登录，其余接口要登录
+    let (st, _) = call(&app, "GET", "/api/v1/health", None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, body) = call(&app, "GET", "/api/v1/strategies", None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["code"], "unauthorized");
+    let (st, _) = call(&app, "GET", "/api/v1/auth/me", None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    // 密码不对
+    let (st, _) = call(&app, "POST", "/api/v1/auth/login", Some(json!({"username": "admin", "password": "wrong"}))).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    // 登录成功：Cookie 保存 30 天
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"username": "admin", "password": "secret-pass"}).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let set = resp.headers()["set-cookie"].to_str().unwrap().to_string();
+    assert!(set.contains("Max-Age=2592000") && set.contains("HttpOnly"), "{set}");
+    let cookie = set.split(';').next().unwrap().to_string();
+    let with = |uri: &str, cookie: &str| Request::builder().uri(uri).header("cookie", cookie).body(Body::empty()).unwrap();
+    let resp = app.clone().oneshot(with("/api/v1/auth/me", &cookie)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = app.clone().oneshot(with("/api/v1/strategies", &cookie)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 篡改过的 Cookie 无效
+    let forged = format!("{}0", &cookie[..cookie.len() - 1]);
+    let resp = app.clone().oneshot(with("/api/v1/strategies", &forged)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // 重启后（新的路由，同一个数据库）登录状态仍然有效；改了密码后失效
+    let app2 = niulai::api::router(engine.clone());
+    assert_eq!(app2.oneshot(with("/api/v1/auth/me", &cookie)).await.unwrap().status(), StatusCode::OK);
+    let mut changed = bare_settings("http://127.0.0.1:1", Some("test"));
+    changed.admin_password = "new-pass".into();
+    let app3 = niulai::api::router(Engine::new(changed, db.pool.clone()).await.unwrap());
+    assert_eq!(app3.oneshot(with("/api/v1/auth/me", &cookie)).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    db.drop().await;
 }
 
 #[tokio::test]
@@ -403,7 +480,7 @@ async fn api_key_setup_flow() {
     // 没有 Key：引导页显示未配置，执行循环暂停
     let engine = Engine::new(bare_settings(&vendor, None), db.pool.clone()).await.unwrap();
     assert!(!engine.client.has_api_key());
-    let app = niulai::api::router(engine.clone());
+    let app = logged_in(niulai::api::router(engine.clone())).await;
     let (st, body) = call(&app, "GET", "/api/v1/setup", None).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["api_key_configured"], false);
@@ -439,7 +516,7 @@ async fn api_key_setup_flow() {
 
     // 环境变量提供 Key 时，网页上不能修改
     let from_env = Engine::new(bare_settings(&vendor, Some("env-key-0000")), db.pool.clone()).await.unwrap();
-    let app = niulai::api::router(from_env);
+    let app = logged_in(niulai::api::router(from_env)).await;
     let (_, body) = call(&app, "GET", "/api/v1/setup", None).await;
     assert_eq!(body["api_key_source"], "env");
     assert_eq!(body["api_key_hint"], "••••0000");
@@ -476,7 +553,7 @@ async fn strategies_screening_diagnosis_and_backtests() {
 
     let settings = bare_settings("http://127.0.0.1:1", Some("test"));
     let engine = Engine::new(settings, db.pool.clone()).await.unwrap();
-    let app = niulai::api::router(engine);
+    let app = logged_in(niulai::api::router(engine)).await;
 
     // 首次启动时复制了 10 个模板
     let (st, list) = call(&app, "GET", "/api/v1/strategies", None).await;

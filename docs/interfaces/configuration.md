@@ -20,6 +20,8 @@
 | --- | --- | --- | --- |
 | `DATABASE_URL` | 是 | — | PostgreSQL 连接串，例如 `postgres://user:pass@127.0.0.1:5432/niulai`。需要 PostgreSQL 16 或以上 |
 | `HITHINK_FINANCE_API_KEY` | 否 | — | 同花顺金融数据服务 API Key（在 <https://fuyao.aicubes.cn/admin/> 生成）。一般不设置，在网页的首次登录引导中配置，保存在数据库；设置后优先使用它，网页上不能修改，见 [ADR：API Key 在首次登录引导中配置](../decisions/api_key_setup.md)。空值按未设置处理 |
+| `NIULAI_ADMIN_USER` | 否 | `niulai` | 网页登录的管理员账号，见 [登录](rest_api.md#auth) |
+| `NIULAI_ADMIN_PASSWORD` | 否 | `niulai` | 网页登录的密码。修改账号或密码并重启后，之前的登录状态全部失效。仍用默认值时启动日志有警告，页面顶部提示修改 |
 | `NIULAI_API_BIND` | 否 | `127.0.0.1:8080` | API 监听地址；Docker 镜像中默认 `0.0.0.0:8080` |
 | `NIULAI_DATASETS_PATH` | 否 | 依次查找 `config/datasets.yaml`、`backend/config/datasets.yaml` | 数据集注册表路径；Docker 镜像中是 `/app/config/datasets.yaml` |
 | `NIULAI_DB_MAX_CONNECTIONS` | 否 | `10` | 数据库连接池上限 |

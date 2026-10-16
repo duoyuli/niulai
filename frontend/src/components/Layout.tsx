@@ -1,5 +1,6 @@
 import { clsx } from "clsx";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { useLogout, useMe } from "../api/generated/auth/auth";
 import { useGetSetup } from "../api/generated/setup/setup";
 import { useReady } from "../api/generated/system/system";
 import { SecuritySearch } from "./SecuritySearch";
@@ -19,8 +20,11 @@ const AUX = [
 ];
 
 export function Layout() {
+  // 没有登录时 fetcher 收到 401 会转到登录页；登录后才检查 API Key
+  const me = useMe({ query: { staleTime: Number.POSITIVE_INFINITY } });
+  const logout = useLogout({ mutation: { onSuccess: () => window.location.assign("/login") } });
   // 首次登录引导：还没有配置 API Key 时，所有页面都先去配置
-  const setup = useGetSetup({ query: { staleTime: 30_000 } });
+  const setup = useGetSetup({ query: { staleTime: 30_000, enabled: me.isSuccess } });
   const { pathname } = useLocation();
   const nav = useNavigate();
   if (setup.data && !setup.data.api_key_configured && pathname !== "/setup") return <Navigate to="/setup" replace />;
@@ -70,11 +74,25 @@ export function Layout() {
                 {a.label}
               </NavLink>
             ))}
+            <button
+              type="button"
+              title={me.data ? `已登录：${me.data.username}` : undefined}
+              onClick={() => logout.mutate()}
+              className="hidden text-xs whitespace-nowrap text-zinc-500 hover:text-zinc-900 sm:inline dark:hover:text-zinc-100"
+            >
+              退出
+            </button>
             <ServerStatus />
           </div>
         </div>
       </header>
       <main className="mx-auto flex w-full min-w-0 max-w-7xl flex-1 flex-col gap-4 px-4 py-6">
+        {me.data?.default_credentials && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+            正在使用默认账号密码 niulai / niulai。请在部署配置中设置 <code>NIULAI_ADMIN_USER</code> 和{" "}
+            <code>NIULAI_ADMIN_PASSWORD</code>，重启后生效。
+          </p>
+        )}
         <Outlet />
       </main>
       <footer className="mx-auto w-full max-w-7xl px-4 py-4 text-xs text-zinc-400">
