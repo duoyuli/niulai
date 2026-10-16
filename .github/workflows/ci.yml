@@ -1,10 +1,10 @@
-# CI：每次 PR 和推送都检查代码；main 分支有合并、或推送 v* 标签时，再构建镜像并推送到 GitHub 镜像仓库。
+# CI：每次 PR 和推送到 main 都检查代码；只有推送 v* 标签时，才构建镜像并推送到 GitHub 镜像仓库。
 #
 # - check：后端 clippy（不允许警告）、单元测试和集成测试（用临时 PostgreSQL）；前端类型检查、代码检查、测试
 # - build：检查通过后，amd64 和 arm64 分别在对应架构的机器上原生构建（模拟另一种架构编译 Rust 要慢很多倍）
 # - merge：合并成一个多架构镜像 ghcr.io/<仓库所有者，小写>/niulai，并打标签：
-#     推送到 main     → latest、sha-<提交>
-#     推送 v0.1.0 标签 → 0.1.0、0.1、sha-<提交>（git tag v0.1.0 && git push origin v0.1.0）
+#     推送 v0.1.0 标签 → 0.1.0、0.1、latest、sha-<提交>（git tag v0.1.0 && git push origin v0.1.0）
+#   latest 始终指向最近一次发布的版本；预发布标签（例如 v0.2.0-rc.1）不更新 latest
 # 部署（CD）见 deploy/ 和 docs/operations/runbook.md#deployment。
 name: ci
 
@@ -68,7 +68,7 @@ jobs:
 
   build:
     needs: check
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
         include:
@@ -115,7 +115,7 @@ jobs:
 
   merge:
     needs: build
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
       - name: 镜像名（GHCR 要求小写）
@@ -135,8 +135,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+          # 预发布版本（带 - 的标签）只打完整版本号和 sha
+          flavor: latest=auto
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha

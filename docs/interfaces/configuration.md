@@ -63,6 +63,6 @@ Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.examp
 | `frontend/orval.config.ts` | 从 `frontend/openapi.json` 生成接口客户端的配置 |
 | `frontend/vite.config.ts` | Vite 配置；开发时把 `/api` 转发到 `NIULAI_API_URL`（默认 `http://127.0.0.1:8080`） |
 | `deploy/Dockerfile` | 镜像构建：先构建前端，再编译后端，构建上下文是仓库根目录（`.dockerignore` 在根目录） |
-| `.github/workflows/ci.yml` | CI：检查代码，`main` 有合并或推送版本标签时构建 amd64、arm64 镜像并推送到 GHCR，见 [CI：构建镜像](../operations/runbook.md#release_image) |
+| `.github/workflows/ci.yml` | CI：PR 和推送到 `main` 只检查代码，推送 `v*` 标签时才构建 amd64、arm64 镜像并推送到 GHCR，见 [CI：构建镜像](../operations/runbook.md#release_image) |
 | `deploy/compose.yml` | Docker 部署：内置 PostgreSQL 和 niulai，配置读取 `deploy/.env` |
 | `deploy/.env`、`deploy/.env.example` | Docker 部署的配置和模板，见 [部署配置](#deploy_env)；`.env` 含密码，不提交 |

@@ -168,11 +168,10 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 ### CI：构建镜像
 
 工作流是 `.github/workflows/ci.yml`：
-- 每次 PR 和推送：后端 clippy（不允许警告）、单元测试和集成测试，前端类型检查、代码检查和测试。
-- `main` 有合并：检查通过后构建 amd64 和 arm64 镜像，推送为 `ghcr.io/duoyuli/niulai:latest`。
-- 推送版本标签：`git tag v0.1.0 && git push origin v0.1.0`，得到 `0.1.0` 和 `0.1`。服务器上建议固定版本号。
+- 每次 PR 和推送到 `main`：只做检查，包括后端 clippy（不允许警告）、单元测试和集成测试，前端类型检查、代码检查和测试。不构建镜像。
+- 发布版本：`git tag v0.1.0 && git push origin v0.1.0`。检查通过后构建 amd64 和 arm64 镜像，推送为 `0.1.0`、`0.1` 和 `latest`。预发布标签（例如 `v0.2.0-rc.1`）只推送完整版本号，不更新 `latest`。服务器上建议固定版本号。为什么只在发标签时构建，见 [ADR：只在发布版本标签时构建镜像](../decisions/image_on_tag.md)。
 
-预期结果：GitHub Actions 中 `ci` 工作流成功；`docker buildx imagetools inspect ghcr.io/duoyuli/niulai:latest` 列出 `linux/amd64` 和 `linux/arm64`。镜像包是公开的，拉取不需要 `docker login`。
+预期结果：GitHub Actions 中标签触发的 `ci` 工作流成功；`docker buildx imagetools inspect ghcr.io/duoyuli/niulai:0.1.0` 列出 `linux/amd64` 和 `linux/arm64`。镜像包是公开的，拉取不需要 `docker login`。
 
 <a id="server_install"></a>
 ### CD：Docker 部署

@@ -40,7 +40,7 @@ backend/    Rust 后端（Axum、SQLx、Tokio）：一个程序 niulai，niulai 
 frontend/   React 前端（TypeScript、Vite、TanStack Query、Tailwind CSS、Lightweight Charts）
 deploy/     Dockerfile 和 Docker Compose 部署文件
 docs/       工程文档：架构、业务规则、接口、运维手册、架构决策记录
-.github/    CI：检查代码，main 有合并时构建多架构镜像并推送到 ghcr.io/duoyuli/niulai
+.github/    CI：检查代码；推送 v* 标签时构建多架构镜像并推送到 ghcr.io/duoyuli/niulai
 ```
 
 数据只依赖 PostgreSQL。复权采用业内通用的等比复权，均线、信号和收益都基于它计算，理由见 [ADR：采用等比复权](docs/decisions/equal_ratio_adjustment.md)。

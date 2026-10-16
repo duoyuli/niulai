@@ -8,7 +8,7 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 - `frontend/`：前端（React 19、TypeScript 6、Vite、TanStack Query、React Router、Tailwind CSS、Lightweight Charts），包管理用 pnpm。接口类型和 hooks 由 orval 从 `frontend/openapi.json` 生成在 `src/api/generated/`，不手工修改。
 - `docs/`：Project Doc 文档库；`docs/research/` 是调研笔记，不属于文档库。
 - `deploy/`：CD。`Dockerfile`（构建上下文是仓库根目录，同时构建前端和后端）、`compose.yml`（Docker 部署）；部署配置在 `deploy/.env`（不提交）。源码部署不用 Docker，直接编译运行，见运维手册。
-- `.github/workflows/ci.yml`：CI。检查代码；`main` 有合并或推送 `v*` 标签时构建 amd64、arm64 镜像并推送到 GHCR。
+- `.github/workflows/ci.yml`：CI。PR 和推送到 `main` 只检查代码；推送 `v*` 标签时才构建 amd64、arm64 镜像并推送到 GHCR。
 - `.agents/skills/project-doc/`：本仓库使用的 project-doc skill；`.claude/skills/project-doc` 是指向它的符号链接。
 - `CLAUDE.md`：指向本文件的符号链接，供只读取 CLAUDE.md 的工具使用。
 - `README.md`：给第一次进入仓库的人看的项目介绍和快速开始。
