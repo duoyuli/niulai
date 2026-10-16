@@ -1,0 +1,11 @@
+# 镜像构建上下文是仓库根目录，只需要 backend/ 和 frontend/ 的源码
+**/.DS_Store
+.agents
+.claude
+docs
+backend/target
+backend/.env
+frontend/node_modules
+frontend/dist
+deploy/
+.github

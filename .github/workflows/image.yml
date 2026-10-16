@@ -1,0 +1,102 @@
+# 构建镜像并推送到 GitHub 镜像仓库：ghcr.io/<仓库所有者，小写>/niulai
+#
+# - 推送到 main：标签 latest、sha-<提交>
+# - 推送 v* 标签（例如 git tag v0.1.0 && git push origin v0.1.0）：标签 0.1.0、0.1、sha-<提交>
+#
+# amd64 和 arm64 分别在对应架构的机器上原生构建（模拟另一种架构编译 Rust 要慢很多倍），再合并成一个多架构镜像。
+# ubuntu-24.04-arm 在公开仓库中免费；私有仓库用不了时，删掉 matrix 中的 arm64 一项即可（云服务器大多是 amd64）。
+# 部署方法见 docs/operations/runbook.md#deployment。
+name: image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: 镜像名（GHCR 要求小写）
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/niulai" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 只按摘要推送，标签在 merge 中统一打
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+      - name: 记录摘要
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.runner }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 镜像名（GHCR 要求小写）
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/niulai" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+      - name: 合并多架构镜像并打标签
+        working-directory: /tmp/digests
+        run: |
+          # 标签和摘要都要拆成多个参数，所以不加引号
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+      - name: 检查
+        run: docker buildx imagetools inspect ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}

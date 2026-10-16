@@ -1,0 +1,115 @@
+//! 运行（ops.run）的生命周期：创建、结束判定。
+//!
+//! 运行和它的全部任务在同一个事务中创建（见 planner），所以执行者看到一个运行时，它的任务已经齐全，
+//! 「没有未完成的任务」就等于「运行已结束」。
+
+use anyhow::bail;
+use chrono::NaiveDate;
+use serde_json::json;
+use sqlx::{PgConnection, PgPool};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunKind {
+    Backfill,
+    Incremental,
+}
+
+impl RunKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RunKind::Backfill => "backfill",
+            RunKind::Incremental => "incremental",
+        }
+    }
+}
+
+impl std::str::FromStr for RunKind {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> anyhow::Result<Self> {
+        match s {
+            "backfill" => Ok(RunKind::Backfill),
+            "incremental" => Ok(RunKind::Incremental),
+            other => bail!("kind 只能是 backfill 或 incremental：{other}"),
+        }
+    }
+}
+
+/// 一个波次对应的运行
+pub struct NewRun<'a> {
+    pub kind: RunKind,
+    pub trade_date: NaiveDate,
+    pub datasets: &'a [String],
+    /// 本波次之后还要规划的波次
+    pub pending_waves: &'a [Vec<String>],
+    /// 第一个波次的 run_id；本身就是第一个波次时为空
+    pub root_run: Option<i64>,
+    pub only_thscodes: &'a [String],
+}
+
+pub async fn create(conn: &mut PgConnection, run: &NewRun<'_>) -> anyhow::Result<i64> {
+    let single = if run.datasets.len() == 1 { Some(run.datasets[0].as_str()) } else { None };
+    Ok(sqlx::query_scalar("INSERT INTO ops.run (kind, dataset_id, trade_date, params) VALUES ($1, $2, $3, $4) RETURNING run_id")
+        .bind(run.kind.as_str())
+        .bind(single)
+        .bind(run.trade_date)
+        .bind(json!({"datasets": run.datasets, "pending_waves": run.pending_waves, "root_run": run.root_run, "only_thscodes": run.only_thscodes}))
+        .fetch_one(conn)
+        .await?)
+}
+
+/// 写入任务总数；没有任务的运行直接记为成功
+pub async fn set_total(conn: &mut PgConnection, run_id: i64, total: usize) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE ops.run SET tasks_total = $2,
+                status = CASE WHEN $2 = 0 THEN 'succeeded' ELSE status END,
+                finished_at = CASE WHEN $2 = 0 THEN now() END
+         WHERE run_id = $1",
+    )
+    .bind(run_id)
+    .bind(total as i32)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+// @project-doc docs/architecture/sync_pipeline.md#task_lifecycle
+/// 运行没有未完成的任务时，把它标为结束，返回结束状态。
+/// 条件 UPDATE 只有一个调用者能成功，其余调用者得到 None，所以后续计算不会重复执行。
+pub async fn try_complete(pool: &PgPool, run_id: i64) -> anyhow::Result<Option<String>> {
+    // 先用部分索引做廉价判断：运行进行中时（绝大多数情况）不必统计整个运行
+    let open: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ops.task WHERE run_id = $1 AND status IN ('pending', 'running', 'failed'))")
+        .bind(run_id)
+        .fetch_one(pool)
+        .await?;
+    if open {
+        return Ok(None);
+    }
+    // 结束时按任务表重新统计，纠正进行中累加的计数可能出现的偏差
+    Ok(sqlx::query_scalar(
+        "UPDATE ops.run r SET
+            tasks_done   = s.ok, tasks_failed = s.bad,
+            status       = CASE WHEN s.bad > 0 THEN 'partial' ELSE 'succeeded' END,
+            finished_at  = now()
+         FROM (SELECT count(*) FILTER (WHERE status IN ('done', 'empty', 'skipped')) ok,
+                      count(*) FILTER (WHERE status = 'dead') bad
+               FROM ops.task WHERE run_id = $1) s
+         WHERE r.run_id = $1 AND r.status = 'running'
+           AND NOT EXISTS (SELECT 1 FROM ops.task t WHERE t.run_id = $1 AND t.status IN ('pending', 'running', 'failed'))
+         RETURNING r.status",
+    )
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
+/// 状态仍是 running、但已经没有未完成任务的运行。
+/// 例如最后一个任务被超时回收后直接标为 dead：这时没有执行者处理过它，运行不会自己结束。
+pub async fn stalled(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT run_id FROM ops.run r WHERE status = 'running'
+           AND NOT EXISTS (SELECT 1 FROM ops.task t WHERE t.run_id = r.run_id AND t.status IN ('pending', 'running', 'failed'))
+         ORDER BY run_id",
+    )
+    .fetch_all(pool)
+    .await?)
+}

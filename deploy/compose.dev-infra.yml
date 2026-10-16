@@ -1,0 +1,12 @@
+# 本机开发环境：数据库用 dev-infra 网络里已有的 dev-postgresql，不启用内置 db 和 proxy（.env 中 COMPOSE_PROFILES 留空）。
+#
+#   docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f deploy/compose.dev-infra.yml up -d --build
+#
+# deploy/.env 中 DATABASE_URL 的主机写容器名 dev-postgresql。
+services:
+  niulai:
+    networks: [default, dev-infra]
+
+networks:
+  dev-infra:
+    external: true

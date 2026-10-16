@@ -1,0 +1,1066 @@
+# niulai 数据集注册表：同花顺金融数据服务（https://fuyao.aicubes.cn），免费 API Key
+#
+# 每个条目声明一个可同步的数据集。同步程序是通用的：读取这份配置，按 partition 生成任务，
+# 按 paging 翻页，按 records 取出记录，按 key 生成主键，写入 raw.record（见 backend/migrations/20261015000001_sync.sql）；
+# 配置了 sink 的数据集，再投影到类型化表。新增数据集只需在这里加一个条目。
+#
+# 每个数据集的探测结果（2026-10-15，免费 Key）写在 notes 里。字段说明见 docs/interfaces/dataset_registry.md，
+# 数据内容与历史深度见 docs/interfaces/dataset_catalog.md。
+#
+# @project-doc docs/interfaces/dataset_registry.md#fields
+# ── 字段说明 ─────────────────────────────────────────────────────────────
+# id          数据集 ID，格式 <domain>.<name>
+# endpoint    GET 路径；params 中 {var} 由分区变量填充
+# priority    P0 当前功能必需 | P1 A 股相关、建议现在就开始同步积累 | P2 其他资产 | P3 低价值或按需
+# partition   任务怎么切分：
+#   once                         一个任务
+#   enum: {param: [v1, v2]}      对参数取值做笛卡尔积
+#   security                     每只证券一个任务；universe 指定范围（SQL 条件，作用于 ref.security 或 raw.record）
+#   security_batch: N            每 N 只证券一个任务，代码用逗号拼接后填入 {thscodes}
+#   security_window              每只证券 × 时间窗口；window_days 为窗口长度，floor 为最早日期，
+#                                start_from: list_date 表示从上市日开始
+#   trading_day                  每个交易日一个任务；变量 {date}（yyyy-MM-dd）、{date_ms}
+#   report_period                每只证券 × 报告期；变量 {report}（例：2025-4）
+#   from_dataset                 取另一个数据集记录中的字段作为分区，例如营业部 ID；
+#                                字段写 rkey / thscode / obs_date，或者以 $ 开头的 JSONPath（作用在 payload 上）；
+#                                filter 是作用于来源记录 r 的额外 SQL 条件
+# paging      none | offset{limit_param, offset_param, size} | page{page_param, size_param, size}
+#             | cursor{...}；翻到返回条数 < size 为止
+# records     从响应中取记录数组的路径；可以是列表（多个数组合并），也可以是 "data"（整个对象作为一条记录）
+# key         主键模板，拼接时用 '|' 分隔；{_part.x} 引用分区变量；{field:date} 把毫秒时间戳转成日期
+# obs_date    记录的业务日期（写入 raw.record.obs_date）
+# capture     说明性字段，程序不读取：upsert 表示参考类数据（按主键覆盖，旧值进 raw.record_version），
+#             snapshot 表示观察类数据（主键里带 {_run.trade_date}，每天一份）。实际语义由 key 决定
+# backfill    说明性字段，程序不读取。回补范围由 partition 决定（trading_day.from、security_window.floor 等）
+# notes       说明性字段：实测结论和注意事项
+# incremental 每日增量的规则：rerun（整份重取）| since_cursor{overlap}（从游标往后，重叠 N 天）
+#             | latest_n{n}（只取最近 N 期）| none（不做增量）
+# schedule    当前约定：日线和只有当天值的数据用 after_close，其余用 weekly
+#             after_close（交易日收盘后，默认 18:00）| daily | weekly | monthly | report_season
+#             | after_open（交易日开盘后）
+# empty_codes 这些供应商错误码按「没有数据」处理：不重试，任务记为 empty，原因写在 last_error
+# trade_date_guard  快照类数据集设为 true：只在运行交易日收盘后、且供应商已出当天日线时执行，否则推迟或跳过
+# store_record 是否写入通用记录库 raw.record（默认 true）。日线这类大数据集设为 false，只写 sink 指定的类型化表
+# sink        除 raw.record 外，还要投影到的类型化表
+# ─────────────────────────────────────────────────────────────────────────
+
+defaults:
+  capture: upsert
+  paging: none
+  incremental: rerun
+  schedule: after_close
+  # 单次请求失败后的退避秒数，以及任务的最大尝试次数。哪些错误可以重试固定在 backend/src/vendor/client.rs；
+  # 限速和并发由环境变量 NIULAI_RATE_LIMIT_RPS、NIULAI_WORKER_CONCURRENCY 控制
+  retry: {max_attempts: 4, backoff_s: [2, 8, 30]}
+
+datasets:
+
+  # ═══════════════════════════ 元数据 ═══════════════════════════
+
+  - id: meta.tickers
+    endpoint: /api/meta/tickers/list
+    priority: P0
+    partition: {enum: {asset_type: [a-share, a-share-index, fund-etf, fund-lof, fund-reits, fund-otc,
+                                    futures, futures-commodity-index, options, forex]}}
+    params: {asset_type: "{asset_type}"}
+    paging: {offset: {limit_param: limit, offset_param: offset, size: 10000}}
+    records: data.item
+    key: "{thscode}"
+    thscode: "{thscode}"
+    schedule: weekly
+    backfill: none
+    sink: [ref.security, ref.index_info]       # a-share → ref.security（ST、改名写入 ref.security_name_hist）；a-share-index → ref.index_info
+    notes: >-
+      a-share 5580、a-share-index 1431、fund-etf 1712、fund-lof 404、fund-reits 90、futures 1175、
+      futures-commodity-index 136、forex 384；fund-otc 和 options 都超过 10000，需要翻页。
+      不含已退市证券；代码从列表中消失时，用 raw.record.last_seen_at 推断退市。
+
+  - id: a_share.calendar
+    endpoint: /api/a-share/calendar/trading-days
+    priority: P0
+    partition: once
+    records: data.item
+    key: "{date}"
+    obs_date: "{date_ms:date}"
+    schedule: weekly
+    backfill: none
+    sink: [ref.trading_day]
+    notes: 固定返回最近一年（243 天）。更早的交易日从行情日期推导。
+
+  # ═══════════════════════════ A 股行情 ═══════════════════════════
+
+  - id: a_share.bar_1d
+    store_record: false
+    endpoint: /api/a-share/prices/historical
+    priority: P0
+    partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", window_days: 3650,
+                                  floor: 2005-01-01, start_from: list_date}}
+    params: {thscode: "{thscode}", interval: 1d, start: "{start_ms}", end: "{end_ms}", adjust: none}
+    records: data.item
+    key: "{_part.thscode}|{date_ms:date}"
+    thscode: "{_part.thscode}"
+    obs_date: "{date_ms:date}"
+    incremental: {since_cursor: {overlap_days: 10}}
+    schedule: weekly
+    sink: [mkt.stock_bar_1d]
+    notes: >-
+      最早到 2005-01-04；窗口不超过 10 年；只返回开高低收、成交量（股）、成交额（元），停牌日无记录。
+      全量约 1.4 万次请求，实测 3 并发约 1.7 次/秒。数据量大，只写类型化表，不进 raw.record。
+
+  - id: a_share.snapshot
+    store_record: false
+    endpoint: /api/a-share/prices/snapshot
+    priority: P0
+    schedule: after_close
+    trade_date_guard: true
+    partition: once
+    paging: {offset: {limit_param: limit, offset_param: offset, size: 200}}
+    records: data.item
+    key: "{_run.trade_date}|{thscode}"
+    thscode: "{thscode}"
+    obs_date: "{_run.trade_date}"
+    capture: snapshot
+    backfill: none
+    sink: [mkt.stock_bar_1d]                   # source='snapshot'，同时写 pre_close；成交量为 0 的不写
+    notes: >-
+      全市场 28 页（size=200）。价格与历史接口一致；成交量和成交额只保留约 9 位有效数字。
+      prev_price 是交易所调整过的前收，除权日与上一日收盘价不同。
+
+  - id: a_share.corp_action
+    endpoint: /api/a-share/corporate-actions/adjustment-factors
+    priority: P0
+    enabled: false                             # 缺配股字段，默认用 a_share.corp_action_dump；两者不要同时开启
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{ex_date_ms:date}|{_seq}"   # _seq = 同一除权日内的源顺序
+    thscode: "{_part.thscode}"
+    obs_date: "{ex_date_ms:date}"
+    schedule: weekly
+    backfill: none                             # 每次返回全部历史
+    sink: [mkt.corp_action]
+    notes: >-
+      最早 1991 年。缺配股字段（rights_*），全市场有 987 次配股，配股复权会算错。
+      完整数据只能从 a_share.corp_action_dump 获取，两者二选一，见方案文档 5.2。
+
+  - id: a_share.corp_action_dump
+    endpoint: /api/dump/market-dumps/adjustment-factors/download-url
+    priority: P0
+    partition: once
+    format: parquet_via_presigned_url          # 第一步取 data.presigned_url（5 分钟内有效），第二步下载 Parquet
+    records: parquet
+    key: "{thscode}|{ex_date_ms:date}|{_seq}"
+    thscode: "{thscode}"
+    obs_date: "{ex_date_ms:date}"
+    schedule: after_close
+    sink: [mkt.corp_action]
+    notes: 全市场 5.8 万条、约 300KB，含配股字段和已公告未除权的事件（113 条）。
+
+  - id: a_share.valuation
+    endpoint: /api/a-share/valuations/snapshot
+    priority: P1
+    schedule: after_close
+    trade_date_guard: true
+    partition: {security_batch: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", size: 100}}
+    params: {thscodes: "{thscodes}"}
+    records: data.item
+    key: "{_run.trade_date}|{thscode}"
+    thscode: "{thscode}"
+    obs_date: "{_run.trade_date}"
+    capture: snapshot
+    sink: [fin.valuation_1d]
+    notes: 只有最新值（PE TTM/MRQ、PB、PS、PCF），没有历史，每天存一份积累；56 次请求。
+
+  - id: a_share.auction_final
+    endpoint: /api/a-share/auction/snapshot
+    priority: P1
+    schedule: after_close
+    trade_date_guard: true
+    partition: {security_batch: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", size: 100}}
+    params: {thscodes: "{thscodes}", stage: final}
+    records: data.item
+    key: "{_run.trade_date}|{thscode}"
+    thscode: "{thscode}"
+    obs_date: "{_run.trade_date}"
+    capture: snapshot
+    sink: [fin.valuation_1d]                   # float_market_cap
+    notes: >-
+      集合竞价终态：竞价价格、量、额、未匹配量、竞价换手率、量比，另有 float_market_cap（流通市值）。
+      每次最多 100 只，56 次请求。没有历史，每天积累；流通市值可推出流通股本和换手率。
+
+  # ═══════════════════════════ A 股财务 ═══════════════════════════
+
+  - id: a_share.income_q
+    endpoint: /api/a-share/financials/income-statements
+    priority: P1
+    partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", window_days: 3650, floor: 1990-01-01}}
+    params: {thscode: "{thscode}", period: quarterly, start: "{start_ms}", end: "{end_ms}"}
+    records: data.item
+    key: "{thscode}|{period_end_ms:date}"
+    thscode: "{thscode}"
+    obs_date: "{period_end_ms:date}"
+    incremental: {latest_n: {params: {period: quarterly, limit: 4}}}
+    schedule: weekly
+    notes: 可追溯到 1990 年代；含 report_date_ms（披露日），可用于按时点回测，避免用到未来数据。
+
+  - id: a_share.balance_q
+    endpoint: /api/a-share/financials/balance-sheets
+    priority: P1
+    partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", window_days: 3650, floor: 1990-01-01}}
+    params: {thscode: "{thscode}", period: quarterly, start: "{start_ms}", end: "{end_ms}"}
+    records: data.item
+    key: "{thscode}|{period_end_ms:date}"
+    thscode: "{thscode}"
+    obs_date: "{period_end_ms:date}"
+    incremental: {latest_n: {params: {period: quarterly, limit: 4}}}
+    schedule: weekly
+
+  - id: a_share.cashflow_q
+    endpoint: /api/a-share/financials/cash-flow-statements
+    priority: P1
+    partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", window_days: 3650, floor: 1990-01-01}}
+    params: {thscode: "{thscode}", period: quarterly, start: "{start_ms}", end: "{end_ms}"}
+    records: data.item
+    key: "{thscode}|{period_end_ms:date}"
+    thscode: "{thscode}"
+    obs_date: "{period_end_ms:date}"
+    incremental: {latest_n: {params: {period: quarterly, limit: 4}}}
+    schedule: weekly
+
+  - id: a_share.fin_indicator
+    endpoint: /api/a-share/financials/indicators
+    priority: P1
+    partition: {report_period: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", from: 2014-1, quarters: [1, 2, 3, 4]}}
+    params: {thscode: "{thscode}", report: "{report}"}
+    records: data                              # 整个对象一条：成长、盈利、偿债、营运、现金流 5 类共 24 个指标
+    key: "{thscode}|{report}"
+    thscode: "{thscode}"
+    incremental: {latest_n: {n: 2}}
+    schedule: weekly
+    empty_codes: [5003]                        # 该报告期没有数据时接口返回 5003（上市前、北交所改码前等）
+    notes: >-
+      每次 1 只 × 1 个报告期；2014 年起可用，2010 年返回 5003。按用户要求回补 2014 年一季度起的全部季度，
+      全量约 5580 × 50 期 ≈ 28 万次请求，是所有数据集里最重的一项。
+  - id: index.ths_catalog
+    endpoint: /api/a-share-index/catalog/ths-index-list
+    priority: P0
+    partition: {enum: {tag: [industry, cn_concept, region, tszs]}}
+    params: {tag: "{tag}"}
+    records: data.item
+    key: "{thscode}"
+    thscode: "{thscode}"
+    schedule: weekly
+    sink: [ref.index_info]
+    notes: 行业 320、概念 390、地区 33、特色 105。
+
+  - id: index.members
+    endpoint: /api/a-share-index/constituents/ths-stock-list
+    priority: P0
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share-index' AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_run.trade_date}|{_part.thscode}|{thscode}"
+    thscode: "{thscode}"
+    obs_date: "{_run.trade_date}"
+    capture: snapshot
+    schedule: weekly
+    sink: [ref.index_member]                   # 与前一天对比后写成区间
+    notes: 只有当前成分，没有历史，每天积累。约 1431 次请求，可以按需缩小到行业和概念板块。
+
+  - id: index.bar_1d
+    store_record: false
+    endpoint: /api/a-share-index/prices/historical
+    priority: P0
+    partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share-index' AND active",
+                                  window_days: 3650, floor: 2022-01-01}}
+    params: {thscode: "{thscode}", interval: 1d, start: "{start_ms}", end: "{end_ms}"}
+    records: data.item
+    key: "{_part.thscode}|{date_ms:date}"
+    thscode: "{_part.thscode}"
+    obs_date: "{date_ms:date}"
+    incremental: {since_cursor: {overlap_days: 10}}
+    schedule: weekly
+    sink: [mkt.index_bar_1d]
+    notes: 只有 2022-01-04 以后的数据；窗口起点早于这一天会返回空，floor 必须 >= 2022-01-01。
+
+  - id: index.snapshot
+    store_record: false
+    endpoint: /api/a-share-index/prices/snapshot
+    priority: P0
+    schedule: after_close
+    trade_date_guard: true
+    # 快照接口不接受中证指数（.CSI），整批会返回 1002；这两个指数的日线由 index.bar_1d 每周补齐
+    partition: {security_batch: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share-index' AND active AND thscode NOT LIKE '%.CSI'", size: 100}}
+    params: {thscodes: "{thscodes}"}
+    records: data.item
+    key: "{_run.trade_date}|{thscode}"
+    thscode: "{thscode}"
+    obs_date: "{_run.trade_date}"
+    capture: snapshot
+    sink: [mkt.index_bar_1d]
+    notes: 每次最多 100 个；不接受 .CSI 代码（2026-10-16 实测）。
+
+  # ═══════════════════════════ A 股特色数据（涨跌停、龙虎榜、热榜、异动、竞价、新股） ═══════════════════════════
+
+  - id: special.limit_up_pool
+    endpoint: /api/a-share/special-data/limit-up-pool
+    priority: P1
+    schedule: weekly
+    partition: {trading_day: {from: 2020-07-01}}
+    params: {date_ms: "{date_ms}"}
+    paging: {page: {page_param: page, size_param: size, size: 200}}
+    records: data.item
+    key: "{_part.date}|{thscode}"
+    thscode: "{thscode}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {overlap_days: 1}}
+    notes: 涨停原因、首次涨停时间、连板天数、封单额、是否 ST；最早有数据的交易日是 2020-07-22，更早的日期返回空。
+
+  - id: special.limit_down_pool
+    endpoint: /api/a-share/special-data/limit-down-pool
+    priority: P1
+    schedule: weekly
+    partition: {trading_day: {from: -1y}}
+    params: {date_ms: "{date_ms}"}
+    paging: {page: {page_param: page, size_param: size, size: 200}}
+    records: data.item
+    key: "{_part.date}|{thscode}"
+    thscode: "{thscode}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {overlap_days: 1}}
+    notes: 只支持最近一年（实测 2025-10-15 起可用，更早的日期返回 1002 Invalid parameter format）。
+  - id: special.limit_break_pool
+    endpoint: /api/a-share/special-data/limit-break-pool
+    priority: P1
+    schedule: weekly
+    partition: {trading_day: {from: -1y}}
+    params: {date_ms: "{date_ms}"}
+    paging: {page: {page_param: page, size_param: size, size: 200}}
+    records: data.item
+    key: "{_part.date}|{thscode}"
+    thscode: "{thscode}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {overlap_days: 1}}
+    notes: 只支持最近一年（实测 2025-10-15 起可用，更早的日期返回 1002 Invalid parameter format）。
+  - id: special.limit_up_ladder
+    endpoint: /api/a-share/special-data/limit-up-ladder
+    priority: P1
+    schedule: weekly
+    partition: once
+    records: data.item
+    key: "{date}"
+    obs_date: "{date}"
+    backfill: none
+    notes: 固定返回最近 30 个交易日的连板梯队，每天重取，按日期覆盖即可积累出历史。
+
+  - id: special.limit_up_stats
+    endpoint: /api/a-share/special-data/limit-up-statistics
+    priority: P1
+    schedule: weekly
+    partition: {trading_day: {from: -1y}}
+    params: {date: "{date}"}
+    records: data
+    key: "{trade_date}"
+    obs_date: "{trade_date}"
+    incremental: {since_cursor: {overlap_days: 1}}
+    notes: 封板率、涨停家数、触及涨停家数、各连板高度的家数；只能查一年内。
+
+  - id: special.dragon_tiger
+    endpoint: /api/a-share/special-data/dragon-tiger-list
+    priority: P1
+    schedule: weekly
+    partition: {trading_day: {from: -1y}}
+    params: {date: "{date}", board_type: all}
+    records: [data.stock_items, data.hot_money_items]
+    key: "{_part.date}|{_array}|{thscode}|{range_days}"
+    thscode: "{thscode}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {overlap_days: 1}}
+    notes: 只能查一年内；同一股票可能同时上当日榜和 3 日榜（range_days）。
+
+  - id: special.dragon_tiger_institution
+    endpoint: /api/a-share/special-data/dragon-tiger-stock-institution
+    priority: P1
+    schedule: weekly
+    # 龙虎榜里还有可转债、ETF、REITs、B 股，机构明细接口只接受 A 股（其他代码返回 1002）
+    partition: {from_dataset: {dataset: special.dragon_tiger, fields: {thscode: thscode, date: obs_date},
+                               filter: "r.thscode IN (SELECT thscode FROM ref.security)"}}
+    params: {thscode: "{thscode}", date: "{date}"}
+    records: data.item
+    key: "{_part.date}|{_part.thscode}|{range_days}"
+    thscode: "{_part.thscode}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {}}
+    notes: 机构买卖金额和买卖席位（含 department_id）。一年内每个上榜股票一次请求，约 1.5 万次。
+
+  - id: special.dragon_tiger_department
+    endpoint: /api/a-share/special-data/dragon-tiger-department-classic-record
+    priority: P3
+    partition: {from_dataset: {dataset: special.dragon_tiger_institution,
+                               fields: {department_id: "$.buy_departments[*].department_id"}}}
+    params: {department_id: "{department_id}"}
+    records: data
+    key: "{department_id}"
+    schedule: monthly
+
+  - id: special.dragon_tiger_department_history
+    endpoint: /api/a-share/special-data/dragon-tiger-department-history
+    priority: P3
+    partition: {from_dataset: {dataset: special.dragon_tiger_department, fields: {department_id: rkey}}}
+    params: {department_id: "{department_id}"}
+    paging: {page: {page_param: page, size_param: size, size: 30}}
+    records: data.item
+    key: "{_part.department_id}|{trade_date}|{thscode}|{rank_type}"
+    thscode: "{thscode}"
+    obs_date: "{trade_date}"
+    schedule: weekly
+
+  - id: special.hot_stock_daily
+    endpoint: /api/a-share/special-data/hot-stock-list-history
+    priority: P1
+    schedule: weekly
+    partition: {trading_day: {from: -1y, calendar: natural}}    # 按自然日查询
+    params: {date: "{date}"}
+    records: data.item
+    key: "{_part.date}|{rank}"
+    thscode: "{thscode}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {}}
+    notes: 每天前 30 名；只能查一年内。
+
+  - id: special.hot_stock_now
+    endpoint: /api/a-share/special-data/hot-stock-list
+    priority: P3
+    partition: {enum: {period: [day, hour]}}
+    params: {period: "{period}"}
+    records: data.item
+    key: "{_run.trade_date}|{_part.period}|{rank}"
+    thscode: "{thscode}"
+    capture: snapshot
+    notes: 只有当前榜单；日榜的历史由 special.hot_stock_daily 覆盖。
+
+  - id: special.skyrocket
+    endpoint: /api/a-share/special-data/skyrocket-list
+    priority: P3
+    partition: {enum: {period: [day, hour]}}
+    params: {period: "{period}"}
+    records: data.item
+    key: "{_run.trade_date}|{_part.period}|{rank}"
+    thscode: "{thscode}"
+    capture: snapshot
+
+  - id: special.anomaly_reason
+    endpoint: /api/a-share/special-data/anomaly-analysis-list
+    priority: P1
+    schedule: after_close
+    trade_date_guard: true
+    partition: once
+    records: data.item
+    key: "{_run.trade_date}|{thscode}|{tag_name}"
+    thscode: "{thscode}"
+    obs_date: "{_run.trade_date}"
+    capture: snapshot
+    backfill: none
+    notes: 当日个股异动原因（涨停、跌停、大涨、快速拉升……）和关键词，约 350 条/天；没有历史，必须当天收盘后取。
+
+  - id: special.abnormal_monitor
+    endpoint: /api/a-share/special-data/abnormal-monitor-list
+    priority: P1
+    partition: {enum: {state: [current, history]}}
+    params: {state: "{state}"}
+    paging: {page: {page_param: page, size_param: size, size: 30}}
+    records: data.item
+    key: "{thscode}|{monitor_type}|{start_date_ms:date}"
+    thscode: "{thscode}"
+    obs_date: "{start_date_ms:date}"
+    schedule: weekly
+    notes: 交易所严重异动、重点监控记录；history 共 738 条。
+
+  - id: special.auction_benchmark
+    endpoint: /api/a-share/auction/short-term-benchmark
+    priority: P3
+    partition: {trading_day: {from: -1y}}
+    params: {date: "{date}"}
+    records: data.item
+    key: "{_part.date}|{thscode}"
+    thscode: "{thscode}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {}}
+
+  - id: special.auction_opportunity
+    endpoint: /api/a-share/special-data/auction-stock-opportunities
+    priority: P3
+    partition: {trading_day: {from: -1y, dates_from: /api/a-share/special-data/auction-opportunity-dates}}
+    params: {date: "{date}"}
+    paging: {page: {page_param: page, size_param: size, size: 20}}
+    records: data.item
+    key: "{_part.date}|{thscode}|{warn_type}|{warn_timestamp}"
+    thscode: "{thscode}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {}}
+    notes: 可选日期 243 天（一年）；每页最多 20 条。
+
+  - id: a_share.ipo_calendar
+    endpoint: /api/a-share/ipo/calendar-list
+    priority: P1
+    partition: {enum: {market: [sh_sz, bj], status: [upcoming, subscribable, awaiting_listing]}}
+    params: {market: "{market}", status: "{status}"}
+    records: data.item
+    key: "{subscription_code}"
+    thscode: "{thscode}"
+    schedule: weekly
+    notes: 新股申购日、上市日、发行价；与 meta.tickers 对照，可以知道新股上市当天。
+
+  # ═══════════════════════════ 基金（P2） ═══════════════════════════
+  # 场外基金代码表超过 1 万只，逐只请求的成本高。建议先限定在 ETF、LOF 和 REITs（约 2200 只），场外基金按需开启。
+
+  - id: fund.profile
+    endpoint: /api/fund/profile/detail
+    priority: P2
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof','fund-reits') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{thscode}"
+    thscode: "{thscode}"
+    schedule: weekly
+    notes: 规模、净值、管理人、基金经理（manager_id）、费率；manager_id 和 company_id 用作下游分区。
+
+  - id: fund.etf_bar_1d
+    endpoint: /api/fund/market/historical
+    priority: P2
+    partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'fund-etf' AND active",
+                                  window_days: 1825, floor: -5y}}
+    params: {thscode: "{thscode}", interval: 1d, start: "{start_ms}", end: "{end_ms}"}
+    records: data.item
+    key: "{_part.thscode}|{date_ms:date}"
+    thscode: "{_part.thscode}"
+    obs_date: "{date_ms:date}"
+    incremental: {since_cursor: {overlap_days: 10}}
+    notes: 前复权价格，只有近 5 年，只支持 ETF（1211 根 ≈ 5 年）。前复权会随分红变化，增量时需要整段重取。
+
+  - id: fund.market_snapshot
+    endpoint: /api/fund/market/snapshot
+    priority: P2
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_run.trade_date}|{thscode}"
+    thscode: "{thscode}"
+    capture: snapshot
+    notes: 每次只能查 1 只（不支持批量），约 2100 次/天；含换手率。
+
+  - id: fund.nav
+    endpoint: /api/fund/performance/nav
+    priority: P2
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type LIKE 'fund-%' AND active"}}
+    params: {thscode: "{thscode}", range: fyear, nav_type: "unit,adj"}
+    records: data.item
+    key: "{_part.thscode}|{nav_date:date}"
+    thscode: "{_part.thscode}"
+    obs_date: "{nav_date:date}"
+    incremental: {latest_n: {params: {range: week}}}
+    notes: 单位净值和复权净值；range 最长 fyear（约 5 年，1217 条）。
+
+  - id: fund.dividends
+    endpoint: /api/fund/corporate-actions/dividends
+    priority: P2
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type LIKE 'fund-%' AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{ex_dividend_date_ms:date}"
+    thscode: "{_part.thscode}"
+    obs_date: "{ex_dividend_date_ms:date}"
+    schedule: weekly
+
+  - id: fund.holdings_latest
+    endpoint: /api/fund/portfolio/holdings
+    priority: P2
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{end_date_ms:date}|{asset_type}|{security_code}"
+    thscode: "{_part.thscode}"
+    obs_date: "{end_date_ms:date}"
+    schedule: report_season
+
+  - id: fund.stock_report_dates
+    endpoint: /api/fund/portfolio/stock-report-dates
+    priority: P2
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{report_type}|{end_date_ms:date}"
+    thscode: "{_part.thscode}"
+    schedule: report_season
+    notes: 可选报告期（示例基金 97 期），作为 fund.stock_history 的分区。
+
+  - id: fund.stock_history
+    endpoint: /api/fund/portfolio/stock-history
+    priority: P3
+    partition: {from_dataset: {dataset: fund.stock_report_dates,
+                               fields: {thscode: thscode, report_type: "$.report_type", end_date: obs_date}}}
+    params: {thscode: "{thscode}", report_type: "{report_type}", end_date: "{end_date}"}
+    records: data.item
+    key: "{_part.thscode}|{_part.end_date}|{thscode}"
+    incremental: {since_cursor: {}}
+    notes: 历史股票持仓。每只基金每个报告期一次请求，量很大，按需开启。
+
+  - id: fund.bond_report_dates
+    endpoint: /api/fund/portfolio/bond-report-dates
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{report_type}|{end_date_ms:date}"
+    schedule: report_season
+
+  - id: fund.bond_history
+    endpoint: /api/fund/portfolio/bond-history
+    priority: P3
+    partition: {from_dataset: {dataset: fund.bond_report_dates,
+                               fields: {thscode: thscode, report_type: "$.report_type", end_date: obs_date}}}
+    params: {thscode: "{thscode}", report_type: "{report_type}", end_date: "{end_date}"}
+    records: data.item
+    key: "{_part.thscode}|{_part.end_date}|{_seq}"
+    incremental: {since_cursor: {}}
+
+  - id: fund.asset_allocation
+    endpoint: /api/fund/portfolio/asset-allocation
+    priority: P2
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{report_date_ms:date}"
+    thscode: "{_part.thscode}"
+    schedule: report_season
+
+  - id: fund.industry_allocation
+    endpoint: /api/fund/portfolio/industry-allocation
+    priority: P2
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{report_period}|{industry_name}"
+    thscode: "{_part.thscode}"
+    schedule: report_season
+
+  - id: fund.holders
+    endpoint: /api/fund/holders/detail
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{report_date_ms:date}|{merge_scope}"
+    schedule: report_season
+
+  - id: fund.holders_top
+    endpoint: /api/fund/holders/top
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{_seq}"
+    schedule: report_season
+
+  - id: fund.financial_indicators
+    endpoint: /api/fund/financials/indicators
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{start_date_ms:date}|{end_date_ms:date}"
+    schedule: report_season
+
+  - id: fund.income_statement
+    endpoint: /api/fund/financials/income-statements
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{start_date_ms:date}|{end_date_ms:date}"
+    schedule: report_season
+
+  - id: fund.balance_sheet
+    endpoint: /api/fund/financials/balance-sheets
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{start_date_ms:date}|{end_date_ms:date}"
+    schedule: report_season
+
+  - id: fund.returns
+    endpoint: /api/fund/performance/returns
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_run.trade_date}|{_part.thscode}"
+    capture: snapshot
+    schedule: weekly
+    notes: 供应商算好的区间收益和同类排名，可由净值自行计算；按周存快照。
+
+  - id: fund.drawdowns
+    endpoint: /api/fund/performance/drawdowns
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_run.trade_date}|{_part.thscode}"
+    capture: snapshot
+    schedule: weekly
+
+  - id: fund.indicators_history
+    endpoint: /api/fund/performance/indicators-historical
+    priority: P3
+    partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active",
+                                  window_days: 365, floor: -1y}}
+    params: {thscode: "{thscode}", start: "{start_ms}", end: "{end_ms}"}
+    records: data.item
+    key: "{_part.thscode}|{date_ms:date}"
+    obs_date: "{date_ms:date}"
+    incremental: {since_cursor: {overlap_days: 5}}
+    notes: 唐奇安通道、RSI、跟踪指数 PE 的 5 年分位。
+
+  - id: fund.diagnostics
+    endpoint: /api/fund/diagnostics/detail
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_run.trade_date}|{_part.thscode}"
+    capture: snapshot
+    schedule: monthly
+
+  - id: fund.manager_detail
+    endpoint: /api/fund/managers/detail
+    priority: P3
+    partition: {from_dataset: {dataset: fund.profile, fields: {manager_id: "$.manager_info[*].manager_id"}}}
+    params: {manager_id: "{manager_id}"}
+    records: data.item
+    key: "{manager_id}"
+    schedule: monthly
+
+  - id: fund.manager_experience
+    endpoint: /api/fund/managers/experience
+    priority: P3
+    partition: {from_dataset: {dataset: fund.profile, fields: {manager_id: "$.manager_info[*].manager_id"}}}
+    params: {manager_id: "{manager_id}"}
+    records: data.item
+    key: "{_part.manager_id}"
+    schedule: monthly
+
+  - id: fund.manager_style
+    endpoint: /api/fund/managers/investment-style
+    priority: P3
+    partition: {from_dataset: {dataset: fund.profile, fields: {manager_id: "$.manager_info[*].manager_id"}}}
+    params: {manager_id: "{manager_id}"}
+    records: data.item
+    key: "{_part.manager_id}"
+    schedule: monthly
+
+  - id: fund.manager_performance
+    endpoint: /api/fund/managers/performance
+    priority: P3
+    partition: {from_dataset: {dataset: fund.profile, fields: {manager_id: "$.manager_info[*].manager_id"}}}
+    params: {manager_id: "{manager_id}", range: year}
+    records: data.item
+    key: "{_part.manager_id}|{date_ms:date}"
+    obs_date: "{date_ms:date}"
+    schedule: weekly
+
+  - id: fund.company
+    endpoint: /api/fund/companies/detail
+    priority: P3
+    partition: {from_dataset: {dataset: fund.profile, fields: {company_id: "$.company_id"}}}
+    params: {company_id: "{company_id}"}
+    records: data.item
+    key: "{company_id}"
+    schedule: monthly
+
+  - id: fund.offerings
+    endpoint: /api/fund/offerings/list
+    priority: P2
+    partition: {enum: {subscribe: [active, upcoming]}}
+    params: {subscribe: "{subscribe}"}
+    records: data.item
+    key: "{thscode}"
+    thscode: "{thscode}"
+    schedule: daily
+
+  - id: fund.qdii_quota
+    endpoint: /api/fund/quota/list
+    priority: P3
+    partition: {enum: {tab: ['["remen"]', '["nazhi100"]']}}    # 分类全集待确认
+    params: {tab: "{tab}"}
+    records: data
+    key: "{_run.trade_date}|{_part.tab}|{_seq}"
+    capture: snapshot
+    schedule: weekly
+
+  - id: fund.backtest_indicators
+    endpoint: /api/fund/backtest/indicators
+    priority: P3
+    partition: once
+    records: data
+    key: "{indicator_code}"
+    schedule: monthly
+    notes: 只是回测功能的指标字典。/api/fund/backtest/result 是计算服务，不是数据，不同步。
+
+  - id: fund.news
+    endpoint: /api/fund/news/article-list
+    priority: P3
+    enabled: false
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'fund-etf' AND active"}}
+    params: {thscode: "{thscode}", limit: 50}
+    paging: {offset: {limit_param: limit, offset_param: offset, size: 50}}
+    records: data.item
+    key: "{_part.thscode}|{_seq}"
+    notes: 样例基金返回空，默认不启用。
+
+  # ═══════════════════════════ 期货（P2） ═══════════════════════════
+
+  - id: futures.varieties
+    endpoint: /api/futures/varieties/list
+    priority: P2
+    partition: once
+    records: data.item
+    key: "{variety_code}"
+    schedule: weekly
+    notes: 91 个品种；合约乘数、最小变动价位、交易时段、保证金、手续费、主力合约。
+
+  - id: futures.variety_plates
+    endpoint: /api/futures/variety-plates/list
+    priority: P2
+    partition: once
+    records: data.item
+    key: "{variety_code}|{plate_level}|{plate_name}"
+    schedule: monthly
+
+  - id: futures.contracts
+    endpoint: /api/futures/contracts/list
+    priority: P2
+    partition: once
+    paging: {offset: {limit_param: limit, offset_param: offset, size: 1000}}
+    records: data.item
+    key: "{thscode}"
+    thscode: "{thscode}"
+    schedule: daily
+
+  - id: futures.main_contracts
+    endpoint: /api/futures/contracts/main-list
+    priority: P2
+    partition: once
+    records: data.item
+    key: "{_run.trade_date}|{variety_code}"
+    thscode: "{thscode}"
+    capture: snapshot
+    schedule: daily
+    notes: 每天记录主力合约是谁，积累出主力合约切换的历史。
+
+  - id: futures.secondary_main_contracts
+    endpoint: /api/futures/contracts/secondary-main-list
+    priority: P2
+    partition: once
+    records: data.item
+    key: "{_run.trade_date}|{variety_code}"
+    thscode: "{thscode}"
+    capture: snapshot
+
+  - id: futures.main_continuous
+    endpoint: /api/futures/contracts/main-continuous-list
+    priority: P2
+    partition: once
+    records: data.item
+    key: "{thscode}"
+    thscode: "{thscode}"
+    schedule: weekly
+    notes: 主连代码，例如 AUZL.SHF，可以作为长周期 K 线的标的。
+
+  - id: futures.commodity_index
+    endpoint: /api/futures/contracts/commodity-index-list
+    priority: P2
+    partition: once
+    records: data.item
+    key: "{thscode}"
+    schedule: weekly
+
+  - id: futures.bar_1d
+    endpoint: /api/futures/prices/daily
+    priority: P2
+    partition: {security_window: {universe: "dataset_id IN ('futures.contracts','futures.main_continuous','futures.commodity_index') AND active",
+                                  window_days: 365, floor: 2021-01-01}}
+    params: {thscode: "{thscode}", start: "{start_ms}", end: "{end_ms}", time_period: day_1}
+    records: data.item
+    key: "{_part.thscode}|{timestamp:date}"
+    thscode: "{_part.thscode}"
+    obs_date: "{timestamp:date}"
+    incremental: {since_cursor: {overlap_days: 5}}
+    notes: 免费 Key 只能取日 K；不传 start/end 时返回最近 100 根。历史起点因合约而异（示例从 2022 年起），窗口上限待测。
+
+  - id: futures.basis_latest
+    endpoint: /api/futures/basis/main-continuous-latest
+    priority: P2
+    partition: once
+    records: data.item
+    key: "{_run.trade_date}|{thscode}"
+    capture: snapshot
+    schedule: after_close
+
+  - id: futures.basis_history
+    endpoint: /api/futures/basis/historical
+    priority: P2
+    partition: {security: {universe: "dataset_id = 'futures.main_continuous' AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data.item
+    key: "{_part.thscode}|{date}"
+    obs_date: "{date}"
+    schedule: weekly
+    notes: 每次返回约 5 年（1212 条）。
+
+  - id: futures.positions_variety
+    endpoint: /api/futures/positions/variety-daily
+    priority: P2
+    partition: {trading_day: {from: -1y}}
+    params: {date: "{date}"}
+    records: data.item
+    key: "{_part.date}|{variety_code}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {}}
+
+  - id: futures.positions_company_variety
+    endpoint: /api/futures/positions/company-variety-daily
+    priority: P3
+    partition: {trading_day: {from: -1y}, cross: {varieties_batch: 5}}
+    params: {date: "{date}", varieties: "{varieties}"}
+    records: data.item
+    key: "{_part.date}|{variety_code}|{company_name}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {}}
+
+  - id: futures.positions_contract
+    endpoint: /api/futures/positions/contract-daily
+    priority: P3
+    partition: {trading_day: {from: -1y}, cross: {from_dataset: futures.main_contracts}}
+    params: {thscode: "{thscode}", variety: "{variety_code}", date: "{date}"}
+    records: data.position_item
+    key: "{_part.date}|{thscode}|{company_name}"
+    obs_date: "{_part.date}"
+    incremental: {since_cursor: {}}
+
+  - id: futures.positions_companies
+    endpoint: /api/futures/positions/company-list
+    priority: P3
+    partition: once
+    records: data.item
+    key: "{company_id}"
+    schedule: monthly
+
+  - id: futures.warehouse_receipts
+    endpoint: /api/futures/warehouse-receipts/historical
+    priority: P3
+    partition: {security_window: {universe: "dataset_id = 'futures.main_contracts' AND active", window_days: 365, floor: -1y}}
+    params: {thscode: "{thscode}", start_date: "{start}", end_date: "{end}"}
+    records: data.item
+    key: "{_part.thscode}|{date}"
+    obs_date: "{date}"
+    incremental: {since_cursor: {overlap_days: 3}}
+
+  - id: futures.trading_schedule
+    endpoint: /api/futures/calendar/trading-schedule
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'futures.main_contracts' AND active"}}
+    params: {thscode: "{thscode}", start_date: "{today}", end_date: "{today+60d}"}
+    records: data
+    key: "{_part.thscode}"
+    schedule: weekly
+
+  # 不同步：/api/futures/contracts/detail（与 futures.contracts 重复）、/api/futures/prices/intraday（只有当日分时）、
+  #         /api/futures/calendar/session-timeline（只有当日时间轴）、/api/futures/positions/contract-historical（需要按公司 × 合约查询，组合太多，按需调用）
+
+  # ═══════════════════════════ 期权（P2） ═══════════════════════════
+
+  - id: options.varieties
+    endpoint: /api/options/varieties/list
+    priority: P2
+    partition: once
+    records: data.item
+    key: "{variety_code}"
+    schedule: weekly
+    notes: 88 个品种。
+
+  - id: options.contracts
+    endpoint: /api/options/contracts/list
+    priority: P2
+    partition: once
+    paging: {offset: {limit_param: limit, offset_param: offset, size: 1000}}
+    records: data.item
+    key: "{thscode}"
+    thscode: "{thscode}"
+    schedule: daily
+    notes: 超过 1 万个合约。
+
+  - id: options.contract_detail
+    endpoint: /api/options/contracts/detail
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'options.contracts' AND active"}}
+    params: {thscode: "{thscode}"}
+    records: data
+    key: "{thscode}"
+    schedule: weekly
+    notes: 行权价、认购/认沽、标的、行权方式；列表接口没有这些字段。
+
+  - id: options.bar_1d
+    endpoint: /api/options/prices/daily
+    priority: P3
+    partition: {security: {universe: "dataset_id = 'options.contracts' AND active"}}
+    params: {thscode: "{thscode}", time_period: day_1}
+    records: data.item
+    key: "{_part.thscode}|{timestamp:date}"
+    obs_date: "{timestamp:date}"
+    incremental: {since_cursor: {overlap_days: 3}}
+    notes: 默认最近 100 根。合约超过 1 万个，按需限定标的。
+
+  # ═══════════════════════════ 港股新股（P3） ═══════════════════════════
+
+  - id: hk_ipo.applications
+    endpoint: /api/hk-share/ipo/application-list
+    priority: P3
+    partition: once
+    paging: {page: {page_param: page, size: 50}}
+    records: data.item
+    key: "{company_name}|{application_date}"
+    schedule: daily
+
+  - id: hk_ipo.calendar
+    endpoint: /api/hk-share/ipo/calendar-list
+    priority: P3
+    partition: {enum: {status: [subscribable, awaiting_listing]}}
+    params: {status: "{status}"}
+    records: data.item
+    key: "{issue_code}"
+    schedule: daily
+
+  - id: hk_ipo.issue_detail
+    endpoint: /api/hk-share/ipo/issue-detail
+    priority: P3
+    partition: {from_dataset: {dataset: hk_ipo.calendar, fields: {issue_code: rkey}}}
+    params: {issue_code: "{issue_code}"}
+    records: data
+    key: "{issue_code}"
+    schedule: daily
+
+# ── 不同步的接口 ──────────────────────────────────────────────────────────
+# 同花顺 AI 客户端专用（免费 Key 返回 2004）：
+#   /api/a-share/capital-flow/{snapshot,historical}   /api/a-share/high-frequency/{historical,intraday}
+#   /api/a-share/special-data/chip-shape-{dates,stocks}   /api/a-share-index/baseinfo/new-concepts
+#   /api/a-share/special-data/turnover-prediction-snapshot   /api/fund/etf-flow/net-inflow-historical
+#   /api/futures/fundamentals/indicators-historical   /api/news/events/search
+# 尚未上线：stock-basics、ths-index-membership、index-overview
+# 工具和计算接口：/api/meta/tickers/search（检索）、/api/fund/backtest/result（在线回测）
+# 只有当日数据、没有历史价值：/api/{futures,options}/prices/intraday、/api/{futures,options}/calendar/session-timeline
+# 被其他数据集使用：/api/a-share/special-data/auction-opportunity-dates（special.auction_opportunity 的日期来源）、
+#                   /api/fund/quota/summary（fund.qdii_quota 的分类汇总，需要时再加）
+# 与其他数据集重复：/api/a-share/special-data/anomaly-analysis-stock（与 special.anomaly_reason 重复）、
+#                    /api/a-share/special-data/hot-stock-rank-trend（只有前 30 名的排名，与 special.hot_stock_daily 重复）
+# 全市场导出：/api/dump/market-dumps/daily-k[-10d]/download-url（用户决定行情走 REST；可作为对账和灾备的备选）

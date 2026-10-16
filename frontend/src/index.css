@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+/* 颜色令牌：A 股习惯红涨绿跌 */
+@theme {
+  --color-up: #d93a3a;
+  --color-down: #16a05d;
+  --color-accent: #3b6ef5;
+  --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+}
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}

@@ -1,0 +1,5 @@
+# 依赖至少发布 3 天后才安装，降低被投毒的新版本直接进入构建的风险
+minimumReleaseAge: 4320
+# 只允许这些依赖执行安装脚本
+allowBuilds:
+  esbuild: true

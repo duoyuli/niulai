@@ -1,0 +1,2610 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "niulai API",
+    "description": "A 股数据工作台：行情、复权、均线信号与数据同步",
+    "license": {
+      "name": ""
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/backtest/ma-cross": {
+      "get": {
+        "tags": [
+          "backtest"
+        ],
+        "summary": "均线交叉策略回测：金叉后下一个交易日开盘满仓买入，死叉后下一个交易日开盘全部卖出",
+        "operationId": "ma_cross_backtest",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "query",
+            "description": "例：600519.SH",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fast",
+            "in": "query",
+            "description": "快线周期，默认 15",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          {
+            "name": "slow",
+            "in": "query",
+            "description": "慢线周期，默认 30",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "description": "回测开始日，默认最早一根日线",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "description": "回测结束日，默认最新一根日线",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "capital",
+            "in": "query",
+            "description": "初始资金（元），默认 100000",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "commission_rate",
+            "in": "query",
+            "description": "佣金费率，默认 0.00025（万 2.5），最大 0.01",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "min_commission",
+            "in": "query",
+            "description": "单笔最低佣金（元），默认 5",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "stamp_tax_rate",
+            "in": "query",
+            "description": "卖出印花税率，默认 0.0005，最大 0.01",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法，或区间内没有日线",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "证券不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/datasets": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "数据集列表及同步状态",
+        "operationId": "list_datasets",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DatasetStatus"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/datasets/{dataset_id}/records": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "通用记录查询：任何已同步数据集的原始记录（字段保持供应商原样）",
+        "operationId": "dataset_records",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "description": "例：special.limit_up_pool",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "thscode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "默认 100，最大 1000",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RecordItem"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "存活检查",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/indices": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "指数与板块列表",
+        "operationId": "list_indices",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "名称片段",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IndexInfo"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/indices/{thscode}/bars": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "指数日线（指数没有复权）",
+        "operationId": "index_bars",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "adjust",
+            "in": "query",
+            "description": "none / qfq / hfq / qfq_ths / hfq_ths，默认 qfq（等比前复权）",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "最多返回最近的 N 根，默认 500，最大 10000",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BarSeries"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/indices/{thscode}/members": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "指数成分（从开始采集那天起有历史）",
+        "operationId": "index_members",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "description": "查询某一天的成分；默认今天（当前成分）",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IndexMember"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "就绪检查：能连上数据库",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "数据库不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/securities": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "证券列表",
+        "operationId": "list_securities",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "代码或名称片段",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "board",
+            "in": "query",
+            "description": "main / chinext / star / bse",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "默认 50，最大 500",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Security"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/securities/{thscode}": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "单只证券详情",
+        "operationId": "get_security",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "description": "例：600519.SH",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/securities/{thscode}/bars": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "个股日线",
+        "operationId": "security_bars",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "adjust",
+            "in": "query",
+            "description": "none / qfq / hfq / qfq_ths / hfq_ths，默认 qfq（等比前复权）",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "最多返回最近的 N 根，默认 500，最大 10000",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BarSeries"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/securities/{thscode}/ma": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "个股均线与交叉信号（等比前复权）",
+        "operationId": "security_ma",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fast",
+            "in": "query",
+            "description": "快线周期，默认 15",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          {
+            "name": "slow",
+            "in": "query",
+            "description": "慢线周期，默认 30",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "signals_only",
+            "in": "query",
+            "description": "true 时只返回发生交叉的日期",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaSeries"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/setup": {
+      "get": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "首次登录引导的状态",
+        "operationId": "get_setup",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/setup/api-key": {
+      "put": {
+        "tags": [
+          "setup"
+        ],
+        "summary": "验证并保存 API Key，立即生效",
+        "operationId": "put_api_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeySaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Key 为空或无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Key 由环境变量提供，不能在网页上修改",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "暂时连不上同花顺接口，无法验证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/signals/ma-cross": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "全市场均线交叉扫描：指定交易日发生金叉或死叉的股票。结果按复权价版本缓存在进程内",
+        "operationId": "ma_cross_scan",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "description": "交易日，默认本地最新的交易日",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "fast",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          {
+            "name": "slow",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          {
+            "name": "signal",
+            "in": "query",
+            "description": "golden / death，默认两者都返回",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sync/runs": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "最近的同步运行",
+        "operationId": "list_runs",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RunSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "发起一次同步运行。只负责规划任务，由 `niulai serve` 的执行循环执行。",
+        "operationId": "create_run",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRun"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "已规划，任务由执行循环执行",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sync/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "运行详情：各数据集进度与失败任务",
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/watchlist": {
+      "get": {
+        "tags": [
+          "watchlist"
+        ],
+        "summary": "自选股列表及诊断",
+        "operationId": "list_watchlist",
+        "parameters": [
+          {
+            "name": "fast",
+            "in": "query",
+            "description": "快线周期，默认 15",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          {
+            "name": "slow",
+            "in": "query",
+            "description": "慢线周期，默认 30",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Watchlist"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/watchlist/{thscode}": {
+      "put": {
+        "tags": [
+          "watchlist"
+        ],
+        "summary": "收藏一只股票（重复收藏不报错）",
+        "operationId": "add_watch",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "description": "例：600519.SH",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已收藏"
+          },
+          "404": {
+            "description": "证券不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "watchlist"
+        ],
+        "summary": "取消收藏（本来没有收藏也不报错）",
+        "operationId": "remove_watch",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "description": "例：600519.SH",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已取消收藏"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiKeyInput": {
+        "type": "object",
+        "required": [
+          "api_key"
+        ],
+        "properties": {
+          "api_key": {
+            "type": "string"
+          }
+        }
+      },
+      "ApiKeySaved": {
+        "type": "object",
+        "properties": {
+          "backfill_run_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "第一次配置时规划的全量回补（第一个波次的运行 ID）；之前已经回补过时为空"
+          }
+        }
+      },
+      "ApiKeySource": {
+        "type": "string",
+        "enum": [
+          "env",
+          "database"
+        ]
+      },
+      "BacktestCosts": {
+        "type": "object",
+        "required": [
+          "commission_rate",
+          "min_commission",
+          "stamp_tax_rate"
+        ],
+        "properties": {
+          "commission_rate": {
+            "type": "number",
+            "format": "double"
+          },
+          "min_commission": {
+            "type": "number",
+            "format": "double"
+          },
+          "stamp_tax_rate": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "BacktestResult": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "name",
+          "fast",
+          "slow",
+          "costs",
+          "summary",
+          "trades",
+          "equity"
+        ],
+        "properties": {
+          "costs": {
+            "$ref": "#/components/schemas/BacktestCosts"
+          },
+          "equity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EquityPoint"
+            },
+            "description": "每个交易日一个点"
+          },
+          "fast": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slow": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/Summary"
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Trade"
+            },
+            "description": "按买入时间排序；最后一笔可能期末仍持有（exit_date 为空）"
+          }
+        }
+      },
+      "Bar": {
+        "type": "object",
+        "description": "日线。价格以字符串返回：未复权为原始十进制；复权价保留 6 位小数",
+        "required": [
+          "trade_date",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume",
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "type": "string",
+            "description": "成交额（元）"
+          },
+          "close": {
+            "type": "string"
+          },
+          "factor": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "复权系数（none 时为空）"
+          },
+          "high": {
+            "type": "string"
+          },
+          "low": {
+            "type": "string"
+          },
+          "open": {
+            "type": "string"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "volume": {
+            "type": "integer",
+            "format": "int64",
+            "description": "成交量（股）"
+          }
+        }
+      },
+      "BarSeries": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "adjust",
+          "bars"
+        ],
+        "properties": {
+          "adjust": {
+            "type": "string"
+          },
+          "bars": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Bar"
+            }
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateRun": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "datasets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "指定数据集；为空时按 priorities 选择已开启的数据集"
+          },
+          "kind": {
+            "type": "string",
+            "description": "backfill（首次全量）或 incremental（增量）"
+          },
+          "priorities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "例：[\"P0\", \"P1\"]"
+          },
+          "thscodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "只同步这些证券（作用于按证券展开的数据集），例：[\"600519.SH\"]"
+          }
+        }
+      },
+      "CreatedRun": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "planned"
+        ],
+        "properties": {
+          "planned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlannedDataset"
+            }
+          },
+          "run_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "第一个波次的运行 ID；后续波次在前一个结束后自动创建，可通过 params.root_run 关联"
+          }
+        }
+      },
+      "CrossSignal": {
+        "type": "string",
+        "enum": [
+          "golden",
+          "death"
+        ]
+      },
+      "DatasetProgress": {
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "tasks",
+          "done",
+          "pending",
+          "running",
+          "failed"
+        ],
+        "properties": {
+          "changed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "dataset_id": {
+            "type": "string"
+          },
+          "done": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "records": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tasks": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DatasetStatus": {
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "domain",
+          "endpoint",
+          "priority",
+          "enabled",
+          "open_tasks",
+          "dead_tasks"
+        ],
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "dead_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "last_done_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "open_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "priority": {
+            "type": "string",
+            "description": "P0–P3"
+          }
+        }
+      },
+      "Diagnosis": {
+        "type": "object",
+        "properties": {
+          "change_1d": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最近 1 个交易日的涨跌幅（0.01 表示 1%）"
+          },
+          "change_20d": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最近 20 个交易日的涨跌幅"
+          },
+          "ma": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MaState",
+                "description": "日线不足 slow 根时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "EquityPoint": {
+        "type": "object",
+        "required": [
+          "date",
+          "equity",
+          "benchmark",
+          "holding"
+        ],
+        "properties": {
+          "benchmark": {
+            "type": "number",
+            "format": "double",
+            "description": "同样的本金在第一天开盘全部买入并一直持有，不计费用"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "equity": {
+            "type": "number",
+            "format": "double",
+            "description": "策略的账户总值（现金加持仓市值）"
+          },
+          "holding": {
+            "type": "boolean",
+            "description": "当天收盘时是否持仓"
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "错误响应体",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "稳定错误码：not_found / bad_request / conflict / unavailable / internal"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "IndexInfo": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "name",
+          "category",
+          "members"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "industry / cn_concept / region / tszs / exchange / ths"
+          },
+          "members": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "IndexMember": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "valid_from"
+        ],
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          }
+        }
+      },
+      "LastCross": {
+        "type": "object",
+        "required": [
+          "signal",
+          "trade_date",
+          "bars_ago"
+        ],
+        "properties": {
+          "bars_ago": {
+            "type": "integer",
+            "format": "int64",
+            "description": "距今几个交易日，0 表示就在诊断日当天"
+          },
+          "signal": {
+            "$ref": "#/components/schemas/CrossSignal"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "MaPoint": {
+        "type": "object",
+        "required": [
+          "trade_date",
+          "close",
+          "ma_fast",
+          "ma_slow"
+        ],
+        "properties": {
+          "close": {
+            "type": "number",
+            "format": "double",
+            "description": "等比前复权收盘价"
+          },
+          "ma_fast": {
+            "type": "number",
+            "format": "double"
+          },
+          "ma_slow": {
+            "type": "number",
+            "format": "double"
+          },
+          "signal": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CrossSignal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "MaSeries": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "fast",
+          "slow",
+          "price_basis",
+          "points"
+        ],
+        "properties": {
+          "fast": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaPoint"
+            }
+          },
+          "price_basis": {
+            "type": "string",
+            "description": "计算口径：等比前复权收盘价的简单移动平均"
+          },
+          "slow": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "MaState": {
+        "type": "object",
+        "required": [
+          "ma_fast",
+          "ma_slow",
+          "trend"
+        ],
+        "properties": {
+          "last_cross": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LastCross",
+                "description": "最近 LOOKBACK 根日线内的最后一次交叉"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ma_fast": {
+            "type": "number",
+            "format": "double"
+          },
+          "ma_slow": {
+            "type": "number",
+            "format": "double"
+          },
+          "trend": {
+            "$ref": "#/components/schemas/MaTrend"
+          }
+        }
+      },
+      "MaTrend": {
+        "type": "string",
+        "enum": [
+          "above",
+          "below",
+          "equal"
+        ]
+      },
+      "NameChange": {
+        "type": "object",
+        "required": [
+          "name",
+          "valid_from",
+          "is_st"
+        ],
+        "properties": {
+          "is_st": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          }
+        }
+      },
+      "Page_Security": {
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "thscode",
+                "ticker",
+                "name",
+                "exchange",
+                "board",
+                "last_seen"
+              ],
+              "properties": {
+                "board": {
+                  "type": "string",
+                  "description": "main / chinext / star / bse"
+                },
+                "delisted_on": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date"
+                },
+                "exchange": {
+                  "type": "string"
+                },
+                "last_seen": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "list_date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "thscode": {
+                  "type": "string"
+                },
+                "ticker": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "PlannedDataset": {
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "tasks"
+        ],
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "RecordItem": {
+        "type": "object",
+        "required": [
+          "rkey",
+          "payload",
+          "changed_at"
+        ],
+        "properties": {
+          "changed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "obs_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "payload": {
+            "type": "object",
+            "description": "供应商原始字段"
+          },
+          "rkey": {
+            "type": "string"
+          },
+          "thscode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RunDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RunSummary"
+          },
+          {
+            "type": "object",
+            "required": [
+              "progress",
+              "failures"
+            ],
+            "properties": {
+              "failures": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TaskFailure"
+                },
+                "description": "最多 50 条失败任务"
+              },
+              "progress": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DatasetProgress"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "RunSummary": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "kind",
+          "status",
+          "tasks_total",
+          "tasks_done",
+          "tasks_failed",
+          "started_at",
+          "params"
+        ],
+        "properties": {
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "kind": {
+            "type": "string",
+            "description": "backfill / incremental"
+          },
+          "params": {
+            "type": "object"
+          },
+          "run_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tasks_done": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "tasks_failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "tasks_total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "trade_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          }
+        }
+      },
+      "ScanHit": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "signal",
+          "close",
+          "ma_fast",
+          "ma_slow"
+        ],
+        "properties": {
+          "close": {
+            "type": "number",
+            "format": "double"
+          },
+          "ma_fast": {
+            "type": "number",
+            "format": "double"
+          },
+          "ma_slow": {
+            "type": "number",
+            "format": "double"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signal": {
+            "$ref": "#/components/schemas/CrossSignal"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "ScanResult": {
+        "type": "object",
+        "required": [
+          "trade_date",
+          "fast",
+          "slow",
+          "scanned",
+          "hits"
+        ],
+        "properties": {
+          "fast": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanHit"
+            }
+          },
+          "scanned": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "slow": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "Security": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "ticker",
+          "name",
+          "exchange",
+          "board",
+          "last_seen"
+        ],
+        "properties": {
+          "board": {
+            "type": "string",
+            "description": "main / chinext / star / bse"
+          },
+          "delisted_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "exchange": {
+            "type": "string"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date"
+          },
+          "list_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "name": {
+            "type": "string"
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "ticker": {
+            "type": "string"
+          }
+        }
+      },
+      "SecurityDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Security"
+          },
+          {
+            "type": "object",
+            "required": [
+              "name_history",
+              "bars"
+            ],
+            "properties": {
+              "bars": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "first_bar": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date",
+                "description": "本地已有日线的范围"
+              },
+              "last_bar": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date"
+              },
+              "name_history": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NameChange"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "SetupStatus": {
+        "type": "object",
+        "required": [
+          "api_key_configured",
+          "api_key_url",
+          "backfill_planned"
+        ],
+        "properties": {
+          "api_key_configured": {
+            "type": "boolean",
+            "description": "是否已经有可用的 API Key；为 false 时同步暂停，前端显示引导页"
+          },
+          "api_key_hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "只露出末尾 4 位，例如 ••••3456"
+          },
+          "api_key_source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ApiKeySource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "api_key_url": {
+            "type": "string",
+            "description": "生成 API Key 的页面"
+          },
+          "backfill_planned": {
+            "type": "boolean",
+            "description": "是否已经规划过全量回补"
+          }
+        }
+      },
+      "Summary": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "days",
+          "capital",
+          "final_equity",
+          "total_return",
+          "max_drawdown",
+          "benchmark_return",
+          "benchmark_max_drawdown",
+          "closed_trades",
+          "wins",
+          "exposure",
+          "fees",
+          "dividends",
+          "deferred_orders",
+          "skipped_buys"
+        ],
+        "properties": {
+          "annual_return": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "年化收益；区间不足 90 个自然日时为空"
+          },
+          "avg_bars_held": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "benchmark_annual_return": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "benchmark_max_drawdown": {
+            "type": "number",
+            "format": "double"
+          },
+          "benchmark_return": {
+            "type": "number",
+            "format": "double"
+          },
+          "capital": {
+            "type": "number",
+            "format": "double"
+          },
+          "closed_trades": {
+            "type": "integer",
+            "description": "已经卖出的交易笔数（不含期末仍持有的那笔）",
+            "minimum": 0
+          },
+          "days": {
+            "type": "integer",
+            "description": "区间内的交易日数",
+            "minimum": 0
+          },
+          "deferred_orders": {
+            "type": "integer",
+            "description": "因一字涨跌停顺延的次数",
+            "minimum": 0
+          },
+          "dividends": {
+            "type": "number",
+            "format": "double",
+            "description": "收到的现金分红合计（元，税前）"
+          },
+          "end": {
+            "type": "string",
+            "format": "date"
+          },
+          "exposure": {
+            "type": "number",
+            "format": "double",
+            "description": "持仓的交易日占比"
+          },
+          "fees": {
+            "type": "number",
+            "format": "double",
+            "description": "佣金和印花税合计（元）"
+          },
+          "final_equity": {
+            "type": "number",
+            "format": "double"
+          },
+          "max_drawdown": {
+            "type": "number",
+            "format": "double",
+            "description": "最大回撤：账户总值从最高点下跌的最大幅度（正数，0.2 表示 20%）"
+          },
+          "skipped_buys": {
+            "type": "integer",
+            "description": "资金不够买一手而放弃的买入信号次数",
+            "minimum": 0
+          },
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "total_return": {
+            "type": "number",
+            "format": "double"
+          },
+          "win_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "赚钱的笔数 / 已卖出的笔数；没有已卖出的交易时为空"
+          },
+          "wins": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "TaskFailure": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "dataset_id",
+          "part_key",
+          "status",
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "dataset_id": {
+            "type": "string"
+          },
+          "last_api_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "part_key": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "Trade": {
+        "type": "object",
+        "required": [
+          "entry_date",
+          "entry_price",
+          "shares",
+          "exit_shares",
+          "cost",
+          "proceeds",
+          "dividends",
+          "pnl",
+          "return_pct",
+          "bars_held"
+        ],
+        "properties": {
+          "bars_held": {
+            "type": "integer",
+            "format": "int64",
+            "description": "持有的交易日数"
+          },
+          "cost": {
+            "type": "number",
+            "format": "double",
+            "description": "买入金额加佣金"
+          },
+          "dividends": {
+            "type": "number",
+            "format": "double",
+            "description": "持有期间收到的现金分红（税前）"
+          },
+          "entry_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "entry_price": {
+            "type": "number",
+            "format": "double",
+            "description": "买入成交价（未复权开盘价）"
+          },
+          "exit_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "卖出日期；期末仍持有时为空"
+          },
+          "exit_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "卖出成交价（未复权开盘价）；期末仍持有时为空"
+          },
+          "exit_shares": {
+            "type": "integer",
+            "format": "int64",
+            "description": "卖出时的股数，持有期间送转股会使它大于买入股数"
+          },
+          "pnl": {
+            "type": "number",
+            "format": "double",
+            "description": "盈亏（元）= 卖出所得 + 分红 − 成本"
+          },
+          "proceeds": {
+            "type": "number",
+            "format": "double",
+            "description": "卖出所得（已扣佣金和印花税）；期末仍持有时是按最后收盘价计算的市值，不扣费"
+          },
+          "return_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "盈亏 / 成本"
+          },
+          "shares": {
+            "type": "integer",
+            "format": "int64",
+            "description": "买入股数"
+          }
+        }
+      },
+      "WatchItem": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "name",
+          "board",
+          "added_at"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "board": {
+            "type": "string",
+            "description": "main / chinext / star / bse"
+          },
+          "close": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delisted_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "diagnosis": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Diagnosis",
+                "description": "按前复权价计算的诊断；还没有日线时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "本地最新一根日线（未复权）的日期和收盘价；还没有日线时为空"
+          },
+          "name": {
+            "type": "string"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "Watchlist": {
+        "type": "object",
+        "required": [
+          "fast",
+          "slow",
+          "items"
+        ],
+        "properties": {
+          "fast": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WatchItem"
+            },
+            "description": "按收藏时间倒序"
+          },
+          "slow": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "健康检查"
+    },
+    {
+      "name": "setup",
+      "description": "首次登录引导：配置 API Key"
+    },
+    {
+      "name": "market",
+      "description": "证券、日线、指数与均线信号"
+    },
+    {
+      "name": "watchlist",
+      "description": "自选股与快速诊断"
+    },
+    {
+      "name": "backtest",
+      "description": "策略回测"
+    },
+    {
+      "name": "sync",
+      "description": "数据集与同步运行"
+    }
+  ]
+}
