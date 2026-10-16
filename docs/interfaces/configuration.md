@@ -40,16 +40,15 @@
 <a id="deploy_env"></a>
 ## 部署配置
 
-用 Docker Compose 部署时，所有配置都写在 `deploy/.env` 中，模板是 `deploy/.env.example`。这个文件同时有两个用途：Compose 用它展开 `compose.yml` 中的变量，niulai 容器也把它作为环境变量读入，所以上面的 `NIULAI_*` 变量都可以写在这里。只在部署时使用的变量：
+Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.example` 列出了全部常用项，默认值可以直接使用。这个文件有两个用途：Compose 用它展开 `compose.yml` 中的变量（镜像、端口、内置数据库的密码），niulai 容器也把它作为环境变量读入，所以 `DATABASE_URL` 和上表中的 `NIULAI_*` 都写在这里。只在 Docker 部署时使用的变量：
 
-| 变量 | 必填 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `POSTGRES_PASSWORD` | 使用内置数据库时 | — | 内置数据库的密码；`DATABASE_URL` 未设置时，niulai 用它连接内置数据库 |
-| `NIULAI_IMAGE` | 否 | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；服务器上建议固定版本号，例如 `ghcr.io/duoyuli/niulai:0.1.0` |
-| `NIULAI_LISTEN` | 否 | `127.0.0.1:8080` | niulai 在宿主机上监听的地址和端口；要从其他机器访问时改成 `0.0.0.0:8080` |
-| `COMPOSE_PROFILES` | 否 | 空 | `db` 表示启动内置 PostgreSQL；使用已有的数据库时留空，并设置 `DATABASE_URL` |
+| 变量 | 默认值 | 含义 |
+| --- | --- | --- |
+| `NIULAI_IMAGE` | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；建议固定版本号，例如 `ghcr.io/duoyuli/niulai:0.1.0` |
+| `NIULAI_LISTEN_ADDR`、`NIULAI_PORT` | `127.0.0.1`、`8080` | niulai 在宿主机上监听的地址和端口；端口被占用时改 `NIULAI_PORT`，要从其他机器访问时把地址改成 `0.0.0.0` |
+| `POSTGRES_PASSWORD` | `niulai` | 内置数据库的密码，要与 `DATABASE_URL` 中的一致；只在第一次启动（创建数据卷）之前修改才生效 |
 
-API Key 一般不写在这里，而是第一次打开网页时配置，见 [首次登录引导](rest_api.md#setup)。
+`DATABASE_URL` 默认是 `postgres://niulai:niulai@postgres:5432/niulai`，指向同一个 Compose 中的内置数据库。容器内的监听地址、前端目录和数据集配置路径由镜像固定（`NIULAI_API_BIND=0.0.0.0:8080`、`NIULAI_WEB_DIR`、`NIULAI_DATASETS_PATH`），不要在 `.env` 中修改。
 
 <a id="config_files"></a>
 ## 配置文件
@@ -65,5 +64,5 @@ API Key 一般不写在这里，而是第一次打开网页时配置，见 [首�
 | `frontend/vite.config.ts` | Vite 配置；开发时把 `/api` 转发到 `NIULAI_API_URL`（默认 `http://127.0.0.1:8080`） |
 | `deploy/Dockerfile` | 镜像构建：先构建前端，再编译后端，构建上下文是仓库根目录（`.dockerignore` 在根目录） |
 | `.github/workflows/ci.yml` | CI：检查代码，`main` 有合并或推送版本标签时构建 amd64、arm64 镜像并推送到 GHCR，见 [CI：构建镜像](../operations/runbook.md#release_image) |
-| `deploy/compose.yml` | Docker 部署：内置 PostgreSQL 和 niulai，读取 `deploy/.env` |
-| `deploy/.env` | 部署配置，见 [部署配置](#deploy_env)；含密码，不提交 |
+| `deploy/compose.yml` | Docker 部署：内置 PostgreSQL 和 niulai，配置读取 `deploy/.env` |
+| `deploy/.env`、`deploy/.env.example` | Docker 部署的配置和模板，见 [部署配置](#deploy_env)；`.env` 含密码，不提交 |

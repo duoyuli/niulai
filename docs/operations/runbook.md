@@ -146,12 +146,12 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 ## 部署
 
 分两部分：CI 在 GitHub 上检查代码并构建镜像；CD 是把服务运行起来，有两种方式：
-- **Docker 部署**（默认）：使用 CI 构建的镜像，用 `deploy/compose.yml` 运行 PostgreSQL 和 niulai 两个容器，配置在 `deploy/.env`。
+- **Docker 部署**（默认）：使用 CI 构建的镜像，用 `deploy/compose.yml` 运行内置 PostgreSQL 和 niulai 两个容器，配置在 `deploy/.env`。
 - **源码部署**：不用 Docker，在服务器上编译前端和后端，直接运行编译出的程序 `niulai`，配置在 `backend/.env`，数据库自己准备。
 
 两种方式运行的是同一个程序，行为相同。环境变量见 [配置](../interfaces/configuration.md)，取舍见 [ADR：CI 构建镜像，部署只交付服务本身](../decisions/ci_cd.md)。
 
-服务对外只有一个 HTTP 端口，默认 `127.0.0.1:8080`：
+服务对外只有一个 HTTP 端口，默认 `127.0.0.1:8080`（Docker 部署在 `.env` 的 `NIULAI_LISTEN_ADDR`、`NIULAI_PORT` 中修改，源码部署是 `NIULAI_API_BIND`）：
 
 | 路径 | 内容 |
 | --- | --- |
@@ -181,7 +181,7 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 
 步骤：
 1. 把 `deploy/compose.yml` 和 `deploy/.env.example` 放到服务器的一个目录中，例如 `/opt/niulai/`。
-2. `cp .env.example .env`，填写 `POSTGRES_PASSWORD`（可以用 `openssl rand -hex 16` 生成），需要时修改 `NIULAI_IMAGE` 和 `NIULAI_LISTEN`。变量见 [部署配置](../interfaces/configuration.md#deploy_env)。
+2. `cp .env.example .env`。其中都是可以直接使用的默认值，按需修改，例如端口 `NIULAI_PORT`、镜像版本 `NIULAI_IMAGE`。变量见 [部署配置](../interfaces/configuration.md#deploy_env)。
 3. `docker compose up -d`。
 4. 预期结果：`docker compose ps` 中 `niulai` 显示 `healthy`；`curl http://127.0.0.1:8080/api/v1/ready` 返回 `{"status":"ready"}`。
 5. 打开网页，按引导配置 API Key。
@@ -190,8 +190,6 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 - 状态和日志：`docker compose ps`、`docker compose logs -f niulai`。
 - 运维命令：`docker compose exec niulai niulai status`，其他子命令同理。
 - 停机：`docker compose down`。niulai 有 2 分钟的停机等待，等正在执行的任务结束，未完成的任务留在队列中，下次启动继续执行。
-
-使用已有的 PostgreSQL（16 或以上）：在 `.env` 中把 `COMPOSE_PROFILES` 改成空，填写 `DATABASE_URL`。库要先建好，主机要能从容器访问（宿主机上的数据库写 `host.docker.internal`）。
 
 使用本机构建的镜像：在仓库根目录执行 `docker build -f deploy/Dockerfile -t niulai:local .`，把 `.env` 中的 `NIULAI_IMAGE` 改成 `niulai:local`，再执行 `docker compose up -d`。
 
@@ -228,7 +226,7 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 <a id="backup_restore"></a>
 ### 备份与恢复
 
-以下命令在 `compose.yml` 所在目录执行，适用于 Docker 部署的内置数据库。源码部署或使用外部数据库时，对那个库直接执行同样的 `pg_dump`、`psql`、`pg_restore`，停止和启动 niulai 换成停止和启动程序。
+以下命令在 `compose.yml` 所在目录执行，适用于 Docker 部署的内置数据库。源码部署时，对 `DATABASE_URL` 指向的库直接执行同样的 `pg_dump`、`psql`、`pg_restore`，停止和启动 niulai 换成停止和启动程序。
 
 备份（pg_dump 自定义格式，已压缩）：
 

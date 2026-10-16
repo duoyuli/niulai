@@ -1,10 +1,10 @@
-# niulai 的 Docker 部署（默认方式）：使用 CI 构建好的镜像，运行 PostgreSQL 和 niulai 两个容器。
-# 对外只暴露 niulai 的一个 HTTP 端口（默认 127.0.0.1:8080），页面和 API 都在这个端口上。
+# niulai 的 Docker 部署：使用 CI 构建好的镜像，运行内置 PostgreSQL 和 niulai 两个容器。
+# 对外只暴露 niulai 的一个 HTTP 端口，页面和 API 都在这个端口上。全部配置在同目录的 .env 中。
 #
-#   cp .env.example .env     # 填写 .env，说明见文件内
-#   docker compose up -d     # 在本目录执行；之后打开网页，按引导配置 API Key
+#   cp .env.example .env     # 默认值可以直接使用，按需修改端口等
+#   docker compose up -d     # 之后打开网页，按引导配置 API Key
 #
-# 使用本机构建的镜像时，把 .env 中的 NIULAI_IMAGE 改成那个镜像（构建命令见 Dockerfile 开头）。
+# 使用本机构建的镜像时，在 .env 中把 NIULAI_IMAGE 改成那个镜像（构建命令见 Dockerfile 开头）。
 # 不用 Docker、直接编译运行的方式见 docs/operations/runbook.md#source_deploy；升级、备份、恢复见同一文档的「部署」一节。
 name: niulai
 
@@ -13,14 +13,13 @@ x-logging: &logging
   options: { max-size: 20m, max-file: "5" }
 
 services:
-  # 内置数据库（profile db）。用已有的 PostgreSQL 时，在 .env 中去掉 db 并填写 DATABASE_URL
+  # 内置数据库：数据在卷 pgdata 中。端口不对外暴露，只有 niulai 容器能连接
   postgres:
     image: postgres:18.6
-    profiles: [db]
     environment:
       POSTGRES_USER: niulai
       POSTGRES_DB: niulai
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-niulai}
     command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_wal_size=2GB"]
     volumes: [pgdata:/var/lib/postgresql]
     restart: unless-stopped
@@ -35,15 +34,13 @@ services:
   niulai:
     image: ${NIULAI_IMAGE:-ghcr.io/duoyuli/niulai:latest}
     command: ["niulai", "serve"]
+    # .env 中的 DATABASE_URL、NIULAI_* 等变量传给 niulai
     env_file: .env
-    environment:
-      # 默认连内置数据库；.env 中设置了 DATABASE_URL 时用它
-      DATABASE_URL: ${DATABASE_URL:-postgres://niulai:${POSTGRES_PASSWORD:-}@postgres:5432/niulai}
     depends_on:
-      postgres: { condition: service_healthy, required: false }
+      postgres: { condition: service_healthy }
     # 对外只有这一个 HTTP 端口：页面 /，接口 /api/v1/*，健康检查 /api/v1/health、/api/v1/ready。
     # 服务本身没有登录和访问控制，默认只监听本机
-    ports: ["${NIULAI_LISTEN:-127.0.0.1:8080}:8080"]
+    ports: ["${NIULAI_LISTEN_ADDR:-127.0.0.1}:${NIULAI_PORT:-8080}:8080"]
     restart: unless-stopped
     stop_grace_period: 2m      # 停机时等正在执行的任务结束
     healthcheck:

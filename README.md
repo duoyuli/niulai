@@ -24,7 +24,7 @@ A 股个股诊断工作台。把同花顺金融数据服务的行情、公司行
 mkdir niulai && cd niulai
 curl -O https://raw.githubusercontent.com/duoyuli/niulai/main/deploy/compose.yml
 curl -o .env https://raw.githubusercontent.com/duoyuli/niulai/main/deploy/.env.example
-# 编辑 .env：填写 POSTGRES_PASSWORD（例如 openssl rand -hex 16 生成）
+# .env 中都是可以直接使用的默认值；端口等按需修改
 docker compose up -d
 ```
 

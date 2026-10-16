@@ -32,7 +32,7 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 在仓库根目录执行：
 
 - 构建镜像：`docker build -f deploy/Dockerfile -t niulai:local .`
-- 本机 Docker 部署：`docker compose -f deploy/compose.yml up -d`（`deploy/.env` 中 `NIULAI_IMAGE=niulai:local`）
+- 本机 Docker 部署：`docker compose -f deploy/compose.yml up -d --no-deps niulai`（`deploy/.env` 中 `NIULAI_IMAGE=niulai:local`，`DATABASE_URL` 指向宿主机上的 dev-postgresql，所以不启动内置数据库）
 - Docker 部署、源码部署（直接编译运行）、升级、备份恢复：见 `docs/operations/runbook.md` 的「部署」
 
 ## 工作约定
