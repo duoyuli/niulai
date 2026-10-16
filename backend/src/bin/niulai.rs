@@ -7,6 +7,7 @@
 //!   niulai work --until-idle                    # 在前台执行任务，队列空了就退出
 //!   niulai daily                                # 立即发起一次每日增量（不等调度时间）
 //!   niulai status
+//!   niulai upgrader                             # Docker 部署的一键升级助手（upgrader 容器中）
 
 use std::sync::Arc;
 
@@ -75,6 +76,18 @@ enum Cmd {
     },
     /// 输出 OpenAPI 规范（JSON）
     Openapi,
+    /// 一键升级助手：在 Docker 部署的 upgrader 容器中运行，不连接数据库
+    Upgrader {
+        /// 与 niulai 共享的目录
+        #[arg(long, default_value = "/upgrade")]
+        upgrade_dir: std::path::PathBuf,
+        /// compose.yml 和 .env 所在目录
+        #[arg(long, default_value = "/deploy")]
+        deploy_dir: std::path::PathBuf,
+        /// Docker 的控制接口
+        #[arg(long, default_value = "/var/run/docker.sock")]
+        socket: std::path::PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -85,6 +98,9 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     telemetry::init();
+    if let Cmd::Upgrader { upgrade_dir, deploy_dir, socket } = cli.cmd {
+        return niulai::upgrader::run(niulai::upgrader::Options { upgrade_dir, deploy_dir, socket }).await;
+    }
     let settings = Settings::load()?;
     let pool = db::connect(&settings).await?;
     if let Cmd::Migrate = cli.cmd {
@@ -95,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
     db::migrate(&pool).await?;
     let engine = Engine::new(settings, pool).await?;
     match cli.cmd {
-        Cmd::Migrate | Cmd::Openapi => unreachable!(),
+        Cmd::Migrate | Cmd::Openapi | Cmd::Upgrader { .. } => unreachable!(),
         Cmd::Serve { no_api, no_worker, no_scheduler } => {
             let opts = ServeOptions { api: !no_api, worker: !no_worker, scheduler: !no_scheduler && engine.settings.scheduler_enabled };
             server::serve(engine, opts).await?;

@@ -179,7 +179,7 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 前提条件：Docker Engine 和 Compose 插件 2.20 或以上；内存 2 GB 以上；磁盘 20 GB 以上（全量数据约 4 GB，之后持续增长）。
 
 步骤：
-1. 把 `deploy/compose.yml`、`deploy/upgrader.sh` 和 `deploy/.env.example` 放到服务器的一个目录中，例如 `/opt/niulai/`。
+1. 把 `deploy/compose.yml` 和 `deploy/.env.example` 放到服务器的一个目录中，例如 `/opt/niulai/`。
 2. `cp .env.example .env`。其中都是可以直接使用的默认值，按需修改，例如端口 `NIULAI_PORT`、镜像版本 `NIULAI_IMAGE`。变量见 [部署配置](../interfaces/configuration.md#deploy_env)。
 3. `docker compose up -d`。
 4. 预期结果：`docker compose ps` 中 `niulai` 显示 `healthy`；`curl http://127.0.0.1:8080/api/v1/ready` 返回 `{"status":"ready"}`。
@@ -218,23 +218,24 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 
 页面左上角 logo 后面是当前版本号。niulai 每 6 小时查一次 GitHub 上最新的 `vX.Y.Z` 标签（`NIULAI_UPDATE_REPO`，默认 `duoyuli/niulai`），有新版本时亮红点；点开后点「一键升级」。
 
-执行升级的是 `compose.yml` 中的 `upgrader` 容器（`docker:cli` 镜像，运行同目录的 `upgrader.sh`），由 `.env` 中的 `COMPOSE_PROFILES=upgrader` 启用。niulai 和 upgrader 通过卷 `upgrade`（niulai 中是 `NIULAI_UPGRADE_DIR=/upgrade`）交换文件：
+执行升级的是 `compose.yml` 中的 `upgrader` 容器：它用与 niulai 相同的镜像，运行 `niulai upgrader`，通过 `/var/run/docker.sock` 直接调用 Docker Engine API，由 `.env` 中的 `COMPOSE_PROFILES=upgrader` 启用。niulai 和 upgrader 通过卷 `upgrade`（niulai 中是 `NIULAI_UPGRADE_DIR=/upgrade`）交换文件：
 - niulai 写 `request`，内容只是版本号，例如 `1.2.0`；upgrader 只接受 `X.Y.Z` 格式。
 - upgrader 每 3 秒写一次 `heartbeat`；30 秒内没有更新时，页面显示「没有启用一键升级」和手动升级的命令。
 - upgrader 把进度写在 `status`，输出写在 `log`，页面每 2 秒刷新一次，失败时显示日志的最后几行。
 
 upgrader 收到请求后依次执行：
-1. 下载新镜像 `ghcr.io/<所有者>/niulai:<版本>`。下载失败时什么都不改。
-2. `DATABASE_URL` 指向内置数据库时，用 `pg_dump` 备份到 `backups/niulai-before-<版本>-<时间>.dump`。备份失败时不升级。
-3. 把 `.env` 中的 `NIULAI_IMAGE` 改成新版本，执行 `docker compose up -d --no-deps niulai`，最多等 5 分钟让 niulai 恢复 `healthy`。
-4. 新版本没有恢复 `healthy` 时，把 `NIULAI_IMAGE` 改回原来的版本并重建。新版本可能已经执行了数据库迁移，旧版本起不来时用第 2 步的备份恢复，见下一节的回滚。
+1. 下载新镜像 `ghcr.io/<所有者>/niulai:<版本>`。下载失败、本机也没有这个镜像时，什么都不改。
+2. niulai 的 `DATABASE_URL` 指向内置数据库时，在 postgres 容器中执行 `pg_dump`，备份到部署目录的 `backups/niulai-before-<版本>-<时间>.dump`。备份失败时不升级。
+3. 把 `.env` 中的 `NIULAI_IMAGE` 改成新版本；停止旧的 niulai 容器（最多等 2 分钟），按它的配置（命令、环境变量、卷、端口、网络、Compose 标签）用新镜像创建并启动新容器，最多等 5 分钟让它恢复 `healthy`，成功后删掉旧容器。
+4. 新容器启动后退出、被反复重启，或 5 分钟内没有恢复 `healthy` 时，删掉新容器，启动旧容器，并把 `.env` 改回去。新版本可能已经执行了数据库迁移，旧版本起不来时用第 2 步的备份恢复，见下一节的回滚。
+5. niulai 升级成功后，upgrader 用新镜像重建自己。
 
 页面发现运行的版本变成目标版本后自动刷新。整个过程中 niulai 有一次停机，最长 2 分钟的停机等待加上启动时间。
 
 要求和限制：
 - `NIULAI_IMAGE` 要是发布的镜像（`ghcr.io/<所有者>/niulai:...`）；本机构建的 `niulai:local` 不能一键升级，开发版也不检查更新。
 - upgrader 挂载了 `/var/run/docker.sock`，能管理这台机器上的所有容器。niulai 没有这个权限，网页上能做的只是提交一个版本号。不需要一键升级时，删掉 `.env` 中的 `COMPOSE_PROFILES=upgrader`，再执行 `docker compose up -d --remove-orphans`。
-- 一键升级只更换 niulai 镜像，不更新 `compose.yml`、`upgrader.sh` 和 `.env.example`。新版本需要改这些文件时，发布说明中会写明，按下一节手动更新。
+- 一键升级只更换镜像，不更新 `compose.yml` 和 `.env.example`。新版本需要改这些文件时，发布说明中会写明，按下一节手动更新。重建的容器之后执行 `docker compose up -d` 时还会再重建一次，结果相同。
 - 为什么这样设计，见 [ADR：Docker 部署的一键升级](../decisions/one_click_upgrade.md)。
 
 <a id="upgrade"></a>

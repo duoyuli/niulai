@@ -55,17 +55,17 @@ services:
       start_period: 60s
     logging: *logging
 
-  # 一键升级助手：网页上点「一键升级」后，由它备份内置数据库、拉取新镜像并重建 niulai 容器，脚本是同目录的 upgrader.sh。
+  # 一键升级助手：网页上点「一键升级」后，由它备份内置数据库、拉取新镜像并重建 niulai 容器（niulai upgrader）。
   # 它挂载 Docker 的控制接口，能管理这台机器上的容器；niulai 没有这个权限，只能通过共享卷 upgrade 提交一个版本号。
   # .env 中的 COMPOSE_PROFILES=upgrader 启用它，删掉这一行即可关闭一键升级
   upgrader:
-    image: docker:29.8.2-cli
+    image: ${NIULAI_IMAGE:-ghcr.io/duoyuli/niulai:latest}
     profiles: [upgrader]
-    # 缺少 upgrader.sh 时只打印提示、不反复重启；页面上显示「没有启用一键升级」
-    command: ["sh", "-c", "[ -f /deploy/upgrader.sh ] && exec sh /deploy/upgrader.sh; echo '缺少 upgrader.sh：把它下载到 compose.yml 所在目录后执行 docker compose up -d'; exec sleep infinity"]
+    command: ["niulai", "upgrader"]
+    user: root                 # 访问 Docker 的控制接口需要 root
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./:/deploy
+      - ./:/deploy             # 改写 .env 中的 NIULAI_IMAGE，备份写到 backups/
       - upgrade:/upgrade
     restart: unless-stopped
     logging: *logging

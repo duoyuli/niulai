@@ -24,7 +24,6 @@ A 股个股诊断工作台。把同花顺金融数据服务的行情、公司行
 ```bash
 mkdir niulai && cd niulai
 curl -O https://raw.githubusercontent.com/duoyuli/niulai/main/deploy/compose.yml
-curl -O https://raw.githubusercontent.com/duoyuli/niulai/main/deploy/upgrader.sh
 curl -o .env https://raw.githubusercontent.com/duoyuli/niulai/main/deploy/.env.example
 # .env 中都是可以直接使用的默认值；端口等按需修改
 docker compose up -d
@@ -39,7 +38,7 @@ docker compose up -d
 ```
 backend/    Rust 后端（Axum、SQLx、Tokio）：一个程序 niulai，niulai serve 同时提供网页、REST API、同步任务执行和定时调度
 frontend/   React 前端（TypeScript、Vite、TanStack Query、Tailwind CSS、Lightweight Charts）
-deploy/     Dockerfile、Docker Compose 部署文件和一键升级脚本 upgrader.sh
+deploy/     Dockerfile 和 Docker Compose 部署文件
 docs/       工程文档：架构、业务规则、接口、运维手册、架构决策记录
 .github/    CI：检查代码；推送 v* 标签时构建多架构镜像并推送到 ghcr.io/duoyuli/niulai
 ```
