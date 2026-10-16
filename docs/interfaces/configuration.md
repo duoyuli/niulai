@@ -40,19 +40,16 @@
 <a id="deploy_env"></a>
 ## 部署配置
 
-用 Docker Compose 部署时，所有配置都写在 `deploy/.env` 中，模板是 `deploy/.env.example`，`deploy/install.sh` 首次运行时生成。这个文件同时有两个用途：Compose 用它展开 `compose.yml` 中的变量，niulai 容器也把它作为环境变量读入，所以上面的 `NIULAI_*` 变量都可以写在这里。只在部署时使用的变量：
+用 Docker Compose 部署时，所有配置都写在 `deploy/.env` 中，模板是 `deploy/.env.example`。这个文件同时有两个用途：Compose 用它展开 `compose.yml` 中的变量，niulai 容器也把它作为环境变量读入，所以上面的 `NIULAI_*` 变量都可以写在这里。只在部署时使用的变量：
 
 | 变量 | 必填 | 默认值 | 含义 |
 | --- | --- | --- | --- |
-| `NIULAI_IMAGE` | 是 | — | 镜像地址，例如 `ghcr.io/<所有者>/niulai:0.1.0`；本机构建时是 `niulai:latest` |
-| `COMPOSE_PROFILES` | 否 | 空 | 启用的可选服务：`db`（内置 PostgreSQL）、`proxy`（Caddy：HTTPS 和登录），逗号分隔 |
-| `POSTGRES_PASSWORD` | 启用 `db` 时 | — | 内置数据库的密码，`install.sh` 随机生成；`DATABASE_URL` 要使用同一个密码 |
-| `NIULAI_DOMAIN` | 启用 `proxy` 时 | — | 公网域名，Caddy 为它申请证书 |
-| `NIULAI_PORT` | 否 | `8080` | niulai 在宿主机上的端口，只监听 `127.0.0.1` |
-| `NIULAI_HTTP_PORT`、`NIULAI_HTTPS_PORT` | 否 | `80`、`443` | Caddy 在宿主机上的端口 |
-| `NIULAI_BACKUP_KEEP` | 否 | `7` | `backup.sh` 保留的备份份数 |
+| `POSTGRES_PASSWORD` | 使用内置数据库时 | — | 内置数据库的密码；`DATABASE_URL` 未设置时，niulai 用它连接内置数据库 |
+| `NIULAI_IMAGE` | 否 | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；服务器上建议固定版本号，例如 `ghcr.io/duoyuli/niulai:0.1.0` |
+| `NIULAI_LISTEN` | 否 | `127.0.0.1:8080` | niulai 在宿主机上监听的地址和端口，反向代理转发到这里 |
+| `COMPOSE_PROFILES` | 否 | 空 | `db` 表示启动内置 PostgreSQL；使用已有的数据库时留空，并设置 `DATABASE_URL` |
 
-`DATABASE_URL` 同样必填，`install.sh` 会写入。API Key 一般不写在这里，而是第一次打开网页时配置。网页登录的用户名和密码哈希不在 `.env` 中，在 `deploy/caddy/auth.caddy` 中，见 [在服务器上安装](../operations/runbook.md#server_install)。
+API Key 一般不写在这里，而是第一次打开网页时配置，见 [首次登录引导](rest_api.md#setup)。
 
 <a id="config_files"></a>
 ## 配置文件
@@ -67,9 +64,7 @@
 | `frontend/orval.config.ts` | 从 `frontend/openapi.json` 生成接口客户端的配置 |
 | `frontend/vite.config.ts` | Vite 配置；开发时把 `/api` 转发到 `NIULAI_API_URL`（默认 `http://127.0.0.1:8080`） |
 | `deploy/Dockerfile` | 镜像构建：先构建前端，再编译后端，构建上下文是仓库根目录（`.dockerignore` 在根目录） |
-| `.github/workflows/image.yml` | 构建 amd64、arm64 镜像并推送到 GHCR，见 [发布镜像](../operations/runbook.md#release_image) |
-| `deploy/compose.yml` | 部署配置：内置 PostgreSQL、niulai、Caddy，读取 `deploy/.env` |
-| `deploy/compose.build.yml`、`deploy/compose.dev-infra.yml` | 本机部署时叠加使用：从源码构建镜像；加入 `dev-infra` 网络 |
+| `.github/workflows/ci.yml` | CI：检查代码，`main` 有合并或推送版本标签时构建 amd64、arm64 镜像并推送到 GHCR，见 [CI：构建镜像](../operations/runbook.md#release_image) |
+| `deploy/compose.yml` | Docker 部署：内置 PostgreSQL 和 niulai，读取 `deploy/.env` |
+| `deploy/compose.source.yml` | 源码部署时叠加使用：在本机从源码构建镜像 |
 | `deploy/.env` | 部署配置，见 [部署配置](#deploy_env)；含密码，不提交 |
-| `deploy/Caddyfile`、`deploy/caddy/auth.caddy` | Caddy 的站点配置；网页登录的用户名和密码哈希（`install.sh` 生成，不提交） |
-| `deploy/*.sh` | `install.sh` 安装、`upgrade.sh` 升级、`backup.sh` 备份、`restore.sh` 恢复，`lib.sh` 是它们共用的函数 |

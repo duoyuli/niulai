@@ -1,7 +1,0 @@
-# 公网入口：自动申请并续期 HTTPS 证书（域名要解析到本机，80、443 端口要放行），所有页面和接口都要登录。
-# niulai 本身没有用户体系，登录由这里的 HTTP 基本认证完成；用户名和密码哈希在 caddy/auth.caddy 中。
-{$NIULAI_DOMAIN} {
-	encode zstd gzip
-	import /etc/caddy/auth.caddy
-	reverse_proxy niulai:8080
-}

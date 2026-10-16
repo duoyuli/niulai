@@ -1,6 +1,6 @@
 # ADR：API Key 在首次登录引导中配置
 
-- 状态：已采纳（accepted），2026-10-16。取代 [ADR：部署方案](deployment.md) 决策第 4 条中「`install.sh` 询问 API Key」和第 5 条中「首次安装时规划全量回补」。
+- 状态：已采纳（accepted），2026-10-16。取代 [ADR：部署方案](deployment.md) 决策第 4 条中「`install.sh` 询问 API Key」和第 5 条中「首次安装时规划全量回补」。「谁能修改 Key」一条中「页面在 Caddy 登录之后」已不成立：Caddy 已去掉，访问控制由使用者的反向代理负责，见 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md)。
 - 相关文档：[首次登录引导](../interfaces/rest_api.md#setup)、[配置](../interfaces/configuration.md#settings)、[在服务器上安装](../operations/runbook.md#server_install)、[前端](../architecture/frontend.md#pages)。
 
 ## 背景

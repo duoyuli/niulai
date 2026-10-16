@@ -1,13 +1,11 @@
-# niulai 部署：在任何装有 Docker 的服务器上，用 GitHub 镜像仓库里的镜像一键启动。
+# niulai 的 Docker 部署（默认方式）：使用 CI 构建好的镜像，运行 PostgreSQL 和 niulai 两个容器。
+# 对外只暴露 niulai 的 HTTP 端口（默认 127.0.0.1:8080）；HTTPS、域名和登录由前面的反向代理负责。
 #
-#   ./install.sh          # 首次安装：生成 .env，启动，等待就绪，规划首次回补
-#   ./upgrade.sh          # 升级：先备份，再拉取新镜像并重启
-#   ./backup.sh           # 备份数据库到 backups/
+#   cp .env.example .env     # 填写 .env，说明见文件内
+#   docker compose up -d     # 在本目录执行；之后打开网页，按引导配置 API Key
 #
-# 所有配置都在同目录的 .env 中（模板 .env.example，由 install.sh 生成）。服务按 COMPOSE_PROFILES 启用：
-#   db     内置 PostgreSQL；已有数据库时去掉，并在 .env 中填 DATABASE_URL
-#   proxy  Caddy 反向代理：自动申请 HTTPS 证书，用户名密码登录；不对公网开放时去掉，用 SSH 隧道访问
-# 说明见 docs/operations/runbook.md#deployment。
+# 从源码构建镜像（不使用镜像仓库）时，叠加 compose.source.yml，见那个文件开头。
+# 升级、备份、恢复见 docs/operations/runbook.md#deployment。
 name: niulai
 
 x-logging: &logging
@@ -15,13 +13,14 @@ x-logging: &logging
   options: { max-size: 20m, max-file: "5" }
 
 services:
+  # 内置数据库（profile db）。用已有的 PostgreSQL 时，在 .env 中去掉 db 并填写 DATABASE_URL
   postgres:
     image: postgres:18.6
     profiles: [db]
     environment:
       POSTGRES_USER: niulai
       POSTGRES_DB: niulai
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}     # install.sh 随机生成；为空时数据库拒绝启动
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_wal_size=2GB"]
     volumes: [pgdata:/var/lib/postgresql]
     restart: unless-stopped
@@ -34,14 +33,17 @@ services:
     logging: *logging
 
   niulai:
-    image: ${NIULAI_IMAGE:?在 .env 中设置 NIULAI_IMAGE}
+    image: ${NIULAI_IMAGE:-ghcr.io/duoyuli/niulai:latest}
     command: ["niulai", "serve"]
     env_file: .env
+    environment:
+      # 默认连内置数据库；.env 中设置了 DATABASE_URL 时用它
+      DATABASE_URL: ${DATABASE_URL:-postgres://niulai:${POSTGRES_PASSWORD:-}@postgres:5432/niulai}
     depends_on:
-      # 没有启用 db 时（使用外部数据库）不等待
       postgres: { condition: service_healthy, required: false }
-    # 只监听本机：公网经 Caddy 访问，或用 SSH 隧道 ssh -L 8080:127.0.0.1:8080 <服务器>
-    ports: ["127.0.0.1:${NIULAI_PORT:-8080}:8080"]
+    # 对外只有这一个 HTTP 端口：页面 /，接口 /api/v1/*，健康检查 /api/v1/health、/api/v1/ready。
+    # 默认只监听本机，由同机的反向代理（例如 Nginx）转发；HTTPS、登录、访问控制都在反向代理上做
+    ports: ["${NIULAI_LISTEN:-127.0.0.1:8080}:8080"]
     restart: unless-stopped
     stop_grace_period: 2m      # 停机时等正在执行的任务结束
     healthcheck:
@@ -52,25 +54,5 @@ services:
       start_period: 60s
     logging: *logging
 
-  caddy:
-    image: caddy:2.11.6
-    profiles: [proxy]
-    environment:
-      NIULAI_DOMAIN: ${NIULAI_DOMAIN:-}             # 启用 proxy 时必填
-    ports:
-      - "${NIULAI_HTTP_PORT:-80}:80"
-      - "${NIULAI_HTTPS_PORT:-443}:443"
-      - "${NIULAI_HTTPS_PORT:-443}:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./caddy/auth.caddy:/etc/caddy/auth.caddy:ro    # 登录用户名和密码哈希，由 install.sh 生成
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on: [niulai]
-    restart: unless-stopped
-    logging: *logging
-
 volumes:
   pgdata:
-  caddy_data:
-  caddy_config:

@@ -7,10 +7,11 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 - `backend/`：Rust 后端（Axum、SQLx、Tokio），只有一个程序 `niulai`：`niulai serve` 是常驻服务，其余子命令是运维命令。迁移在 `backend/migrations/`，数据集配置在 `backend/config/datasets.yaml`，本地配置在 `backend/.env`（不提交）。
 - `frontend/`：前端（React 19、TypeScript 6、Vite、TanStack Query、React Router、Tailwind CSS、Lightweight Charts），包管理用 pnpm。接口类型和 hooks 由 orval 从 `frontend/openapi.json` 生成在 `src/api/generated/`，不手工修改。
 - `docs/`：Project Doc 文档库；`docs/research/` 是调研笔记，不属于文档库。
-- `deploy/`：部署文件：`Dockerfile`（构建上下文是仓库根目录，同时构建前端和后端）、Docker Compose 配置、`install.sh` 等运维脚本；部署配置在 `deploy/.env`（不提交）。
-- `.github/workflows/image.yml`：构建 amd64、arm64 镜像并推送到 GHCR。
+- `deploy/`：CD。`Dockerfile`（构建上下文是仓库根目录，同时构建前端和后端）、`compose.yml`（Docker 部署）、`compose.source.yml`（源码部署）；部署配置在 `deploy/.env`（不提交）。
+- `.github/workflows/ci.yml`：CI。检查代码；`main` 有合并或推送 `v*` 标签时构建 amd64、arm64 镜像并推送到 GHCR。
 - `.agents/skills/project-doc/`：本仓库使用的 project-doc skill；`.claude/skills/project-doc` 是指向它的符号链接。
 - `CLAUDE.md`：指向本文件的符号链接，供只读取 CLAUDE.md 的工具使用。
+- `README.md`：给第一次进入仓库的人看的项目介绍和快速开始。
 
 ## 常用命令
 
@@ -30,8 +31,8 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 
 在仓库根目录执行：
 
-- 本机部署：`docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f deploy/compose.dev-infra.yml up -d --build`
-- 服务器部署：拷贝 `deploy/` 后执行 `./install.sh`，见 `docs/operations/runbook.md` 的「部署」
+- 源码部署（本机开发环境也用这种方式）：`docker compose -f deploy/compose.yml -f deploy/compose.source.yml up -d --build`
+- Docker 部署、升级、备份恢复：见 `docs/operations/runbook.md` 的「部署」
 
 ## 工作约定
 
@@ -41,7 +42,6 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 - 新增或修改 API 时，`#[utoipa::path]` 的每个响应都写 `description`，否则前端生成客户端失败。
 - 前端依赖精确锁定版本；`frontend/pnpm-workspace.yaml` 要求依赖发布满 3 天才安装，不要为了装最新版而放宽这条策略。
 - API Key、数据库密码只放在 `backend/.env`、`deploy/.env` 或部署环境变量中，不写进代码、日志、文档或提交。
-- 修改 `deploy/*.sh` 后用 shellcheck 检查；中文紧跟变量时写成 `${VAR}`，否则旧版 bash 会把中文当成变量名的一部分。
 - 中文文档遵循 tech-doc-style-chinese 风格：中文与英文、数字之间加空格，引号用「」，一段一行。
 
 ## Project Doc gate

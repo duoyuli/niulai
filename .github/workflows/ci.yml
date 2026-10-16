@@ -1,25 +1,74 @@
-# 构建镜像并推送到 GitHub 镜像仓库：ghcr.io/<仓库所有者，小写>/niulai
+# CI：每次 PR 和推送都检查代码；main 分支有合并、或推送 v* 标签时，再构建镜像并推送到 GitHub 镜像仓库。
 #
-# - 推送到 main：标签 latest、sha-<提交>
-# - 推送 v* 标签（例如 git tag v0.1.0 && git push origin v0.1.0）：标签 0.1.0、0.1、sha-<提交>
-#
-# amd64 和 arm64 分别在对应架构的机器上原生构建（模拟另一种架构编译 Rust 要慢很多倍），再合并成一个多架构镜像。
-# ubuntu-24.04-arm 在公开仓库中免费；私有仓库用不了时，删掉 matrix 中的 arm64 一项即可（云服务器大多是 amd64）。
-# 部署方法见 docs/operations/runbook.md#deployment。
-name: image
+# - check：后端 clippy（不允许警告）、单元测试和集成测试（用临时 PostgreSQL）；前端类型检查、代码检查、测试
+# - build：检查通过后，amd64 和 arm64 分别在对应架构的机器上原生构建（模拟另一种架构编译 Rust 要慢很多倍）
+# - merge：合并成一个多架构镜像 ghcr.io/<仓库所有者，小写>/niulai，并打标签：
+#     推送到 main     → latest、sha-<提交>
+#     推送 v0.1.0 标签 → 0.1.0、0.1、sha-<提交>（git tag v0.1.0 && git push origin v0.1.0）
+# 部署（CD）见 deploy/ 和 docs/operations/runbook.md#deployment。
+name: ci
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  check:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Rust 工具链（按 backend/rust-toolchain.toml）
+        working-directory: backend
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: 后端：clippy
+        working-directory: backend
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: 后端：单元测试和集成测试
+        working-directory: backend
+        env:
+          NIULAI_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: cargo test --locked
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: 前端：安装依赖
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: 前端：类型检查、代码检查、测试
+        working-directory: frontend
+        run: pnpm typecheck && pnpm lint && pnpm test
+
   build:
+    needs: check
+    if: github.event_name != 'pull_request'
     strategy:
       matrix:
         include:
@@ -66,6 +115,7 @@ jobs:
 
   merge:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: 镜像名（GHCR 要求小写）

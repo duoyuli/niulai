@@ -1,9 +1,0 @@
-# 从源码构建镜像，不从镜像仓库拉取。叠加在 compose.yml 之上使用（在仓库根目录执行）：
-#
-#   docker compose -f deploy/compose.yml -f deploy/compose.build.yml up -d --build
-#
-# 构建需要约 4 GB 内存，并能访问 Docker Hub、npm、crates.io。服务器上一般直接用镜像仓库里的镜像。
-services:
-  niulai:
-    build: { context: .., dockerfile: deploy/Dockerfile }
-    pull_policy: build

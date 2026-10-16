@@ -11,7 +11,8 @@
 - [技术栈](technology_stack.md)：后端 Rust（Axum、SQLx、Tokio）、PostgreSQL 18、前端 React 与 orval，以及各组件的维护状况核查。状态：已采纳，§4 的多进程部分和 §8.1 第 4 条（Redis）已被取代。阅读时机：引入、升级或替换依赖，或评估前端、登录、消息队列等扩展。
 - [前端技术选型](frontend_stack.md)：React Router、Tailwind CSS、Lightweight Charts、orval、Biome、pnpm 的选择与维护状况，前端由 `niulai serve` 提供。状态：已采纳。阅读时机：引入或升级前端依赖，或考虑更换图表、组件库、部署方式。
 - [API Key 在首次登录引导中配置](api_key_setup.md)：Key 不在部署时提供，第一次打开网页时配置并验证，保存在 `app.setting`，环境变量优先；第一次配置后规划全量回补。状态：已采纳。阅读时机：修改 `backend/src/setup.rs`、引导页，或考虑加密保存 Key、增加其他网页设置。
-- [部署方案](deployment.md)：GHCR 多架构镜像、Compose 编排内置 PostgreSQL 与 Caddy、基本认证登录、`deploy/.env` 单一配置、安装升级备份恢复脚本。状态：已采纳，API Key 与首次回补部分已被取代。阅读时机：修改 `deploy/` 或 `.github/workflows/`，考虑换镜像仓库、增加程序内登录或改用托管数据库。
+- [CI 构建镜像，部署只交付服务本身](ci_cd.md)：CI 检查代码并构建多架构镜像推送到 GHCR；CD 分 Docker 部署和源码部署，只运行 PostgreSQL 和 niulai，对外一个 HTTP 端口，公网入口交给使用者的反向代理。状态：已采纳。阅读时机：修改 `deploy/` 或 `.github/workflows/`，或考虑在项目中加入登录、证书。
+- [部署方案](deployment.md)：第一版部署方案：Caddy 做 HTTPS 和基本认证、安装升级备份恢复脚本。状态：已被取代。阅读时机：想了解为什么项目里不包含反向代理和运维脚本。
 - [单进程服务](single_process_service.md)：三个程序合并为一个，`niulai serve` 同时运行 API、任务执行和调度。状态：已采纳，「扩容」一条已被取代。阅读时机：考虑拆分进程、调整部署方式或扩容。
 - [限速在进程内](in_process_rate_limit.md)：去掉 Redis，同一时刻只有一个进程执行同步任务（数据库咨询锁），限速在进程内。状态：已采纳。阅读时机：考虑多进程执行、更换 API Key 额度，或调整限速。
 - [采用同花顺金融数据服务](hithink_data_source.md)：数据源选择、REST 为主、公司行动用导出文件的例外、已知缺口和验证记录。状态：已采纳，「限速跨进程共享」一条后果已被取代。阅读时机：考虑更换或增加数据源，或质疑取数方式。

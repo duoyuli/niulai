@@ -4,5 +4,4 @@
 /frontend/dist
 .DS_Store
 /deploy/.env
-/deploy/caddy/
 /deploy/backups/

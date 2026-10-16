@@ -1,6 +1,6 @@
-# ADR：部署方案
+# ADR：部署方案（已被取代）
 
-- 状态：已采纳（accepted），2026-10-16。决策第 4 条中「`install.sh` 询问 API Key」和第 5 条中「首次安装时规划全量回补」已被 [ADR：API Key 在首次登录引导中配置](api_key_setup.md) 取代。细化 [ADR：技术栈](technology_stack.md) §6 第 7 条（Docker Compose 部署、备份与恢复）和 §8 中「登录与权限」一项。
+- 状态：已被取代（superseded），2026-10-16。由 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md) 取代：去掉了 Caddy、基本认证登录和运维脚本，公网入口交给使用者自己的反向代理。此前决策第 4、5 条的一部分已被 [ADR：API Key 在首次登录引导中配置](api_key_setup.md) 取代。
 - 相关文档：[部署](../operations/runbook.md#deployment)、[部署配置](../interfaces/configuration.md#deploy_env)、[ADR：单进程服务](single_process_service.md)、[ADR：限速在进程内](in_process_rate_limit.md)。
 
 ## 背景

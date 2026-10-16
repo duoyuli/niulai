@@ -1,0 +1,11 @@
+# 源码部署：在本机从源码构建镜像，不使用镜像仓库。叠加在 compose.yml 之上，在仓库根目录执行：
+#
+#   cp deploy/.env.example deploy/.env      # 填写 deploy/.env
+#   docker compose -f deploy/compose.yml -f deploy/compose.source.yml up -d --build
+#
+# 更新：git pull 后再执行一次上面的命令。构建需要约 4 GB 内存，并能访问 Docker Hub、npm、crates.io。
+services:
+  niulai:
+    image: niulai:source
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    pull_policy: build
