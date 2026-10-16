@@ -78,6 +78,8 @@ pub struct SignalInfo {
     pub tone: Tone,
     pub kind: SignalKind,
     pub description: &'static str,
+    /// 怎么看、要注意什么，给没有金融背景的人看
+    pub usage: &'static str,
     pub params: &'static [ParamInfo],
 }
 
@@ -96,31 +98,31 @@ use SignalKind::{Event, State};
 use Tone::{Bearish, Bullish};
 
 pub const CATALOG: &[SignalInfo] = &[
-    SignalInfo { id: S::MaCrossUp, name: "{fast} 日均线上穿 {slow} 日均线", group: "均线", tone: Bullish, kind: Event, description: "金叉：短期均线从下往上穿过长期均线，常被看作走势转强", params: MA_PAIR },
-    SignalInfo { id: S::MaCrossDown, name: "{fast} 日均线下穿 {slow} 日均线", group: "均线", tone: Bearish, kind: Event, description: "死叉：短期均线从上往下穿过长期均线，常被看作走势转弱", params: MA_PAIR },
-    SignalInfo { id: S::MaBullish, name: "均线多头排列（{short} > {mid} > {long}）", group: "均线", tone: Bullish, kind: State, description: "短期均线在上、长期均线在下，处在上升趋势中", params: MA_TRIPLE },
-    SignalInfo { id: S::MaBearish, name: "均线空头排列（{short} < {mid} < {long}）", group: "均线", tone: Bearish, kind: State, description: "短期均线在下、长期均线在上，处在下降趋势中", params: MA_TRIPLE },
-    SignalInfo { id: S::PriceCrossAboveMa, name: "收盘站上 {n} 日均线", group: "均线", tone: Bullish, kind: Event, description: "前一天收在均线下方，当天收在上方", params: MA_ONE },
-    SignalInfo { id: S::PriceCrossBelowMa, name: "收盘跌破 {n} 日均线", group: "均线", tone: Bearish, kind: Event, description: "前一天收在均线上方，当天收在下方", params: MA_ONE },
-    SignalInfo { id: S::MacdGolden, name: "MACD 金叉", group: "MACD", tone: Bullish, kind: Event, description: "MACD 快线（DIF）上穿慢线（DEA）", params: NONE },
-    SignalInfo { id: S::MacdDeath, name: "MACD 死叉", group: "MACD", tone: Bearish, kind: Event, description: "MACD 快线（DIF）下穿慢线（DEA）", params: NONE },
-    SignalInfo { id: S::MacdTurnPositive, name: "MACD 上穿零轴", group: "MACD", tone: Bullish, kind: Event, description: "DIF 由负转正：12 日指数均线重新站上 26 日指数均线", params: NONE },
-    SignalInfo { id: S::KdjGolden, name: "KDJ 金叉", group: "超买超卖", tone: Bullish, kind: Event, description: "K 值上穿 D 值", params: NONE },
-    SignalInfo { id: S::KdjDeath, name: "KDJ 死叉", group: "超买超卖", tone: Bearish, kind: Event, description: "K 值下穿 D 值", params: NONE },
-    SignalInfo { id: S::RsiLeaveOversold, name: "RSI 走出超卖（上穿 {level}）", group: "超买超卖", tone: Bullish, kind: Event, description: "RSI(14) 从 {level} 以下回到上方，跌势可能告一段落", params: &[p("level", "超卖线", 30.0, 5.0, 50.0, false)] },
-    SignalInfo { id: S::RsiEnterOverbought, name: "RSI 进入超买（上穿 {level}）", group: "超买超卖", tone: Bearish, kind: Event, description: "RSI(14) 上穿 {level}，短期涨得较多，可能回调", params: &[p("level", "超买线", 70.0, 50.0, 95.0, false)] },
-    SignalInfo { id: S::BollBreakUpper, name: "突破布林带上轨", group: "突破", tone: Bullish, kind: Event, description: "收盘价从上轨下方升到上方，走势很强", params: NONE },
-    SignalInfo { id: S::BollBreakLower, name: "跌破布林带下轨", group: "突破", tone: Bearish, kind: Event, description: "收盘价从下轨上方跌到下方，走势很弱", params: NONE },
-    SignalInfo { id: S::NewHigh, name: "创 {n} 日新高", group: "突破", tone: Bullish, kind: Event, description: "收盘价高于之前 {n} 个交易日的所有收盘价", params: DAYS },
-    SignalInfo { id: S::NewLow, name: "创 {n} 日新低", group: "突破", tone: Bearish, kind: Event, description: "收盘价低于之前 {n} 个交易日的所有收盘价", params: DAYS },
-    SignalInfo { id: S::VolumeSurge, name: "放量（{ratio} 倍以上）", group: "量能", tone: Bullish, kind: Event, description: "成交量达到前 5 个交易日平均的 {ratio} 倍以上，说明关注度明显上升", params: &[p("ratio", "倍数", 2.0, 1.2, 10.0, false)] },
-    SignalInfo { id: S::BigUp, name: "大阳线（涨 {pct}% 以上）", group: "K 线形态", tone: Bullish, kind: Event, description: "当天涨幅不小于 {pct}%，且收盘高于开盘", params: &[p("pct", "涨幅 %", 5.0, 2.0, 20.0, false)] },
-    SignalInfo { id: S::GapUp, name: "向上跳空", group: "K 线形态", tone: Bullish, kind: Event, description: "当天最低价高于前一天最高价，留下缺口", params: NONE },
-    SignalInfo { id: S::LongLowerShadow, name: "长下影线", group: "K 线形态", tone: Bullish, kind: Event, description: "盘中跌下去又被拉回：下影线不短于实体的 2 倍，且不短于股价的 3%", params: NONE },
-    SignalInfo { id: S::LimitUp, name: "涨停", group: "涨跌停", tone: Bullish, kind: Event, description: "收盘价达到涨停价", params: NONE },
-    SignalInfo { id: S::LimitDown, name: "跌停", group: "涨跌停", tone: Bearish, kind: Event, description: "收盘价达到跌停价", params: NONE },
-    SignalInfo { id: S::BrokenLimitUp, name: "炸板", group: "涨跌停", tone: Bearish, kind: Event, description: "盘中触及涨停价，收盘没有封住", params: NONE },
-    SignalInfo { id: S::ConsecutiveLimitUp, name: "连续 {n} 个涨停", group: "涨跌停", tone: Bullish, kind: Event, description: "连续 {n} 个交易日收盘涨停", params: &[p("n", "连板数", 2.0, 2.0, 10.0, true)] },
+    SignalInfo { id: S::MaCrossUp, name: "{fast} 日均线上穿 {slow} 日均线", group: "均线", tone: Bullish, kind: Event, description: "金叉：短期均线从下往上穿过长期均线，常被看作走势转强", usage: "最常用的转强信号。周期越短越灵敏，假信号也越多；股价横盘时金叉死叉会来回出现，最好结合成交量或更长的均线一起看。", params: MA_PAIR },
+    SignalInfo { id: S::MaCrossDown, name: "{fast} 日均线下穿 {slow} 日均线", group: "均线", tone: Bearish, kind: Event, description: "死叉：短期均线从上往下穿过长期均线，常被看作走势转弱", usage: "常用的转弱信号，很多人把它当作卖出提示。和金叉一样，横盘时容易反复出现。", params: MA_PAIR },
+    SignalInfo { id: S::MaBullish, name: "均线多头排列（{short} > {mid} > {long}）", group: "均线", tone: Bullish, kind: State, description: "短期均线在上、长期均线在下，处在上升趋势中", usage: "短、中、长期走势一致向上，是趋势最清楚的状态之一。出现时往往已经涨了一段，适合顺着趋势做，而不是抄底。", params: MA_TRIPLE },
+    SignalInfo { id: S::MaBearish, name: "均线空头排列（{short} < {mid} < {long}）", group: "均线", tone: Bearish, kind: State, description: "短期均线在下、长期均线在上，处在下降趋势中", usage: "下降趋势最清楚的状态。处在空头排列的股票，反弹常常到均线附近就受阻。", params: MA_TRIPLE },
+    SignalInfo { id: S::PriceCrossAboveMa, name: "收盘站上 {n} 日均线", group: "均线", tone: Bullish, kind: Event, description: "前一天收在均线下方，当天收在上方", usage: "比均线交叉出现得早，但也更容易是假突破，之后几天能不能站稳更重要。20 日均线常被看作中短期强弱的分界线。", params: MA_ONE },
+    SignalInfo { id: S::PriceCrossBelowMa, name: "收盘跌破 {n} 日均线", group: "均线", tone: Bearish, kind: Event, description: "前一天收在均线上方，当天收在下方", usage: "常用的止损或减仓提示，策略模板默认的卖出规则就是跌破 20 日均线。", params: MA_ONE },
+    SignalInfo { id: S::MacdGolden, name: "MACD 金叉", group: "MACD", tone: Bullish, kind: Event, description: "MACD 快线（DIF）上穿慢线（DEA）", usage: "MACD 是两条指数均线的差，反应比普通均线快。出现在零轴上方（DIF 大于 0）的金叉比零轴下方的更强。", params: NONE },
+    SignalInfo { id: S::MacdDeath, name: "MACD 死叉", group: "MACD", tone: Bearish, kind: Event, description: "MACD 快线（DIF）下穿慢线（DEA）", usage: "动能转弱。零轴上方的死叉常常只是上涨中的回调，零轴下方的死叉说明弱势还在延续。", params: NONE },
+    SignalInfo { id: S::MacdTurnPositive, name: "MACD 上穿零轴", group: "MACD", tone: Bullish, kind: Event, description: "DIF 由负转正：12 日指数均线重新站上 26 日指数均线", usage: "中期由弱转强的标志。比 MACD 金叉出现得晚，但更稳。", params: NONE },
+    SignalInfo { id: S::KdjGolden, name: "KDJ 金叉", group: "超买超卖", tone: Bullish, kind: Event, description: "K 值上穿 D 值", usage: "KDJ 很灵敏，适合看几天之内的短线节奏。在低位（K、D 小于 20）出现的金叉更有参考价值，高位的金叉容易很快失效。", params: NONE },
+    SignalInfo { id: S::KdjDeath, name: "KDJ 死叉", group: "超买超卖", tone: Bearish, kind: Event, description: "K 值下穿 D 值", usage: "短线转弱。在高位（K、D 大于 80）出现时更值得注意。", params: NONE },
+    SignalInfo { id: S::RsiLeaveOversold, name: "RSI 走出超卖（上穿 {level}）", group: "超买超卖", tone: Bullish, kind: Event, description: "RSI(14) 从 {level} 以下回到上方，跌势可能告一段落", usage: "说明连续下跌之后买盘开始回来。强烈的下跌中 RSI 可以在超卖区停很久，走出超卖不等于见底。", params: &[p("level", "超卖线", 30.0, 5.0, 50.0, false)] },
+    SignalInfo { id: S::RsiEnterOverbought, name: "RSI 进入超买（上穿 {level}）", group: "超买超卖", tone: Bearish, kind: Event, description: "RSI(14) 上穿 {level}，短期涨得较多，可能回调", usage: "涨得快不等于马上会跌，强势股常常长时间处在超买区。更适合用来提醒「别追高」，而不是当作卖出信号。", params: &[p("level", "超买线", 70.0, 50.0, 95.0, false)] },
+    SignalInfo { id: S::BollBreakUpper, name: "突破布林带上轨", group: "突破", tone: Bullish, kind: Event, description: "收盘价从上轨下方升到上方，走势很强", usage: "布林带上下轨之间大约包住了 95% 的正常波动，收盘突破上轨说明涨势超出平常。可能是新一轮上涨的开始，也可能是短期过热。", params: NONE },
+    SignalInfo { id: S::BollBreakLower, name: "跌破布林带下轨", group: "突破", tone: Bearish, kind: Event, description: "收盘价从下轨上方跌到下方，走势很弱", usage: "跌势超出平常，可能是恐慌性下跌，也可能是弱势加速。单独出现时不宜当作买入理由。", params: NONE },
+    SignalInfo { id: S::NewHigh, name: "创 {n} 日新高", group: "突破", tone: Bullish, kind: Event, description: "收盘价高于之前 {n} 个交易日的所有收盘价", usage: "创新高说明这段时间买入的人都在赚钱，上方没有被套的人等着解套卖出，强势股常见。注意追高的风险。", params: DAYS },
+    SignalInfo { id: S::NewLow, name: "创 {n} 日新低", group: "突破", tone: Bearish, kind: Event, description: "收盘价低于之前 {n} 个交易日的所有收盘价", usage: "这段时间买入的人都在亏钱，弱势明显。「跌到新低就便宜」是常见误区。", params: DAYS },
+    SignalInfo { id: S::VolumeSurge, name: "放量（{ratio} 倍以上）", group: "量能", tone: Bullish, kind: Event, description: "成交量达到前 5 个交易日平均的 {ratio} 倍以上，说明关注度明显上升", usage: "成交量反映关注度和资金进出。放量上涨说明买的人多，放量下跌说明卖压重，要结合当天的涨跌一起看。", params: &[p("ratio", "倍数", 2.0, 1.2, 10.0, false)] },
+    SignalInfo { id: S::BigUp, name: "大阳线（涨 {pct}% 以上）", group: "K 线形态", tone: Bullish, kind: Event, description: "当天涨幅不小于 {pct}%，且收盘高于开盘", usage: "当天买方力量很强。出现在长期下跌之后可能是转折，出现在连续上涨之后可能是加速，也可能是尾声。", params: &[p("pct", "涨幅 %", 5.0, 2.0, 20.0, false)] },
+    SignalInfo { id: S::GapUp, name: "向上跳空", group: "K 线形态", tone: Bullish, kind: Event, description: "当天最低价高于前一天最高价，留下缺口", usage: "开盘就比前一天的最高价还高，说明买方很急。缺口如果几天内被回补（价格跌回缺口里），说明上涨的力量不够持续。", params: NONE },
+    SignalInfo { id: S::LongLowerShadow, name: "长下影线", group: "K 线形态", tone: Bullish, kind: Event, description: "盘中跌下去又被拉回：下影线不短于实体的 2 倍，且不短于股价的 3%", usage: "盘中跌下去又被买回来，说明下方有人接。出现在低位时更有意义，出现在高位可能是有人借机卖出。", params: NONE },
+    SignalInfo { id: S::LimitUp, name: "涨停", group: "涨跌停", tone: Bullish, kind: Event, description: "收盘价达到涨停价", usage: "A 股的单日涨幅上限（主板 10%，创业板、科创板 20%，北交所 30%）。涨停说明短期资金追捧，但第二天走势分化很大；一字涨停的股票普通人往往买不进。", params: NONE },
+    SignalInfo { id: S::LimitDown, name: "跌停", group: "涨跌停", tone: Bearish, kind: Event, description: "收盘价达到跌停价", usage: "单日跌幅下限，往往伴随重大利空或恐慌。跌停封死时很难卖出。", params: NONE },
+    SignalInfo { id: S::BrokenLimitUp, name: "炸板", group: "涨跌停", tone: Bearish, kind: Event, description: "盘中触及涨停价，收盘没有封住", usage: "冲上涨停却没封住，说明高位有大量卖盘，第二天表现通常偏弱。", params: NONE },
+    SignalInfo { id: S::ConsecutiveLimitUp, name: "连续 {n} 个涨停", group: "涨跌停", tone: Bullish, kind: Event, description: "连续 {n} 个交易日收盘涨停", usage: "市场炒作最热的股票，波动和风险都极大，不适合普通投资者追。", params: &[p("n", "连板数", 2.0, 2.0, 10.0, true)] },
 ];
 
 pub fn info_of(id: SignalId) -> &'static SignalInfo {
@@ -285,6 +287,16 @@ pub fn compute(f: &Frame, id: SignalId, params: &Params) -> Vec<bool> {
 mod tests {
     use super::*;
     use crate::analysis::indicators::tests::bars_from;
+
+    #[test]
+    fn every_catalog_entry_is_explained() {
+        for s in CATALOG {
+            assert!(!s.description.is_empty() && !s.usage.is_empty(), "信号 {:?} 缺少说明", s.id);
+        }
+        for i in crate::analysis::indicators::CATALOG {
+            assert!(!i.description.is_empty() && !i.usage.is_empty(), "指标 {:?} 缺少说明", i.id);
+        }
+    }
 
     #[test]
     fn ma_cross_matches_existing_rule() {

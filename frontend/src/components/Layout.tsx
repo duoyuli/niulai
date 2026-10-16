@@ -13,6 +13,7 @@ const NAV = [
 
 /** 数据同步、指数板块、设置：不是每天用的，放在右侧 */
 const AUX = [
+  { to: "/guide", label: "说明", title: "指标与信号是什么、怎么看" },
   { to: "/sync", label: "数据", title: "数据同步与指数板块" },
   { to: "/setup", label: "设置", title: "数据源设置：API Key" },
 ];

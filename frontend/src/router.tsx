@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate, useParams, useSearchParams } from "react-router";
 import { Layout } from "./components/Layout";
+import { GuidePage } from "./pages/GuidePage";
 import { IndexDetailPage } from "./pages/IndexDetailPage";
 import { IndicesPage } from "./pages/IndicesPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
       { path: "/strategies/:id/edit", element: <StrategyEditorPage /> },
       { path: "/watchlist", element: <WatchlistPage /> },
       { path: "/securities/:thscode", element: <SecurityDetailPage /> },
+      { path: "/guide", element: <GuidePage /> },
       { path: "/indices", element: <IndicesPage /> },
       { path: "/indices/:thscode", element: <IndexDetailPage /> },
       { path: "/setup", element: <SetupPage /> },

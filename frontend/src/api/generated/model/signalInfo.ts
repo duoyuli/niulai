@@ -19,4 +19,6 @@ export interface SignalInfo {
   name: string;
   params: ParamInfo[];
   tone: Tone;
+  /** 怎么看、要注意什么，给没有金融背景的人看 */
+  usage: string;
 }

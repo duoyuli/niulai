@@ -34,4 +34,6 @@ export interface IndicatorInfo {
   name: string;
   /** 单位：price 价格、pct 百分数（5 表示 5%）、ratio 倍数、yuan 元、shares 股、index 指数值 */
   unit: string;
+  /** 怎么看、要注意什么，给没有金融背景的人看 */
+  usage: string;
 }

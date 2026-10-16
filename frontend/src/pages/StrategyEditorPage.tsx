@@ -80,7 +80,7 @@ export function StrategyEditorPage() {
   const editId = params.id === undefined ? undefined : Number(params.id);
   const catalog = useCatalog({ query: { staleTime: Number.POSITIVE_INFINITY } });
   const existing = useGetStrategy(editId ?? 0, { query: { enabled: editId !== undefined } });
-  const [s, set] = useSearchState({ from: "" });
+  const [s, set] = useSearchState({ from: "", signal: "" });
 
   if (catalog.isPending || (editId !== undefined && existing.isPending)) return <Spinner />;
   const cat = catalog.data;
@@ -94,8 +94,14 @@ export function StrategyEditorPage() {
   const t = cat.templates.find((x) => x.key === s.from);
   const initial: StrategyInput = t
     ? { name: t.name, description: t.description, definition: t.definition, template: t.key }
-    : { name: "", description: "", definition: { all: [] } };
+    : { name: "", description: "", definition: { all: seedCondition(cat, s.signal) } };
   return <Editor key={s.from} catalog={cat} initial={toDraft(cat, initial)} onBack={() => set({ from: "" })} />;
+}
+
+/** 从「指标与信号」页的「用它新建策略」进来时，先放好这一个信号条件 */
+function seedCondition(catalog: Catalog, signal: string): Condition[] {
+  const info = findSignal(catalog, signal);
+  return info ? [newSignalCondition(info)] : [];
 }
 
 function TemplatePicker({ catalog, onPick }: { catalog: Catalog; onPick: (key: string) => void }) {
@@ -642,6 +648,9 @@ function ConditionRow({ c, catalog, onChange }: { c: Condition; catalog: Catalog
         {info && (
           <span className="w-full text-xs text-zinc-400 sm:w-auto">
             {fillName(info.description, { ...defaults(info), ...c.params })}
+            <Link to={`/guide#sig-${info.id}`} target="_blank" className="ml-2 text-accent hover:underline">
+              这是什么？
+            </Link>
           </span>
         )}
       </>
@@ -720,6 +729,16 @@ function IndicatorPicker({
             onChange={(n) => n !== null && onChange({ ...value, n })}
           />
         </span>
+      )}
+      {info && (
+        <Link
+          to={`/guide?tab=indicators#ind-${info.id}`}
+          target="_blank"
+          className="px-1 text-xs text-zinc-400 hover:text-accent"
+          title={`${info.description}。点击看详细说明`}
+        >
+          ?
+        </Link>
       )}
     </span>
   );

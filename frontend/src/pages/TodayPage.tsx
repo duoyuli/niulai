@@ -241,7 +241,7 @@ function WatchRows({ items }: { items: WatchItem[] }) {
               ) : (
                 x.recent_signals
                   .slice(0, 3)
-                  .map((e) => <SignalChip key={`${e.trade_date}-${e.signal}`} event={e} withDate />)
+                  .map((e) => <SignalChip key={`${e.trade_date}-${e.signal}`} event={e} withDate link={false} />)
               )}
             </span>
           </Link>

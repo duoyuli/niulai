@@ -33,7 +33,7 @@
 <a id="pages"></a>
 ## 页面与接口
 
-界面按用户要做的事组织，而不是按后端有哪些功能组织：主导航只有「今日」「策略」「自选」三项，个股从页头的搜索框进入，回测是策略和个股页里的一个标签页，数据同步和指数板块放在页头右侧的「数据」里。为什么这样组织，见 [ADR：界面按任务组织](../decisions/ui_by_task.md)。
+界面按用户要做的事组织，而不是按后端有哪些功能组织：主导航只有「今日」「策略」「自选」三项，个股从页头的搜索框进入，回测是策略和个股页里的一个标签页，数据同步和指数板块放在页头右侧的「数据」里，指标与信号的说明在页头右侧的「说明」里。为什么这样组织，见 [ADR：界面按任务组织](../decisions/ui_by_task.md)。
 
 | 路径 | 页面 | 接口 |
 | --- | --- | --- |
@@ -43,6 +43,7 @@
 | `/strategies/new`、`/strategies/:id/edit` | 策略编辑器：从模板或空白开始，设置股票池、条件、排序和卖出规则，可预览结果 | `GET /strategies/catalog`、`POST /strategies/preview`、`POST /strategies`、`PUT /strategies/{id}` |
 | `/watchlist` | 自选：收藏的股票、涨跌、趋势和最近信号，可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
 | `/securities/:thscode` | 个股：页头是最新价和收藏；「走势与诊断」标签页是诊断卡片和 K 线（复权口径与均线交叉记录折叠在下面）；「回测」标签页用均线交叉或任意已保存的策略回测这只股票 | `GET /securities/{thscode}`、`/bars`、`/ma`、`/diagnosis`、`GET /backtest/ma-cross`、`/backtest/strategy`、`GET /strategies` |
+| `/guide` | 指标与信号：三个概念的说明，每个信号和指标是什么、怎么看、要注意什么；可以查看今天哪些股票出现了某个信号，或用它新建策略。各页面的信号标签和策略编辑器的「这是什么？」链接到对应条目（`#sig-<信号>`、`#ind-<指标>`） | `GET /strategies/catalog`、`POST /strategies/preview` |
 | `/indices` | 指数与板块列表，按分类筛选；从「数据」页和今日页的板块进入 | `GET /indices` |
 | `/indices/:thscode` | 指数详情：K 线、当前成分股 | `GET /indices`、`/indices/{thscode}/bars`、`/members` |
 | `/sync` | 数据同步：待执行和失败任务数、最近的运行、数据集状态，发起运行 | `GET /datasets`、`GET /sync/runs`、`POST /sync/runs` |

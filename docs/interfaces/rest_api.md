@@ -34,7 +34,7 @@
 | `GET /backtest/ma-cross` | 单只股票的均线交叉策略回测：汇总指标、交易记录、每日账户总值 | `thscode`（必填）、`fast`、`slow`、`start`、`end`、`capital` 默认 100,000；`commission_rate`、`min_commission`、`stamp_tax_rate` 默认万 2.5、5 元、千分之 0.5；规则见 [回测](../domains/backtest.md) |
 | `GET /backtest/strategy` | 单只股票的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
 | `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金和成本同上；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
-| `GET /strategies/catalog` | 指标、信号、模板目录和默认股票池，前端据此生成策略编辑器 | — |
+| `GET /strategies/catalog` | 指标、信号（含白话说明）、模板目录和默认股票池，前端据此生成策略编辑器和「指标与信号」页 | — |
 | `GET /strategies` | 全部策略，含白话说明（`explained`）和最近一次巡检的数量 | — |
 | `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, template}`；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |
 | `GET` / `PUT` / `DELETE /strategies/{id}` | 读取、修改（请求体同新建）、删除策略；删除返回 204 | 不存在时返回 404 |
