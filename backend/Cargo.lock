@@ -1375,6 +1375,7 @@ dependencies = [
  "chrono",
  "clap",
  "config",
+ "futures-util",
  "http-body-util",
  "parquet",
  "reqwest",

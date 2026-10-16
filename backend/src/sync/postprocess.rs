@@ -12,7 +12,8 @@ pub const REFRESH_INTERVAL: &str = "5 minutes";
 /// ops.scheduler 中记录上次重算时刻的作业名
 const JOB: &str = "adj_rebuild";
 
-pub async fn after_run(pool: &PgPool, run_id: i64) -> anyhow::Result<()> {
+/// 返回行情或公司行动是否有变化（有变化时才重算，调用方据此决定是否巡检）
+pub async fn after_run(pool: &PgPool, run_id: i64) -> anyhow::Result<bool> {
     let changed: i64 = sqlx::query_scalar(
         "SELECT coalesce(sum(changed), 0) FROM ops.task WHERE run_id = $1 AND dataset_id = ANY($2) AND status = 'done'",
     )
@@ -21,10 +22,11 @@ pub async fn after_run(pool: &PgPool, run_id: i64) -> anyhow::Result<()> {
     .fetch_one(pool)
     .await?;
     if changed == 0 {
-        return Ok(());
+        return Ok(false);
     }
     mark_rebuilt(pool).await?;
-    recompute_adjustments(pool, run_id).await
+    recompute_adjustments(pool, run_id).await?;
+    Ok(true)
 }
 
 // @project-doc docs/architecture/sync_pipeline.md#postprocess

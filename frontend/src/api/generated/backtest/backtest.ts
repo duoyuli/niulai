@@ -23,7 +23,11 @@ import type {
 import type {
   BacktestResult,
   ErrorBody,
-  MaCrossBacktestParams
+  MaCrossBacktestParams,
+  PortfolioBacktestParams,
+  PortfolioResult,
+  StrategyBacktestParams,
+  StrategyBacktestResult
 } from '../model';
 
 import { apiFetch } from '../../fetcher';
@@ -144,6 +148,220 @@ export function useMaCrossBacktest<TData = Awaited<ReturnType<typeof maCrossBack
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getMaCrossBacktestQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getPortfolioBacktestUrl = (params: PortfolioBacktestParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/backtest/portfolio?${stringifiedParams}` : `/api/v1/backtest/portfolio`
+}
+
+/**
+ * @summary 全市场组合回测：用选股策略每天选股，最多同时持有 max_positions 只，空余仓位平分现金。区间最长 5 年
+ */
+export const portfolioBacktest = async (params: PortfolioBacktestParams, options?: Parameters<typeof apiFetch>[1]): Promise<PortfolioResult> => {
+
+  return apiFetch<PortfolioResult>(getPortfolioBacktestUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getPortfolioBacktestQueryKey = (params?: PortfolioBacktestParams,) => {
+    return [
+    `/api/v1/backtest/portfolio`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getPortfolioBacktestQueryOptions = <TData = Awaited<ReturnType<typeof portfolioBacktest>>, TError = ErrorBody>(params: PortfolioBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof portfolioBacktest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPortfolioBacktestQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof portfolioBacktest>>> = ({ signal }) => portfolioBacktest(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof portfolioBacktest>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type PortfolioBacktestQueryResult = NonNullable<Awaited<ReturnType<typeof portfolioBacktest>>>
+export type PortfolioBacktestQueryError = ErrorBody
+
+
+export function usePortfolioBacktest<TData = Awaited<ReturnType<typeof portfolioBacktest>>, TError = ErrorBody>(
+ params: PortfolioBacktestParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof portfolioBacktest>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof portfolioBacktest>>,
+          TError,
+          Awaited<ReturnType<typeof portfolioBacktest>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePortfolioBacktest<TData = Awaited<ReturnType<typeof portfolioBacktest>>, TError = ErrorBody>(
+ params: PortfolioBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof portfolioBacktest>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof portfolioBacktest>>,
+          TError,
+          Awaited<ReturnType<typeof portfolioBacktest>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function usePortfolioBacktest<TData = Awaited<ReturnType<typeof portfolioBacktest>>, TError = ErrorBody>(
+ params: PortfolioBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof portfolioBacktest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 全市场组合回测：用选股策略每天选股，最多同时持有 max_positions 只，空余仓位平分现金。区间最长 5 年
+ */
+
+export function usePortfolioBacktest<TData = Awaited<ReturnType<typeof portfolioBacktest>>, TError = ErrorBody>(
+ params: PortfolioBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof portfolioBacktest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getPortfolioBacktestQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getStrategyBacktestUrl = (params: StrategyBacktestParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/backtest/strategy?${stringifiedParams}` : `/api/v1/backtest/strategy`
+}
+
+/**
+ * @summary 用选股策略回测一只股票：满足策略的买入条件（含股票池）后下一个交易日开盘买入，满足卖出规则后卖出
+ */
+export const strategyBacktest = async (params: StrategyBacktestParams, options?: Parameters<typeof apiFetch>[1]): Promise<StrategyBacktestResult> => {
+
+  return apiFetch<StrategyBacktestResult>(getStrategyBacktestUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getStrategyBacktestQueryKey = (params?: StrategyBacktestParams,) => {
+    return [
+    `/api/v1/backtest/strategy`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getStrategyBacktestQueryOptions = <TData = Awaited<ReturnType<typeof strategyBacktest>>, TError = ErrorBody>(params: StrategyBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyBacktest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getStrategyBacktestQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof strategyBacktest>>> = ({ signal }) => strategyBacktest(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof strategyBacktest>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type StrategyBacktestQueryResult = NonNullable<Awaited<ReturnType<typeof strategyBacktest>>>
+export type StrategyBacktestQueryError = ErrorBody
+
+
+export function useStrategyBacktest<TData = Awaited<ReturnType<typeof strategyBacktest>>, TError = ErrorBody>(
+ params: StrategyBacktestParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyBacktest>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof strategyBacktest>>,
+          TError,
+          Awaited<ReturnType<typeof strategyBacktest>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useStrategyBacktest<TData = Awaited<ReturnType<typeof strategyBacktest>>, TError = ErrorBody>(
+ params: StrategyBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyBacktest>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof strategyBacktest>>,
+          TError,
+          Awaited<ReturnType<typeof strategyBacktest>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useStrategyBacktest<TData = Awaited<ReturnType<typeof strategyBacktest>>, TError = ErrorBody>(
+ params: StrategyBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyBacktest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 用选股策略回测一只股票：满足策略的买入条件（含股票池）后下一个交易日开盘买入，满足卖出规则后卖出
+ */
+
+export function useStrategyBacktest<TData = Awaited<ReturnType<typeof strategyBacktest>>, TError = ErrorBody>(
+ params: StrategyBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyBacktest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getStrategyBacktestQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

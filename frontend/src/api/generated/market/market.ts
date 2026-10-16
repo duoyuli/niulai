@@ -22,6 +22,7 @@ import type {
 
 import type {
   BarSeries,
+  Diagnosis,
   ErrorBody,
   IndexBarsParams,
   IndexInfo,
@@ -31,8 +32,12 @@ import type {
   ListSecuritiesParams,
   MaCrossScanParams,
   MaSeries,
+  MarketOverviewParams,
+  Overview,
   PageSecurity,
   ScanResult,
+  SectorStrength,
+  SectorsParams,
   SecurityBarsParams,
   SecurityDetail,
   SecurityMaParams
@@ -397,6 +402,220 @@ export function useIndexMembers<TData = Awaited<ReturnType<typeof indexMembers>>
 
 
 
+export const getMarketOverviewUrl = (params?: MarketOverviewParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/market/overview?${stringifiedParams}` : `/api/v1/market/overview`
+}
+
+/**
+ * @summary 市场概况：涨跌家数、涨跌停数、站上 20 日均线的比例
+ */
+export const marketOverview = async (params?: MarketOverviewParams, options?: Parameters<typeof apiFetch>[1]): Promise<Overview> => {
+
+  return apiFetch<Overview>(getMarketOverviewUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getMarketOverviewQueryKey = (params?: MarketOverviewParams,) => {
+    return [
+    `/api/v1/market/overview`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getMarketOverviewQueryOptions = <TData = Awaited<ReturnType<typeof marketOverview>>, TError = ErrorBody>(params?: MarketOverviewParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketOverview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getMarketOverviewQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof marketOverview>>> = ({ signal }) => marketOverview(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof marketOverview>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type MarketOverviewQueryResult = NonNullable<Awaited<ReturnType<typeof marketOverview>>>
+export type MarketOverviewQueryError = ErrorBody
+
+
+export function useMarketOverview<TData = Awaited<ReturnType<typeof marketOverview>>, TError = ErrorBody>(
+ params: undefined |  MarketOverviewParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketOverview>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof marketOverview>>,
+          TError,
+          Awaited<ReturnType<typeof marketOverview>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useMarketOverview<TData = Awaited<ReturnType<typeof marketOverview>>, TError = ErrorBody>(
+ params?: MarketOverviewParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketOverview>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof marketOverview>>,
+          TError,
+          Awaited<ReturnType<typeof marketOverview>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useMarketOverview<TData = Awaited<ReturnType<typeof marketOverview>>, TError = ErrorBody>(
+ params?: MarketOverviewParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketOverview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 市场概况：涨跌家数、涨跌停数、站上 20 日均线的比例
+ */
+
+export function useMarketOverview<TData = Awaited<ReturnType<typeof marketOverview>>, TError = ErrorBody>(
+ params?: MarketOverviewParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketOverview>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getMarketOverviewQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSectorsUrl = (params?: SectorsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/market/sectors?${stringifiedParams}` : `/api/v1/market/sectors`
+}
+
+/**
+ * @summary 板块强弱：行业或概念按最近 N 个交易日涨跌幅排名。板块指数日线从 2022 年起
+ */
+export const sectors = async (params?: SectorsParams, options?: Parameters<typeof apiFetch>[1]): Promise<SectorStrength[]> => {
+
+  return apiFetch<SectorStrength[]>(getSectorsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getSectorsQueryKey = (params?: SectorsParams,) => {
+    return [
+    `/api/v1/market/sectors`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getSectorsQueryOptions = <TData = Awaited<ReturnType<typeof sectors>>, TError = ErrorBody>(params?: SectorsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof sectors>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSectorsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof sectors>>> = ({ signal }) => sectors(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof sectors>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SectorsQueryResult = NonNullable<Awaited<ReturnType<typeof sectors>>>
+export type SectorsQueryError = ErrorBody
+
+
+export function useSectors<TData = Awaited<ReturnType<typeof sectors>>, TError = ErrorBody>(
+ params: undefined |  SectorsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof sectors>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof sectors>>,
+          TError,
+          Awaited<ReturnType<typeof sectors>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSectors<TData = Awaited<ReturnType<typeof sectors>>, TError = ErrorBody>(
+ params?: SectorsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof sectors>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof sectors>>,
+          TError,
+          Awaited<ReturnType<typeof sectors>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSectors<TData = Awaited<ReturnType<typeof sectors>>, TError = ErrorBody>(
+ params?: SectorsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof sectors>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 板块强弱：行业或概念按最近 N 个交易日涨跌幅排名。板块指数日线从 2022 年起
+ */
+
+export function useSectors<TData = Awaited<ReturnType<typeof sectors>>, TError = ErrorBody>(
+ params?: SectorsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof sectors>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSectorsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 export const getListSecuritiesUrl = (params?: ListSecuritiesParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -708,6 +927,106 @@ export function useSecurityBars<TData = Awaited<ReturnType<typeof securityBars>>
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getSecurityBarsQueryOptions(thscode,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSecurityDiagnosisUrl = (thscode: string,) => {
+
+
+
+
+  return `/api/v1/securities/${thscode}/diagnosis`
+}
+
+/**
+ * @summary 个股诊断：趋势、动量、量能、位置各一句结论，最近 20 个交易日的信号，关键价位，当天满足的策略
+ */
+export const securityDiagnosis = async (thscode: string, options?: Parameters<typeof apiFetch>[1]): Promise<Diagnosis> => {
+
+  return apiFetch<Diagnosis>(getSecurityDiagnosisUrl(thscode),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getSecurityDiagnosisQueryKey = (thscode: string,) => {
+    return [
+    `/api/v1/securities/${thscode}/diagnosis`
+    ] as const;
+    }
+
+
+export const getSecurityDiagnosisQueryOptions = <TData = Awaited<ReturnType<typeof securityDiagnosis>>, TError = ErrorBody>(thscode: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityDiagnosis>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSecurityDiagnosisQueryKey(thscode);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof securityDiagnosis>>> = ({ signal }) => securityDiagnosis(thscode, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: thscode !== null && thscode !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof securityDiagnosis>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SecurityDiagnosisQueryResult = NonNullable<Awaited<ReturnType<typeof securityDiagnosis>>>
+export type SecurityDiagnosisQueryError = ErrorBody
+
+
+export function useSecurityDiagnosis<TData = Awaited<ReturnType<typeof securityDiagnosis>>, TError = ErrorBody>(
+ thscode: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityDiagnosis>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof securityDiagnosis>>,
+          TError,
+          Awaited<ReturnType<typeof securityDiagnosis>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSecurityDiagnosis<TData = Awaited<ReturnType<typeof securityDiagnosis>>, TError = ErrorBody>(
+ thscode: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityDiagnosis>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof securityDiagnosis>>,
+          TError,
+          Awaited<ReturnType<typeof securityDiagnosis>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSecurityDiagnosis<TData = Awaited<ReturnType<typeof securityDiagnosis>>, TError = ErrorBody>(
+ thscode: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityDiagnosis>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 个股诊断：趋势、动量、量能、位置各一句结论，最近 20 个交易日的信号，关键价位，当天满足的策略
+ */
+
+export function useSecurityDiagnosis<TData = Awaited<ReturnType<typeof securityDiagnosis>>, TError = ErrorBody>(
+ thscode: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityDiagnosis>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSecurityDiagnosisQueryOptions(thscode,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

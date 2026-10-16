@@ -5,18 +5,19 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
-import type { MaState } from './maState';
+import type { Dimension } from './dimension';
+import type { Level } from './level';
+import type { SignalEvent } from './signalEvent';
+import type { StrategyMatch } from './strategyMatch';
 
 export interface Diagnosis {
-  /**
-     * 最近 1 个交易日的涨跌幅（0.01 表示 1%）
-     * @nullable
-     */
-  change_1d?: number | null;
-  /**
-     * 最近 20 个交易日的涨跌幅
-     * @nullable
-     */
-  change_20d?: number | null;
-  ma?: MaState | null;
+  /** 收盘价（未复权） */
+  close: number;
+  dimensions: Dimension[];
+  levels: Level[];
+  /** 最近 20 个交易日出现过的事件类信号，新的在前 */
+  recent_signals: SignalEvent[];
+  /** 当天满足的策略（按股票池和全部条件判断） */
+  strategies: StrategyMatch[];
+  trade_date: string;
 }

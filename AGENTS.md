@@ -41,6 +41,7 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 - 新增数据集优先只改 `backend/config/datasets.yaml`；只有需要类型化表时才在 `backend/src/sync/sinks.rs` 增加投影。
 - 动态拼接的 SQL 用 `sqlx::AssertSqlSafe` 包裹，并在上一行用「审计：」注释说明拼接内容为什么安全。用户输入一律走绑定参数。
 - 新增或修改 API 时，`#[utoipa::path]` 的每个响应都写 `description`，否则前端生成客户端失败。
+- 所有 `ToSchema` 类型的名字在整个 API 中必须唯一：utoipa 遇到同名类型会静默覆盖，生成的前端类型会错。重名时改类型名或用 `#[schema(as = ...)]`。
 - 前端依赖精确锁定版本；`frontend/pnpm-workspace.yaml` 要求依赖发布满 3 天才安装，不要为了装最新版而放宽这条策略。
 - API Key、数据库密码只放在 `backend/.env`、`deploy/.env` 或部署环境变量中，不写进代码、日志、文档或提交。
 - 中文文档遵循 tech-doc-style-chinese 风格：中文与英文、数字之间加空格，引号用「」，一段一行。

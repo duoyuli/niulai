@@ -2,7 +2,9 @@
 
 pub mod market;
 pub mod setup;
+pub mod strategy;
 pub mod backtest;
+pub mod insight;
 pub mod sync;
 pub mod watchlist;
 mod web;
@@ -41,7 +43,8 @@ pub struct AppState {
         (name = "setup", description = "首次登录引导：配置 API Key"),
         (name = "market", description = "证券、日线、指数与均线信号"),
         (name = "watchlist", description = "自选股与快速诊断"),
-        (name = "backtest", description = "策略回测"),
+        (name = "strategy", description = "选股策略与每日巡检"),
+        (name = "backtest", description = "回测"),
         (name = "sync", description = "数据集与同步运行"),
     )
 )]
@@ -79,6 +82,8 @@ fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(ready))
         .merge(setup::routes())
         .merge(market::routes())
+        .merge(insight::routes())
+        .merge(strategy::routes())
         .merge(watchlist::routes())
         .merge(backtest::routes())
         .merge(sync::routes())

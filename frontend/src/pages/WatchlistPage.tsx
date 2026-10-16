@@ -4,6 +4,7 @@ import type { WatchItem } from "../api/generated/model";
 import { useListWatchlist } from "../api/generated/watchlist/watchlist";
 import { MaControls } from "../components/MaControls";
 import { SecuritySearch } from "../components/SecuritySearch";
+import { SignalChip } from "../components/SignalChip";
 import { Badge, Card, Empty, PageHeader, QueryView, SignalBadge, Table } from "../components/ui";
 import { WatchButton } from "../components/WatchButton";
 import { useSearchState } from "../hooks/useSearchState";
@@ -80,6 +81,7 @@ function WatchTable({ items, fast, slow }: { items: WatchItem[]; fast: number; s
             均线（MA{fast} / MA{slow}）
           </th>
           <th title="最近约两年内的最后一次交叉">最近交叉</th>
+          <th title="最近 5 个交易日出现过的信号，例如放量、创新高、MACD 金叉；红色偏多，绿色偏空">最近信号</th>
           <th aria-label="操作" />
         </tr>
       </thead>
@@ -148,6 +150,22 @@ function WatchTable({ items, fast, slow }: { items: WatchItem[]; fast: number; s
                     <span className="num text-xs text-zinc-500">
                       {cross.trade_date} · {cross.bars_ago === 0 ? "最新交易日" : `${cross.bars_ago} 个交易日前`}
                     </span>
+                  </span>
+                ) : (
+                  <span className="text-zinc-400">—</span>
+                )}
+              </td>
+              <td className="max-w-64 whitespace-normal">
+                {x.recent_signals.length > 0 ? (
+                  <span className="flex flex-wrap gap-1">
+                    {x.recent_signals.slice(0, 3).map((e) => (
+                      <SignalChip key={`${e.trade_date}-${e.signal}`} event={e} withDate />
+                    ))}
+                    {x.recent_signals.length > 3 && (
+                      <Link to={`/securities/${x.thscode}`} className="text-xs text-zinc-500 hover:underline">
+                        等 {x.recent_signals.length} 个
+                      </Link>
+                    )}
                   </span>
                 ) : (
                   <span className="text-zinc-400">—</span>

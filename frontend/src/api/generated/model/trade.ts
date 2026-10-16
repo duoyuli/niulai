@@ -5,6 +5,7 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { ExitReason } from './exitReason';
 
 export interface Trade {
   /** 持有的交易日数 */
@@ -26,6 +27,7 @@ export interface Trade {
      * @nullable
      */
   exit_price?: number | null;
+  exit_reason?: ExitReason | null;
   /** 卖出时的股数，持有期间送转股会使它大于买入股数 */
   exit_shares: number;
   /** 盈亏（元）= 卖出所得 + 分红 − 成本 */

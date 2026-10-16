@@ -33,10 +33,13 @@
 | 路径 | 页面 | 接口 |
 | --- | --- | --- |
 | `/` | 股票列表：按代码或名称搜索，按板块筛选，分页，可收藏 | `GET /securities` |
-| `/watchlist` | 自选：收藏的股票及诊断（最新收盘、涨跌、均线状态、最近交叉），可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
-| `/securities/:thscode` | 股票详情：K 线（5 种复权口径、1 年到全部）、均线与金叉死叉、交叉信号列表、简称变化，可收藏、可跳转回测 | `GET /securities/{thscode}`、`/bars`、`/ma` |
+| `/watchlist` | 自选：收藏的股票及诊断（最新收盘、涨跌、均线状态、最近交叉、最近信号），可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
+| `/screener` | 选股：市场概况、板块强弱、全部策略的最近一次巡检结果，可立即巡检、新建策略 | `GET /market/overview`、`GET /market/sectors`、`GET /strategies`、`POST /screening/run` |
+| `/screener/:id` | 策略详情：条件的白话说明，按交易日查看巡检结果（新入选、不再符合），可编辑、删除、暂停巡检、回测 | `GET /strategies/{id}`、`/results`、`PUT` / `DELETE /strategies/{id}`、`POST /screening/run` |
+| `/screener/new`、`/screener/:id/edit` | 策略编辑器：从模板或空白开始，设置股票池、条件、排序和卖出规则，可预览结果 | `GET /strategies/catalog`、`POST /strategies/preview`、`POST /strategies`、`PUT /strategies/{id}` |
+| `/securities/:thscode` | 股票详情：诊断卡片、K 线（5 种复权口径、1 年到全部）、均线与金叉死叉、交叉信号列表、简称变化，可收藏、可跳转回测 | `GET /securities/{thscode}`、`/bars`、`/ma`、`/diagnosis` |
 | `/signals` | 均线扫描：某个交易日发生交叉的股票，可改快慢线周期，可收藏 | `GET /signals/ma-cross` |
-| `/backtest` | 回测：选股票、均线周期、区间、资金和交易成本，显示结论、指标、账户总值曲线和交易记录；可从详情页、自选页带参数进入 | `GET /backtest/ma-cross`、`GET /watchlist`、`GET /securities` |
+| `/backtest` | 回测，三种方式：单只股票的均线交叉、单只股票的已保存策略、全市场选股组合（`mode` 参数）；选区间、资金和交易成本，显示结论、指标、账户总值曲线和交易记录（含卖出原因）；可从详情页、自选页、策略页带参数进入 | `GET /backtest/ma-cross`、`/backtest/strategy`、`/backtest/portfolio`、`GET /strategies`、`GET /watchlist`、`GET /securities` |
 | `/indices` | 指数与板块列表，按分类筛选 | `GET /indices` |
 | `/indices/:thscode` | 指数详情：K 线、当前成分股 | `GET /indices`、`/indices/{thscode}/bars`、`/members` |
 | `/sync` | 数据同步：待执行和失败任务数、最近的运行、数据集状态，发起运行 | `GET /datasets`、`GET /sync/runs`、`POST /sync/runs` |

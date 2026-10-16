@@ -6,6 +6,7 @@ import { useReady } from "../api/generated/system/system";
 const NAV = [
   { to: "/", label: "股票", end: true },
   { to: "/watchlist", label: "自选" },
+  { to: "/screener", label: "选股" },
   { to: "/signals", label: "均线扫描" },
   { to: "/backtest", label: "回测" },
   { to: "/indices", label: "指数板块" },

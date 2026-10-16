@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 
 use chrono::NaiveDate;
-use sqlx::PgPool;
+use sqlx::{AssertSqlSafe, PgPool};
 
-/// 一根日线：未复权价用于成交和计算手数，等比前复权价用于收益和指标
+/// 一根日线：未复权价用于成交、计算手数和涨跌停，等比前复权价（q_*）用于收益和指标
 #[derive(Clone, Debug)]
 pub struct DailyBar {
     pub date: NaiveDate,
@@ -15,27 +15,80 @@ pub struct DailyBar {
     pub low: f64,
     pub close: f64,
     pub q_open: f64,
+    pub q_high: f64,
+    pub q_low: f64,
     pub q_close: f64,
+    /// 成交量（股）
+    pub volume: f64,
+    /// 成交额（元）
+    pub amount: f64,
+}
+
+/// 查询一行日线的列，顺序与 `BarRow` 一致；前复权价的表达式与 `mkt.v_stock_bar_qfq` 相同
+const BAR_COLUMNS: &str = "b.trade_date, b.open::float8, b.high::float8, b.low::float8, b.close::float8,
+     b.open * coalesce(s.qfq_factor, 1), b.high * coalesce(s.qfq_factor, 1),
+     b.low * coalesce(s.qfq_factor, 1), b.close * coalesce(s.qfq_factor, 1),
+     b.volume::float8, b.amount::float8";
+const BAR_JOIN: &str = "mkt.stock_bar_1d b
+     LEFT JOIN mkt.adj_segment s ON s.thscode = b.thscode AND b.trade_date >= s.valid_from AND b.trade_date < s.valid_to";
+
+type BarRow = (NaiveDate, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64);
+
+fn bar((date, open, high, low, close, q_open, q_high, q_low, q_close, volume, amount): BarRow) -> DailyBar {
+    DailyBar { date, open, high, low, close, q_open, q_high, q_low, q_close, volume, amount }
 }
 
 /// 一只股票截至 end（含）的全部日线，按日期升序
 pub async fn stock_bars(pool: &PgPool, code: &str, end: Option<NaiveDate>) -> sqlx::Result<Vec<DailyBar>> {
-    let rows: Vec<(NaiveDate, f64, f64, f64, f64, f64, f64)> = sqlx::query_as(
-        "SELECT b.trade_date, b.open::float8, b.high::float8, b.low::float8, b.close::float8,
-                b.open * coalesce(s.qfq_factor, 1), b.close * coalesce(s.qfq_factor, 1)
-         FROM mkt.stock_bar_1d b
-         LEFT JOIN mkt.adj_segment s ON s.thscode = b.thscode AND b.trade_date >= s.valid_from AND b.trade_date < s.valid_to
-         WHERE b.thscode = $1 AND ($2::date IS NULL OR b.trade_date <= $2)
-         ORDER BY b.trade_date",
-    )
-    .bind(code)
-    .bind(end)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(date, open, high, low, close, q_open, q_close)| DailyBar { date, open, high, low, close, q_open, q_close })
-        .collect())
+    // 审计：只拼接了本文件中的常量
+    let sql = format!("SELECT {BAR_COLUMNS} FROM {BAR_JOIN} WHERE b.thscode = $1 AND ($2::date IS NULL OR b.trade_date <= $2) ORDER BY b.trade_date");
+    let rows: Vec<BarRow> = sqlx::query_as(AssertSqlSafe(sql)).bind(code).bind(end).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(bar).collect())
+}
+
+/// 一只股票最近 n 根日线，按日期升序
+pub async fn recent_bars(pool: &PgPool, code: &str, n: i64) -> sqlx::Result<Vec<DailyBar>> {
+    // 审计：只拼接了本文件中的常量
+    let sql = format!("SELECT * FROM (SELECT {BAR_COLUMNS} FROM {BAR_JOIN} WHERE b.thscode = $1 ORDER BY b.trade_date DESC LIMIT $2) t ORDER BY 1");
+    let rows: Vec<BarRow> = sqlx::query_as(AssertSqlSafe(sql)).bind(code).bind(n).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(bar).collect())
+}
+
+/// 全市场在 (lo, hi] 内的日线，按股票代码顺序逐只交给 f，同一时刻只有一只股票的数据在内存中。
+/// 全市场扫描、每日巡检和组合回测都用它：几年的全市场日线有几百万行，一次性读入会占用大量内存
+pub async fn for_each_stock<F>(pool: &PgPool, lo: NaiveDate, hi: NaiveDate, mut f: F) -> sqlx::Result<()>
+where
+    F: FnMut(&str, &[DailyBar]),
+{
+    use futures_util::TryStreamExt;
+    let mut tx = pool.begin().await?;
+    // 一次性的大查询：JIT 编译的耗时比它省下的多；排序放在内存里，不落盘
+    sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
+    sqlx::query("SET LOCAL work_mem = '128MB'").execute(&mut *tx).await?;
+    // 审计：只拼接了本文件中的常量
+    let sql = format!("SELECT b.thscode, {BAR_COLUMNS} FROM {BAR_JOIN} WHERE b.trade_date > $1 AND b.trade_date <= $2 ORDER BY b.thscode, b.trade_date");
+    let mut rows = sqlx::query_as::<_, (String, NaiveDate, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64)>(AssertSqlSafe(sql))
+        .bind(lo)
+        .bind(hi)
+        .fetch(&mut *tx);
+    let mut code = String::new();
+    let mut bars: Vec<DailyBar> = Vec::with_capacity(512);
+    while let Some((c, d, o, h, l, cl, qo, qh, ql, qc, v, a)) = rows.try_next().await? {
+        if c != code {
+            if !bars.is_empty() {
+                f(&code, &bars);
+                bars.clear();
+            }
+            code = c;
+        }
+        bars.push(bar((d, o, h, l, cl, qo, qh, ql, qc, v, a)));
+    }
+    if !bars.is_empty() {
+        f(&code, &bars);
+    }
+    drop(rows);
+    tx.commit().await?;
+    Ok(())
 }
 
 /// 前复权收盘价序列，按股票分组、日期升序

@@ -32,7 +32,19 @@
 | `GET /securities/{thscode}/ma` | 均线与交叉信号 | `fast` 默认 15、`slow` 默认 30、`start`、`end`、`signals_only`；规则见 [均线与交叉信号](../domains/ma_signals.md) |
 | `GET /signals/ma-cross` | 全市场某个交易日的交叉扫描，结果缓存到下一次复权重算 | `date` 默认本地最新交易日、`fast`、`slow`、`signal`（`golden` / `death`） |
 | `GET /backtest/ma-cross` | 单只股票的均线交叉策略回测：汇总指标、交易记录、每日账户总值 | `thscode`（必填）、`fast`、`slow`、`start`、`end`、`capital` 默认 100,000；`commission_rate`、`min_commission`、`stamp_tax_rate` 默认万 2.5、5 元、千分之 0.5；规则见 [回测](../domains/backtest.md) |
-| `GET /watchlist` | 自选股及诊断：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
+| `GET /backtest/strategy` | 单只股票的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
+| `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金和成本同上；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
+| `GET /strategies/catalog` | 指标、信号、模板目录和默认股票池，前端据此生成策略编辑器 | — |
+| `GET /strategies` | 全部策略，含白话说明（`explained`）和最近一次巡检的数量 | — |
+| `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, template}`；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |
+| `GET` / `PUT` / `DELETE /strategies/{id}` | 读取、修改（请求体同新建）、删除策略；删除返回 204 | 不存在时返回 404 |
+| `POST /strategies/preview` | 试算：不保存，在某个交易日上执行一个策略定义 | 请求体 `{definition, date}`，`date` 默认最新交易日 |
+| `GET /strategies/{id}/results` | 某次巡检的结果：入选股票、命中条件、是否新入选、上次入选这次不在的股票，以及有结果的交易日 | `date` 默认最近一次巡检 |
+| `POST /screening/run` | 立即巡检 | `strategy_id` 默认全部开启巡检的策略、`date` 默认最新交易日 |
+| `GET /securities/{thscode}/diagnosis` | 个股诊断：四个维度的结论、最近 20 个交易日的信号、关键价位、当天符合的策略 | 规则见 [个股诊断](../domains/strategies.md#diagnosis) |
+| `GET /market/overview` | 市场概况：涨跌家数、涨跌停数、涨跌幅中位数、站上 20 日均线的比例 | `date` 默认最新交易日 |
+| `GET /market/sectors` | 板块强弱排名 | `category`（`industry` 默认 / `cn_concept`）、`days` 默认 5、范围 1 到 60、`date`；规则见 [市场环境](../domains/strategies.md#market) |
+| `GET /watchlist` | 自选股及诊断：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
@@ -70,13 +82,13 @@
 
 | HTTP 状态 | `code` | 含义 |
 | --- | --- | --- |
-| 400 | `bad_request` | 参数不合法，`message` 说明原因，例如 `adjust` 取值不对、`fast` 不小于 `slow`、回测区间内没有日线 |
-| 404 | `not_found` | 证券、数据集或运行不存在 |
+| 400 | `bad_request` | 参数不合法，`message` 说明原因，例如 `adjust` 取值不对、`fast` 不小于 `slow`、回测区间内没有日线、策略定义没有通过校验 |
+| 404 | `not_found` | 证券、数据集、运行或策略不存在 |
 | 409 | `conflict` | 与当前状态冲突，例如 API Key 由环境变量提供时在网页上修改 |
 | 500 | `internal` | 服务器内部错误；详细原因只写日志，响应中不包含 |
 | 503 | `unavailable` | 依赖的外部服务暂时不可用，例如验证 API Key 时连不上同花顺接口 |
 
-查询参数格式错误（例如日期不是 `yyyy-MM-dd`）由框架直接返回 400，响应体是纯文本。
+查询参数格式错误（例如日期不是 `yyyy-MM-dd`）由框架直接返回 400，请求体 JSON 的结构不对（例如策略定义里有未知的信号）返回 422，响应体都是纯文本。
 
 <a id="openapi"></a>
 ## OpenAPI 与前端类型

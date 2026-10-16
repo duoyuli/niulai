@@ -1,0 +1,343 @@
+//! 选股策略与每日巡检接口。计算在 `crate::analysis`（strategy、screener），规则见 docs/domains/strategies.md。
+
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use chrono::{DateTime, NaiveDate, Utc};
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
+
+use super::AppState;
+use crate::analysis::indicators::{self, IndicatorInfo};
+use crate::analysis::screener::{self, Hit, ScreeningSummary};
+use crate::analysis::signals::{self, SignalInfo};
+use crate::analysis::strategy::{Definition, Template, Universe, templates};
+use crate::error::{ApiError, ApiResult};
+
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(catalog))
+        .routes(routes!(list_strategies, create_strategy))
+        .routes(routes!(get_strategy, update_strategy, delete_strategy))
+        .routes(routes!(preview))
+        .routes(routes!(results))
+        .routes(routes!(run_screening))
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct Catalog {
+    pub indicators: Vec<IndicatorInfo>,
+    pub signals: Vec<SignalInfo>,
+    pub templates: Vec<Template>,
+    /// 新建策略时的默认股票池
+    pub default_universe: Universe,
+}
+
+/// 可用的指标、信号和内置模板
+#[utoipa::path(get, path = "/strategies/catalog", tag = "strategy", responses((status = 200, description = "成功", body = Catalog)))]
+async fn catalog() -> Json<Catalog> {
+    Json(Catalog { indicators: indicators::CATALOG.to_vec(), signals: signals::CATALOG.to_vec(), templates: templates(), default_universe: Universe::default() })
+}
+
+/// 策略的白话说明：股票池、买入条件、卖出规则
+#[derive(Serialize, ToSchema)]
+pub struct Explained {
+    pub universe: Vec<String>,
+    /// 全部满足
+    pub all: Vec<String>,
+    /// 至少满足一个
+    pub any: Vec<String>,
+    pub exit: Vec<String>,
+}
+
+fn explain(d: &Definition) -> Explained {
+    let mut exit: Vec<String> = d.exit.any.iter().map(|c| c.describe()).collect();
+    if let Some(v) = d.exit.stop_loss_pct {
+        exit.push(format!("亏损 {v}% 止损"));
+    }
+    if let Some(v) = d.exit.take_profit_pct {
+        exit.push(format!("盈利 {v}% 止盈"));
+    }
+    if let Some(v) = d.exit.max_hold_days {
+        exit.push(format!("最多持有 {v} 个交易日"));
+    }
+    Explained {
+        universe: d.describe_universe(),
+        all: d.all.iter().map(|c| c.describe()).collect(),
+        any: d.any.iter().map(|c| c.describe()).collect(),
+        exit,
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct LatestRun {
+    pub trade_date: NaiveDate,
+    /// 满足条件的股票数（截断前）
+    pub matched: i32,
+    /// 保存的结果数
+    pub hits: i64,
+    /// 其中新入选的数量
+    pub new_hits: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct StrategyItem {
+    pub strategy_id: i64,
+    pub name: String,
+    pub description: String,
+    /// 是否参加每日巡检
+    pub screening: bool,
+    pub template: Option<String>,
+    pub definition: Definition,
+    pub explained: Explained,
+    /// 最近一次巡检；还没有巡检过时为空
+    pub latest: Option<LatestRun>,
+    pub updated_at: DateTime<Utc>,
+}
+
+type StrategyRow = (i64, String, String, bool, Option<String>, serde_json::Value, DateTime<Utc>);
+
+async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem>> {
+    let rows: Vec<StrategyRow> = sqlx::query_as(
+        "SELECT strategy_id, name, description, screening, template, definition, updated_at FROM app.strategy
+         WHERE ($1::bigint IS NULL OR strategy_id = $1) ORDER BY strategy_id",
+    )
+    .bind(id)
+    .fetch_all(&s.pool)
+    .await?;
+    let latest: Vec<(i64, NaiveDate, i32, i64, i64)> = sqlx::query_as(
+        "SELECT DISTINCT ON (r.strategy_id) r.strategy_id, r.trade_date, r.matched,
+                (SELECT count(*) FROM app.screen_hit h WHERE h.run_id = r.run_id),
+                (SELECT count(*) FROM app.screen_hit h WHERE h.run_id = r.run_id AND h.is_new)
+         FROM app.screen_run r WHERE ($1::bigint IS NULL OR r.strategy_id = $1) ORDER BY r.strategy_id, r.trade_date DESC",
+    )
+    .bind(id)
+    .fetch_all(&s.pool)
+    .await?;
+    let mut out = vec![];
+    for (strategy_id, name, description, screening, template, v, updated_at) in rows {
+        let definition: Definition = serde_json::from_value(v).map_err(|e| ApiError::Internal(e.into()))?;
+        let latest = latest
+            .iter()
+            .find(|l| l.0 == strategy_id)
+            .map(|&(_, trade_date, matched, hits, new_hits)| LatestRun { trade_date, matched, hits, new_hits });
+        out.push(StrategyItem { strategy_id, name, description, screening, template, explained: explain(&definition), definition, latest, updated_at });
+    }
+    Ok(out)
+}
+
+/// 全部策略和各自最近一次巡检的概况
+#[utoipa::path(get, path = "/strategies", tag = "strategy", responses((status = 200, description = "成功", body = [StrategyItem])))]
+async fn list_strategies(State(s): State<AppState>) -> ApiResult<Json<Vec<StrategyItem>>> {
+    Ok(Json(load_items(&s, None).await?))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct StrategyInput {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub definition: Definition,
+    /// 是否参加每日巡检，默认 true
+    #[serde(default = "yes")]
+    pub screening: bool,
+    /// 由哪个模板创建（只作记录）
+    #[serde(default)]
+    pub template: Option<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn check(input: &StrategyInput) -> ApiResult<()> {
+    let n = input.name.trim().chars().count();
+    if n == 0 || n > 40 {
+        return Err(ApiError::BadRequest("策略名称应为 1 到 40 个字".into()));
+    }
+    input.definition.validate().map_err(ApiError::BadRequest)
+}
+
+/// 新建策略
+#[utoipa::path(post, path = "/strategies", tag = "strategy", request_body = StrategyInput,
+    responses((status = 201, description = "已创建", body = StrategyItem), (status = 400, description = "定义不合法", body = crate::error::ErrorBody)))]
+async fn create_strategy(State(s): State<AppState>, Json(input): Json<StrategyInput>) -> ApiResult<(StatusCode, Json<StrategyItem>)> {
+    check(&input)?;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO app.strategy (name, description, definition, screening, template) VALUES ($1, $2, $3, $4, $5) RETURNING strategy_id",
+    )
+    .bind(input.name.trim())
+    .bind(input.description.trim())
+    .bind(serde_json::to_value(&input.definition).map_err(|e| ApiError::Internal(e.into()))?)
+    .bind(input.screening)
+    .bind(&input.template)
+    .fetch_one(&s.pool)
+    .await?;
+    let item = load_items(&s, Some(id)).await?.pop().ok_or_else(|| ApiError::NotFound("策略不存在".into()))?;
+    Ok((StatusCode::CREATED, Json(item)))
+}
+
+/// 单个策略
+#[utoipa::path(get, path = "/strategies/{strategy_id}", tag = "strategy", params(("strategy_id" = i64, Path)),
+    responses((status = 200, description = "成功", body = StrategyItem), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
+async fn get_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<Json<StrategyItem>> {
+    load_items(&s, Some(id)).await?.pop().map(Json).ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))
+}
+
+/// 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义
+#[utoipa::path(put, path = "/strategies/{strategy_id}", tag = "strategy", params(("strategy_id" = i64, Path)), request_body = StrategyInput,
+    responses((status = 200, description = "已保存", body = StrategyItem),
+              (status = 400, description = "定义不合法", body = crate::error::ErrorBody),
+              (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
+async fn update_strategy(State(s): State<AppState>, Path(id): Path<i64>, Json(input): Json<StrategyInput>) -> ApiResult<Json<StrategyItem>> {
+    check(&input)?;
+    let n = sqlx::query("UPDATE app.strategy SET name = $2, description = $3, definition = $4, screening = $5, updated_at = now() WHERE strategy_id = $1")
+        .bind(id)
+        .bind(input.name.trim())
+        .bind(input.description.trim())
+        .bind(serde_json::to_value(&input.definition).map_err(|e| ApiError::Internal(e.into()))?)
+        .bind(input.screening)
+        .execute(&s.pool)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(ApiError::NotFound(format!("策略不存在：{id}")));
+    }
+    get_strategy(State(s), Path(id)).await
+}
+
+/// 删除策略和它的巡检结果
+#[utoipa::path(delete, path = "/strategies/{strategy_id}", tag = "strategy", params(("strategy_id" = i64, Path)),
+    responses((status = 204, description = "已删除")))]
+async fn delete_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<StatusCode> {
+    sqlx::query("DELETE FROM app.strategy WHERE strategy_id = $1").bind(id).execute(&s.pool).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct PreviewInput {
+    pub definition: Definition,
+    /// 交易日，默认最新
+    #[serde(default)]
+    pub date: Option<NaiveDate>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PreviewResult {
+    pub trade_date: NaiveDate,
+    pub scanned: usize,
+    pub matched: usize,
+    pub hits: Vec<Hit>,
+    pub explained: Explained,
+}
+
+/// 试运行：用这份定义在某个交易日选股，不保存。全市场计算一次约几秒
+#[utoipa::path(post, path = "/strategies/preview", tag = "strategy", request_body = PreviewInput,
+    responses((status = 200, description = "成功", body = PreviewResult), (status = 400, description = "定义不合法或没有日线", body = crate::error::ErrorBody)))]
+async fn preview(State(s): State<AppState>, Json(input): Json<PreviewInput>) -> ApiResult<Json<PreviewResult>> {
+    input.definition.validate().map_err(ApiError::BadRequest)?;
+    let out = screener::screen(&s.pool, &[&input.definition], input.date).await?.ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;
+    let r = out.results.into_iter().next().expect("一个策略一个结果");
+    Ok(Json(PreviewResult { trade_date: out.trade_date, scanned: out.scanned, matched: r.matched, hits: r.hits, explained: explain(&input.definition) }))
+}
+
+#[derive(Deserialize, IntoParams)]
+pub struct ResultsQuery {
+    /// 交易日，默认最近一次巡检
+    pub date: Option<NaiveDate>,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct StoredHit {
+    pub thscode: String,
+    pub name: String,
+    pub rank: i32,
+    /// 上一次巡检时不在结果中
+    pub is_new: bool,
+    #[schema(value_type = Vec<String>)]
+    pub reasons: sqlx::types::Json<Vec<String>>,
+    pub close: Option<f64>,
+    pub change_pct: Option<f64>,
+    pub amount: Option<f64>,
+    pub sort_value: Option<f64>,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct RemovedHit {
+    pub thscode: String,
+    pub name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ScreenResults {
+    /// 没有巡检过时为空
+    pub trade_date: Option<NaiveDate>,
+    pub scanned: Option<i32>,
+    pub matched: Option<i32>,
+    pub ran_at: Option<DateTime<Utc>>,
+    pub hits: Vec<StoredHit>,
+    /// 上一次巡检入选、这一次不在结果中的股票
+    pub removed: Vec<RemovedHit>,
+    /// 有巡检结果的交易日（最近 60 个，新的在前）
+    pub dates: Vec<NaiveDate>,
+}
+
+/// 某个策略某个交易日的巡检结果
+#[utoipa::path(get, path = "/strategies/{strategy_id}/results", tag = "strategy", params(("strategy_id" = i64, Path), ResultsQuery),
+    responses((status = 200, description = "成功", body = ScreenResults), (status = 404, description = "策略不存在", body = crate::error::ErrorBody)))]
+async fn results(State(s): State<AppState>, Path(id): Path<i64>, Query(q): Query<ResultsQuery>) -> ApiResult<Json<ScreenResults>> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)").bind(id).fetch_one(&s.pool).await?;
+    if !exists {
+        return Err(ApiError::NotFound(format!("策略不存在：{id}")));
+    }
+    let dates: Vec<NaiveDate> =
+        sqlx::query_scalar("SELECT trade_date FROM app.screen_run WHERE strategy_id = $1 ORDER BY trade_date DESC LIMIT 60").bind(id).fetch_all(&s.pool).await?;
+    let run: Option<(i64, NaiveDate, i32, i32, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT run_id, trade_date, scanned, matched, ran_at FROM app.screen_run
+         WHERE strategy_id = $1 AND ($2::date IS NULL OR trade_date = $2) ORDER BY trade_date DESC LIMIT 1",
+    )
+    .bind(id)
+    .bind(q.date)
+    .fetch_optional(&s.pool)
+    .await?;
+    let Some((run_id, trade_date, scanned, matched, ran_at)) = run else {
+        return Ok(Json(ScreenResults { trade_date: None, scanned: None, matched: None, ran_at: None, hits: vec![], removed: vec![], dates }));
+    };
+    let hits: Vec<StoredHit> = sqlx::query_as(
+        "SELECT thscode, coalesce(metrics->>'name', '') AS name, rank, is_new, reasons,
+                (metrics->>'close')::float8 AS close, (metrics->>'change_pct')::float8 AS change_pct,
+                (metrics->>'amount')::float8 AS amount, (metrics->>'sort_value')::float8 AS sort_value
+         FROM app.screen_hit WHERE run_id = $1 ORDER BY rank",
+    )
+    .bind(run_id)
+    .fetch_all(&s.pool)
+    .await?;
+    let removed: Vec<RemovedHit> = sqlx::query_as(
+        "SELECT p.thscode, coalesce(p.metrics->>'name', '') AS name FROM app.screen_hit p
+         WHERE p.run_id = (SELECT run_id FROM app.screen_run WHERE strategy_id = $1 AND trade_date < $2 ORDER BY trade_date DESC LIMIT 1)
+           AND NOT EXISTS (SELECT 1 FROM app.screen_hit h WHERE h.run_id = $3 AND h.thscode = p.thscode)
+         ORDER BY p.rank",
+    )
+    .bind(id)
+    .bind(trade_date)
+    .bind(run_id)
+    .fetch_all(&s.pool)
+    .await?;
+    Ok(Json(ScreenResults { trade_date: Some(trade_date), scanned: Some(scanned), matched: Some(matched), ran_at: Some(ran_at), hits, removed, dates }))
+}
+
+#[derive(Deserialize, IntoParams)]
+pub struct RunQuery {
+    /// 交易日，默认最新
+    pub date: Option<NaiveDate>,
+    /// 只巡检这个策略；默认巡检全部开启巡检的策略
+    pub strategy_id: Option<i64>,
+}
+
+/// 立即巡检并保存结果。每个交易日收盘同步完成后会自动执行，这里用于手动补跑或重跑某一天
+#[utoipa::path(post, path = "/screening/run", tag = "strategy", params(RunQuery), responses((status = 200, description = "已完成", body = ScreeningSummary)))]
+async fn run_screening(State(s): State<AppState>, Query(q): Query<RunQuery>) -> ApiResult<Json<ScreeningSummary>> {
+    Ok(Json(screener::run_and_store(&s.pool, q.date, q.strategy_id).await?))
+}

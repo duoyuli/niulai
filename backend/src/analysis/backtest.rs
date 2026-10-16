@@ -1,4 +1,5 @@
-//! 均线交叉策略回测：单只股票，只做多，金叉后满仓买入、死叉后全部卖出。
+//! 单只股票回测：只做多，买入信号出现后满仓买入，卖出信号或风控触发后全部卖出。
+//! 买卖信号可以来自均线交叉，也可以来自选股策略（见 strategy::Definition）。
 //!
 //! 规则（详见 docs/domains/backtest.md）：
 //! - 信号用等比前复权价计算；信号在收盘后才确定，所以在下一个交易日的开盘价成交，不使用当天还不知道的信息。
@@ -35,19 +36,54 @@ impl Default for Costs {
 }
 
 impl Costs {
-    fn commission(&self, amount: f64) -> f64 {
+    pub(crate) fn commission(&self, amount: f64) -> f64 {
         (amount * self.commission_rate).max(self.min_commission)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
-    pub fast: usize,
-    pub slow: usize,
-    /// 从这一天起允许交易；均线仍然用之前的历史计算
+    /// 从这一天起允许交易；指标和信号仍然用之前的历史计算
     pub start: Option<NaiveDate>,
     pub capital: f64,
     pub costs: Costs,
+    pub risk: Risk,
+}
+
+/// 风控：持仓期间按收盘价判断，触发后在下一个交易日开盘卖出。涨跌按前复权价计算，含分红送转
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Risk {
+    /// 例如 8 表示亏损 8% 时卖出
+    pub stop_loss_pct: Option<f64>,
+    pub take_profit_pct: Option<f64>,
+    pub max_hold_days: Option<u32>,
+}
+
+/// 每天收盘后的买入信号和卖出信号（与日线等长）
+pub struct Signals<'a> {
+    pub entry: &'a [bool],
+    pub exit: &'a [bool],
+}
+
+/// 卖出的原因
+#[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ExitReason {
+    /// 满足卖出条件
+    Signal,
+    StopLoss,
+    TakeProfit,
+    /// 持有满最长天数
+    MaxHold,
+}
+
+/// 由均线交叉得到买卖信号：金叉买、死叉卖
+pub fn ma_cross_signals(bars: &[DailyBar], fast: usize, slow: usize) -> (Vec<bool>, Vec<bool>) {
+    let closes: Vec<f64> = bars.iter().map(|b| b.q_close).collect();
+    let rows = ma_cross(&closes, fast, slow);
+    let entry = rows.iter().map(|r| r.is_some_and(|r| r.signal == Some(CrossSignal::Golden))).collect();
+    let exit = rows.iter().map(|r| r.is_some_and(|r| r.signal == Some(CrossSignal::Death))).collect();
+    (entry, exit)
 }
 
 #[derive(Serialize, ToSchema, Debug)]
@@ -63,6 +99,8 @@ pub struct Trade {
     pub exit_price: Option<f64>,
     /// 卖出时的股数，持有期间送转股会使它大于买入股数
     pub exit_shares: i64,
+    /// 卖出的原因；期末仍持有时为空
+    pub exit_reason: Option<ExitReason>,
     /// 买入金额加佣金
     pub cost: f64,
     /// 卖出所得（已扣佣金和印花税）；期末仍持有时是按最后收盘价计算的市值，不扣费
@@ -109,6 +147,8 @@ pub struct Summary {
     pub wins: usize,
     /// 赚钱的笔数 / 已卖出的笔数；没有已卖出的交易时为空
     pub win_rate: Option<f64>,
+    /// 盈亏比：赚钱的交易平均赚多少 ÷ 亏钱的交易平均亏多少；大于 1 表示赚的时候比亏的时候多
+    pub payoff_ratio: Option<f64>,
     pub avg_bars_held: Option<f64>,
     /// 持仓的交易日占比
     pub exposure: f64,
@@ -140,6 +180,8 @@ struct Position {
     entry_shares: i64,
     shares: i64,
     price: f64,
+    /// 买入时的前复权开盘价，判断止损止盈用
+    q_price: f64,
     cost: f64,
     dividends: f64,
 }
@@ -158,14 +200,13 @@ fn annualize(r: f64, start: NaiveDate, end: NaiveDate) -> Option<f64> {
 /// 区间内没有日线时返回 None。bars 按日期升序，包含 start 之前的历史（用于计算均线）；
 /// events 是这只股票的公司行动，按除权日升序
 // @project-doc docs/domains/backtest.md#rules
-pub fn run(bars: &[DailyBar], events: &[CorpEvent], p: &Params) -> Option<Outcome> {
+pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -> Option<Outcome> {
     let first = bars.iter().position(|b| p.start.is_none_or(|s| b.date >= s))?;
-    let closes: Vec<f64> = bars.iter().map(|b| b.q_close).collect();
-    let ma = ma_cross(&closes, p.fast, p.slow);
 
     let mut cash = p.capital;
     let mut pos: Option<Position> = None;
     let mut pending: Option<Side> = None;
+    let mut sell_reason = ExitReason::Signal;
     let mut trades = vec![];
     let mut equity = Vec::with_capacity(bars.len() - first);
     let (mut fees, mut dividends, mut deferred, mut skipped, mut held_days) = (0.0, 0.0, 0usize, 0usize, 0usize);
@@ -217,7 +258,7 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], p: &Params) -> Option<Outcom
                             let fee = p.costs.commission(amount);
                             cash -= amount + fee;
                             fees += fee;
-                            pos = Some(Position { idx: i, entry_shares: shares, shares, price: b.open, cost: amount + fee, dividends: 0.0 });
+                            pos = Some(Position { idx: i, entry_shares: shares, shares, price: b.open, q_price: b.q_open, cost: amount + fee, dividends: 0.0 });
                         }
                     }
                     Side::Sell => {
@@ -226,7 +267,7 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], p: &Params) -> Option<Outcom
                             let fee = p.costs.commission(gross) + gross * p.costs.stamp_tax_rate;
                             cash += gross - fee;
                             fees += fee;
-                            trades.push(close_trade(bars, &o, i, Some(b.open), gross - fee));
+                            trades.push(close_trade(bars, &o, i, Some((b.open, sell_reason)), gross - fee));
                         }
                     }
                 }
@@ -243,14 +284,31 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], p: &Params) -> Option<Outcom
         held_days += pos.is_some() as usize;
         equity.push(EquityPoint { date: b.date, equity: value, benchmark: bench_value, holding: pos.is_some() });
 
-        // 4. 收盘后：根据当天的信号决定明天的订单；反向信号取消还没成交的订单
-        if let Some(row) = ma[i] {
-            match (row.signal, pos.is_some()) {
-                (Some(CrossSignal::Golden), false) => pending = Some(Side::Buy),
-                (Some(CrossSignal::Death), true) => pending = Some(Side::Sell),
-                (Some(_), _) => pending = None,
-                (None, _) => {}
+        // 4. 收盘后：根据当天的信号和风控决定明天的订单；反向信号取消还没成交的订单
+        match &pos {
+            Some(o) => {
+                let r = b.q_close / o.q_price - 1.0;
+                let reason = if sig.exit[i] {
+                    Some(ExitReason::Signal)
+                } else if p.risk.stop_loss_pct.is_some_and(|s| r <= -s / 100.0) {
+                    Some(ExitReason::StopLoss)
+                } else if p.risk.take_profit_pct.is_some_and(|t| r >= t / 100.0) {
+                    Some(ExitReason::TakeProfit)
+                } else if p.risk.max_hold_days.is_some_and(|d| i + 1 - o.idx >= d as usize) {
+                    Some(ExitReason::MaxHold)
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    pending = Some(Side::Sell);
+                    sell_reason = reason;
+                } else if sig.entry[i] {
+                    pending = None;
+                }
             }
+            None if sig.entry[i] && !sig.exit[i] => pending = Some(Side::Buy),
+            None if sig.exit[i] => pending = None,
+            None => {}
         }
     }
 
@@ -264,6 +322,7 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], p: &Params) -> Option<Outcom
     let benchmark_return = equity.last().map_or(0.0, |e| e.benchmark / p.capital - 1.0);
     let closed: Vec<&Trade> = trades.iter().filter(|t| t.exit_date.is_some()).collect();
     let wins = closed.iter().filter(|t| t.pnl > 0.0).count();
+    let payoff_ratio = payoff(&closed.iter().map(|t| t.pnl).collect::<Vec<_>>());
     let summary = Summary {
         start,
         end: last.date,
@@ -279,6 +338,7 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], p: &Params) -> Option<Outcom
         closed_trades: closed.len(),
         wins,
         win_rate: (!closed.is_empty()).then(|| wins as f64 / closed.len() as f64),
+        payoff_ratio,
         avg_bars_held: (!closed.is_empty()).then(|| closed.iter().map(|t| t.bars_held as f64).sum::<f64>() / closed.len() as f64),
         exposure: held_days as f64 / equity.len() as f64,
         fees,
@@ -289,15 +349,27 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], p: &Params) -> Option<Outcom
     Some(Outcome { summary, trades, equity })
 }
 
-fn close_trade(bars: &[DailyBar], o: &Position, exit_idx: usize, exit_price: Option<f64>, proceeds: f64) -> Trade {
+/// 盈亏比：平均盈利 ÷ 平均亏损的绝对值。没有赚钱或没有亏钱的交易时为空
+pub fn payoff(pnls: &[f64]) -> Option<f64> {
+    let wins: Vec<f64> = pnls.iter().copied().filter(|v| *v > 0.0).collect();
+    let losses: Vec<f64> = pnls.iter().copied().filter(|v| *v < 0.0).collect();
+    if wins.is_empty() || losses.is_empty() {
+        return None;
+    }
+    let avg = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    Some(avg(&wins) / avg(&losses).abs())
+}
+
+fn close_trade(bars: &[DailyBar], o: &Position, exit_idx: usize, exit: Option<(f64, ExitReason)>, proceeds: f64) -> Trade {
     let pnl = proceeds + o.dividends - o.cost;
     Trade {
         entry_date: bars[o.idx].date,
         entry_price: o.price,
         shares: o.entry_shares,
-        exit_date: exit_price.map(|_| bars[exit_idx].date),
-        exit_price,
+        exit_date: exit.map(|_| bars[exit_idx].date),
+        exit_price: exit.map(|(p, _)| p),
         exit_shares: o.shares,
+        exit_reason: exit.map(|(_, r)| r),
         cost: o.cost,
         proceeds,
         dividends: o.dividends,
@@ -317,19 +389,25 @@ mod tests {
         closes
             .iter()
             .enumerate()
-            .map(|(i, &c)| DailyBar { date: d0 + chrono::Duration::days(i as i64), open: c, high: c + 0.1, low: c - 0.1, close: c, q_open: c, q_close: c })
+            .map(|(i, &c)| DailyBar { date: d0 + chrono::Duration::days(i as i64), open: c, high: c + 0.1, low: c - 0.1, close: c, q_open: c, q_high: c + 0.1, q_low: c - 0.1, q_close: c, volume: 1e6, amount: c * 1e6 })
             .collect()
     }
 
     fn params() -> Params {
-        Params { fast: 2, slow: 3, start: None, capital: 10_000.0, costs: Costs { commission_rate: 0.0, min_commission: 0.0, stamp_tax_rate: 0.0 } }
+        Params { start: None, capital: 10_000.0, costs: Costs { commission_rate: 0.0, min_commission: 0.0, stamp_tax_rate: 0.0 }, risk: Risk::default() }
+    }
+
+    /// 2 日均线与 3 日均线交叉的回测
+    fn run_ma(b: &[DailyBar], events: &[CorpEvent], p: &Params) -> Outcome {
+        let (entry, exit) = ma_cross_signals(b, 2, 3);
+        run(b, events, &Signals { entry: &entry, exit: &exit }, p).unwrap()
     }
 
     #[test]
     fn trades_next_open_after_signal() {
         // 下标 5 收盘金叉，下标 6 开盘 8 元买入
         let b = bars(&[5.0, 4.0, 3.0, 2.0, 3.0, 5.0, 8.0, 10.0, 6.0, 3.0, 2.0, 2.0]);
-        let out = run(&b, &[], &params()).unwrap();
+        let out = run_ma(&b, &[], &params());
         let t = &out.trades[0];
         assert_eq!((t.entry_date, t.entry_price, t.shares), (b[6].date, 8.0, 1200));
         // 快线 9 8 4.5，慢线 7.67 8 6.33：下标 9 收盘死叉，下标 10 开盘 2 元卖出
@@ -350,7 +428,7 @@ mod tests {
         b[6].low = 8.0;
         let mut p = params();
         p.costs = Costs::default();
-        let out = run(&b, &[], &p).unwrap();
+        let out = run_ma(&b, &[], &p);
         assert_eq!(out.summary.deferred_orders, 1);
         let t = &out.trades[0];
         assert_eq!((t.entry_date, t.entry_price), (b[7].date, 9.0));
@@ -372,7 +450,7 @@ mod tests {
             CorpEvent { ex_date: b[0].date, cash_div: 9.0, bonus_ratio: 9.0 },
             CorpEvent { ex_date: b[7].date, cash_div: 0.5, bonus_ratio: 0.5 },
         ];
-        let out = run(&b, &events, &params()).unwrap();
+        let out = run_ma(&b, &events, &params());
         let t = &out.trades[0];
         assert_eq!((t.shares, t.exit_shares), (1200, 1800));
         assert!((t.dividends - 600.0).abs() < 1e-9, "第一天当天的事件不处理，只算下标 7 的分红");
@@ -381,5 +459,34 @@ mod tests {
         assert!((t.pnl - (10_800.0 + 600.0 - 9_600.0)).abs() < 1e-9);
         // 基准：5 元买 2,000 股，分红 1,000 元，送股后 3,000 股 × 6 元
         assert!((out.summary.benchmark_return - (19_000.0 / 10_000.0 - 1.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn stop_loss_and_max_hold_close_positions() {
+        // 第一天收盘就买入信号，之后一路下跌：跌 8% 后下一天开盘止损
+        let b = bars(&[10.0, 10.0, 9.5, 9.0, 8.5, 8.0, 7.5]);
+        let entry = vec![true, false, false, false, false, false, false];
+        let exit = vec![false; 7];
+        let mut p = params();
+        p.risk.stop_loss_pct = Some(8.0);
+        let out = run(&b, &[], &Signals { entry: &entry, exit: &exit }, &p).unwrap();
+        let t = &out.trades[0];
+        // 下标 1 开盘 10 元买入；下标 3 收盘 9.0（−10%）触发，下标 4 开盘卖出
+        assert_eq!((t.entry_date, t.exit_date, t.exit_reason), (b[1].date, Some(b[4].date), Some(ExitReason::StopLoss)));
+
+        let flat = bars(&[10.0; 8]);
+        let entry = vec![true, false, false, false, false, false, false, false];
+        let exit = vec![false; 8];
+        let mut p = params();
+        p.risk.max_hold_days = Some(3);
+        let out = run(&flat, &[], &Signals { entry: &entry, exit: &exit }, &p).unwrap();
+        let t = &out.trades[0];
+        assert_eq!((t.bars_held, t.exit_reason), (3, Some(ExitReason::MaxHold)));
+    }
+
+    #[test]
+    fn payoff_ratio() {
+        assert_eq!(payoff(&[30.0, 10.0, -10.0]), Some(2.0));
+        assert_eq!(payoff(&[5.0]), None);
     }
 }

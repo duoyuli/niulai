@@ -223,7 +223,12 @@ impl Executor {
     async fn after_task(&self, run_id: i64) -> anyhow::Result<()> {
         let Some(status) = run::try_complete(&self.pool, run_id).await? else { return Ok(()) };
         tracing::info!(run_id, %status, "运行结束，开始后处理");
-        postprocess::after_run(&self.pool, run_id).await?;
+        // 行情有变化时，按最新交易日执行每日巡检；巡检失败不影响同步
+        if postprocess::after_run(&self.pool, run_id).await?
+            && let Err(e) = crate::analysis::screener::run_and_store(&self.pool, None, None).await
+        {
+            tracing::error!(run_id, error = %format!("{e:#}"), "每日巡检失败");
+        }
         if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry).continue_chain(run_id).await? {
             tracing::info!(run_id, next, "已规划下一个波次");
         }

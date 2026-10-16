@@ -448,3 +448,97 @@ async fn api_key_setup_flow() {
 
     db.drop().await;
 }
+
+#[tokio::test]
+async fn strategies_screening_diagnosis_and_backtests() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    // 一只合成股票：120 个交易日，先跌后涨，最后一天放量站上 20 日均线
+    let run_id: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind) VALUES ('backfill') RETURNING run_id").fetch_one(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO ref.security (thscode, ticker, name, exchange, board, list_date, first_seen, last_seen) VALUES ('600000.SH', '600000', '测试银行', 'SH', 'main', '2020-01-02', current_date, current_date)")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO mkt.stock_bar_1d (thscode, trade_date, open, high, low, close, volume, amount, run_id)
+         SELECT '600000.SH', d, c, c * 1.01, c * 0.99, c, v, v * c, $1
+         FROM (SELECT d::date AS d, row_number() OVER (ORDER BY d) AS i FROM generate_series('2026-01-05'::date, '2026-10-30'::date, '1 day') d
+               WHERE extract(isodow FROM d) < 6 LIMIT 120) t,
+         LATERAL (SELECT round((CASE WHEN i < 90 THEN 20 - i * 0.05 ELSE 15.5 + (i - 90) * 0.25 END)::numeric, 2) AS c,
+                         CASE WHEN i = 120 THEN 9000000 ELSE 1000000 END AS v) x",
+    )
+    .bind(run_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let settings = bare_settings("http://127.0.0.1:1", Some("test"));
+    let engine = Engine::new(settings, db.pool.clone()).await.unwrap();
+    let app = niulai::api::router(engine);
+
+    // 首次启动时复制了 10 个模板
+    let (st, list) = call(&app, "GET", "/api/v1/strategies", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(list.as_array().unwrap().len(), 10);
+    let (_, cat) = call(&app, "GET", "/api/v1/strategies/catalog", None).await;
+    assert!(cat["signals"].as_array().unwrap().len() >= 20);
+
+    // 试运行：最后一天放量（9 倍）且站在 20 日均线上方
+    let def = json!({
+        "universe": {"exclude_st": true, "min_price": 1, "min_amount": 1000},
+        "all": [
+            {"kind": "signal", "signal": "volume_surge", "params": {"ratio": 3}},
+            {"kind": "compare", "left": {"id": "close"}, "op": ">", "right": {"id": "ma", "n": 20}}
+        ],
+        "exit": {"stop_loss_pct": 5, "max_hold_days": 10}
+    });
+    let (st, body) = call(&app, "POST", "/api/v1/strategies/preview", Some(json!({"definition": def}))).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["matched"], 1);
+    assert_eq!(body["hits"][0]["thscode"], "600000.SH");
+    assert!(body["hits"][0]["reasons"][0].as_str().unwrap().contains("放量"));
+
+    // 保存、巡检、查结果
+    let (st, created) = call(&app, "POST", "/api/v1/strategies", Some(json!({"name": "放量站上均线", "definition": def}))).await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    let id = created["strategy_id"].as_i64().unwrap();
+    let (st, run) = call(&app, "POST", &format!("/api/v1/screening/run?strategy_id={id}"), None).await;
+    assert_eq!(st, StatusCode::OK, "{run}");
+    assert_eq!(run["scanned"], 1);
+    let (_, res) = call(&app, "GET", &format!("/api/v1/strategies/{id}/results"), None).await;
+    assert_eq!(res["hits"].as_array().unwrap().len(), 1);
+    assert_eq!(res["hits"][0]["is_new"], false, "第一次巡检没有可比较的上一次");
+    // 补一次前一天（第 119 天，不满足）的巡检，再巡检最后一天：与前一天比是新入选
+    let (st, _) = call(&app, "POST", &format!("/api/v1/screening/run?strategy_id={id}&date=2026-06-18"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    call(&app, "POST", &format!("/api/v1/screening/run?strategy_id={id}"), None).await;
+    let (_, res) = call(&app, "GET", &format!("/api/v1/strategies/{id}/results"), None).await;
+    assert_eq!(res["trade_date"], "2026-06-19");
+    assert_eq!(res["hits"][0]["is_new"], true);
+    assert_eq!(res["dates"].as_array().unwrap().len(), 2);
+    let (st, _) = call(&app, "PUT", &format!("/api/v1/strategies/{id}"), Some(json!({"name": "", "definition": def}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "名称不能为空");
+
+    // 诊断、市场概况、回测
+    let (st, diag) = call(&app, "GET", "/api/v1/securities/600000.SH/diagnosis", None).await;
+    assert_eq!(st, StatusCode::OK, "{diag}");
+    assert_eq!(diag["dimensions"].as_array().unwrap().len(), 4);
+    assert!(diag["strategies"].as_array().unwrap().iter().any(|s| s["strategy_id"] == id), "当天满足刚保存的策略");
+    let (st, ov) = call(&app, "GET", "/api/v1/market/overview", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(ov["stocks"], 1);
+    let (st, bt) = call(&app, "GET", &format!("/api/v1/backtest/strategy?strategy_id={id}&thscode=600000.SH"), None).await;
+    assert_eq!(st, StatusCode::OK, "{bt}");
+    assert_eq!(bt["equity"].as_array().unwrap().len(), 120);
+    let (st, pf) = call(&app, "GET", &format!("/api/v1/backtest/portfolio?strategy_id={id}&start=2026-01-01&max_positions=3"), None).await;
+    assert_eq!(st, StatusCode::OK, "{pf}");
+    assert_eq!(pf["summary"]["signals"], 0, "信号在最后一天，第二天没有日线，不能买入");
+    let (st, _) = call(&app, "GET", "/api/v1/backtest/portfolio?strategy_id=99999", None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let (st, _) = call(&app, "DELETE", &format!("/api/v1/strategies/{id}"), None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    db.drop().await;
+}

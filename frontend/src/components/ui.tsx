@@ -125,7 +125,7 @@ export function buttonClass(variant: "primary" | "ghost" = "primary") {
 }
 
 export const inputClass =
-  "rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm outline-none placeholder:text-zinc-400 focus:border-accent focus:ring-2 focus:ring-accent/20 dark:border-zinc-700 dark:bg-zinc-900";
+  "rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent focus:ring-2 focus:ring-accent/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
 
 /** 一组互斥选项（分段按钮） */
 export function Segmented<V extends string>({

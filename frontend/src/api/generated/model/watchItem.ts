@@ -5,7 +5,8 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
-import type { Diagnosis } from './diagnosis';
+import type { SignalEvent } from './signalEvent';
+import type { WatchDiagnosis } from './watchDiagnosis';
 
 export interface WatchItem {
   added_at: string;
@@ -15,12 +16,14 @@ export interface WatchItem {
   close?: string | null;
   /** @nullable */
   delisted_on?: string | null;
-  diagnosis?: Diagnosis | null;
+  diagnosis?: WatchDiagnosis | null;
   /**
      * 本地最新一根日线（未复权）的日期和收盘价；还没有日线时为空
      * @nullable
      */
   last_date?: string | null;
   name: string;
+  /** 最近 5 个交易日出现过的信号，新的在前 */
+  recent_signals: SignalEvent[];
   thscode: string;
 }

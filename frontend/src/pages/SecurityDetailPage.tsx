@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { Link, useParams } from "react-router";
 import { useGetSecurity, useSecurityBars, useSecurityMa } from "../api/generated/market/market";
 import type { Bar, MaPoint } from "../api/generated/model";
+import { DiagnosisCard } from "../components/DiagnosisCard";
 import { MaControls } from "../components/MaControls";
 import { PriceChart } from "../components/PriceChart";
 import {
@@ -69,7 +70,7 @@ export function SecurityDetailPage() {
             <Link
               to={`/backtest?code=${thscode}&fast=${fast}&slow=${slow}`}
               className={buttonClass("ghost")}
-              title="按当前均线周期回测：金叉买入、死叉卖出"
+              title="按当前均线周期回测：金叉买入、死叉卖出；也可以在回测页换成已保存的策略"
             >
               回测
             </Link>
@@ -81,6 +82,8 @@ export function SecurityDetailPage() {
       />
 
       {bars.data && <Summary bars={bars.data.bars} ma={ma.data?.points} />}
+
+      <DiagnosisCard thscode={thscode} />
 
       <Card
         title="日 K 线"

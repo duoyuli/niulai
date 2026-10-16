@@ -45,6 +45,11 @@ export interface Summary {
   /** 最大回撤：账户总值从最高点下跌的最大幅度（正数，0.2 表示 20%） */
   max_drawdown: number;
   /**
+     * 盈亏比：赚钱的交易平均赚多少 ÷ 亏钱的交易平均亏多少；大于 1 表示赚的时候比亏的时候多
+     * @nullable
+     */
+  payoff_ratio?: number | null;
+  /**
      * 资金不够买一手而放弃的买入信号次数
      * @minimum 0
      */

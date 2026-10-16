@@ -102,3 +102,9 @@ export const RANGES = [
 export function rangeStart(range: string): string | undefined {
   return range === "all" ? undefined : yearsBefore(todayCn(), Number(range));
 }
+
+/** 已经是百分数的值（5 表示 5%），例如策略接口里的涨跌幅 */
+export function fmtPctValue(v: number | null | undefined, digits = 2): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
+  return `${v > 0 ? "+" : ""}${v.toFixed(digits)}%`;
+}

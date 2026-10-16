@@ -14,11 +14,15 @@ use utoipa_axum::routes;
 use super::AppState;
 use super::market::windows;
 use crate::analysis::ma::{CrossSignal, ma_cross, state_of};
-use crate::analysis::prices;
+use crate::analysis::diagnosis::{SignalEvent, recent_signals};
+use crate::analysis::indicators::Frame;
+use crate::analysis::{market, prices};
 use crate::error::{ApiError, ApiResult};
 
 /// 每只股票取最近多少根前复权日线做诊断：约两年，足够算出 250 日均线并找到最近一次交叉
 const LOOKBACK: i64 = 500;
+/// 计算最近信号需要的日线根数：覆盖 60 日新高和 MACD 的收敛期
+const RECENT_BARS: i64 = 200;
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(list_watchlist)).routes(routes!(add_watch, remove_watch))
@@ -52,11 +56,13 @@ pub struct WatchItem {
     pub last_date: Option<NaiveDate>,
     pub close: Option<String>,
     /// 按前复权价计算的诊断；还没有日线时为空
-    pub diagnosis: Option<Diagnosis>,
+    pub diagnosis: Option<WatchDiagnosis>,
+    /// 最近 5 个交易日出现过的信号，新的在前
+    pub recent_signals: Vec<SignalEvent>,
 }
 
 #[derive(Serialize, ToSchema)]
-pub struct Diagnosis {
+pub struct WatchDiagnosis {
     /// 最近 1 个交易日的涨跌幅（0.01 表示 1%）
     pub change_1d: Option<f64>,
     /// 最近 20 个交易日的涨跌幅
@@ -113,19 +119,23 @@ async fn list_watchlist(State(s): State<AppState>, Query(q): Query<WatchQuery>) 
     let codes: Vec<String> = base.iter().map(|r| r.0.clone()).collect();
     let series = prices::recent_closes(&s.pool, &codes, LOOKBACK).await?;
 
-    let items = base
-        .into_iter()
-        .map(|(thscode, name, board, delisted_on, added_at, last_date, close)| {
-            let diagnosis = series.get(&thscode).and_then(|pts| diagnose(pts, fast, slow));
-            WatchItem { thscode, name, board, delisted_on, added_at, last_date, close, diagnosis }
-        })
-        .collect();
+    let sec = market::securities(&s.pool).await?;
+    let mut items = vec![];
+    for (thscode, name, board, delisted_on, added_at, last_date, close) in base {
+        let diagnosis = series.get(&thscode).and_then(|pts| diagnose(pts, fast, slow));
+        let bars = prices::recent_bars(&s.pool, &thscode, RECENT_BARS).await?;
+        let recent_signals = {
+            let f = Frame::new(&bars, sec.meta.get(&thscode));
+            recent_signals(&f, 5)
+        };
+        items.push(WatchItem { thscode, name, board, delisted_on, added_at, last_date, close, diagnosis, recent_signals });
+    }
     Ok(Json(Watchlist { fast: fast as i32, slow: slow as i32, items }))
 }
 
 // @project-doc docs/domains/ma_signals.md#watchlist
 /// pts 是按日期升序的前复权收盘价
-fn diagnose(pts: &[(NaiveDate, f64)], fast: usize, slow: usize) -> Option<Diagnosis> {
+fn diagnose(pts: &[(NaiveDate, f64)], fast: usize, slow: usize) -> Option<WatchDiagnosis> {
     let &(_, close) = pts.last()?;
     let change = |k: usize| pts.len().checked_sub(k + 1).map(|i| close / pts[i].1 - 1.0);
     let closes: Vec<f64> = pts.iter().map(|p| p.1).collect();
@@ -141,7 +151,7 @@ fn diagnose(pts: &[(NaiveDate, f64)], fast: usize, slow: usize) -> Option<Diagno
         };
         MaState { ma_fast: last.ma_fast, ma_slow: last.ma_slow, trend, last_cross }
     });
-    Some(Diagnosis { change_1d: change(1), change_20d: change(20), ma })
+    Some(WatchDiagnosis { change_1d: change(1), change_20d: change(20), ma })
 }
 
 /// 收藏一只股票（重复收藏不报错）
