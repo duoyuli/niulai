@@ -1,22 +1,27 @@
 import { clsx } from "clsx";
-import { Navigate, NavLink, Outlet, useLocation } from "react-router";
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { useGetSetup } from "../api/generated/setup/setup";
 import { useReady } from "../api/generated/system/system";
+import { SecuritySearch } from "./SecuritySearch";
 
+/** 主导航只放三件事：今天看什么、我的选股方法、我关注的股票。个股从页头搜索进入 */
 const NAV = [
-  { to: "/", label: "股票", end: true },
+  { to: "/", label: "今日", end: true },
+  { to: "/strategies", label: "策略" },
   { to: "/watchlist", label: "自选" },
-  { to: "/screener", label: "选股" },
-  { to: "/signals", label: "均线扫描" },
-  { to: "/backtest", label: "回测" },
-  { to: "/indices", label: "指数板块" },
-  { to: "/sync", label: "数据同步" },
+];
+
+/** 数据同步、指数板块、设置：不是每天用的，放在右侧 */
+const AUX = [
+  { to: "/sync", label: "数据", title: "数据同步与指数板块" },
+  { to: "/setup", label: "设置", title: "数据源设置：API Key" },
 ];
 
 export function Layout() {
   // 首次登录引导：还没有配置 API Key 时，所有页面都先去配置
   const setup = useGetSetup({ query: { staleTime: 30_000 } });
   const { pathname } = useLocation();
+  const nav = useNavigate();
   if (setup.data && !setup.data.api_key_configured && pathname !== "/setup") return <Navigate to="/setup" replace />;
   return (
     <div className="flex min-h-dvh flex-col">
@@ -45,21 +50,25 @@ export function Layout() {
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto flex items-center gap-3">
-            <NavLink
-              to="/setup"
-              title="数据源设置：API Key"
-              className={({ isActive }) =>
-                clsx(
-                  "text-xs whitespace-nowrap",
-                  isActive
-                    ? "text-zinc-900 dark:text-zinc-100"
-                    : "text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100",
-                )
-              }
-            >
-              设置
-            </NavLink>
+          <div className="ml-auto flex min-w-0 items-center gap-3">
+            <SecuritySearch onPick={(code) => nav(`/securities/${code}`)} width="w-28 sm:w-56" />
+            {AUX.map((a) => (
+              <NavLink
+                key={a.to}
+                to={a.to}
+                title={a.title}
+                className={({ isActive }) =>
+                  clsx(
+                    "hidden text-xs whitespace-nowrap sm:inline",
+                    isActive || (a.to === "/sync" && pathname.startsWith("/indices"))
+                      ? "text-zinc-900 dark:text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100",
+                  )
+                }
+              >
+                {a.label}
+              </NavLink>
+            ))}
             <ServerStatus />
           </div>
         </div>

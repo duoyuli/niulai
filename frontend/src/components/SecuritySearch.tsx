@@ -8,34 +8,38 @@ export function SecuritySearch({
   label,
   onPick,
   action,
+  width = "w-64",
 }: {
-  label: string;
+  /** 为空时不显示标签（页头的搜索框） */
+  label?: string;
+  width?: string;
   onPick?: (thscode: string) => void;
   action?: (thscode: string) => ReactNode;
 }) {
   const [text, setText] = useState("");
   const q = useDebounced(text).trim();
   const found = useListSecurities({ q, limit: 8 }, { query: { enabled: q !== "" } });
+  const input = (
+    <input
+      className={`${inputClass} ${width}`}
+      placeholder={label ? "代码或名称，例如 600519 或 茅台" : "搜索股票"}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") setText("");
+        const first = found.data?.items[0];
+        if (e.key === "Enter" && onPick && first) {
+          onPick(first.thscode);
+          setText("");
+        }
+      }}
+    />
+  );
   return (
     <div className="relative">
-      <Field label={label}>
-        <input
-          className={`${inputClass} w-64`}
-          placeholder="代码或名称，例如 600519 或 茅台"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setText("");
-            const first = found.data?.items[0];
-            if (e.key === "Enter" && onPick && first) {
-              onPick(first.thscode);
-              setText("");
-            }
-          }}
-        />
-      </Field>
+      {label ? <Field label={label}>{input}</Field> : input}
       {q !== "" && found.data && (
-        <ul className="absolute z-20 mt-1 w-72 overflow-hidden rounded-lg border border-zinc-200 bg-white text-sm shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+        <ul className="absolute right-0 z-20 mt-1 w-72 sm:right-auto overflow-hidden rounded-lg border border-zinc-200 bg-white text-sm shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
           {found.data.items.length === 0 ? (
             <li className="px-3 py-2 text-zinc-500">没有找到</li>
           ) : (

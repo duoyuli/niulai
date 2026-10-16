@@ -19,7 +19,10 @@
 | `src/pages/` | 每个页面一个文件 |
 | `src/components/ui.tsx` | 通用组件：卡片、表格、标签、分段按钮、加载与错误状态 |
 | `src/components/PriceChart.tsx`、`EquityChart.tsx` | K 线、成交量和均线图；回测的账户总值曲线（策略与买入持有，可切换对数坐标） |
-| `src/components/SecuritySearch.tsx` | 按代码或名称搜索股票的下拉框，自选页添加股票和回测页选股共用 |
+| `src/components/SecuritySearch.tsx` | 按代码或名称搜索股票的下拉框：页头的全局搜索和自选页添加股票共用 |
+| `src/components/DiagnosisCard.tsx`、`SignalChip.tsx` | 个股诊断卡片；信号标签（偏多红色、偏空绿色） |
+| `src/components/backtest.tsx` | 回测的共用部分：交易成本输入、结果展示（单只股票和全市场组合）、规则说明；个股页和策略页共用 |
+| `src/lib/strategy.ts` | 信号和指标名称模板的填充、卖出原因的中文名 |
 | `src/components/WatchButton.tsx`、`src/hooks/useWatchlist.ts` | 收藏星标；各页面共用一份自选股列表，收藏变化后刷新所有自选股查询 |
 | `src/hooks/` | URL 筛选状态、防抖、深色模式、收藏状态 |
 | `src/lib/format.ts`、`labels.ts` | 数字和日期格式化、涨跌颜色（`upDownClass`）、时间区间选项；后端枚举值的中文名 |
@@ -30,21 +33,25 @@
 <a id="pages"></a>
 ## 页面与接口
 
+界面按用户要做的事组织，而不是按后端有哪些功能组织：主导航只有「今日」「策略」「自选」三项，个股从页头的搜索框进入，回测是策略和个股页里的一个标签页，数据同步和指数板块放在页头右侧的「数据」里。为什么这样组织，见 [ADR：界面按任务组织](../decisions/ui_by_task.md)。
+
 | 路径 | 页面 | 接口 |
 | --- | --- | --- |
-| `/` | 股票列表：按代码或名称搜索，按板块筛选，分页，可收藏 | `GET /securities` |
-| `/watchlist` | 自选：收藏的股票及诊断（最新收盘、涨跌、均线状态、最近交叉、最近信号），可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
-| `/screener` | 选股：市场概况、板块强弱、全部策略的最近一次巡检结果，可立即巡检、新建策略 | `GET /market/overview`、`GET /market/sectors`、`GET /strategies`、`POST /screening/run` |
-| `/screener/:id` | 策略详情：条件的白话说明，按交易日查看巡检结果（新入选、不再符合），可编辑、删除、暂停巡检、回测 | `GET /strategies/{id}`、`/results`、`PUT` / `DELETE /strategies/{id}`、`POST /screening/run` |
-| `/screener/new`、`/screener/:id/edit` | 策略编辑器：从模板或空白开始，设置股票池、条件、排序和卖出规则，可预览结果 | `GET /strategies/catalog`、`POST /strategies/preview`、`POST /strategies`、`PUT /strategies/{id}` |
-| `/securities/:thscode` | 股票详情：诊断卡片、K 线（5 种复权口径、1 年到全部）、均线与金叉死叉、交叉信号列表、简称变化，可收藏、可跳转回测 | `GET /securities/{thscode}`、`/bars`、`/ma`、`/diagnosis` |
-| `/signals` | 均线扫描：某个交易日发生交叉的股票，可改快慢线周期，可收藏 | `GET /signals/ma-cross` |
-| `/backtest` | 回测，三种方式：单只股票的均线交叉、单只股票的已保存策略、全市场选股组合（`mode` 参数）；选区间、资金和交易成本，显示结论、指标、账户总值曲线和交易记录（含卖出原因）；可从详情页、自选页、策略页带参数进入 | `GET /backtest/ma-cross`、`/backtest/strategy`、`/backtest/portfolio`、`GET /strategies`、`GET /watchlist`、`GET /securities` |
-| `/indices` | 指数与板块列表，按分类筛选 | `GET /indices` |
+| `/` | 今日：大盘涨跌概况、近 5 日最强的行业、每个开启巡检的策略今天选出的股票（新入选的在前）、自选股的最近信号 | `GET /market/overview`、`GET /market/sectors`、`GET /strategies`、`GET /strategies/{id}/results`、`GET /watchlist` |
+| `/strategies` | 策略列表：每个策略最近一次选出的数量，可立即巡检、新建 | `GET /strategies`、`POST /screening/run` |
+| `/strategies/:id` | 策略详情：条件写成一段话；「选出的股票」标签页按交易日看结果（新入选、不再符合）；「过去表现如何」标签页做全市场组合回测，点「开始回测」才计算 | `GET /strategies/{id}`、`/results`、`PUT` / `DELETE /strategies/{id}`、`POST /screening/run`、`GET /backtest/portfolio` |
+| `/strategies/new`、`/strategies/:id/edit` | 策略编辑器：从模板或空白开始，设置股票池、条件、排序和卖出规则，可预览结果 | `GET /strategies/catalog`、`POST /strategies/preview`、`POST /strategies`、`PUT /strategies/{id}` |
+| `/watchlist` | 自选：收藏的股票、涨跌、趋势和最近信号，可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
+| `/securities/:thscode` | 个股：页头是最新价和收藏；「走势与诊断」标签页是诊断卡片和 K 线（复权口径与均线交叉记录折叠在下面）；「回测」标签页用均线交叉或任意已保存的策略回测这只股票 | `GET /securities/{thscode}`、`/bars`、`/ma`、`/diagnosis`、`GET /backtest/ma-cross`、`/backtest/strategy`、`GET /strategies` |
+| `/indices` | 指数与板块列表，按分类筛选；从「数据」页和今日页的板块进入 | `GET /indices` |
 | `/indices/:thscode` | 指数详情：K 线、当前成分股 | `GET /indices`、`/indices/{thscode}/bars`、`/members` |
 | `/sync` | 数据同步：待执行和失败任务数、最近的运行、数据集状态，发起运行 | `GET /datasets`、`GET /sync/runs`、`POST /sync/runs` |
 | `/sync/runs/:runId` | 运行详情：各数据集进度、失败任务 | `GET /sync/runs/{run_id}` |
 | `/setup` | 首次登录引导和数据源设置：说明去哪里生成 API Key，验证并保存；已配置时显示来源和末尾 4 位，可以更换 | `GET /setup`、`PUT /setup/api-key` |
+
+旧地址 `/securities`、`/signals`、`/backtest`、`/screener/...` 跳转到对应的新页面。全市场均线扫描接口 `GET /signals/ma-cross` 仍然保留，但没有页面使用；同样的需求用「均线金叉」策略。
+
+页面里常用的展示原则：每页先给一句白话结论，再给最多四个关键数字，其余数字、明细表和规则说明折叠起来。
 
 还没有配置 API Key 时（`GET /setup` 的 `api_key_configured` 为 false），`Layout` 把所有页面跳转到 `/setup`；页头右侧的「设置」也进入这个页面。页头右侧的服务状态每 30 秒请求一次 `GET /ready`。数据同步页每 5 秒刷新运行列表，运行详情在运行进行中时每 5 秒刷新。
 

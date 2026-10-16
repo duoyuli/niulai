@@ -105,7 +105,7 @@ function TemplatePicker({ catalog, onPick }: { catalog: Catalog; onPick: (key: s
         title="新建策略"
         desc="先选一个最接近想法的模板，再改条件；也可以从空白开始。"
         extra={
-          <Link to="/screener" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+          <Link to="/strategies" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
             ← 返回
           </Link>
         }
@@ -155,7 +155,7 @@ function Editor({
   const preview = usePreview();
   const done = (id: number) => {
     qc.invalidateQueries();
-    nav(`/screener/${id}`);
+    nav(`/strategies/${id}`);
   };
   const create = useCreateStrategy({ mutation: { onSuccess: (r) => done(r.strategy_id) } });
   const update = useUpdateStrategy({ mutation: { onSuccess: (r) => done(r.strategy_id) } });
@@ -182,7 +182,7 @@ function Editor({
             </button>
           ) : (
             <Link
-              to={`/screener/${editId}`}
+              to={`/strategies/${editId}`}
               className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
             >
               ← 返回

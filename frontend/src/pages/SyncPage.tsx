@@ -33,9 +33,14 @@ export function SyncPage() {
         title="数据同步"
         desc="从同花顺同步到本地数据库的运行和数据集状态。每个交易日 18:00 自动发起增量运行，历史回补在后台排队执行。"
         extra={
-          <button type="button" className={buttonClass()} onClick={() => setCreating((v) => !v)}>
-            {creating ? "收起" : "发起运行"}
-          </button>
+          <div className="flex items-center gap-3">
+            <Link to="/indices" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+              指数与板块 →
+            </Link>
+            <button type="button" className={buttonClass()} onClick={() => setCreating((v) => !v)}>
+              {creating ? "收起" : "发起运行"}
+            </button>
+          </div>
         }
       />
       {datasets.data && <Overview datasets={datasets.data} runs={runs.data ?? []} />}
