@@ -32,8 +32,10 @@ import type {
   ErrorBody,
   ListRunsParams,
   RecordItem,
+  RepairSummary,
   RunDetail,
-  RunSummary
+  RunSummary,
+  SyncHealth
 } from '../model';
 
 import { apiFetch } from '../../fetcher';
@@ -273,7 +275,180 @@ export function useDatasetRecords<TData = Awaited<ReturnType<typeof datasetRecor
 
 
 
-export const getListRunsUrl = (params?: ListRunsParams,) => {
+export const getSyncHealthUrl = () => {
+
+
+
+
+  return `/api/v1/sync/health`
+}
+
+/**
+ * @summary 同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口、没有解决的失败、历史回补进度
+ */
+export const syncHealth = async ( options?: Parameters<typeof apiFetch>[1]): Promise<SyncHealth> => {
+
+  return apiFetch<SyncHealth>(getSyncHealthUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getSyncHealthQueryKey = () => {
+    return [
+    `/api/v1/sync/health`
+    ] as const;
+    }
+
+
+export const getSyncHealthQueryOptions = <TData = Awaited<ReturnType<typeof syncHealth>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof syncHealth>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSyncHealthQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof syncHealth>>> = ({ signal }) => syncHealth({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof syncHealth>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SyncHealthQueryResult = NonNullable<Awaited<ReturnType<typeof syncHealth>>>
+export type SyncHealthQueryError = unknown
+
+
+export function useSyncHealth<TData = Awaited<ReturnType<typeof syncHealth>>, TError = unknown>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof syncHealth>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof syncHealth>>,
+          TError,
+          Awaited<ReturnType<typeof syncHealth>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSyncHealth<TData = Awaited<ReturnType<typeof syncHealth>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof syncHealth>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof syncHealth>>,
+          TError,
+          Awaited<ReturnType<typeof syncHealth>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSyncHealth<TData = Awaited<ReturnType<typeof syncHealth>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof syncHealth>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口、没有解决的失败、历史回补进度
+ */
+
+export function useSyncHealth<TData = Awaited<ReturnType<typeof syncHealth>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof syncHealth>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSyncHealthQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSyncRepairUrl = () => {
+
+
+
+
+  return `/api/v1/sync/repair`
+}
+
+/**
+ * @summary 立即兜底补偿：能重新取的缺口规划补偿运行，供应商暂时不可用导致的失败重新排队。每天每日同步结束后也会自动执行一次
+ */
+export const syncRepair = async ( options?: Parameters<typeof apiFetch>[1]): Promise<RepairSummary> => {
+
+  return apiFetch<RepairSummary>(getSyncRepairUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getSyncRepairMutationKey = () => ['syncRepair'] as const;
+
+export const getSyncRepairMutationOptions = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof syncRepair>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof syncRepair>>, TError,void, TContext> => {
+
+const mutationKey = getSyncRepairMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof syncRepair>>, void> = () => {
+
+
+          return  syncRepair(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SyncRepairMutationResult = NonNullable<Awaited<ReturnType<typeof syncRepair>>>
+
+    export type SyncRepairMutationError = unknown
+
+
+    /**
+ * @summary 立即兜底补偿：能重新取的缺口规划补偿运行，供应商暂时不可用导致的失败重新排队。每天每日同步结束后也会自动执行一次
+ */
+export const useSyncRepair = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof syncRepair>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof syncRepair>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getSyncRepairMutationOptions(options), queryClient);
+    }
+    export const getListRunsUrl = (params?: ListRunsParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {

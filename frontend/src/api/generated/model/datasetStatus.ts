@@ -7,14 +7,26 @@
  */
 
 export interface DatasetStatus {
+  backfill_done: number;
+  /** 正在进行的历史回补中，这个数据集的任务数和已结束的任务数；没有回补时都是 0 */
+  backfill_total: number;
+  category: string;
   dataset_id: string;
+  /** 失败后之后也没有成功过的任务 */
   dead_tasks: number;
   domain: string;
   enabled: boolean;
   endpoint: string;
   /** @nullable */
   last_done_at?: string | null;
+  /** 只有当天的值，错过当天就补不回来 */
+  only_current: boolean;
   open_tasks: number;
   /** P0–P3 */
   priority: string;
+  /** 更新频率：after_close / daily / weekly / monthly / report_season / after_open */
+  schedule: string;
+  summary: string;
+  /** 中文名、分类、一句话说明 */
+  title: string;
 }

@@ -46,7 +46,7 @@
 | `/guide` | 指标与信号：三个概念的说明，每个信号和指标是什么、怎么看、要注意什么；可以查看今天哪些股票出现了某个信号，或用它新建策略。各页面的信号标签和策略编辑器的「这是什么？」链接到对应条目（`#sig-<信号>`、`#ind-<指标>`） | `GET /strategies/catalog`、`POST /strategies/preview` |
 | `/indices` | 指数与板块列表，按分类筛选；从「数据」页和今日页的板块进入 | `GET /indices` |
 | `/indices/:thscode` | 指数详情：K 线、当前成分股 | `GET /indices`、`/indices/{thscode}/bars`、`/members` |
-| `/sync` | 数据同步：待执行和失败任务数、最近的运行、数据集状态，发起运行 | `GET /datasets`、`GET /sync/runs`、`POST /sync/runs` |
+| `/sync` | 数据同步：顶部一句话说明最近一个交易日的数据是否就绪和补历史的进度；「需要注意」列出缺口和失败，分「可以补」和「补不回来」，可以一键补齐；数据按分类分组，每个数据集显示中文名、一句话说明、更新频率、最近更新和状态，没有开启的收在最后；同步记录把同一次同步的几个波次合并成一行；手动发起同步收在「高级」里 | `GET /sync/health`、`POST /sync/repair`、`GET /datasets`、`GET /sync/runs`、`POST /sync/runs` |
 | `/sync/runs/:runId` | 运行详情：各数据集进度、失败任务 | `GET /sync/runs/{run_id}` |
 | `/login` | 登录：输入管理员账号密码，成功后回到原来要打开的页面（`next` 参数）；不在 `Layout` 中 | `POST /auth/login` |
 | `/setup` | 首次配置引导和数据源设置：说明去哪里生成 API Key，验证并保存；已配置时显示来源和末尾 4 位，可以更换 | `GET /setup`、`PUT /setup/api-key` |

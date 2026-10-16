@@ -7,6 +7,7 @@
 //! - 状态：queue（ops.task）、run（ops.run）、cursor（ops.cursor）、calendar（ref.trading_day 与交易日校验）
 //! - 配置：spec、template、registry
 
+pub mod audit;
 pub mod calendar;
 pub mod cursor;
 pub mod executor;

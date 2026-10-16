@@ -1855,6 +1855,48 @@
         }
       }
     },
+    "/sync/health": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口、没有解决的失败、历史回补进度",
+        "operationId": "sync_health",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncHealth"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sync/repair": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "立即兜底补偿：能重新取的缺口规划补偿运行，供应商暂时不可用导致的失败重新排队。每天每日同步结束后也会自动执行一次",
+        "operationId": "sync_repair",
+        "responses": {
+          "202": {
+            "description": "已规划补偿",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/sync/runs": {
       "get": {
         "tags": [
@@ -2234,6 +2276,31 @@
           "type": "string"
         }
       },
+      "BackfillProgress": {
+        "type": "object",
+        "required": [
+          "done",
+          "total"
+        ],
+        "properties": {
+          "done": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "eta_hours": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "按最近一小时的速度估算的剩余时间"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "BacktestCosts": {
         "type": "object",
         "required": [
@@ -2526,6 +2593,15 @@
           "death"
         ]
       },
+      "DailyState": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "running",
+          "incomplete",
+          "not_started"
+        ]
+      },
       "DatasetProgress": {
         "type": "object",
         "required": [
@@ -2580,20 +2656,40 @@
         "type": "object",
         "required": [
           "dataset_id",
+          "title",
+          "category",
+          "summary",
           "domain",
           "endpoint",
           "priority",
           "enabled",
+          "schedule",
+          "only_current",
           "open_tasks",
-          "dead_tasks"
+          "dead_tasks",
+          "backfill_total",
+          "backfill_done"
         ],
         "properties": {
+          "backfill_done": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "backfill_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "正在进行的历史回补中，这个数据集的任务数和已结束的任务数；没有回补时都是 0"
+          },
+          "category": {
+            "type": "string"
+          },
           "dataset_id": {
             "type": "string"
           },
           "dead_tasks": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "失败后之后也没有成功过的任务"
           },
           "domain": {
             "type": "string"
@@ -2611,6 +2707,10 @@
             ],
             "format": "date-time"
           },
+          "only_current": {
+            "type": "boolean",
+            "description": "只有当天的值，错过当天就补不回来"
+          },
           "open_tasks": {
             "type": "integer",
             "format": "int64"
@@ -2618,6 +2718,17 @@
           "priority": {
             "type": "string",
             "description": "P0–P3"
+          },
+          "schedule": {
+            "type": "string",
+            "description": "更新频率：after_close / daily / weekly / monthly / report_season / after_open"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "description": "中文名、分类、一句话说明"
           }
         }
       },
@@ -2864,6 +2975,85 @@
             }
           }
         }
+      },
+      "FailureGroup": {
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "title",
+          "tasks",
+          "reason",
+          "sample_error"
+        ],
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "latest_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string",
+            "description": "白话说明：为什么失败、会不会自动处理"
+          },
+          "sample_error": {
+            "type": "string",
+            "description": "其中一条原始错误"
+          },
+          "tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "Gap": {
+        "type": "object",
+        "required": [
+          "trade_date",
+          "dataset_id",
+          "title",
+          "kind",
+          "message",
+          "recoverable"
+        ],
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/GapKind"
+          },
+          "message": {
+            "type": "string"
+          },
+          "recoverable": {
+            "type": "boolean",
+            "description": "能否补回：有历史的数据可以重新取，只有当天值的数据错过了就没有了"
+          },
+          "title": {
+            "type": "string"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "GapKind": {
+        "type": "string",
+        "enum": [
+          "not_run",
+          "missed",
+          "failed",
+          "incomplete"
+        ]
       },
       "Health": {
         "type": "object",
@@ -3897,6 +4087,35 @@
           }
         }
       },
+      "RepairSummary": {
+        "type": "object",
+        "required": [
+          "runs",
+          "retried",
+          "unrecoverable"
+        ],
+        "properties": {
+          "retried": {
+            "type": "integer",
+            "format": "int64",
+            "description": "重新排队的失败任务数",
+            "minimum": 0
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "新规划的补偿运行"
+          },
+          "unrecoverable": {
+            "type": "integer",
+            "description": "补不回来的缺口数",
+            "minimum": 0
+          }
+        }
+      },
       "RunDetail": {
         "allOf": [
           {
@@ -4802,6 +5021,64 @@
           "wins": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "SyncHealth": {
+        "type": "object",
+        "required": [
+          "daily_state",
+          "message",
+          "gaps",
+          "failures"
+        ],
+        "properties": {
+          "backfill": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BackfillProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "daily_state": {
+            "$ref": "#/components/schemas/DailyState"
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FailureGroup"
+            },
+            "description": "失败后不再自动重试、之后也没有成功过的任务，按数据集分组"
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Gap"
+            },
+            "description": "最近 20 个交易日的缺口，新的在前"
+          },
+          "last_repair_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "最近一次兜底补偿的时间"
+          },
+          "latest_trade_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "最近一个应该已经有数据的交易日"
+          },
+          "message": {
+            "type": "string",
+            "description": "一句话说明当前状态"
           }
         }
       },

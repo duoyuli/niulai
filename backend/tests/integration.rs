@@ -515,6 +515,72 @@ async fn one_click_upgrade_hands_request_to_upgrader() {
 }
 
 #[tokio::test]
+async fn audit_finds_gaps_and_plans_repairs() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let pool = &db.pool;
+    let engine = Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), pool.clone()).await.unwrap();
+    // 两个过去的交易日：d1 同步过（估值错过了，一个任务因供应商不可用重试用尽），d2 完全没有同步；一只在市的股票没有日线
+    let d1: chrono::NaiveDate = sqlx::query_scalar("SELECT current_date - 3").fetch_one(pool).await.unwrap();
+    let d2 = d1 + chrono::Duration::days(1);
+    sqlx::query("INSERT INTO ref.trading_day (cal_date, source) VALUES ($1, 'api'), ($2, 'api')").bind(d1).bind(d2).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO ref.security (thscode, ticker, name, exchange, board, list_date, first_seen, last_seen) VALUES ('600000.SH', '600000', '测试银行', 'SH', 'main', '2020-01-02', current_date, current_date)")
+        .execute(pool)
+        .await
+        .unwrap();
+    let run: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind, trade_date, status) VALUES ('incremental', $1, 'partial') RETURNING run_id").bind(d1).fetch_one(pool).await.unwrap();
+    for (ds, status, err) in [
+        ("a_share.snapshot", "done", ""),
+        ("index.snapshot", "done", ""),
+        ("a_share.corp_action_dump", "done", ""),
+        ("a_share.auction_final", "done", ""),
+        ("special.anomaly_reason", "done", ""),
+        ("a_share.valuation", "dead", "已错过：供应商最新交易日已是更晚的一天"),
+        ("special.hot_stock_daily", "dead", "可重试错误（code=Some(5003)，http=Some(200)）：Data source unavailable"),
+        // 同一个分区失败了两次：只能重新排队一个（每个分区同时只能有一个未完成的任务）
+        ("special.hot_stock_daily", "dead", "可重试错误（code=Some(5003)，http=Some(200)）：Data source unavailable"),
+    ] {
+        sqlx::query("INSERT INTO ops.task (run_id, dataset_id, part_key, params, status, last_error, finished_at) VALUES ($1, $2, '*', '{}', $3, nullif($4, ''), now())")
+            .bind(run)
+            .bind(ds)
+            .bind(status)
+            .bind(err)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    let h = niulai::sync::audit::health(&engine).await.unwrap();
+    let kinds: Vec<(chrono::NaiveDate, &str, niulai::sync::audit::GapKind, bool)> =
+        h.gaps.iter().map(|g| (g.trade_date, g.dataset_id.as_str(), g.kind, g.recoverable)).collect();
+    use niulai::sync::audit::GapKind::*;
+    assert!(kinds.contains(&(d1, "a_share.valuation", Missed, false)), "{kinds:?}");
+    assert!(kinds.contains(&(d1, "a_share.bar_1d", Incomplete, true)), "{kinds:?}");
+    assert!(kinds.contains(&(d2, "a_share.snapshot", NotRun, true)), "快照没同步，可由个股日线补：{kinds:?}");
+    assert!(kinds.contains(&(d2, "a_share.valuation", NotRun, false)), "{kinds:?}");
+    assert!(!kinds.iter().any(|k| k.0 == d1 && k.1 == "a_share.snapshot"), "d1 的快照成功了");
+    assert_eq!(h.latest_trade_date, Some(d2));
+    assert_eq!(h.daily_state, niulai::sync::audit::DailyState::Incomplete);
+    assert!(h.failures.iter().any(|f| f.dataset_id == "a_share.valuation" && f.reason.contains("无法补回")));
+
+    // 补偿：能补的规划补偿运行，供应商不可用的任务重新排队，错过的估值补不回来
+    let s = niulai::sync::audit::repair(&engine).await.unwrap();
+    assert!(!s.runs.is_empty());
+    assert_eq!(s.retried, 1);
+    assert!(s.unrecoverable >= 2);
+    let repair_runs: Vec<String> = sqlx::query_scalar("SELECT dataset_id FROM ops.run WHERE kind = 'repair' AND dataset_id IS NOT NULL ORDER BY 1").fetch_all(pool).await.unwrap();
+    assert!(repair_runs.contains(&"a_share.bar_1d".to_string()), "{repair_runs:?}");
+    assert!(repair_runs.contains(&"a_share.corp_action_dump".to_string()), "{repair_runs:?}");
+    let reopened: String = sqlx::query_scalar("SELECT status FROM ops.run WHERE run_id = $1").bind(run).fetch_one(pool).await.unwrap();
+    assert_eq!(reopened, "running", "重新排队的任务所在的运行重新打开");
+    let pr: i16 = sqlx::query_scalar("SELECT priority FROM ops.task WHERE dataset_id = 'special.hot_stock_daily' AND status = 'pending'").fetch_one(pool).await.unwrap();
+    assert!((50..100).contains(&pr), "重新排队的任务在补偿层：{pr}");
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn api_key_setup_flow() {
     let Some(db) = TestDb::create().await else {
         eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");

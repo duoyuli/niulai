@@ -29,11 +29,19 @@ pub async fn run(engine: Arc<Engine>, mut stop: watch::Receiver<bool>) -> anyhow
         }
         let now = now_cn();
         // 还没有配置 API Key 时不发起增量；配置后当天到点照常触发
-        if now.time() >= at
-            && engine.client.has_api_key()
-            && let Err(e) = tick(&engine, now.date()).await {
+        if engine.client.has_api_key() {
+            if now.time() >= at
+                && let Err(e) = tick(&engine, now.date()).await
+            {
                 tracing::error!(error = %format!("{e:#}"), "调度失败");
             }
+            if let Err(e) = catch_up(&engine, now.date()).await {
+                tracing::error!(error = %format!("{e:#}"), "补发每日同步失败");
+            }
+            if let Err(e) = super::audit::auto_repair(&engine, now.date()).await {
+                tracing::error!(error = %format!("{e:#}"), "兜底补偿失败");
+            }
+        }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(30)) => {}
             _ = stop.changed() => {}
@@ -42,7 +50,7 @@ pub async fn run(engine: Arc<Engine>, mut stop: watch::Receiver<bool>) -> anyhow
 }
 
 /// 每个周期只有一个调用者能把 last_fired 推进到新周期，返回 true 的那个负责触发
-async fn claim(pool: &PgPool, job: &str, today: NaiveDate, period: &str) -> anyhow::Result<bool> {
+pub(crate) async fn claim(pool: &PgPool, job: &str, today: NaiveDate, period: &str) -> anyhow::Result<bool> {
     let sql = format!(
         "INSERT INTO ops.scheduler (job, last_fired) VALUES ($1, $2)
          ON CONFLICT (job) DO UPDATE SET last_fired = EXCLUDED.last_fired, fired_at = now()
@@ -74,6 +82,27 @@ async fn tick(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
     sqlx::query("UPDATE ops.scheduler SET run_id = $2 WHERE job = $1").bind("after_close").bind(run_id).execute(&engine.pool).await?;
     let tasks: usize = summary.iter().map(|(_, n)| n).sum();
     tracing::info!(run_id, datasets = due.len(), tasks, weekly, monthly, "每日增量已规划");
+    Ok(())
+}
+
+/// 补发错过的每日同步：上一个交易日的每日同步没有发起过（例如那天 18:00 到现在服务一直没有运行），立即补发。
+/// 只补每日数据集；只有当天值的数据能不能取到由交易日校验决定，取不到时记为「已错过」。
+/// 只往前看一个交易日：更早的日子，只有当天值的数据已经无法获取，其余数据由每周增量和完整性核对补齐
+async fn catch_up(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
+    let prev: Option<NaiveDate> = sqlx::query_scalar("SELECT max(cal_date) FROM ref.trading_day WHERE cal_date < $1 AND cal_date >= $1 - 10")
+        .bind(today)
+        .fetch_one(&engine.pool)
+        .await?;
+    let Some(prev) = prev else { return Ok(()) };
+    // 系统还没开始每日同步（例如刚部署、还在首次回补）时不补
+    let last: Option<NaiveDate> = sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'after_close'").fetch_optional(&engine.pool).await?;
+    if last.is_none_or(|l| l >= prev) || !claim(&engine.pool, "after_close", prev, "day").await? {
+        return Ok(());
+    }
+    let due: Vec<&DatasetSpec> = engine.registry.datasets.iter().filter(|d| d.enabled && d.schedule.is_daily()).collect();
+    let (run_id, summary) = engine.planner().plan_run(RunKind::Incremental, &due, planner::PlanOptions { trade_date: Some(prev), ..Default::default() }).await?;
+    let tasks: usize = summary.iter().map(|(_, n)| n).sum();
+    tracing::warn!(run_id, trade_date = %prev, last_fired = ?last, tasks, "上一个交易日的每日同步没有发起过，已补发");
     Ok(())
 }
 

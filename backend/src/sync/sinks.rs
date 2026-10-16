@@ -65,6 +65,8 @@ INSERT INTO ref.trading_day (cal_date, source)
 SELECT DISTINCT to_date(e->'p'->>'date', 'YYYYMMDD'), 'api' FROM jsonb_array_elements($1) e
 ON CONFLICT (cal_date) DO UPDATE SET source = 'api' WHERE ref.trading_day.source <> 'api'";
 
+// 供应商偶尔返回明显错误的一行（例如 000066.SZ 2006-09-25 的成交额是 9.2e18，接近 64 位整数上限），
+// 写入会溢出、让整个窗口的几千行都失败。成交量或成交额达到 1e13 的行直接丢掉，不影响其他日子，见 docs/domains/market_data_rules.md#bad_rows
 const STOCK_BAR_HIST: &str = "
 INSERT INTO mkt.stock_bar_1d AS t (thscode, trade_date, open, high, low, close, volume, amount, source, run_id)
 SELECT e->>'thscode', (e->>'obs_date')::date,
@@ -72,6 +74,7 @@ SELECT e->>'thscode', (e->>'obs_date')::date,
        (e->'p'->>'close_price')::numeric, round((e->'p'->>'volume')::numeric)::bigint, (e->'p'->>'turnover')::numeric, 'hist', $2
 FROM jsonb_array_elements($1) e
 WHERE e->'p'->>'open_price' IS NOT NULL
+  AND coalesce((e->'p'->>'volume')::numeric, 0) < 1e13 AND coalesce((e->'p'->>'turnover')::numeric, 0) < 1e13
 ON CONFLICT (thscode, trade_date) DO UPDATE
   SET open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low, close = EXCLUDED.close,
       volume = EXCLUDED.volume, amount = EXCLUDED.amount, source = 'hist', run_id = EXCLUDED.run_id, updated_at = now()
@@ -87,6 +90,7 @@ SELECT e->>'thscode', $3::date,
        (e->'p'->>'prev_price')::numeric, 'snapshot', $2
 FROM jsonb_array_elements($1) e
 WHERE coalesce((e->'p'->>'volume')::numeric, 0) > 0 AND coalesce((e->'p'->>'open_price')::numeric, 0) > 0
+  AND (e->'p'->>'volume')::numeric < 1e13 AND coalesce((e->'p'->>'turnover')::numeric, 0) < 1e13
 ON CONFLICT (thscode, trade_date) DO UPDATE
   SET pre_close = EXCLUDED.pre_close,
       open   = CASE WHEN t.source = 'snapshot' THEN EXCLUDED.open   ELSE t.open   END,
@@ -97,11 +101,12 @@ ON CONFLICT (thscode, trade_date) DO UPDATE
       amount = CASE WHEN t.source = 'snapshot' THEN EXCLUDED.amount ELSE t.amount END,
       updated_at = now()";
 
+// 指数的基日那一行（点位 1000）没有成交量和成交额，按 0 写入
 const INDEX_BAR_HIST: &str = "
 INSERT INTO mkt.index_bar_1d AS t (thscode, trade_date, open, high, low, close, volume, amount, run_id)
 SELECT e->>'thscode', (e->>'obs_date')::date,
        (e->'p'->>'open_price')::numeric, (e->'p'->>'high_price')::numeric, (e->'p'->>'low_price')::numeric,
-       (e->'p'->>'close_price')::numeric, round((e->'p'->>'volume')::numeric), (e->'p'->>'turnover')::numeric, $2
+       (e->'p'->>'close_price')::numeric, coalesce(round((e->'p'->>'volume')::numeric), 0), coalesce((e->'p'->>'turnover')::numeric, 0), $2
 FROM jsonb_array_elements($1) e
 WHERE e->'p'->>'open_price' IS NOT NULL
 ON CONFLICT (thscode, trade_date) DO UPDATE
@@ -113,7 +118,7 @@ const INDEX_BAR_SNAPSHOT: &str = "
 INSERT INTO mkt.index_bar_1d AS t (thscode, trade_date, open, high, low, close, volume, amount, pre_close, run_id)
 SELECT e->>'thscode', $3::date,
        (e->'p'->>'open_price')::numeric, (e->'p'->>'high_price')::numeric, (e->'p'->>'low_price')::numeric,
-       (e->'p'->>'last_price')::numeric, round((e->'p'->>'volume')::numeric), (e->'p'->>'turnover')::numeric, (e->'p'->>'prev_price')::numeric, $2
+       (e->'p'->>'last_price')::numeric, coalesce(round((e->'p'->>'volume')::numeric), 0), coalesce((e->'p'->>'turnover')::numeric, 0), (e->'p'->>'prev_price')::numeric, $2
 FROM jsonb_array_elements($1) e
 WHERE coalesce((e->'p'->>'open_price')::numeric, 0) > 0
 ON CONFLICT (thscode, trade_date) DO UPDATE SET pre_close = EXCLUDED.pre_close, updated_at = now()";

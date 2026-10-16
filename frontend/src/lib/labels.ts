@@ -50,8 +50,37 @@ export const TASK_STATUS: Record<string, { label: string; tone: Tone }> = {
 };
 
 export const RUN_KINDS: Record<string, string> = {
-  backfill: "历史回补",
-  incremental: "增量",
+  backfill: "补历史数据",
+  incremental: "定时同步",
+  repair: "补齐缺口",
+};
+
+/** 数据同步页的分类顺序，与 datasets.yaml 的 category 一致 */
+export const DATASET_CATEGORIES = [
+  "基础信息",
+  "行情",
+  "公司行动",
+  "估值与市值",
+  "财务",
+  "指数与板块",
+  "涨跌停",
+  "龙虎榜",
+  "热点与异动",
+  "新股",
+  "基金",
+  "期货",
+  "期权",
+  "港股新股",
+];
+
+/** 更新频率 */
+export const SCHEDULES: Record<string, string> = {
+  after_close: "每个交易日",
+  daily: "每个交易日",
+  weekly: "每周",
+  monthly: "每月",
+  report_season: "财报季每天",
+  after_open: "暂不自动更新",
 };
 
 export const PRIORITIES: Record<string, string> = {

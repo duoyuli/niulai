@@ -22,8 +22,9 @@
 | 字段 | 必填 | 含义 |
 | --- | --- | --- |
 | `id` | 是 | `<领域>.<名称>`，例如 `a_share.bar_1d`。领域取第一个点之前的部分 |
+| `title`、`category`、`summary` | 是 | 中文名、分类、一句话说明（是什么数据、用在哪里），数据同步页按分类展示。分类的顺序在 `frontend/src/lib/labels.ts` 的 `DATASET_CATEGORIES` 中 |
 | `endpoint` | 是 | 供应商接口路径，只支持 GET |
-| `priority` | 是 | `P0`–`P3`，决定任务执行顺序（P0 先执行）和默认开关 |
+| `priority` | 是 | `P0`–`P3`，决定默认开关，以及同一层任务中的先后（P0 先执行）；分层见 [任务生命周期](../architecture/sync_pipeline.md#task_lifecycle) |
 | `enabled` | 否 | 是否开启。未配置时 P0、P1 开启，P2、P3 关闭 |
 | `partition` | 是 | 任务切分方式，见 [分区类型](#partitions) |
 | `params` | 否 | 请求参数模板，值中的 `{变量}` 由分区变量填充 |
@@ -35,7 +36,8 @@
 | `schedule` | 否 | `after_close`、`daily`、`weekly`、`monthly`、`report_season`、`after_open`，到期规则见 [定时调度](../architecture/sync_pipeline.md#scheduling) |
 | `store_record` | 否 | 是否写入通用记录库 `raw.record`，默认 true |
 | `sink` | 否 | 要写入的类型化表列表，必须是 `sinks.rs` 中已实现的组合 |
-| `trade_date_guard` | 否 | 快照类数据集设为 true：执行前做交易日校验，未收盘或数据未就绪时推迟，错过的交易日跳过，见 [交易日校验](../domains/market_data_rules.md#trade_date_guard)。默认 false |
+| `trade_date_guard` | 否 | 快照类数据集设为 true：执行前做交易日校验，未收盘或数据未就绪时推迟，已经错过的交易日记为失败，见 [交易日校验](../domains/market_data_rules.md#trade_date_guard)。默认 false |
+| `recover_with` | 否 | 这个数据集取不到时，由哪个有历史的数据集补回同样的数据，例如收盘快照由个股日线补。兜底补偿按它规划，见 [完整性核对与兜底补偿](../architecture/sync_pipeline.md#audit)。没有配置的只有当天值的数据集，错过就补不回来 |
 | `empty_codes` | 否 | 按「没有数据」处理的供应商错误码列表，例如 `a_share.fin_indicator` 的 `[5003]`。命中时不重试，任务记为 `empty`，原因写在 `last_error` |
 
 说明性字段（程序不读取）：`capture`（`upsert` 表示参考类数据，`snapshot` 表示观察类数据，实际语义由 `key` 决定）、`backfill`（回补范围实际由分区决定）、`format`、`notes`。
@@ -112,7 +114,7 @@
 ## 新增数据集
 
 1. 在 [同花顺接口](hithink_api.md) 和官方文档中确认接口路径、参数、分页上限、历史深度，用真实 Key 调一次，看响应结构。
-2. 在 `datasets.yaml` 中新增条目：选择分区类型，写 `params`、`records`、`key`，有业务日期时写 `obs_date`，有证券时写 `thscode`。把实测结论写进 `notes`。
+2. 在 `datasets.yaml` 中新增条目：写中文名、分类和一句话说明，选择分区类型，写 `params`、`records`、`key`，有业务日期时写 `obs_date`，有证券时写 `thscode`。把实测结论写进 `notes`。
 3. 需要类型化表时：新增迁移文件建表，在 `sinks.rs` 的 `apply` 中增加 `(sink, 数据集)` 分支。
 4. 运行 `cargo test`。`spec::tests::project_registry_parses` 会解析真实的配置文件。
 5. 用少量证券试跑：`niulai plan backfill -d <数据集> --thscode 600519.SH`。`niulai serve` 在运行时会自动执行；没有运行时用 `niulai work --until-idle`。检查 `ops.task` 中没有 `dead` 任务，并抽查 `raw.record`。

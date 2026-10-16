@@ -182,10 +182,18 @@ impl<'a> Planner<'a> {
     }
 }
 
-/// 任务优先级（越小越先执行）：增量任务永远排在回补任务前面，同类任务再按数据集的 P0–P3 排序。
-/// 否则积压的历史回补会让每日增量排队数天，只有当天值的数据（估值、异动原因等）就会错过。
+// @project-doc docs/architecture/sync_pipeline.md#task_lifecycle
+/// 任务优先级（越小越先执行），按急迫程度分层，同一层再按数据集的 P0–P3 排序：
+/// 每日数据（0 层）→ 兜底补偿（50 层）→ 每周等其他增量（100 层）→ 历史回补（200 层）。
+/// 只有当天值的数据（估值、异动原因等）错过当天就补不回来，不能排在每周增量的几万个任务后面
 pub fn task_priority(spec: &DatasetSpec, kind: RunKind) -> i16 {
-    spec.priority_rank() + if kind == RunKind::Backfill { 100 } else { 0 }
+    let tier = match kind {
+        RunKind::Backfill => 200,
+        RunKind::Repair => 50,
+        RunKind::Incremental if spec.schedule.is_daily() => 0,
+        RunKind::Incremental => 100,
+    };
+    tier + spec.priority_rank()
 }
 
 async fn insert_tasks(
@@ -261,7 +269,7 @@ async fn seeds_for(ctx: &PlanContext<'_>, spec: &DatasetSpec) -> anyhow::Result<
 async fn window_seeds(ctx: &PlanContext<'_>, spec: &DatasetSpec) -> anyhow::Result<Vec<TaskSeed>> {
     let today = ctx.today;
     let base_vars = || base_vars(today);
-    let incremental = ctx.kind == RunKind::Incremental;
+    let incremental = ctx.kind != RunKind::Backfill;
     match &spec.partition {
         Partition::Unsupported(what) => bail!("规划器暂不支持 {what}"),
         Partition::Once => Ok(vec![TaskSeed { part_key: "*".into(), vars: base_vars() }]),
@@ -415,7 +423,7 @@ async fn from_dataset_seeds(
     fields: &BTreeMap<String, String>,
     filter: Option<&str>,
 ) -> anyhow::Result<(Vec<TaskSeed>, Option<DateTime<Utc>>)> {
-    let incremental = ctx.kind == RunKind::Incremental;
+    let incremental = ctx.kind != RunKind::Backfill;
     let since = if incremental { cursor::planned_since(ctx.pool, &spec.id).await? } else { None };
     // 先取数据库时刻再读来源记录：读取期间变化的记录下次还会被规划，不会漏掉
     let mark: DateTime<Utc> = sqlx::query_scalar("SELECT now()").fetch_one(ctx.pool).await?;
@@ -432,7 +440,9 @@ async fn from_dataset_seeds(
             TaskSeed { part_key, vars }
         })
         .collect();
-    Ok((seeds, incremental.then_some(mark)))
+    // 回补也要记下水位：否则第一次增量没有水位，会把来源数据集的全部记录重新规划一遍
+    // （龙虎榜机构明细的第一次每周增量因此重查了一整年、1.6 万次请求）。只同步部分证券时不记，免得漏掉其他证券
+    Ok((seeds, (incremental || ctx.only.is_empty()).then_some(mark)))
 }
 
 fn base_vars(today: NaiveDate) -> Map<String, Value> {
@@ -511,6 +521,16 @@ async fn from_dataset_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn daily_data_goes_before_weekly_increments_and_backfill() {
+        let reg = Registry::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/datasets.yaml")).unwrap();
+        let p = |id: &str, kind| task_priority(reg.get(id).unwrap(), kind);
+        // 只有当天值的估值（P1）也要排在每周增量的 P0 前面
+        assert!(p("a_share.valuation", RunKind::Incremental) < p("a_share.bar_1d", RunKind::Incremental));
+        assert!(p("a_share.bar_1d", RunKind::Repair) < p("a_share.income_q", RunKind::Incremental));
+        assert!(p("a_share.income_q", RunKind::Incremental) < p("a_share.snapshot", RunKind::Backfill));
+    }
 
     #[test]
     fn report_periods_only_finished_quarters() {

@@ -12,6 +12,8 @@ use sqlx::{PgConnection, PgPool};
 pub enum RunKind {
     Backfill,
     Incremental,
+    /// 兜底补偿：完整性核对发现缺口后补取，规则与增量相同
+    Repair,
 }
 
 impl RunKind {
@@ -19,6 +21,7 @@ impl RunKind {
         match self {
             RunKind::Backfill => "backfill",
             RunKind::Incremental => "incremental",
+            RunKind::Repair => "repair",
         }
     }
 }
@@ -29,7 +32,8 @@ impl std::str::FromStr for RunKind {
         match s {
             "backfill" => Ok(RunKind::Backfill),
             "incremental" => Ok(RunKind::Incremental),
-            other => bail!("kind 只能是 backfill 或 incremental：{other}"),
+            "repair" => Ok(RunKind::Repair),
+            other => bail!("kind 只能是 backfill、incremental 或 repair：{other}"),
         }
     }
 }

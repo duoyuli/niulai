@@ -22,37 +22,96 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(dataset_records))
         .routes(routes!(list_runs, create_run))
         .routes(routes!(get_run))
+        .routes(routes!(sync_health))
+        .routes(routes!(sync_repair))
 }
 
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
+/// 同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口、没有解决的失败、历史回补进度
+#[utoipa::path(get, path = "/sync/health", tag = "sync", responses((status = 200, description = "成功", body = crate::sync::audit::SyncHealth)))]
+async fn sync_health(State(s): State<AppState>) -> ApiResult<Json<crate::sync::audit::SyncHealth>> {
+    Ok(Json(crate::sync::audit::health(&s.engine).await?))
+}
+
+/// 立即兜底补偿：能重新取的缺口规划补偿运行，供应商暂时不可用导致的失败重新排队。每天每日同步结束后也会自动执行一次
+#[utoipa::path(post, path = "/sync/repair", tag = "sync", responses((status = 202, description = "已规划补偿", body = crate::sync::audit::RepairSummary)))]
+async fn sync_repair(State(s): State<AppState>) -> ApiResult<(StatusCode, Json<crate::sync::audit::RepairSummary>)> {
+    Ok((StatusCode::ACCEPTED, Json(crate::sync::audit::repair(&s.engine).await?)))
+}
+
+#[derive(Serialize, ToSchema)]
 pub struct DatasetStatus {
     pub dataset_id: String,
+    /// 中文名、分类、一句话说明
+    pub title: String,
+    pub category: String,
+    pub summary: String,
     pub domain: String,
     pub endpoint: String,
     /// P0–P3
     pub priority: String,
     pub enabled: bool,
+    /// 更新频率：after_close / daily / weekly / monthly / report_season / after_open
+    pub schedule: String,
+    /// 只有当天的值，错过当天就补不回来
+    pub only_current: bool,
     pub last_done_at: Option<DateTime<Utc>>,
     pub open_tasks: i64,
+    /// 失败后之后也没有成功过的任务
     pub dead_tasks: i64,
+    /// 正在进行的历史回补中，这个数据集的任务数和已结束的任务数；没有回补时都是 0
+    pub backfill_total: i64,
+    pub backfill_done: i64,
 }
+
+type DatasetRow = (String, String, String, String, bool, Option<DateTime<Utc>>, i64, i64, i64, i64);
 
 /// 数据集列表及同步状态
 #[utoipa::path(get, path = "/datasets", tag = "sync", responses((status = 200, description = "成功", body = [DatasetStatus])))]
 async fn list_datasets(State(s): State<AppState>) -> ApiResult<Json<Vec<DatasetStatus>>> {
-    let rows = sqlx::query_as(
-        "SELECT d.dataset_id, d.domain, d.endpoint, d.priority, d.enabled, t.last_done_at, coalesce(t.open, 0) open_tasks, coalesce(t.dead, 0) dead_tasks
+    let rows: Vec<DatasetRow> = sqlx::query_as(
+        "SELECT d.dataset_id, d.domain, d.endpoint, d.priority, d.enabled, t.last_done_at, coalesce(t.open, 0), coalesce(t.dead, 0),
+                coalesce(b.total, 0), coalesce(b.done, 0)
          FROM ops.dataset d
          LEFT JOIN LATERAL (
            SELECT max(finished_at) FILTER (WHERE status IN ('done', 'empty')) last_done_at,
                   count(*) FILTER (WHERE status IN ('pending', 'running', 'failed')) open,
-                  count(*) FILTER (WHERE status = 'dead') dead
-           FROM ops.task WHERE dataset_id = d.dataset_id) t ON true
+                  count(*) FILTER (WHERE status = 'dead' AND NOT EXISTS (
+                    SELECT 1 FROM ops.task o WHERE o.dataset_id = x.dataset_id AND o.part_key = x.part_key
+                      AND o.task_id > x.task_id AND o.status IN ('done', 'empty'))) dead
+           FROM ops.task x WHERE x.dataset_id = d.dataset_id) t ON true
+         LEFT JOIN LATERAL (
+           SELECT count(*) total, count(*) FILTER (WHERE y.status NOT IN ('pending', 'running', 'failed')) done
+           FROM ops.task y JOIN ops.run r USING (run_id)
+           WHERE y.dataset_id = d.dataset_id AND r.kind = 'backfill' AND r.status = 'running') b ON true
          ORDER BY d.priority, d.dataset_id",
     )
     .fetch_all(&s.pool)
     .await?;
-    Ok(Json(rows))
+    let reg = &s.engine.registry;
+    let out = rows
+        .into_iter()
+        .map(|(dataset_id, domain, endpoint, priority, enabled, last_done_at, open_tasks, dead_tasks, backfill_total, backfill_done)| {
+            let spec = reg.get(&dataset_id);
+            DatasetStatus {
+                title: spec.map_or_else(|| dataset_id.clone(), |s| s.title.clone()),
+                category: spec.map_or_else(|| "其他".into(), |s| s.category.clone()),
+                summary: spec.map(|s| s.summary.clone()).unwrap_or_default(),
+                schedule: spec.map_or("after_close", |s| s.schedule.as_str()).into(),
+                only_current: spec.is_some_and(|s| s.trade_date_guard && s.recover_with.is_none()),
+                dataset_id,
+                domain,
+                endpoint,
+                priority,
+                enabled,
+                last_done_at,
+                open_tasks,
+                dead_tasks,
+                backfill_total,
+                backfill_done,
+            }
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 #[derive(Deserialize, IntoParams)]

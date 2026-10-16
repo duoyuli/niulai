@@ -46,6 +46,13 @@ impl Registry {
                 bail!("数据集 ID 重复：{}", d.id);
             }
         }
+        for d in &datasets {
+            if let Some(r) = &d.recover_with
+                && !seen.contains(r.as_str())
+            {
+                bail!("数据集 {} 的 recover_with 指向不存在的数据集：{r}", d.id);
+            }
+        }
         Ok(Registry { datasets, max_attempts, backoff_s })
     }
 
@@ -58,6 +65,12 @@ impl Registry {
 pub struct DatasetSpec {
     pub id: String,
     pub domain: String,
+    /// 中文名、分类、一句话说明：数据同步页展示用
+    pub title: String,
+    pub category: String,
+    pub summary: String,
+    /// 这个数据集取不到时，由哪个数据集补回同样的数据
+    pub recover_with: Option<String>,
     pub endpoint: String,
     pub priority: String,
     pub enabled: bool,
@@ -100,7 +113,12 @@ impl DatasetSpec {
             Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
             _ => vec![],
         };
+        let text = |k: &str| s(k).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).with_context(|| format!("缺少 {k}"));
         Ok(DatasetSpec {
+            title: text("title")?,
+            category: text("category")?,
+            summary: text("summary")?,
+            recover_with: s("recover_with"),
             endpoint: s("endpoint").context("缺少 endpoint")?,
             // 未显式配置时，P0/P1 默认开启，P2/P3 默认关闭
             enabled: v.get("enabled").and_then(Value::as_bool).unwrap_or(priority == "P0" || priority == "P1"),
@@ -354,6 +372,23 @@ pub enum Schedule {
 }
 
 impl Schedule {
+    /// 每个交易日都执行
+    pub fn is_daily(self) -> bool {
+        matches!(self, Schedule::AfterClose | Schedule::Daily)
+    }
+
+    /// 配置中的写法
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Schedule::AfterClose => "after_close",
+            Schedule::Daily => "daily",
+            Schedule::Weekly => "weekly",
+            Schedule::Monthly => "monthly",
+            Schedule::ReportSeason => "report_season",
+            Schedule::AfterOpen => "after_open",
+        }
+    }
+
     fn from_value(v: &Value) -> anyhow::Result<Self> {
         Ok(match v.as_str().unwrap_or("after_close") {
             "after_close" => Schedule::AfterClose,

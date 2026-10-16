@@ -66,8 +66,10 @@ pub async fn trading_days(pool: &PgPool, from: NaiveDate, to: NaiveDate) -> anyh
 #[derive(Debug, PartialEq, Eq)]
 pub enum Readiness {
     Ready,
-    /// 这一天的数据不会再有：不是交易日、在未来，或已经错过
+    /// 这一天没有数据：不是交易日，或在未来
     Skip(String),
+    /// 这一天是交易日，但供应商已经进入下一个交易日，只有当天值的数据再也取不到了。记为失败，不能静默跳过
+    Missed(String),
     /// 数据尚未就绪，稍后再试
     Defer(String),
 }
@@ -91,19 +93,28 @@ impl TradeDateGuard {
         if d > now.date() {
             return Ok(Readiness::Skip(format!("运行交易日 {d} 在未来")));
         }
-        let mut is_trading_day = is_known_trading_day(&self.pool, d).await?;
+        let mut known = is_known_trading_day(&self.pool, d).await?;
         // 本地日历可能还没有最近的交易日（日历在当天之前取过）：刷新一次再判断
-        if !is_trading_day && latest_api_day(&self.pool).await?.is_none_or(|m| m < d) {
+        if !known && latest_api_day(&self.pool).await?.is_none_or(|m| m < d) {
             refresh(&self.pool, &self.client).await?;
-            is_trading_day = is_known_trading_day(&self.pool, d).await?;
+            known = is_known_trading_day(&self.pool, d).await?;
         }
-        if !is_trading_day {
-            return Ok(Readiness::Skip(format!("{d} 不是交易日")));
+        if !known {
+            // 日历已经覆盖到这一天却没有它，或者是周末：确实不是交易日。
+            // 否则是供应商日历还没更新到这一天（例如当天凌晨），不能据此判定，交给下面的最新日线判断
+            let covered = latest_api_day(&self.pool).await?.is_some_and(|m| m >= d);
+            if covered || d.weekday().number_from_monday() > 5 {
+                return Ok(Readiness::Skip(format!("{d} 不是交易日")));
+            }
         }
         if d == now.date() && now.time() < CLOSE_CUTOFF {
             return Ok(Readiness::Defer(format!("{d} 尚未收盘，{CLOSE_CUTOFF} 之后才采集当天数据")));
         }
-        Ok(compare_latest(d, self.latest_vendor_day().await?))
+        Ok(match compare_latest(d, self.latest_vendor_day().await?) {
+            // 日历里没有这一天、供应商又已经有更晚的日线：这一天是节假日
+            Readiness::Missed(_) if !known => Readiness::Skip(format!("{d} 不是交易日（供应商没有这一天的日线）")),
+            r => r,
+        })
     }
 
     /// 参照指数最新一根日线的日期，LATEST_DAY_TTL 内复用
@@ -137,7 +148,7 @@ impl TradeDateGuard {
 fn compare_latest(d: NaiveDate, latest: NaiveDate) -> Readiness {
     match latest.cmp(&d) {
         std::cmp::Ordering::Equal => Readiness::Ready,
-        std::cmp::Ordering::Greater => Readiness::Skip(format!("供应商最新交易日已是 {latest}，{d} 的快照已无法获取")),
+        std::cmp::Ordering::Greater => Readiness::Missed(format!("已错过：供应商最新交易日已是 {latest}，{d} 只有当天值的数据已无法获取")),
         std::cmp::Ordering::Less => Readiness::Defer(format!("供应商最新交易日仍是 {latest}，{d} 的数据尚未就绪")),
     }
 }
@@ -151,6 +162,6 @@ mod tests {
         let d = NaiveDate::from_ymd_opt(2026, 10, 16).unwrap();
         assert_eq!(compare_latest(d, d), Readiness::Ready);
         assert!(matches!(compare_latest(d, d.pred_opt().unwrap()), Readiness::Defer(_)));
-        assert!(matches!(compare_latest(d, d.succ_opt().unwrap()), Readiness::Skip(_)));
+        assert!(matches!(compare_latest(d, d.succ_opt().unwrap()), Readiness::Missed(_)));
     }
 }

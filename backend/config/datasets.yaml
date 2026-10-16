@@ -11,6 +11,11 @@
 # ── 字段说明 ─────────────────────────────────────────────────────────────
 # id          数据集 ID，格式 <domain>.<name>
 # endpoint    GET 路径；params 中 {var} 由分区变量填充
+# title       中文名，数据同步页上显示
+# category    分类，数据同步页按它分组：基础信息、行情、公司行动、财务、估值与市值、指数与板块、涨跌停、龙虎榜、
+#             热点与异动、新股、基金、期货、期权、港股新股
+# summary     一句话说明：是什么数据、用在哪里
+# recover_with 可选。只有当天值的快照类数据集取不到时，由哪个有历史的数据集补回同样的数据（例如收盘快照由个股日线补）
 # priority    P0 当前功能必需 | P1 A 股相关、建议现在就开始同步积累 | P2 其他资产 | P3 低价值或按需
 # partition   任务怎么切分：
 #   once                         一个任务
@@ -58,6 +63,9 @@ datasets:
   # ═══════════════════════════ 元数据 ═══════════════════════════
 
   - id: meta.tickers
+    title: 代码表
+    category: 基础信息
+    summary: 所有股票、指数、基金、期货的代码和名称，其他数据都按它展开；代码消失时判定为退市
     endpoint: /api/meta/tickers/list
     priority: P0
     partition: {enum: {asset_type: [a-share, a-share-index, fund-etf, fund-lof, fund-reits, fund-otc,
@@ -76,6 +84,9 @@ datasets:
       不含已退市证券；代码从列表中消失时，用 raw.record.last_seen_at 推断退市。
 
   - id: a_share.calendar
+    title: 交易日历
+    category: 基础信息
+    summary: 哪些天开市，用来判断每天要不要同步
     endpoint: /api/a-share/calendar/trading-days
     priority: P0
     partition: once
@@ -90,6 +101,9 @@ datasets:
   # ═══════════════════════════ A 股行情 ═══════════════════════════
 
   - id: a_share.bar_1d
+    title: 个股日线
+    category: 行情
+    summary: 每只股票每天的开盘、最高、最低、收盘价和成交量，2005 年起；K 线、均线、回测都用它
     store_record: false
     endpoint: /api/a-share/prices/historical
     priority: P0
@@ -108,6 +122,10 @@ datasets:
       全量约 1.4 万次请求，实测 3 并发约 1.7 次/秒。数据量大，只写类型化表，不进 raw.record。
 
   - id: a_share.snapshot
+    title: 收盘快照
+    category: 行情
+    summary: 每天收盘后一次取回全市场当天的行情，最快得到当天日线
+    recover_with: a_share.bar_1d   # 这个数据集取不到时，由它补回同样的数据
     store_record: false
     endpoint: /api/a-share/prices/snapshot
     priority: P0
@@ -127,6 +145,9 @@ datasets:
       prev_price 是交易所调整过的前收，除权日与上一日收盘价不同。
 
   - id: a_share.corp_action
+    title: 复权因子（逐只）
+    category: 公司行动
+    summary: 按股票逐只取分红送转，缺配股字段，默认关闭，由「分红送转配股」代替
     endpoint: /api/a-share/corporate-actions/adjustment-factors
     priority: P0
     enabled: false                             # 缺配股字段，默认用 a_share.corp_action_dump；两者不要同时开启
@@ -144,6 +165,9 @@ datasets:
       完整数据只能从 a_share.corp_action_dump 获取，两者二选一，见方案文档 5.2。
 
   - id: a_share.corp_action_dump
+    title: 分红送转配股
+    category: 公司行动
+    summary: 全市场的分红、送股、转增、配股记录，1991 年起；复权价格据此计算
     endpoint: /api/dump/market-dumps/adjustment-factors/download-url
     priority: P0
     partition: once
@@ -157,6 +181,9 @@ datasets:
     notes: 全市场 5.8 万条、约 300KB，含配股字段和已公告未除权的事件（113 条）。
 
   - id: a_share.valuation
+    title: 估值
+    category: 估值与市值
+    summary: 每只股票当天的市盈率、市净率、市销率、市现率；只有当天的值，每天存一份
     endpoint: /api/a-share/valuations/snapshot
     priority: P1
     schedule: after_close
@@ -172,6 +199,9 @@ datasets:
     notes: 只有最新值（PE TTM/MRQ、PB、PS、PCF），没有历史，每天存一份积累；56 次请求。
 
   - id: a_share.auction_final
+    title: 集合竞价终态与流通市值
+    category: 估值与市值
+    summary: 开盘集合竞价的最终价格和成交，以及流通市值；只有当天的值，每天存一份
     endpoint: /api/a-share/auction/snapshot
     priority: P1
     schedule: after_close
@@ -191,6 +221,9 @@ datasets:
   # ═══════════════════════════ A 股财务 ═══════════════════════════
 
   - id: a_share.income_q
+    title: 利润表
+    category: 财务
+    summary: 每只股票每个季度的营业收入、利润等，含披露日期
     endpoint: /api/a-share/financials/income-statements
     priority: P1
     partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", window_days: 3650, floor: 1990-01-01}}
@@ -204,6 +237,9 @@ datasets:
     notes: 可追溯到 1990 年代；含 report_date_ms（披露日），可用于按时点回测，避免用到未来数据。
 
   - id: a_share.balance_q
+    title: 资产负债表
+    category: 财务
+    summary: 每只股票每个季度的资产、负债、所有者权益
     endpoint: /api/a-share/financials/balance-sheets
     priority: P1
     partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", window_days: 3650, floor: 1990-01-01}}
@@ -216,6 +252,9 @@ datasets:
     schedule: weekly
 
   - id: a_share.cashflow_q
+    title: 现金流量表
+    category: 财务
+    summary: 每只股票每个季度经营、投资、筹资的现金流
     endpoint: /api/a-share/financials/cash-flow-statements
     priority: P1
     partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", window_days: 3650, floor: 1990-01-01}}
@@ -228,6 +267,9 @@ datasets:
     schedule: weekly
 
   - id: a_share.fin_indicator
+    title: 财务指标
+    category: 财务
+    summary: 成长、盈利、偿债、营运、现金流 5 类共 24 个指标，2014 年起
     endpoint: /api/a-share/financials/indicators
     priority: P1
     partition: {report_period: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", from: 2014-1, quarters: [1, 2, 3, 4]}}
@@ -242,6 +284,9 @@ datasets:
       每次 1 只 × 1 个报告期；2014 年起可用，2010 年返回 5003。按用户要求回补 2014 年一季度起的全部季度，
       全量约 5580 × 50 期 ≈ 28 万次请求，是所有数据集里最重的一项。
   - id: index.ths_catalog
+    title: 板块目录
+    category: 指数与板块
+    summary: 同花顺的行业、概念、地区、特色板块列表
     endpoint: /api/a-share-index/catalog/ths-index-list
     priority: P0
     partition: {enum: {tag: [industry, cn_concept, region, tszs]}}
@@ -254,6 +299,9 @@ datasets:
     notes: 行业 320、概念 390、地区 33、特色 105。
 
   - id: index.members
+    title: 板块成分股
+    category: 指数与板块
+    summary: 每个指数、板块包含哪些股票；只有当前成分，每周存一份，积累出变化
     endpoint: /api/a-share-index/constituents/ths-stock-list
     priority: P0
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share-index' AND active"}}
@@ -268,6 +316,9 @@ datasets:
     notes: 只有当前成分，没有历史，每天积累。约 1431 次请求，可以按需缩小到行业和概念板块。
 
   - id: index.bar_1d
+    title: 指数日线
+    category: 指数与板块
+    summary: 指数和板块每天的点位，2022 年起；板块强弱排名用它
     store_record: false
     endpoint: /api/a-share-index/prices/historical
     priority: P0
@@ -284,6 +335,10 @@ datasets:
     notes: 只有 2022-01-04 以后的数据；窗口起点早于这一天会返回空，floor 必须 >= 2022-01-01。
 
   - id: index.snapshot
+    title: 指数收盘快照
+    category: 指数与板块
+    summary: 每天收盘后一次取回指数和板块当天的点位
+    recover_with: index.bar_1d   # 这个数据集取不到时，由它补回同样的数据
     store_record: false
     endpoint: /api/a-share-index/prices/snapshot
     priority: P0
@@ -303,6 +358,9 @@ datasets:
   # ═══════════════════════════ A 股特色数据（涨跌停、龙虎榜、热榜、异动、竞价、新股） ═══════════════════════════
 
   - id: special.limit_up_pool
+    title: 涨停股
+    category: 涨跌停
+    summary: 每天涨停的股票、涨停原因、首次涨停时间、连板天数，2020 年 7 月起
     endpoint: /api/a-share/special-data/limit-up-pool
     priority: P1
     schedule: weekly
@@ -317,6 +375,9 @@ datasets:
     notes: 涨停原因、首次涨停时间、连板天数、封单额、是否 ST；最早有数据的交易日是 2020-07-22，更早的日期返回空。
 
   - id: special.limit_down_pool
+    title: 跌停股
+    category: 涨跌停
+    summary: 每天跌停的股票，最近一年
     endpoint: /api/a-share/special-data/limit-down-pool
     priority: P1
     schedule: weekly
@@ -330,6 +391,9 @@ datasets:
     incremental: {since_cursor: {overlap_days: 1}}
     notes: 只支持最近一年（实测 2025-10-15 起可用，更早的日期返回 1002 Invalid parameter format）。
   - id: special.limit_break_pool
+    title: 炸板股
+    category: 涨跌停
+    summary: 盘中涨停、收盘没封住的股票，最近一年
     endpoint: /api/a-share/special-data/limit-break-pool
     priority: P1
     schedule: weekly
@@ -343,6 +407,9 @@ datasets:
     incremental: {since_cursor: {overlap_days: 1}}
     notes: 只支持最近一年（实测 2025-10-15 起可用，更早的日期返回 1002 Invalid parameter format）。
   - id: special.limit_up_ladder
+    title: 连板梯队
+    category: 涨跌停
+    summary: 连续涨停 2 板、3 板……各有哪些股票
     endpoint: /api/a-share/special-data/limit-up-ladder
     priority: P1
     schedule: weekly
@@ -354,6 +421,9 @@ datasets:
     notes: 固定返回最近 30 个交易日的连板梯队，每天重取，按日期覆盖即可积累出历史。
 
   - id: special.limit_up_stats
+    title: 涨停统计
+    category: 涨跌停
+    summary: 每天的涨停家数、封板率、各连板高度的家数，最近一年
     endpoint: /api/a-share/special-data/limit-up-statistics
     priority: P1
     schedule: weekly
@@ -366,6 +436,9 @@ datasets:
     notes: 封板率、涨停家数、触及涨停家数、各连板高度的家数；只能查一年内。
 
   - id: special.dragon_tiger
+    title: 龙虎榜
+    category: 龙虎榜
+    summary: 交易所公布的异常波动上榜股票和买卖金额，最近一年
     endpoint: /api/a-share/special-data/dragon-tiger-list
     priority: P1
     schedule: weekly
@@ -379,12 +452,17 @@ datasets:
     notes: 只能查一年内；同一股票可能同时上当日榜和 3 日榜（range_days）。
 
   - id: special.dragon_tiger_institution
+    title: 龙虎榜机构明细
+    category: 龙虎榜
+    summary: 上榜股票中机构和营业部的买卖金额与席位
     endpoint: /api/a-share/special-data/dragon-tiger-stock-institution
     priority: P1
     schedule: weekly
     # 龙虎榜里还有可转债、ETF、REITs、B 股，机构明细接口只接受 A 股（其他代码返回 1002）
+    # 接口只接受一年内的日期：留 5 天余量，排队期间不会过期
     partition: {from_dataset: {dataset: special.dragon_tiger, fields: {thscode: thscode, date: obs_date},
-                               filter: "r.thscode IN (SELECT thscode FROM ref.security)"}}
+                               filter: "r.thscode IN (SELECT thscode FROM ref.security) AND r.obs_date > current_date - 360"}}
+    empty_codes: [1002]                        # 1002 Unknown thscode：接口不支持这个代码（B 股、ETF 等），按无数据处理
     params: {thscode: "{thscode}", date: "{date}"}
     records: data.item
     key: "{_part.date}|{_part.thscode}|{range_days}"
@@ -394,6 +472,9 @@ datasets:
     notes: 机构买卖金额和买卖席位（含 department_id）。一年内每个上榜股票一次请求，约 1.5 万次。
 
   - id: special.dragon_tiger_department
+    title: 营业部战绩
+    category: 龙虎榜
+    summary: 活跃营业部的上榜次数和胜率，默认关闭
     endpoint: /api/a-share/special-data/dragon-tiger-department-classic-record
     priority: P3
     partition: {from_dataset: {dataset: special.dragon_tiger_institution,
@@ -404,6 +485,9 @@ datasets:
     schedule: monthly
 
   - id: special.dragon_tiger_department_history
+    title: 营业部上榜历史
+    category: 龙虎榜
+    summary: 每个营业部历次上榜的记录，默认关闭
     endpoint: /api/a-share/special-data/dragon-tiger-department-history
     priority: P3
     partition: {from_dataset: {dataset: special.dragon_tiger_department, fields: {department_id: rkey}}}
@@ -416,6 +500,9 @@ datasets:
     schedule: weekly
 
   - id: special.hot_stock_daily
+    title: 每日热股
+    category: 热点与异动
+    summary: 每天关注度最高的前 30 只股票，最近一年
     endpoint: /api/a-share/special-data/hot-stock-list-history
     priority: P1
     schedule: weekly
@@ -429,6 +516,9 @@ datasets:
     notes: 每天前 30 名；只能查一年内。
 
   - id: special.hot_stock_now
+    title: 实时热股
+    category: 热点与异动
+    summary: 当前时刻的热股榜，默认关闭
     endpoint: /api/a-share/special-data/hot-stock-list
     priority: P3
     partition: {enum: {period: [day, hour]}}
@@ -440,6 +530,9 @@ datasets:
     notes: 只有当前榜单；日榜的历史由 special.hot_stock_daily 覆盖。
 
   - id: special.skyrocket
+    title: 飙升榜
+    category: 热点与异动
+    summary: 关注度上升最快的股票，默认关闭
     endpoint: /api/a-share/special-data/skyrocket-list
     priority: P3
     partition: {enum: {period: [day, hour]}}
@@ -450,6 +543,9 @@ datasets:
     capture: snapshot
 
   - id: special.anomaly_reason
+    title: 异动原因
+    category: 热点与异动
+    summary: 当天大涨、涨停、快速拉升等个股异动的原因和关键词；只有当天的值
     endpoint: /api/a-share/special-data/anomaly-analysis-list
     priority: P1
     schedule: after_close
@@ -464,6 +560,9 @@ datasets:
     notes: 当日个股异动原因（涨停、跌停、大涨、快速拉升……）和关键词，约 350 条/天；没有历史，必须当天收盘后取。
 
   - id: special.abnormal_monitor
+    title: 严重异动与重点监控
+    category: 热点与异动
+    summary: 交易所公布的严重异常波动和重点监控股票
     endpoint: /api/a-share/special-data/abnormal-monitor-list
     priority: P1
     partition: {enum: {state: [current, history]}}
@@ -477,6 +576,9 @@ datasets:
     notes: 交易所严重异动、重点监控记录；history 共 738 条。
 
   - id: special.auction_benchmark
+    title: 竞价基准
+    category: 热点与异动
+    summary: 集合竞价阶段的短线参考指标，默认关闭
     endpoint: /api/a-share/auction/short-term-benchmark
     priority: P3
     partition: {trading_day: {from: -1y}}
@@ -488,6 +590,9 @@ datasets:
     incremental: {since_cursor: {}}
 
   - id: special.auction_opportunity
+    title: 竞价机会
+    category: 热点与异动
+    summary: 集合竞价阶段筛选出的机会股，默认关闭
     endpoint: /api/a-share/special-data/auction-stock-opportunities
     priority: P3
     partition: {trading_day: {from: -1y, dates_from: /api/a-share/special-data/auction-opportunity-dates}}
@@ -501,6 +606,9 @@ datasets:
     notes: 可选日期 243 天（一年）；每页最多 20 条。
 
   - id: a_share.ipo_calendar
+    title: 新股日历
+    category: 新股
+    summary: 新股的申购日、上市日和发行价
     endpoint: /api/a-share/ipo/calendar-list
     priority: P1
     partition: {enum: {market: [sh_sz, bj], status: [upcoming, subscribable, awaiting_listing]}}
@@ -515,6 +623,9 @@ datasets:
   # 场外基金代码表超过 1 万只，逐只请求的成本高。建议先限定在 ETF、LOF 和 REITs（约 2200 只），场外基金按需开启。
 
   - id: fund.profile
+    title: 基金资料
+    category: 基金
+    summary: 基金规模、净值、管理人、基金经理、费率
     endpoint: /api/fund/profile/detail
     priority: P2
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof','fund-reits') AND active"}}
@@ -526,6 +637,9 @@ datasets:
     notes: 规模、净值、管理人、基金经理（manager_id）、费率；manager_id 和 company_id 用作下游分区。
 
   - id: fund.etf_bar_1d
+    title: ETF 日线
+    category: 基金
+    summary: ETF 每天的价格（前复权），近 5 年
     endpoint: /api/fund/market/historical
     priority: P2
     partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'fund-etf' AND active",
@@ -539,6 +653,9 @@ datasets:
     notes: 前复权价格，只有近 5 年，只支持 ETF（1211 根 ≈ 5 年）。前复权会随分红变化，增量时需要整段重取。
 
   - id: fund.market_snapshot
+    title: 基金行情快照
+    category: 基金
+    summary: 场内基金当天的行情和换手率
     endpoint: /api/fund/market/snapshot
     priority: P2
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -550,6 +667,9 @@ datasets:
     notes: 每次只能查 1 只（不支持批量），约 2100 次/天；含换手率。
 
   - id: fund.nav
+    title: 基金净值
+    category: 基金
+    summary: 单位净值和复权净值，近 5 年
     endpoint: /api/fund/performance/nav
     priority: P2
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type LIKE 'fund-%' AND active"}}
@@ -562,6 +682,9 @@ datasets:
     notes: 单位净值和复权净值；range 最长 fyear（约 5 年，1217 条）。
 
   - id: fund.dividends
+    title: 基金分红
+    category: 基金
+    summary: 基金历次分红
     endpoint: /api/fund/corporate-actions/dividends
     priority: P2
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type LIKE 'fund-%' AND active"}}
@@ -573,6 +696,9 @@ datasets:
     schedule: weekly
 
   - id: fund.holdings_latest
+    title: 基金最新持仓
+    category: 基金
+    summary: 基金最近一期公布的重仓股票
     endpoint: /api/fund/portfolio/holdings
     priority: P2
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -584,6 +710,9 @@ datasets:
     schedule: report_season
 
   - id: fund.stock_report_dates
+    title: 基金持仓报告期
+    category: 基金
+    summary: 基金公布持仓的报告期列表，供历史持仓使用
     endpoint: /api/fund/portfolio/stock-report-dates
     priority: P2
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -595,6 +724,9 @@ datasets:
     notes: 可选报告期（示例基金 97 期），作为 fund.stock_history 的分区。
 
   - id: fund.stock_history
+    title: 基金历史持股
+    category: 基金
+    summary: 基金历次公布的股票持仓，量很大，默认关闭
     endpoint: /api/fund/portfolio/stock-history
     priority: P3
     partition: {from_dataset: {dataset: fund.stock_report_dates,
@@ -606,6 +738,9 @@ datasets:
     notes: 历史股票持仓。每只基金每个报告期一次请求，量很大，按需开启。
 
   - id: fund.bond_report_dates
+    title: 基金债券持仓报告期
+    category: 基金
+    summary: 基金公布债券持仓的报告期列表
     endpoint: /api/fund/portfolio/bond-report-dates
     priority: P3
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -615,6 +750,9 @@ datasets:
     schedule: report_season
 
   - id: fund.bond_history
+    title: 基金历史持债
+    category: 基金
+    summary: 基金历次公布的债券持仓
     endpoint: /api/fund/portfolio/bond-history
     priority: P3
     partition: {from_dataset: {dataset: fund.bond_report_dates,
@@ -625,6 +763,9 @@ datasets:
     incremental: {since_cursor: {}}
 
   - id: fund.asset_allocation
+    title: 基金资产配置
+    category: 基金
+    summary: 股票、债券、现金等各占多少
     endpoint: /api/fund/portfolio/asset-allocation
     priority: P2
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -635,6 +776,9 @@ datasets:
     schedule: report_season
 
   - id: fund.industry_allocation
+    title: 基金行业配置
+    category: 基金
+    summary: 基金持股在各行业的分布
     endpoint: /api/fund/portfolio/industry-allocation
     priority: P2
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -645,6 +789,9 @@ datasets:
     schedule: report_season
 
   - id: fund.holders
+    title: 基金持有人结构
+    category: 基金
+    summary: 机构和个人各持有多少份额
     endpoint: /api/fund/holders/detail
     priority: P3
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -654,6 +801,9 @@ datasets:
     schedule: report_season
 
   - id: fund.holders_top
+    title: 基金前十大持有人
+    category: 基金
+    summary: 持有份额最多的前十名
     endpoint: /api/fund/holders/top
     priority: P3
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -663,6 +813,9 @@ datasets:
     schedule: report_season
 
   - id: fund.financial_indicators
+    title: 基金财务指标
+    category: 基金
+    summary: 基金定期报告中的财务指标
     endpoint: /api/fund/financials/indicators
     priority: P3
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -672,6 +825,9 @@ datasets:
     schedule: report_season
 
   - id: fund.income_statement
+    title: 基金利润表
+    category: 基金
+    summary: 基金定期报告中的利润表
     endpoint: /api/fund/financials/income-statements
     priority: P3
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -681,6 +837,9 @@ datasets:
     schedule: report_season
 
   - id: fund.balance_sheet
+    title: 基金资产负债表
+    category: 基金
+    summary: 基金定期报告中的资产负债表
     endpoint: /api/fund/financials/balance-sheets
     priority: P3
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -690,6 +849,9 @@ datasets:
     schedule: report_season
 
   - id: fund.returns
+    title: 基金区间收益
+    category: 基金
+    summary: 近一月、一年等区间的收益和同类排名
     endpoint: /api/fund/performance/returns
     priority: P3
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -701,6 +863,9 @@ datasets:
     notes: 供应商算好的区间收益和同类排名，可由净值自行计算；按周存快照。
 
   - id: fund.drawdowns
+    title: 基金回撤
+    category: 基金
+    summary: 基金净值从高点下跌的幅度
     endpoint: /api/fund/performance/drawdowns
     priority: P3
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -711,6 +876,9 @@ datasets:
     schedule: weekly
 
   - id: fund.indicators_history
+    title: 基金技术指标历史
+    category: 基金
+    summary: 通道、RSI、跟踪指数估值分位等
     endpoint: /api/fund/performance/indicators-historical
     priority: P3
     partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active",
@@ -723,6 +891,9 @@ datasets:
     notes: 唐奇安通道、RSI、跟踪指数 PE 的 5 年分位。
 
   - id: fund.diagnostics
+    title: 基金诊断
+    category: 基金
+    summary: 供应商给出的基金综合评价
     endpoint: /api/fund/diagnostics/detail
     priority: P3
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
@@ -733,6 +904,9 @@ datasets:
     schedule: monthly
 
   - id: fund.manager_detail
+    title: 基金经理资料
+    category: 基金
+    summary: 基金经理的履历和在管基金
     endpoint: /api/fund/managers/detail
     priority: P3
     partition: {from_dataset: {dataset: fund.profile, fields: {manager_id: "$.manager_info[*].manager_id"}}}
@@ -742,6 +916,9 @@ datasets:
     schedule: monthly
 
   - id: fund.manager_experience
+    title: 基金经理任职经历
+    category: 基金
+    summary: 基金经理历任的基金和任职期间
     endpoint: /api/fund/managers/experience
     priority: P3
     partition: {from_dataset: {dataset: fund.profile, fields: {manager_id: "$.manager_info[*].manager_id"}}}
@@ -751,6 +928,9 @@ datasets:
     schedule: monthly
 
   - id: fund.manager_style
+    title: 基金经理投资风格
+    category: 基金
+    summary: 基金经理偏好的风格和行业
     endpoint: /api/fund/managers/investment-style
     priority: P3
     partition: {from_dataset: {dataset: fund.profile, fields: {manager_id: "$.manager_info[*].manager_id"}}}
@@ -760,6 +940,9 @@ datasets:
     schedule: monthly
 
   - id: fund.manager_performance
+    title: 基金经理业绩
+    category: 基金
+    summary: 基金经理任职期间的回报
     endpoint: /api/fund/managers/performance
     priority: P3
     partition: {from_dataset: {dataset: fund.profile, fields: {manager_id: "$.manager_info[*].manager_id"}}}
@@ -770,6 +953,9 @@ datasets:
     schedule: weekly
 
   - id: fund.company
+    title: 基金公司
+    category: 基金
+    summary: 基金公司的规模和产品
     endpoint: /api/fund/companies/detail
     priority: P3
     partition: {from_dataset: {dataset: fund.profile, fields: {company_id: "$.company_id"}}}
@@ -779,6 +965,9 @@ datasets:
     schedule: monthly
 
   - id: fund.offerings
+    title: 新发基金
+    category: 基金
+    summary: 正在发行或即将发行的基金
     endpoint: /api/fund/offerings/list
     priority: P2
     partition: {enum: {subscribe: [active, upcoming]}}
@@ -789,6 +978,9 @@ datasets:
     schedule: daily
 
   - id: fund.qdii_quota
+    title: QDII 额度
+    category: 基金
+    summary: QDII 基金的申购额度
     endpoint: /api/fund/quota/list
     priority: P3
     partition: {enum: {tab: ['["remen"]', '["nazhi100"]']}}    # 分类全集待确认
@@ -799,6 +991,9 @@ datasets:
     schedule: weekly
 
   - id: fund.backtest_indicators
+    title: 基金回测指标字典
+    category: 基金
+    summary: 供应商回测功能的指标列表
     endpoint: /api/fund/backtest/indicators
     priority: P3
     partition: once
@@ -808,6 +1003,9 @@ datasets:
     notes: 只是回测功能的指标字典。/api/fund/backtest/result 是计算服务，不是数据，不同步。
 
   - id: fund.news
+    title: 基金资讯
+    category: 基金
+    summary: 基金相关新闻，默认关闭
     endpoint: /api/fund/news/article-list
     priority: P3
     enabled: false
@@ -821,6 +1019,9 @@ datasets:
   # ═══════════════════════════ 期货（P2） ═══════════════════════════
 
   - id: futures.varieties
+    title: 期货品种
+    category: 期货
+    summary: 91 个期货品种的合约乘数、最小变动价位、交易时段、保证金
     endpoint: /api/futures/varieties/list
     priority: P2
     partition: once
@@ -830,6 +1031,9 @@ datasets:
     notes: 91 个品种；合约乘数、最小变动价位、交易时段、保证金、手续费、主力合约。
 
   - id: futures.variety_plates
+    title: 期货板块
+    category: 期货
+    summary: 期货品种所属的板块
     endpoint: /api/futures/variety-plates/list
     priority: P2
     partition: once
@@ -838,6 +1042,9 @@ datasets:
     schedule: monthly
 
   - id: futures.contracts
+    title: 期货合约
+    category: 期货
+    summary: 各品种的全部合约
     endpoint: /api/futures/contracts/list
     priority: P2
     partition: once
@@ -848,6 +1055,9 @@ datasets:
     schedule: daily
 
   - id: futures.main_contracts
+    title: 主力合约
+    category: 期货
+    summary: 每天记录各品种的主力合约，积累出主力切换的历史
     endpoint: /api/futures/contracts/main-list
     priority: P2
     partition: once
@@ -859,6 +1069,9 @@ datasets:
     notes: 每天记录主力合约是谁，积累出主力合约切换的历史。
 
   - id: futures.secondary_main_contracts
+    title: 次主力合约
+    category: 期货
+    summary: 每天记录各品种的次主力合约
     endpoint: /api/futures/contracts/secondary-main-list
     priority: P2
     partition: once
@@ -868,6 +1081,9 @@ datasets:
     capture: snapshot
 
   - id: futures.main_continuous
+    title: 主力连续
+    category: 期货
+    summary: 主力连续合约的代码，用来看长周期走势
     endpoint: /api/futures/contracts/main-continuous-list
     priority: P2
     partition: once
@@ -878,6 +1094,9 @@ datasets:
     notes: 主连代码，例如 AUZL.SHF，可以作为长周期 K 线的标的。
 
   - id: futures.commodity_index
+    title: 商品指数
+    category: 期货
+    summary: 期货商品指数的代码
     endpoint: /api/futures/contracts/commodity-index-list
     priority: P2
     partition: once
@@ -886,6 +1105,9 @@ datasets:
     schedule: weekly
 
   - id: futures.bar_1d
+    title: 期货日线
+    category: 期货
+    summary: 期货合约每天的价格
     endpoint: /api/futures/prices/daily
     priority: P2
     partition: {security_window: {universe: "dataset_id IN ('futures.contracts','futures.main_continuous','futures.commodity_index') AND active",
@@ -899,6 +1121,9 @@ datasets:
     notes: 免费 Key 只能取日 K；不传 start/end 时返回最近 100 根。历史起点因合约而异（示例从 2022 年起），窗口上限待测。
 
   - id: futures.basis_latest
+    title: 最新基差
+    category: 期货
+    summary: 期货价格与现货价格的差
     endpoint: /api/futures/basis/main-continuous-latest
     priority: P2
     partition: once
@@ -908,6 +1133,9 @@ datasets:
     schedule: after_close
 
   - id: futures.basis_history
+    title: 基差历史
+    category: 期货
+    summary: 期货与现货价差的历史，约 5 年
     endpoint: /api/futures/basis/historical
     priority: P2
     partition: {security: {universe: "dataset_id = 'futures.main_continuous' AND active"}}
@@ -919,6 +1147,9 @@ datasets:
     notes: 每次返回约 5 年（1212 条）。
 
   - id: futures.positions_variety
+    title: 品种持仓
+    category: 期货
+    summary: 每个品种每天的持仓量
     endpoint: /api/futures/positions/variety-daily
     priority: P2
     partition: {trading_day: {from: -1y}}
@@ -929,6 +1160,9 @@ datasets:
     incremental: {since_cursor: {}}
 
   - id: futures.positions_company_variety
+    title: 期货公司品种持仓
+    category: 期货
+    summary: 各期货公司在各品种上的持仓，默认关闭
     endpoint: /api/futures/positions/company-variety-daily
     priority: P3
     partition: {trading_day: {from: -1y}, cross: {varieties_batch: 5}}
@@ -939,6 +1173,9 @@ datasets:
     incremental: {since_cursor: {}}
 
   - id: futures.positions_contract
+    title: 合约持仓排名
+    category: 期货
+    summary: 各合约的持仓排名，默认关闭
     endpoint: /api/futures/positions/contract-daily
     priority: P3
     partition: {trading_day: {from: -1y}, cross: {from_dataset: futures.main_contracts}}
@@ -949,6 +1186,9 @@ datasets:
     incremental: {since_cursor: {}}
 
   - id: futures.positions_companies
+    title: 期货公司列表
+    category: 期货
+    summary: 公布持仓的期货公司
     endpoint: /api/futures/positions/company-list
     priority: P3
     partition: once
@@ -957,6 +1197,9 @@ datasets:
     schedule: monthly
 
   - id: futures.warehouse_receipts
+    title: 仓单
+    category: 期货
+    summary: 交易所仓单的历史
     endpoint: /api/futures/warehouse-receipts/historical
     priority: P3
     partition: {security_window: {universe: "dataset_id = 'futures.main_contracts' AND active", window_days: 365, floor: -1y}}
@@ -967,6 +1210,9 @@ datasets:
     incremental: {since_cursor: {overlap_days: 3}}
 
   - id: futures.trading_schedule
+    title: 期货交易时间
+    category: 期货
+    summary: 各品种的交易时段
     endpoint: /api/futures/calendar/trading-schedule
     priority: P3
     partition: {security: {universe: "dataset_id = 'futures.main_contracts' AND active"}}
@@ -981,6 +1227,9 @@ datasets:
   # ═══════════════════════════ 期权（P2） ═══════════════════════════
 
   - id: options.varieties
+    title: 期权品种
+    category: 期权
+    summary: 88 个期权品种
     endpoint: /api/options/varieties/list
     priority: P2
     partition: once
@@ -990,6 +1239,9 @@ datasets:
     notes: 88 个品种。
 
   - id: options.contracts
+    title: 期权合约
+    category: 期权
+    summary: 全部期权合约，超过 1 万个
     endpoint: /api/options/contracts/list
     priority: P2
     partition: once
@@ -1001,6 +1253,9 @@ datasets:
     notes: 超过 1 万个合约。
 
   - id: options.contract_detail
+    title: 期权合约详情
+    category: 期权
+    summary: 行权价、认购或认沽、标的、行权方式
     endpoint: /api/options/contracts/detail
     priority: P3
     partition: {security: {universe: "dataset_id = 'options.contracts' AND active"}}
@@ -1011,6 +1266,9 @@ datasets:
     notes: 行权价、认购/认沽、标的、行权方式；列表接口没有这些字段。
 
   - id: options.bar_1d
+    title: 期权日线
+    category: 期权
+    summary: 期权合约每天的价格，默认关闭
     endpoint: /api/options/prices/daily
     priority: P3
     partition: {security: {universe: "dataset_id = 'options.contracts' AND active"}}
@@ -1024,6 +1282,9 @@ datasets:
   # ═══════════════════════════ 港股新股（P3） ═══════════════════════════
 
   - id: hk_ipo.applications
+    title: 港股递表
+    category: 港股新股
+    summary: 向港交所递交上市申请的公司
     endpoint: /api/hk-share/ipo/application-list
     priority: P3
     partition: once
@@ -1033,6 +1294,9 @@ datasets:
     schedule: daily
 
   - id: hk_ipo.calendar
+    title: 港股新股日历
+    category: 港股新股
+    summary: 港股新股的认购和上市日期
     endpoint: /api/hk-share/ipo/calendar-list
     priority: P3
     partition: {enum: {status: [subscribable, awaiting_listing]}}
@@ -1042,6 +1306,9 @@ datasets:
     schedule: daily
 
   - id: hk_ipo.issue_detail
+    title: 港股新股发行详情
+    category: 港股新股
+    summary: 发行价、募资额、基石投资者等
     endpoint: /api/hk-share/ipo/issue-detail
     priority: P3
     partition: {from_dataset: {dataset: hk_ipo.calendar, fields: {issue_code: rkey}}}

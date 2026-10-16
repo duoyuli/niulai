@@ -39,6 +39,8 @@ enum Outcome {
     Done(TaskStats),
     Empty { pages: i32, note: Option<String> },
     Skipped(String),
+    /// 只有当天值的数据已经错过，记为失败
+    Missed(String),
     /// 数据尚未就绪：放回队列，推迟后再执行，不计入尝试次数
     Deferred(String),
 }
@@ -142,6 +144,11 @@ impl Executor {
                 tracing::warn!(task_id = task.task_id, dataset = %task.dataset_id, reason = %why, "任务跳过");
                 self.queue.finish(&task, Finished::Skipped, TaskStats::default(), Some(&why)).await?
             }
+            Ok(Outcome::Missed(why)) => {
+                // 只有当天值的数据错过了：记为失败（dead），在同步页和完整性核对中显示，而不是静默跳过
+                tracing::error!(task_id = task.task_id, dataset = %task.dataset_id, reason = %why, "已错过当天的数据");
+                self.queue.fail(&task, None, &why, true).await?;
+            }
             Ok(Outcome::Deferred(why)) => {
                 tracing::info!(task_id = task.task_id, dataset = %task.dataset_id, reason = %why, "数据尚未就绪，稍后再试");
                 return self.queue.defer(&task, &why).await;
@@ -186,6 +193,7 @@ impl Executor {
             match self.guard.check(task.trade_date).await? {
                 Readiness::Ready => {}
                 Readiness::Skip(why) => return Ok(Outcome::Skipped(why)),
+                Readiness::Missed(why) => return Ok(Outcome::Missed(why)),
                 Readiness::Defer(why) => return Ok(Outcome::Deferred(why)),
             }
         }
