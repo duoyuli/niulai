@@ -29,8 +29,8 @@ pub struct Shared {
     pub next_date: NaiveDate,
     pub market: Option<MarketIn>,
     sec: Securities,
-    /// 内置策略：模板 key → 编号
-    builtin: HashMap<String, i64>,
+    /// 参加巡检的策略（候选股的来源），按编号
+    screening: Vec<(i64, String)>,
     names: HashMap<i64, String>,
     stats: HashMap<i64, StrategyStat>,
     /// 当天的买点：(策略, 股票, 命中条件, 成交额)
@@ -38,9 +38,9 @@ pub struct Shared {
     delisted: HashMap<String, bool>,
 }
 
-/// 内置策略最近一次巡检的交易日：建议跟着它走
+/// 参加巡检的策略最近一次巡检的交易日：建议跟着它走
 pub async fn latest_screen_date(pool: &PgPool) -> sqlx::Result<Option<NaiveDate>> {
-    sqlx::query_scalar("SELECT max(r.trade_date) FROM app.screen_run r JOIN app.strategy s USING (strategy_id) WHERE s.builtin_key IS NOT NULL").fetch_one(pool).await
+    sqlx::query_scalar("SELECT max(r.trade_date) FROM app.screen_run r JOIN app.strategy s USING (strategy_id) WHERE s.screening").fetch_one(pool).await
 }
 
 /// 交易日之后的下一个交易日：本地日历有就用，没有时取下一个工作日
@@ -61,9 +61,9 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
     let next_date = next_trading_day(pool, trade_date).await?;
     let market = market::overview(pool, Some(trade_date)).await?.map(|o| MarketIn { above_ma20_pct: o.above_ma20 * 100.0, stocks: o.stocks });
     let sec = market::securities(pool).await?;
-    let builtin = screener::builtin_ids(pool).await?;
     let names: HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>("SELECT strategy_id, name FROM app.strategy").fetch_all(pool).await?.into_iter().collect();
-    let ids: Vec<i64> = builtin.values().copied().collect();
+    let screening: Vec<(i64, String)> = sqlx::query_as("SELECT strategy_id, name FROM app.strategy WHERE screening ORDER BY strategy_id").fetch_all(pool).await?;
+    let ids: Vec<i64> = screening.iter().map(|(id, _)| *id).collect();
     let stats = stats::load(pool, &ids).await?;
     let rows: Vec<HitRow> = sqlx::query_as(
         "SELECT r.strategy_id, h.thscode, h.reasons, (h.metrics->>'amount')::float8 FROM app.screen_hit h JOIN app.screen_run r USING (run_id)
@@ -76,7 +76,7 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
     let hits = rows.into_iter().map(|(id, code, r, amount)| (id, code, r.0, amount.unwrap_or(0.0))).collect();
     let delisted: HashMap<String, bool> =
         sqlx::query_as::<_, (String, bool)>("SELECT thscode, delisted_on IS NOT NULL FROM ref.security").fetch_all(pool).await?.into_iter().collect();
-    Ok(Some(Shared { trade_date, next_date, market, sec, builtin, names, stats, hits, delisted }))
+    Ok(Some(Shared { trade_date, next_date, market, sec, screening, names, stats, hits, delisted }))
 }
 
 fn finite(v: f64) -> Option<f64> {
@@ -135,13 +135,13 @@ async fn streaks(pool: &PgPool, account_id: i64, trade_date: NaiveDate) -> anyho
 }
 
 pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Result<Input> {
-    let params = acc.params();
+    let rules = acc.rules.clone();
     let positions = account::positions(pool, acc.account_id).await.map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut holdings = vec![];
     for p in &positions {
         let meta = sh.sec.meta.get(&p.thscode).cloned().unwrap_or(StockMeta { board: "main".into(), is_st: false, list_date: None });
         let bars = prices::recent_bars_until(pool, &p.thscode, sh.trade_date, BARS).await?;
-        let snap = snapshot(&bars, &meta, params.trend_ma);
+        let snap = snapshot(&bars, &meta, rules.trend_ma);
         let bars_held = match p.opened_on {
             Some(d) => Some(
                 sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mkt.stock_bar_1d WHERE thscode = $1 AND trade_date >= $2 AND trade_date <= $3")
@@ -182,8 +182,10 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         });
     }
 
-    // 候选：风格参考的策略今天的买点，按股票合并
-    let ids: Vec<i64> = params.strategies.iter().filter_map(|k| sh.builtin.get(k).copied()).collect();
+    // 候选：参考的策略今天的买点，按股票合并；先按和生成时相同的优先级预选，只细看前面的
+    let ids: Vec<i64> = sh.screening.iter().map(|(id, _)| *id).filter(|id| rules.uses(*id)).collect();
+    let excess = |id: i64| sh.stats.get(&id).and_then(StrategyStat::excess20_pct);
+    let effective = |id: i64| excess(id).is_none_or(|e| e > 0.0);
     let mut by_code: HashMap<&str, (Vec<Pick>, f64)> = HashMap::new();
     for (id, code, reasons, amount) in &sh.hits {
         if ids.contains(id) {
@@ -191,29 +193,35 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             e.0.push(Pick { strategy_id: *id, reasons: reasons.clone() });
         }
     }
+    let score = |picks: &[Pick]| {
+        let good: Vec<&Pick> = picks.iter().filter(|k| effective(k.strategy_id)).collect();
+        (good.len(), good.iter().filter_map(|k| excess(k.strategy_id)).sum::<f64>())
+    };
     let mut pre: Vec<(&str, Vec<Pick>, f64)> = by_code.into_iter().map(|(c, (picks, a))| (c, picks, a)).collect();
-    pre.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| b.2.total_cmp(&a.2)).then_with(|| a.0.cmp(b.0)));
+    pre.sort_by(|a, b| {
+        let (sa, sb) = (score(&a.1), score(&b.1));
+        sb.0.cmp(&sa.0).then_with(|| sb.1.total_cmp(&sa.1)).then_with(|| b.2.total_cmp(&a.2)).then_with(|| a.0.cmp(b.0))
+    });
     let mut candidates = vec![];
     for (code, mut picks, _) in pre.into_iter().filter(|(c, _, _)| !positions.iter().any(|p| p.thscode == *c)).take(MAX_CANDIDATES) {
         let Some(meta) = sh.sec.meta.get(code) else { continue };
         let bars = prices::recent_bars_until(pool, code, sh.trade_date, BARS).await?;
-        let Some(snap) = snapshot(&bars, meta, params.trend_ma) else { continue };
-        // 按风格里的顺序列出选中它的策略
-        picks.sort_by_key(|k| ids.iter().position(|id| *id == k.strategy_id));
+        let Some(snap) = snapshot(&bars, meta, rules.trend_ma) else { continue };
+        // 过去表现好的策略列在前面
+        picks.sort_by(|a, b| excess(b.strategy_id).unwrap_or(f64::MIN).total_cmp(&excess(a.strategy_id).unwrap_or(f64::MIN)));
         candidates.push(CandidateIn { thscode: code.to_string(), name: sh.sec.names.get(code).cloned().unwrap_or_default(), board: meta.board.clone(), is_st: meta.is_st, picks, snap });
     }
 
-    let strategies = params
-        .strategies
+    let strategies = sh
+        .screening
         .iter()
-        .filter_map(|k| sh.builtin.get(k).map(|id| (k, *id)))
-        .map(|(k, id)| StrategyIn { strategy_id: id, key: k.clone(), name: sh.names.get(&id).cloned().unwrap_or_default(), stat: sh.stats.get(&id).cloned() })
+        .filter(|(id, _)| rules.uses(*id))
+        .map(|(id, name)| StrategyIn { strategy_id: *id, name: name.clone(), stat: sh.stats.get(id).cloned() })
         .collect();
     Ok(Input {
         trade_date: sh.trade_date,
         next_date: sh.next_date,
-        style: acc.style,
-        params,
+        rules,
         fees: acc.fees,
         cash: acc.cash,
         market: sh.market,

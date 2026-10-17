@@ -2,7 +2,7 @@
 //!
 //! - `generate`：纯函数，从输入算出建议和每条的理由；
 //! - `inputs`：从数据库组装输入；
-//! - `stats`、`backtest`：内置策略的过去表现和三种风格的回测，每周算一次，理由和风格卡片引用；
+//! - `stats`、`backtest`：策略的过去表现和三组参考值的回测，每周算一次，理由和设置页引用；
 //! - `review`：过去的建议之后 5、10、20 个交易日的实际涨跌；
 //! - 本文件：保存、重新生成、每天为所有账户生成、后台的每周统计。
 //!
@@ -109,14 +109,14 @@ pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> 
 static WEEKLY_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// 执行循环每分钟调一次：
-/// - 内置策略在最新交易日还没有巡检（例如刚部署、刚加了内置策略）时补一次巡检，每天最多一次；
+/// - 参加巡检的策略在最新交易日还没有巡检（例如刚部署、刚加了内置策略）时补一次巡检，每天最多一次；
 /// - 还没有当天建议的账户补上；
-/// - 策略表现和风格回测到期时在后台重算（每天最多尝试一次），算完后刷新还没处理过的建议
+/// - 策略表现和参考值回测到期时在后台重算（每天最多尝试一次），算完后刷新还没处理过的建议
 pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
     let latest_bar = crate::analysis::market::resolve_date(pool, None).await?;
     let screened = inputs::latest_screen_date(pool).await?;
     if latest_bar.is_some() && screened < latest_bar && crate::sync::scheduler::claim(pool, "builtin_screen", crate::time::today_cn(), "day").await? {
-        tracing::info!("内置策略在最新交易日还没有巡检，补一次");
+        tracing::info!("参加巡检的策略在最新交易日还没有巡检，补一次");
         crate::analysis::screener::run_and_store(pool, None, None).await?;
     }
     refresh_all(pool, false).await?;
@@ -135,7 +135,7 @@ pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
             }
             .await;
             if let Err(e) = r {
-                tracing::error!(error = %format!("{e:#}"), "策略表现或风格回测失败，明天再试");
+                tracing::error!(error = %format!("{e:#}"), "策略表现或参考值回测失败，明天再试");
             }
             WEEKLY_RUNNING.store(false, Ordering::Release);
         });

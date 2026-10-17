@@ -36,7 +36,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "新建账户：名字、风格、现在的现金。持仓之后在持仓页添加或粘贴",
+        "summary": "新建账户：名字、现在的现金，规则用稳健型的参考值（之后在高级设置里改）。持仓之后添加或粘贴",
         "operationId": "create_account",
         "requestBody": {
           "content": {
@@ -127,7 +127,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "修改名字、风格、高级设置、费率、备注；之后重新生成今天的建议",
+        "summary": "修改名字、选股和风控规则、费率、备注；之后重新生成今天的建议",
         "operationId": "update_account",
         "parameters": [
           {
@@ -583,7 +583,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "用这个账户实际生效的参数做一次风格回测（过去 3 年）。全市场计算，要十几秒",
+        "summary": "用这个账户的规则回测过去 3 年。全市场计算，要一两分钟",
         "operationId": "account_backtest",
         "parameters": [
           {
@@ -602,7 +602,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StyleBacktest"
+                  "$ref": "#/components/schemas/RulesBacktest"
                 }
               }
             }
@@ -1996,6 +1996,27 @@
         }
       }
     },
+    "/rules/guide": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和参考策略的过去表现",
+        "operationId": "rules_guide",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulesGuide"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/screening/run": {
       "post": {
         "tags": [
@@ -3202,30 +3223,6 @@
         }
       }
     },
-    "/styles": {
-      "get": {
-        "tags": [
-          "accounts"
-        ],
-        "summary": "三种风格：规则、参考的策略和它们的过去表现、风格回测",
-        "operationId": "styles",
-        "responses": {
-          "200": {
-            "description": "成功",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/StyleInfo"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/sync/check": {
       "get": {
         "tags": [
@@ -3897,8 +3894,7 @@
         "required": [
           "account_id",
           "name",
-          "style",
-          "overrides",
+          "rules",
           "cash",
           "fees",
           "note",
@@ -3936,12 +3932,9 @@
           "note": {
             "type": "string"
           },
-          "overrides": {
-            "$ref": "#/components/schemas/StyleOverrides",
-            "description": "高级设置中改过的参数；为空对象表示全部跟着风格"
-          },
-          "style": {
-            "$ref": "#/components/schemas/Style"
+          "rules": {
+            "$ref": "#/components/schemas/Rules",
+            "description": "选股和风控规则"
           },
           "updated_at": {
             "type": "string",
@@ -3953,14 +3946,9 @@
         "type": "object",
         "required": [
           "summary",
-          "params",
           "positions"
         ],
         "properties": {
-          "params": {
-            "$ref": "#/components/schemas/StyleParams",
-            "description": "实际生效的风格参数（含高级设置）"
-          },
           "positions": {
             "type": "array",
             "items": {
@@ -4022,8 +4010,6 @@
         "type": "object",
         "required": [
           "account",
-          "style_name",
-          "custom",
           "positions",
           "market_value",
           "total_assets",
@@ -4050,10 +4036,6 @@
             ],
             "description": "持仓很久没变动、又有没执行的建议时，提醒核对"
           },
-          "custom": {
-            "type": "boolean",
-            "description": "改过高级设置"
-          },
           "day_pnl": {
             "type": "number",
             "format": "double",
@@ -4066,9 +4048,6 @@
           "positions": {
             "type": "integer",
             "minimum": 0
-          },
-          "style_name": {
-            "type": "string"
           },
           "total_assets": {
             "type": "number",
@@ -4152,7 +4131,7 @@
         "type": "object",
         "required": [
           "name",
-          "style",
+          "rules",
           "fees"
         ],
         "properties": {
@@ -4165,11 +4144,8 @@
           "note": {
             "type": "string"
           },
-          "overrides": {
-            "$ref": "#/components/schemas/StyleOverrides"
-          },
-          "style": {
-            "$ref": "#/components/schemas/Style"
+          "rules": {
+            "$ref": "#/components/schemas/Rules"
           }
         }
       },
@@ -4178,7 +4154,6 @@
         "required": [
           "trade_date",
           "next_date",
-          "style",
           "headline",
           "total_assets",
           "cash",
@@ -4235,9 +4210,6 @@
               "$ref": "#/components/schemas/SkippedCandidate"
             },
             "description": "今天有买点、但没进建议的候选和原因"
-          },
-          "style": {
-            "$ref": "#/components/schemas/Style"
           },
           "total_assets": {
             "type": "number",
@@ -6327,8 +6299,7 @@
       "NewAccount": {
         "type": "object",
         "required": [
-          "name",
-          "style"
+          "name"
         ],
         "properties": {
           "cash": {
@@ -6341,9 +6312,6 @@
           },
           "note": {
             "type": "string"
-          },
-          "style": {
-            "$ref": "#/components/schemas/Style"
           }
         }
       },
@@ -7208,6 +7176,58 @@
           }
         }
       },
+      "Preset": {
+        "type": "string",
+        "description": "三组参考值：只是辅助，套用后还可以改",
+        "enum": [
+          "conservative",
+          "balanced",
+          "aggressive"
+        ]
+      },
+      "PresetInfo": {
+        "type": "object",
+        "description": "一组参考值：适合什么样的账户、怎么设计、过去 3 年的回测",
+        "required": [
+          "preset",
+          "name",
+          "tagline",
+          "design",
+          "rules"
+        ],
+        "properties": {
+          "backtest": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RulesBacktest",
+                "description": "按这组规则过去 3 年的回测；还没算时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "design": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "这类账户一般怎么设计，每条说明一个参数为什么这样取"
+          },
+          "name": {
+            "type": "string"
+          },
+          "preset": {
+            "$ref": "#/components/schemas/Preset"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/Rules"
+          },
+          "tagline": {
+            "type": "string"
+          }
+        }
+      },
       "PreviewInput": {
         "type": "object",
         "required": [
@@ -7458,6 +7478,233 @@
           "admin",
           "member"
         ]
+      },
+      "Rules": {
+        "type": "object",
+        "description": "一个账户的全部规则。缺的字段按稳健的参考值补齐",
+        "properties": {
+          "chase_limit_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "第二天开盘比参考价高多少（%）就不买",
+            "default": 5.0
+          },
+          "max_positions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "最多同时持有几只",
+            "default": 6,
+            "minimum": 0
+          },
+          "max_weight_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "单只最多占总资产的百分比",
+            "default": 25.0
+          },
+          "min_cash_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "至少留多少现金（占总资产的百分比）",
+            "default": 10.0
+          },
+          "min_picks": {
+            "type": "integer",
+            "format": "int32",
+            "description": "至少几个有效策略（过去 3 年表现好于随便买）同时选中才买",
+            "default": 1,
+            "minimum": 0
+          },
+          "sell_st": {
+            "type": "boolean",
+            "description": "持有的股票被 ST 时卖出",
+            "default": true
+          },
+          "stop_loss_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "止损线：比成本价亏多少（%）就卖",
+            "default": 8.0
+          },
+          "strategies": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "参考哪些策略（策略编号）；为空表示全部参加巡检的策略",
+            "default": []
+          },
+          "trend_ma": {
+            "type": "integer",
+            "format": "int32",
+            "description": "收盘跌破几日均线就卖",
+            "default": 20,
+            "minimum": 0
+          },
+          "weak_market": {
+            "$ref": "#/components/schemas/WeakMarket",
+            "default": "half"
+          },
+          "weak_threshold_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "全市场站上 20 日均线的股票比例低于多少（%）算弱市",
+            "default": 30.0
+          }
+        }
+      },
+      "RulesBacktest": {
+        "type": "object",
+        "required": [
+          "summary",
+          "equity"
+        ],
+        "properties": {
+          "equity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RulesEquityPoint"
+            },
+            "description": "每周一个点"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/RulesBacktestSummary"
+          }
+        }
+      },
+      "RulesBacktestSummary": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "total_return",
+          "max_drawdown",
+          "trades",
+          "avg_positions",
+          "avg_cash_ratio",
+          "strategies",
+          "avg_effective"
+        ],
+        "properties": {
+          "annual_return": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "avg_cash_ratio": {
+            "type": "number",
+            "format": "double",
+            "description": "平均现金占比"
+          },
+          "avg_effective": {
+            "type": "number",
+            "format": "double"
+          },
+          "avg_positions": {
+            "type": "number",
+            "format": "double",
+            "description": "平均每天持有几只"
+          },
+          "benchmark_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "benchmark_return": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "end": {
+            "type": "string",
+            "format": "date"
+          },
+          "max_drawdown": {
+            "type": "number",
+            "format": "double",
+            "description": "最大回撤（0.2 表示从最高点跌了 20%）"
+          },
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "strategies": {
+            "type": "integer",
+            "description": "参考了几个策略，以及回测期间平均有几个算作有效",
+            "minimum": 0
+          },
+          "total_return": {
+            "type": "number",
+            "format": "double",
+            "description": "区间涨跌（0.1 表示 10%）"
+          },
+          "trades": {
+            "type": "integer",
+            "description": "已卖出的交易笔数",
+            "minimum": 0
+          },
+          "win_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "RulesEquityPoint": {
+        "type": "object",
+        "required": [
+          "date",
+          "value"
+        ],
+        "properties": {
+          "benchmark": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "基准指数相对第一天的倍数"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "账户总值相对本金的倍数（1.1 表示赚了 10%）"
+          }
+        }
+      },
+      "RulesGuide": {
+        "type": "object",
+        "required": [
+          "presets",
+          "strategies"
+        ],
+        "properties": {
+          "presets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresetInfo"
+            }
+          },
+          "strategies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StrategyQuality"
+            },
+            "description": "全部参加巡检的策略，过去表现好的在前"
+          }
+        }
       },
       "RunDetail": {
         "allOf": [
@@ -8609,7 +8856,7 @@
         "properties": {
           "builtin": {
             "type": "boolean",
-            "description": "内置策略：由模板生成，只读、不能删除、总是参加巡检，账户的风格引用它；想改就复制一份"
+            "description": "内置策略：由模板生成，只读、不能删除、总是参加巡检，账户的调仓建议会参考它；想改就复制一份"
           },
           "definition": {
             "$ref": "#/components/schemas/Definition"
@@ -8727,6 +8974,45 @@
           }
         }
       },
+      "StrategyQuality": {
+        "type": "object",
+        "description": "一个参考策略：过去表现和是否算作有效策略",
+        "required": [
+          "strategy_id",
+          "name",
+          "builtin"
+        ],
+        "properties": {
+          "builtin": {
+            "type": "boolean"
+          },
+          "effective": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "买点之后 20 日平均好于随便买；还没统计时为空"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stat": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StrategyStat",
+                "description": "过去 3 年的表现；还没统计时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "StrategyStat": {
         "type": "object",
         "required": [
@@ -8802,374 +9088,6 @@
             ],
             "format": "double",
             "description": "卖出的交易中赚钱的比例（0.55 表示 55%）"
-          }
-        }
-      },
-      "Style": {
-        "type": "string",
-        "enum": [
-          "conservative",
-          "balanced",
-          "aggressive"
-        ]
-      },
-      "StyleBacktest": {
-        "type": "object",
-        "required": [
-          "summary",
-          "equity"
-        ],
-        "properties": {
-          "equity": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StyleEquityPoint"
-            },
-            "description": "每周一个点"
-          },
-          "summary": {
-            "$ref": "#/components/schemas/StyleBacktestSummary"
-          }
-        }
-      },
-      "StyleBacktestSummary": {
-        "type": "object",
-        "required": [
-          "start",
-          "end",
-          "total_return",
-          "max_drawdown",
-          "trades",
-          "avg_positions",
-          "avg_cash_ratio"
-        ],
-        "properties": {
-          "annual_return": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "avg_cash_ratio": {
-            "type": "number",
-            "format": "double",
-            "description": "平均现金占比"
-          },
-          "avg_positions": {
-            "type": "number",
-            "format": "double",
-            "description": "平均每天持有几只"
-          },
-          "benchmark_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "benchmark_return": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "end": {
-            "type": "string",
-            "format": "date"
-          },
-          "max_drawdown": {
-            "type": "number",
-            "format": "double",
-            "description": "最大回撤（0.2 表示从最高点跌了 20%）"
-          },
-          "start": {
-            "type": "string",
-            "format": "date"
-          },
-          "total_return": {
-            "type": "number",
-            "format": "double",
-            "description": "区间涨跌（0.1 表示 10%）"
-          },
-          "trades": {
-            "type": "integer",
-            "description": "已卖出的交易笔数",
-            "minimum": 0
-          },
-          "win_rate": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          }
-        }
-      },
-      "StyleEquityPoint": {
-        "type": "object",
-        "required": [
-          "date",
-          "value"
-        ],
-        "properties": {
-          "benchmark": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "基准指数相对第一天的倍数"
-          },
-          "date": {
-            "type": "string",
-            "format": "date"
-          },
-          "value": {
-            "type": "number",
-            "format": "double",
-            "description": "账户总值相对本金的倍数（1.1 表示赚了 10%）"
-          }
-        }
-      },
-      "StyleInfo": {
-        "type": "object",
-        "required": [
-          "style",
-          "name",
-          "tagline",
-          "params",
-          "strategies"
-        ],
-        "properties": {
-          "backtest": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/StyleBacktest",
-                "description": "过去 3 年按这个风格操作的回测；还没算时为空"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "name": {
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/components/schemas/StyleParams"
-          },
-          "strategies": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StyleStrategy"
-            }
-          },
-          "style": {
-            "$ref": "#/components/schemas/Style"
-          },
-          "tagline": {
-            "type": "string"
-          }
-        }
-      },
-      "StyleOverrides": {
-        "type": "object",
-        "description": "高级设置中改过的参数；没改的为空，跟着风格走",
-        "properties": {
-          "chase_limit_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "max_positions": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
-          },
-          "max_weight_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "min_cash_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "require_edge": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "sell_st": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "stop_loss_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "strategies": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "trend_ma": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
-          },
-          "weak_market": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/WeakMarket"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "weak_threshold_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          }
-        }
-      },
-      "StyleParams": {
-        "type": "object",
-        "description": "一个风格的全部规则",
-        "required": [
-          "strategies",
-          "max_positions",
-          "max_weight_pct",
-          "min_cash_pct",
-          "stop_loss_pct",
-          "trend_ma",
-          "weak_market",
-          "weak_threshold_pct",
-          "chase_limit_pct",
-          "require_edge",
-          "sell_st"
-        ],
-        "properties": {
-          "chase_limit_pct": {
-            "type": "number",
-            "format": "double",
-            "description": "第二天开盘比参考价高多少（%）就不买"
-          },
-          "max_positions": {
-            "type": "integer",
-            "format": "int32",
-            "description": "最多同时持有几只",
-            "minimum": 0
-          },
-          "max_weight_pct": {
-            "type": "number",
-            "format": "double",
-            "description": "单只最多占总资产的百分比"
-          },
-          "min_cash_pct": {
-            "type": "number",
-            "format": "double",
-            "description": "至少留多少现金（占总资产的百分比）"
-          },
-          "require_edge": {
-            "type": "boolean",
-            "description": "只采纳过去 3 年 20 日平均涨跌好于「随便买」的策略"
-          },
-          "sell_st": {
-            "type": "boolean",
-            "description": "持有的股票被 ST 时卖出"
-          },
-          "stop_loss_pct": {
-            "type": "number",
-            "format": "double",
-            "description": "止损线：比成本价亏多少（%）就卖"
-          },
-          "strategies": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "参考的内置策略（模板 key）"
-          },
-          "trend_ma": {
-            "type": "integer",
-            "format": "int32",
-            "description": "收盘跌破几日均线就卖",
-            "minimum": 0
-          },
-          "weak_market": {
-            "$ref": "#/components/schemas/WeakMarket"
-          },
-          "weak_threshold_pct": {
-            "type": "number",
-            "format": "double",
-            "description": "全市场站上 20 日均线的股票比例低于多少（%）算弱市"
-          }
-        }
-      },
-      "StyleStrategy": {
-        "type": "object",
-        "description": "风格引用的一个内置策略",
-        "required": [
-          "key",
-          "name",
-          "description"
-        ],
-        "properties": {
-          "description": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "stat": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/StrategyStat",
-                "description": "过去 3 年的表现；还没统计时为空"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "strategy_id": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
           }
         }
       },

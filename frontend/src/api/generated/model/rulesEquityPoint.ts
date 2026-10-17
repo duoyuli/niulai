@@ -6,7 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface StyleEquityPoint {
+export interface RulesEquityPoint {
   /**
      * 基准指数相对第一天的倍数
      * @nullable

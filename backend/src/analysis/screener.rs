@@ -302,7 +302,7 @@ pub async fn load_strategy(pool: &PgPool, id: i64) -> anyhow::Result<Option<Defi
 }
 
 /// 内置策略：每个模板一行（`builtin_key` 是模板的 key），启动时按模板内容同步，只读、总是参加巡检。
-/// 账户的风格按 key 引用它们，所以不能被改坏。还没有内置行时，先接管内容和模板完全一样的普通策略
+/// 账户的调仓建议默认参考全部参加巡检的策略，内置策略保证总有一批不会被改坏的。还没有内置行时，先接管内容和模板完全一样的普通策略
 /// （以前第一次启动时由模板复制出来、没有改过的），避免同一个策略出现两份；改过的保持为普通策略。
 /// 模板删掉后，对应的行变回普通策略，巡检记录保留
 pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {

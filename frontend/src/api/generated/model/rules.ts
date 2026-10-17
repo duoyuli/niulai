@@ -8,34 +8,37 @@
 import type { WeakMarket } from './weakMarket';
 
 /**
- * 一个风格的全部规则
+ * 一个账户的全部规则。缺的字段按稳健的参考值补齐
  */
-export interface StyleParams {
+export interface Rules {
   /** 第二天开盘比参考价高多少（%）就不买 */
-  chase_limit_pct: number;
+  chase_limit_pct?: number;
   /**
      * 最多同时持有几只
      * @minimum 0
      */
-  max_positions: number;
+  max_positions?: number;
   /** 单只最多占总资产的百分比 */
-  max_weight_pct: number;
+  max_weight_pct?: number;
   /** 至少留多少现金（占总资产的百分比） */
-  min_cash_pct: number;
-  /** 只采纳过去 3 年 20 日平均涨跌好于「随便买」的策略 */
-  require_edge: boolean;
+  min_cash_pct?: number;
+  /**
+     * 至少几个有效策略（过去 3 年表现好于随便买）同时选中才买
+     * @minimum 0
+     */
+  min_picks?: number;
   /** 持有的股票被 ST 时卖出 */
-  sell_st: boolean;
+  sell_st?: boolean;
   /** 止损线：比成本价亏多少（%）就卖 */
-  stop_loss_pct: number;
-  /** 参考的内置策略（模板 key） */
-  strategies: string[];
+  stop_loss_pct?: number;
+  /** 参考哪些策略（策略编号）；为空表示全部参加巡检的策略 */
+  strategies?: number[];
   /**
      * 收盘跌破几日均线就卖
      * @minimum 0
      */
-  trend_ma: number;
-  weak_market: WeakMarket;
+  trend_ma?: number;
+  weak_market?: WeakMarket;
   /** 全市场站上 20 日均线的股票比例低于多少（%）算弱市 */
-  weak_threshold_pct: number;
+  weak_threshold_pct?: number;
 }

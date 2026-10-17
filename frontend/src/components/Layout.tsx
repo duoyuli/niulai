@@ -82,28 +82,33 @@ export function Layout() {
               </NavLink>
             ))}
             {me.data && (
-              <NavLink
-                to="/me"
-                title="改密码"
-                className={({ isActive }) =>
-                  clsx(
-                    "hidden max-w-24 truncate text-xs whitespace-nowrap sm:inline",
-                    isActive
-                      ? "text-zinc-900 dark:text-zinc-100"
-                      : "text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100",
-                  )
-                }
-              >
-                {me.data.username}
-              </NavLink>
+              <div className="hidden items-center gap-2 border-l border-zinc-200 pl-3 sm:flex dark:border-zinc-700">
+                <NavLink
+                  to="/me"
+                  title="我的：改密码"
+                  className={({ isActive }) =>
+                    clsx(
+                      "flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-xs whitespace-nowrap transition",
+                      isActive
+                        ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                        : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
+                    )
+                  }
+                >
+                  <span className="flex size-5 items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent uppercase">
+                    {me.data.username.slice(0, 1)}
+                  </span>
+                  <span className="max-w-24 truncate">{me.data.username}</span>
+                </NavLink>
+                <button
+                  type="button"
+                  onClick={() => logout.mutate()}
+                  className="text-xs whitespace-nowrap text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+                >
+                  退出
+                </button>
+              </div>
             )}
-            <button
-              type="button"
-              onClick={() => logout.mutate()}
-              className="hidden text-xs whitespace-nowrap text-zinc-500 hover:text-zinc-900 sm:inline dark:hover:text-zinc-100"
-            >
-              退出
-            </button>
           </div>
         </div>
       </header>

@@ -13,15 +13,13 @@ import {
   useGetAccount,
   useListTrades,
   useMarkChecked,
-  useStyles,
   useUpdateAccount,
 } from "../api/generated/accounts/accounts";
-import type { AccountDetail, Style, StyleOverrides, StyleParams, TradeKind, WeakMarket } from "../api/generated/model";
-import { useListStrategies } from "../api/generated/strategy/strategy";
+import type { AccountDetail, TradeKind } from "../api/generated/model";
 import { AdviceView } from "../components/AdviceView";
 import { PositionsEditor } from "../components/PositionsEditor";
+import { BacktestLine, type FullRules, RulesEditor } from "../components/RulesEditor";
 import { SecuritySearch } from "../components/SecuritySearch";
-import { BacktestLine, StyleCards, styleRules } from "../components/StyleCards";
 import {
   buttonClass,
   Card,
@@ -35,7 +33,7 @@ import {
   Table,
 } from "../components/ui";
 import { useSearchState } from "../hooks/useSearchState";
-import { ACTIONS, TRADE_KINDS, TRADE_SOURCES, WEAK_MARKET, yuan } from "../lib/accounts";
+import { ACTIONS, TRADE_KINDS, TRADE_SOURCES, yuan } from "../lib/accounts";
 import { fmtDateTime, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
 
 const TABS = [
@@ -58,13 +56,7 @@ export function AccountPage() {
               <Link to="/accounts" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
                 ← 我的账户
               </Link>
-              <h1 className="mt-1 text-xl font-semibold">
-                {d.summary.account.name}
-                <span className="ml-2 text-sm font-normal text-zinc-500">
-                  {d.summary.style_name}
-                  {d.summary.custom && "（自定义）"}
-                </span>
-              </h1>
+              <h1 className="mt-1 text-xl font-semibold">{d.summary.account.name}</h1>
             </div>
             <div className="flex flex-wrap gap-6">
               <Stat label="总资产" value={yuan(d.summary.total_assets)} />
@@ -117,7 +109,7 @@ function CheckHint({ d }: { d: AccountDetail }) {
 
 function Positions({ d }: { d: AccountDetail }) {
   const [mode, setMode] = useState<"view" | "calibrate" | "trade">("view");
-  const p = d.params;
+  const p = d.summary.account.rules as FullRules;
   return (
     <Card
       title="持仓"
@@ -462,40 +454,18 @@ function Records({ id }: { id: number }) {
   );
 }
 
-type NumKey =
-  | "max_positions"
-  | "max_weight_pct"
-  | "min_cash_pct"
-  | "stop_loss_pct"
-  | "trend_ma"
-  | "weak_threshold_pct"
-  | "chase_limit_pct";
-const NUM_FIELDS: { key: NumKey; label: string }[] = [
-  { key: "max_positions", label: "最多持有几只" },
-  { key: "max_weight_pct", label: "单只最多占总资产（%）" },
-  { key: "min_cash_pct", label: "至少留现金（%）" },
-  { key: "stop_loss_pct", label: "止损线：比成本亏（%）" },
-  { key: "trend_ma", label: "收盘跌破几日均线就卖" },
-  { key: "weak_threshold_pct", label: "弱市阈值：站上 20 日均线的股票低于（%）" },
-  { key: "chase_limit_pct", label: "追高上限：开盘比参考价高（%）" },
-];
-
 function Settings({ d }: { d: AccountDetail }) {
   const acc = d.summary.account;
   const id = acc.account_id;
   const nav = useNavigate();
   const qc = useQueryClient();
-  const styles = useStyles();
-  const builtin = useListStrategies({ query: { select: (l) => l.filter((s) => s.builtin) } });
   const [name, setName] = useState(acc.name);
-  const [style, setStyle] = useState<Style>(acc.style);
-  const [params, setParams] = useState<StyleParams>(d.params);
+  const [rules, setRules] = useState<FullRules>(acc.rules as FullRules);
   const [rate, setRate] = useState(String(acc.fees.commission_rate * 10000));
   const [minFee, setMinFee] = useState(String(acc.fees.min_commission));
   const [note, setNote] = useState(acc.note);
   const [confirm, setConfirm] = useState("");
   const [saved, setSaved] = useState(false);
-  const preset = styles.data?.find((s) => s.style === style)?.params;
   const update = useUpdateAccount({
     mutation: {
       onSuccess: (r) => {
@@ -514,33 +484,10 @@ function Settings({ d }: { d: AccountDetail }) {
     },
   });
   const backtest = useAccountBacktest();
-
-  // 换风格时，高级设置回到新风格的默认值
-  const pickStyle = (s: Style) => {
-    setStyle(s);
-    const p = styles.data?.find((x) => x.style === s)?.params;
-    if (p) setParams(p);
-  };
-  // 和风格默认值不同的才存为高级设置
-  const overrides = (): StyleOverrides => {
-    if (!preset) return {};
-    const o: StyleOverrides = {};
-    for (const f of NUM_FIELDS) if (params[f.key] !== preset[f.key]) o[f.key] = params[f.key];
-    if (params.weak_market !== preset.weak_market) o.weak_market = params.weak_market;
-    if (params.require_edge !== preset.require_edge) o.require_edge = params.require_edge;
-    if (params.sell_st !== preset.sell_st) o.sell_st = params.sell_st;
-    if ([...params.strategies].sort().join() !== [...preset.strategies].sort().join()) o.strategies = params.strategies;
-    return o;
-  };
-  const toggleStrategy = (key: string) =>
-    setParams((p) => ({
-      ...p,
-      strategies: p.strategies.includes(key) ? p.strategies.filter((k) => k !== key) : [...p.strategies, key],
-    }));
   return (
     <div className="flex flex-col gap-4">
-      <Card title="名字和风格">
-        <div className="flex flex-col gap-3">
+      <Card title="名字和备注">
+        <div className="flex flex-wrap items-end gap-3">
           <Field label="账户名">
             <input
               className={`${inputClass} w-72`}
@@ -549,73 +496,15 @@ function Settings({ d }: { d: AccountDetail }) {
               onChange={(e) => setName(e.target.value)}
             />
           </Field>
-          <StyleCards value={style} onChange={pickStyle} />
-        </div>
-      </Card>
-      <Card title="高级设置（一般不用改）">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {NUM_FIELDS.map((f) => (
-            <Field key={f.key} label={f.label}>
-              <input
-                className={clsx(inputClass, preset && params[f.key] !== preset[f.key] && "ring-2 ring-amber-400")}
-                inputMode="decimal"
-                value={params[f.key]}
-                onChange={(e) => setParams((p) => ({ ...p, [f.key]: Number(e.target.value) || 0 }))}
-              />
-            </Field>
-          ))}
-          <Field label="弱市时">
-            <select
-              className={inputClass}
-              value={params.weak_market}
-              onChange={(e) => setParams((p) => ({ ...p, weak_market: e.target.value as WeakMarket }))}
-            >
-              {(Object.keys(WEAK_MARKET) as WeakMarket[]).map((k) => (
-                <option key={k} value={k}>
-                  {WEAK_MARKET[k]}
-                </option>
-              ))}
-            </select>
+          <Field label="备注">
+            <input className={`${inputClass} w-72`} value={note} onChange={(e) => setNote(e.target.value)} />
           </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={params.require_edge}
-              onChange={(e) => setParams((p) => ({ ...p, require_edge: e.target.checked }))}
-            />
-            只采纳过去表现好于随便买的策略
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={params.sell_st}
-              onChange={(e) => setParams((p) => ({ ...p, sell_st: e.target.checked }))}
-            />
-            持有的股票被 ST 时卖出
-          </label>
         </div>
-        <h3 className="mt-4 text-xs font-medium text-zinc-500">参考的策略</h3>
-        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-          {(builtin.data ?? []).map((s) => (
-            <label key={s.strategy_id} className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={!!s.template && params.strategies.includes(s.template)}
-                onChange={() => s.template && toggleStrategy(s.template)}
-              />
-              <Link to={`/strategies/${s.strategy_id}`} className="hover:underline">
-                {s.name}
-              </Link>
-            </label>
-          ))}
-        </div>
-        <ul className="mt-3 list-disc pl-4 text-xs text-zinc-500">
-          {styleRules(params).map((r) => (
-            <li key={r}>{r}</li>
-          ))}
-        </ul>
       </Card>
-      <Card title="费率和备注">
+      <Card title="选股和风控规则（高级设置）">
+        <RulesEditor value={rules} onChange={setRules} />
+      </Card>
+      <Card title="费率">
         <div className="flex flex-wrap items-end gap-3">
           <Field label="佣金率（万分之几）">
             <input
@@ -633,9 +522,6 @@ function Settings({ d }: { d: AccountDetail }) {
               onChange={(e) => setMinFee(e.target.value)}
             />
           </Field>
-          <Field label="备注">
-            <input className={`${inputClass} w-72`} value={note} onChange={(e) => setNote(e.target.value)} />
-          </Field>
         </div>
         <p className="mt-2 text-xs text-zinc-500">印花税按国家税率（卖出时千分之 0.5）自动算。</p>
       </Card>
@@ -643,15 +529,14 @@ function Settings({ d }: { d: AccountDetail }) {
         <button
           type="button"
           className={buttonClass()}
-          disabled={update.isPending || !name.trim() || params.strategies.length === 0}
+          disabled={update.isPending || !name.trim()}
           onClick={() => {
             setSaved(false);
             update.mutate({
               accountId: id,
               data: {
                 name: name.trim(),
-                style,
-                overrides: overrides(),
+                rules,
                 fees: { commission_rate: (Number(rate) || 0) / 10000, min_commission: Number(minFee) || 0 },
                 note,
               },
@@ -663,9 +548,10 @@ function Settings({ d }: { d: AccountDetail }) {
         {saved && <span className="text-sm text-emerald-600">已保存</span>}
         {!!update.error && <span className="text-sm text-red-600">{errorText(update.error)}</span>}
       </div>
-      <Card title="用这个账户的设置回测过去 3 年">
+      <Card title="用这个账户的规则回测过去 3 年">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          按保存后的设置，假设过去 3 年每天都照着建议做，账户会怎样。全市场计算，要十几秒。
+          按保存后的规则，假设过去 3 年每天都照着建议做，账户会怎样。哪些策略算有效，每年只用之前 3
+          年的数据判断。全市场计算，要一两分钟。
         </p>
         <button
           type="button"

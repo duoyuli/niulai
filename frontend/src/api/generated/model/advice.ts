@@ -8,7 +8,6 @@
 import type { AdviceAfter } from './adviceAfter';
 import type { AdviceItem } from './adviceItem';
 import type { SkippedCandidate } from './skippedCandidate';
-import type { Style } from './style';
 
 export interface Advice {
   after: AdviceAfter;
@@ -28,7 +27,6 @@ export interface Advice {
   notes: string[];
   /** 今天有买点、但没进建议的候选和原因 */
   skipped: SkippedCandidate[];
-  style: Style;
   total_assets: number;
   trade_date: string;
   /**

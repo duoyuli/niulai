@@ -7,11 +7,8 @@
  */
 import type { AccountSummary } from './accountSummary';
 import type { PositionView } from './positionView';
-import type { StyleParams } from './styleParams';
 
 export interface AccountDetail {
-  /** 实际生效的风格参数（含高级设置） */
-  params: StyleParams;
   positions: PositionView[];
   summary: AccountSummary;
 }

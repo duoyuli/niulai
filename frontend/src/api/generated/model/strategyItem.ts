@@ -10,7 +10,7 @@ import type { Explained } from './explained';
 import type { LatestRun } from './latestRun';
 
 export interface StrategyItem {
-  /** 内置策略：由模板生成，只读、不能删除、总是参加巡检，账户的风格引用它；想改就复制一份 */
+  /** 内置策略：由模板生成，只读、不能删除、总是参加巡检，账户的调仓建议会参考它；想改就复制一份 */
   builtin: boolean;
   definition: Definition;
   description: string;

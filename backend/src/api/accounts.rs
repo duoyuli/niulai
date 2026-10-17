@@ -1,7 +1,7 @@
 //! 账户、持仓、流水和每日调仓建议。账户只属于当前用户：每个查询都按当前用户的编号过滤，
 //! 别人的账户（包括管理员看普通用户的）一律返回 404。规则见 docs/domains/accounts.md。
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -15,9 +15,9 @@ use utoipa_axum::routes;
 use super::AppState;
 use super::auth::CurrentUser;
 use crate::account::paste::{self, Known, ParsedRow};
-use crate::account::style::{Style, StyleParams};
+use crate::account::rules::{Preset, Rules};
 use crate::account::{self, Account, AccountError, AccountUpdate, NewAccount, Position, PositionInput, Trade, TradeInput, TradeKind, TradeSource};
-use crate::advice::backtest::{self, StyleBacktest};
+use crate::advice::backtest::{self, RulesBacktest};
 use crate::advice::generate::Action;
 use crate::advice::review::{self, Review};
 use crate::advice::stats::{self, StrategyStat};
@@ -28,7 +28,7 @@ use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(styles))
+        .routes(routes!(rules_guide))
         .routes(routes!(list_accounts, create_account))
         .routes(routes!(get_account, update_account, delete_account))
         .routes(routes!(mark_checked))
@@ -55,58 +55,67 @@ impl From<AccountError> for ApiError {
     }
 }
 
-/// 风格引用的一个内置策略
+/// 一个参考策略：过去表现和是否算作有效策略
 #[derive(Serialize, ToSchema)]
-pub struct StyleStrategy {
-    pub key: String,
-    pub strategy_id: Option<i64>,
+pub struct StrategyQuality {
+    pub strategy_id: i64,
     pub name: String,
-    pub description: String,
+    pub builtin: bool,
     /// 过去 3 年的表现；还没统计时为空
     pub stat: Option<StrategyStat>,
+    /// 买点之后 20 日平均好于随便买；还没统计时为空
+    pub effective: Option<bool>,
+}
+
+/// 一组参考值：适合什么样的账户、怎么设计、过去 3 年的回测
+#[derive(Serialize, ToSchema)]
+pub struct PresetInfo {
+    pub preset: Preset,
+    pub name: String,
+    pub tagline: String,
+    /// 这类账户一般怎么设计，每条说明一个参数为什么这样取
+    pub design: Vec<String>,
+    pub rules: Rules,
+    /// 按这组规则过去 3 年的回测；还没算时为空
+    pub backtest: Option<RulesBacktest>,
 }
 
 #[derive(Serialize, ToSchema)]
-pub struct StyleInfo {
-    pub style: Style,
-    pub name: String,
-    pub tagline: String,
-    pub params: StyleParams,
-    pub strategies: Vec<StyleStrategy>,
-    /// 过去 3 年按这个风格操作的回测；还没算时为空
-    pub backtest: Option<StyleBacktest>,
+pub struct RulesGuide {
+    pub presets: Vec<PresetInfo>,
+    /// 全部参加巡检的策略，过去表现好的在前
+    pub strategies: Vec<StrategyQuality>,
 }
 
-/// 三种风格：规则、参考的策略和它们的过去表现、风格回测
-#[utoipa::path(get, path = "/styles", tag = "accounts", responses((status = 200, description = "成功", body = [StyleInfo])))]
-async fn styles(State(s): State<AppState>) -> ApiResult<Json<Vec<StyleInfo>>> {
-    let ids = screener::builtin_ids(&s.pool).await?;
-    let stats = stats::load(&s.pool, &ids.values().copied().collect::<Vec<_>>()).await?;
-    let tests = backtest::load_presets(&s.pool).await?;
-    let templates = crate::analysis::strategy::templates();
-    let out = Style::ALL
+/// 设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和参考策略的过去表现
+#[utoipa::path(get, path = "/rules/guide", tag = "accounts", responses((status = 200, description = "成功", body = RulesGuide)))]
+async fn rules_guide(State(s): State<AppState>) -> ApiResult<Json<RulesGuide>> {
+    let list: Vec<(i64, String, bool)> =
+        sqlx::query_as("SELECT strategy_id, name, builtin_key IS NOT NULL FROM app.strategy WHERE screening ORDER BY strategy_id").fetch_all(&s.pool).await?;
+    let stats = stats::load(&s.pool, &list.iter().map(|x| x.0).collect::<Vec<_>>()).await?;
+    let mut strategies: Vec<StrategyQuality> = list
         .into_iter()
-        .map(|style| {
-            let params = style.params();
-            let strategies = params
-                .strategies
-                .iter()
-                .map(|k| {
-                    let t = templates.iter().find(|t| t.key == k);
-                    let id = ids.get(k).copied();
-                    StyleStrategy {
-                        key: k.clone(),
-                        strategy_id: id,
-                        name: t.map_or_else(|| k.clone(), |t| t.name.to_string()),
-                        description: t.map_or_else(String::new, |t| t.description.to_string()),
-                        stat: id.and_then(|id| stats.get(&id).cloned()),
-                    }
-                })
-                .collect();
-            StyleInfo { style, name: style.name().into(), tagline: style.tagline().into(), params, strategies, backtest: tests.get(style.key()).cloned() }
+        .map(|(strategy_id, name, builtin)| {
+            let stat = stats.get(&strategy_id).cloned();
+            let effective = stat.as_ref().and_then(StrategyStat::excess20_pct).map(|e| e > 0.0);
+            StrategyQuality { strategy_id, name, builtin, stat, effective }
         })
         .collect();
-    Ok(Json(out))
+    let ex = |q: &StrategyQuality| q.stat.as_ref().and_then(StrategyStat::excess20_pct).unwrap_or(f64::MIN);
+    strategies.sort_by(|a, b| ex(b).total_cmp(&ex(a)));
+    let tests = backtest::load_presets(&s.pool).await?;
+    let presets = Preset::ALL
+        .into_iter()
+        .map(|p| PresetInfo {
+            preset: p,
+            name: p.name().into(),
+            tagline: p.tagline().into(),
+            design: p.design().into_iter().map(String::from).collect(),
+            rules: p.rules(),
+            backtest: tests.get(p.key()).cloned(),
+        })
+        .collect();
+    Ok(Json(RulesGuide { presets, strategies }))
 }
 
 /// 一份建议的摘要（账户列表和今日页用）
@@ -125,9 +134,6 @@ pub struct AdviceBrief {
 #[derive(Serialize, ToSchema)]
 pub struct AccountSummary {
     pub account: Account,
-    pub style_name: String,
-    /// 改过高级设置
-    pub custom: bool,
     pub positions: usize,
     pub market_value: f64,
     pub total_assets: f64,
@@ -166,8 +172,6 @@ pub struct PositionView {
 #[derive(Serialize, ToSchema)]
 pub struct AccountDetail {
     pub summary: AccountSummary,
-    /// 实际生效的风格参数（含高级设置）
-    pub params: StyleParams,
     pub positions: Vec<PositionView>,
 }
 
@@ -227,8 +231,6 @@ async fn summary(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
         }
     }
     Ok(AccountSummary {
-        style_name: acc.style.name().into(),
-        custom: !acc.overrides.is_empty(),
         positions: positions.len(),
         market_value: mv,
         total_assets: acc.cash + mv,
@@ -241,7 +243,7 @@ async fn summary(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
 
 async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDetail> {
     let acc = account::get(&s.pool, me.user_id, id).await?;
-    let params = acc.params();
+    let params = acc.rules.clone();
     let positions = account::positions(&s.pool, id).await?;
     let names: HashMap<String, (String, String, bool)> = sqlx::query_as::<_, (String, String, String, bool)>(
         "SELECT thscode, name, board, delisted_on IS NOT NULL FROM ref.security WHERE thscode = ANY($1)",
@@ -283,7 +285,7 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
         v.weight_pct = v.market_value / summary.total_assets.max(1.0) * 100.0;
     }
     views.sort_by(|a, b| b.market_value.total_cmp(&a.market_value));
-    Ok(AccountDetail { summary, params, positions: views })
+    Ok(AccountDetail { summary, positions: views })
 }
 
 /// 改了持仓、现金或设置后重新生成今天的建议；失败只写日志，不影响这次修改
@@ -308,7 +310,7 @@ async fn list_accounts(State(s): State<AppState>, me: CurrentUser) -> ApiResult<
     Ok(Json(out))
 }
 
-/// 新建账户：名字、风格、现在的现金。持仓之后在持仓页添加或粘贴
+/// 新建账户：名字、现在的现金，规则用稳健型的参考值（之后在高级设置里改）。持仓之后添加或粘贴
 #[utoipa::path(post, path = "/accounts", tag = "accounts", request_body = NewAccount,
     responses((status = 201, description = "已创建", body = AccountDetail),
               (status = 400, description = "名字不合法、现金为负或账户太多", body = crate::error::ErrorBody),
@@ -326,15 +328,14 @@ async fn get_account(State(s): State<AppState>, me: CurrentUser, Path(id): Path<
     Ok(Json(detail(&s, &me, id).await?))
 }
 
-/// 修改名字、风格、高级设置、费率、备注；之后重新生成今天的建议
+/// 修改名字、选股和风控规则、费率、备注；之后重新生成今天的建议
 #[utoipa::path(put, path = "/accounts/{account_id}", tag = "accounts", params(("account_id" = i64, Path)), request_body = AccountUpdate,
     responses((status = 200, description = "已保存", body = AccountDetail),
               (status = 400, description = "参数不合法", body = crate::error::ErrorBody),
               (status = 404, description = "不存在", body = crate::error::ErrorBody),
               (status = 409, description = "已经有同名账户", body = crate::error::ErrorBody)))]
 async fn update_account(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>, Json(input): Json<AccountUpdate>) -> ApiResult<Json<AccountDetail>> {
-    let keys: Vec<&str> = crate::analysis::strategy::templates().iter().map(|t| t.key).collect();
-    account::update(&s.pool, me.user_id, id, &input, &keys).await?;
+    account::update(&s.pool, me.user_id, id, &input).await?;
     regenerate(&s, &me, id).await;
     Ok(Json(detail(&s, &me, id).await?))
 }
@@ -581,16 +582,13 @@ async fn account_review(State(s): State<AppState>, me: CurrentUser, Path(id): Pa
     Ok(Json(review::review(&s.pool, id).await?))
 }
 
-/// 用这个账户实际生效的参数做一次风格回测（过去 3 年）。全市场计算，要十几秒
+/// 用这个账户的规则回测过去 3 年。全市场计算，要一两分钟
 #[utoipa::path(post, path = "/accounts/{account_id}/backtest", tag = "accounts", params(("account_id" = i64, Path)),
-    responses((status = 200, description = "成功", body = StyleBacktest),
+    responses((status = 200, description = "成功", body = RulesBacktest),
               (status = 400, description = "本地还没有日线", body = crate::error::ErrorBody),
               (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
-async fn account_backtest(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>) -> ApiResult<Json<StyleBacktest>> {
+async fn account_backtest(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>) -> ApiResult<Json<RulesBacktest>> {
     let acc = account::get(&s.pool, me.user_id, id).await?;
-    let params = acc.params();
-    let ids = screener::builtin_ids(&s.pool).await?;
-    let defs: BTreeMap<i64, _> = stats::builtin_definitions(&s.pool).await?.into_iter().collect();
-    let list: Vec<_> = params.strategies.iter().filter_map(|k| ids.get(k).and_then(|i| defs.get(i)).cloned()).collect();
-    backtest::run(&s.pool, &params, &list).await?.map(Json).ok_or_else(|| ApiError::BadRequest("本地还没有足够的日线".into()))
+    let defs = screener::screening_strategies(&s.pool).await?;
+    backtest::run(&s.pool, &acc.rules, &defs).await?.map(Json).ok_or_else(|| ApiError::BadRequest("本地还没有足够的日线，或勾选的策略都没有参加巡检".into()))
 }

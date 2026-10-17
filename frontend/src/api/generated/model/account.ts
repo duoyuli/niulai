@@ -6,8 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { Fees } from './fees';
-import type { Style } from './style';
-import type { StyleOverrides } from './styleOverrides';
+import type { Rules } from './rules';
 
 export interface Account {
   account_id: number;
@@ -22,8 +21,7 @@ export interface Account {
   fees: Fees;
   name: string;
   note: string;
-  /** 高级设置中改过的参数；为空对象表示全部跟着风格 */
-  overrides: StyleOverrides;
-  style: Style;
+  /** 选股和风控规则 */
+  rules: Rules;
   updated_at: string;
 }

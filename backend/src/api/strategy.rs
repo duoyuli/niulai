@@ -97,7 +97,7 @@ pub struct StrategyItem {
     /// 是否在「今日」页展示选出的股票
     pub show_on_today: bool,
     pub template: Option<String>,
-    /// 内置策略：由模板生成，只读、不能删除、总是参加巡检，账户的风格引用它；想改就复制一份
+    /// 内置策略：由模板生成，只读、不能删除、总是参加巡检，账户的调仓建议会参考它；想改就复制一份
     pub builtin: bool,
     pub definition: Definition,
     pub explained: Explained,
@@ -219,7 +219,7 @@ async fn update_strategy(State(s): State<AppState>, Path(id): Path<i64>, Json(in
             && input.screening
             && serde_json::to_value(&input.definition).ok() == serde_json::to_value(&current.definition).ok();
         if !same {
-            return Err(ApiError::Conflict("内置策略不能修改（账户的风格引用它），可以复制一份再改".into()));
+            return Err(ApiError::Conflict("内置策略不能修改，可以复制一份再改".into()));
         }
     }
     let n = sqlx::query("UPDATE app.strategy SET name = $2, description = $3, definition = $4, screening = $5, show_on_today = $6, updated_at = now() WHERE strategy_id = $1")
@@ -246,7 +246,7 @@ async fn delete_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiR
     if n == 0 {
         let builtin: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)").bind(id).fetch_one(&s.pool).await?;
         if builtin {
-            return Err(ApiError::Conflict("内置策略不能删除（账户的风格引用它）".into()));
+            return Err(ApiError::Conflict("内置策略不能删除，可以关掉「在今日展示」".into()));
         }
     }
     Ok(StatusCode::NO_CONTENT)

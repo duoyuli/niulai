@@ -29,10 +29,6 @@ function AccountCard({ a }: { a: AccountSummary }) {
     >
       <div className="flex items-center justify-between gap-2">
         <span className="font-semibold">{a.account.name}</span>
-        <span className="text-xs text-zinc-500">
-          {a.style_name}
-          {a.custom && "（自定义）"}
-        </span>
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
         <span>
@@ -58,7 +54,7 @@ export function AccountsPage() {
     <>
       <PageHeader
         title="我的账户"
-        desc="每个证券账户建一个，选一个风格。每天收盘、数据同步完之后，系统按风格的规则给每个账户生成一份「明天怎么操作」，每条都写清楚为什么。照着做完点「已执行」，持仓自动更新。账户只有你自己看得到。"
+        desc="每个证券账户建一个。每天收盘、数据同步完之后，系统从全部策略选出的股票里，按过去表现好的策略优先，结合每个账户的持仓和风控规则，生成一份「明天怎么操作」，每条都写清楚为什么。照着做完点「已执行」，持仓自动更新。账户只有你自己看得到。"
         extra={
           <Link to="/accounts/new" className={buttonClass()}>
             新建账户
@@ -74,7 +70,7 @@ export function AccountsPage() {
                 <Link to="/accounts/new" className="text-accent hover:underline">
                   建一个
                 </Link>
-                ，三步就好：起个名字、选风格、填现金和持仓。
+                ，两步就好：起个名字、填现金和持仓。
               </Empty>
             </Card>
           ) : (

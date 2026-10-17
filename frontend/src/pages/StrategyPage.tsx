@@ -91,7 +91,7 @@ export function StrategyPage() {
         </div>
         {admin && st.builtin && (
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <span className="text-xs text-zinc-500">内置策略由模板生成、账户的风格引用它，不能修改或删除</span>
+            <span className="text-xs text-zinc-500">内置策略由模板生成，不能修改或删除</span>
             <Link to={`/strategies/new?from=${st.template ?? ""}`} className={buttonClass("ghost")}>
               复制一份改
             </Link>

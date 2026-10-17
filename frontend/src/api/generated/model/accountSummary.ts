@@ -16,13 +16,10 @@ export interface AccountSummary {
      * @nullable
      */
   check_hint?: string | null;
-  /** 改过高级设置 */
-  custom: boolean;
   /** 按最近一个交易日的涨跌估算的今日盈亏 */
   day_pnl: number;
   market_value: number;
   /** @minimum 0 */
   positions: number;
-  style_name: string;
   total_assets: number;
 }

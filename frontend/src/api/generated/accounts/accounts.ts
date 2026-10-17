@@ -41,8 +41,8 @@ import type {
   ParsedRow,
   PasteInput,
   Review,
-  StyleBacktest,
-  StyleInfo,
+  RulesBacktest,
+  RulesGuide,
   TradeInput
 } from '../model';
 
@@ -177,7 +177,7 @@ export const getCreateAccountUrl = () => {
 }
 
 /**
- * @summary 新建账户：名字、风格、现在的现金。持仓之后在持仓页添加或粘贴
+ * @summary 新建账户：名字、现在的现金，规则用稳健型的参考值（之后在高级设置里改）。持仓之后添加或粘贴
  */
 export const createAccount = async (newAccount: NewAccount, options?: Parameters<typeof apiFetch>[1]): Promise<AccountDetail> => {
 
@@ -243,7 +243,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type CreateAccountMutationVariables = {data: NewAccount}
 
     /**
- * @summary 新建账户：名字、风格、现在的现金。持仓之后在持仓页添加或粘贴
+ * @summary 新建账户：名字、现在的现金，规则用稳健型的参考值（之后在高级设置里改）。持仓之后添加或粘贴
  */
 export const useCreateAccount = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAccount>>, TError,CreateAccountMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
@@ -364,7 +364,7 @@ export const getUpdateAccountUrl = (accountId: number,) => {
 }
 
 /**
- * @summary 修改名字、风格、高级设置、费率、备注；之后重新生成今天的建议
+ * @summary 修改名字、选股和风控规则、费率、备注；之后重新生成今天的建议
  */
 export const updateAccount = async (accountId: number,
     accountUpdate: AccountUpdate, options?: Parameters<typeof apiFetch>[1]): Promise<AccountDetail> => {
@@ -431,7 +431,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type UpdateAccountMutationVariables = {accountId: number;data: AccountUpdate}
 
     /**
- * @summary 修改名字、风格、高级设置、费率、备注；之后重新生成今天的建议
+ * @summary 修改名字、选股和风控规则、费率、备注；之后重新生成今天的建议
  */
 export const useUpdateAccount = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAccount>>, TError,UpdateAccountMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
@@ -1074,11 +1074,11 @@ export const useClearItem = <TError = ErrorBody,
 }
 
 /**
- * @summary 用这个账户实际生效的参数做一次风格回测（过去 3 年）。全市场计算，要十几秒
+ * @summary 用这个账户的规则回测过去 3 年。全市场计算，要一两分钟
  */
-export const accountBacktest = async (accountId: number, options?: Parameters<typeof apiFetch>[1]): Promise<StyleBacktest> => {
+export const accountBacktest = async (accountId: number, options?: Parameters<typeof apiFetch>[1]): Promise<RulesBacktest> => {
 
-  return apiFetch<StyleBacktest>(getAccountBacktestUrl(accountId),
+  return apiFetch<RulesBacktest>(getAccountBacktestUrl(accountId),
   {
     ...options,
     method: 'POST'
@@ -1126,7 +1126,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type AccountBacktestMutationVariables = {accountId: number}
 
     /**
- * @summary 用这个账户实际生效的参数做一次风格回测（过去 3 年）。全市场计算，要十几秒
+ * @summary 用这个账户的规则回测过去 3 年。全市场计算，要一两分钟
  */
 export const useAccountBacktest = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof accountBacktest>>, TError,AccountBacktestMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
@@ -1690,20 +1690,20 @@ export const useAddTrade = <TError = ErrorBody,
       > => {
       return useMutation(getAddTradeMutationOptions(options), queryClient);
     }
-    export const getStylesUrl = () => {
+    export const getRulesGuideUrl = () => {
 
 
 
 
-  return `/api/v1/styles`
+  return `/api/v1/rules/guide`
 }
 
 /**
- * @summary 三种风格：规则、参考的策略和它们的过去表现、风格回测
+ * @summary 设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和参考策略的过去表现
  */
-export const styles = async ( options?: Parameters<typeof apiFetch>[1]): Promise<StyleInfo[]> => {
+export const rulesGuide = async ( options?: Parameters<typeof apiFetch>[1]): Promise<RulesGuide> => {
 
-  return apiFetch<StyleInfo[]>(getStylesUrl(),
+  return apiFetch<RulesGuide>(getRulesGuideUrl(),
   {
     ...options,
     method: 'GET'
@@ -1716,69 +1716,69 @@ export const styles = async ( options?: Parameters<typeof apiFetch>[1]): Promise
 
 
 
-export const getStylesQueryKey = () => {
+export const getRulesGuideQueryKey = () => {
     return [
-    `/api/v1/styles`
+    `/api/v1/rules/guide`
     ] as const;
     }
 
 
-export const getStylesQueryOptions = <TData = Awaited<ReturnType<typeof styles>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof styles>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getRulesGuideQueryOptions = <TData = Awaited<ReturnType<typeof rulesGuide>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof rulesGuide>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getStylesQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getRulesGuideQueryKey();
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof styles>>> = ({ signal }) => styles({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof rulesGuide>>> = ({ signal }) => rulesGuide({ signal, ...requestOptions });
 
 
 
 
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof styles>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof rulesGuide>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
 }
 
-export type StylesQueryResult = NonNullable<Awaited<ReturnType<typeof styles>>>
-export type StylesQueryError = unknown
+export type RulesGuideQueryResult = NonNullable<Awaited<ReturnType<typeof rulesGuide>>>
+export type RulesGuideQueryError = unknown
 
 
-export function useStyles<TData = Awaited<ReturnType<typeof styles>>, TError = unknown>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof styles>>, TError, TData>> & Pick<
+export function useRulesGuide<TData = Awaited<ReturnType<typeof rulesGuide>>, TError = unknown>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof rulesGuide>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof styles>>,
+          Awaited<ReturnType<typeof rulesGuide>>,
           TError,
-          Awaited<ReturnType<typeof styles>>
+          Awaited<ReturnType<typeof rulesGuide>>
         > , 'initialData'
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStyles<TData = Awaited<ReturnType<typeof styles>>, TError = unknown>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof styles>>, TError, TData>> & Pick<
+export function useRulesGuide<TData = Awaited<ReturnType<typeof rulesGuide>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof rulesGuide>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof styles>>,
+          Awaited<ReturnType<typeof rulesGuide>>,
           TError,
-          Awaited<ReturnType<typeof styles>>
+          Awaited<ReturnType<typeof rulesGuide>>
         > , 'initialData'
       >, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useStyles<TData = Awaited<ReturnType<typeof styles>>, TError = unknown>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof styles>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export function useRulesGuide<TData = Awaited<ReturnType<typeof rulesGuide>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof rulesGuide>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary 三种风格：规则、参考的策略和它们的过去表现、风格回测
+ * @summary 设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和参考策略的过去表现
  */
 
-export function useStyles<TData = Awaited<ReturnType<typeof styles>>, TError = unknown>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof styles>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export function useRulesGuide<TData = Awaited<ReturnType<typeof rulesGuide>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof rulesGuide>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
-  const queryOptions = getStylesQueryOptions(options)
+  const queryOptions = getRulesGuideQueryOptions(options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

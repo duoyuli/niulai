@@ -8,13 +8,16 @@
 import type { StrategyStat } from './strategyStat';
 
 /**
- * 风格引用的一个内置策略
+ * 一个参考策略：过去表现和是否算作有效策略
  */
-export interface StyleStrategy {
-  description: string;
-  key: string;
+export interface StrategyQuality {
+  builtin: boolean;
+  /**
+     * 买点之后 20 日平均好于随便买；还没统计时为空
+     * @nullable
+     */
+  effective?: boolean | null;
   name: string;
   stat?: StrategyStat | null;
-  /** @nullable */
-  strategy_id?: number | null;
+  strategy_id: number;
 }

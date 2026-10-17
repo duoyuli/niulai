@@ -6,10 +6,13 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type Style = typeof Style[keyof typeof Style];
+/**
+ * 三组参考值：只是辅助，套用后还可以改
+ */
+export type Preset = typeof Preset[keyof typeof Preset];
 
 
-export const Style = {
+export const Preset = {
   conservative: 'conservative',
   balanced: 'balanced',
   aggressive: 'aggressive',

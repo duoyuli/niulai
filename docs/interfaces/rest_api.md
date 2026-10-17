@@ -65,10 +65,10 @@
 | `GET /watchlist` | 当前用户的自选股及诊断（每个用户各自一份）：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |
-| `GET /styles` | 三种风格：规则、参考的内置策略和它们过去 3 年的表现、风格回测 | 规则见 [风格](../domains/accounts.md#styles) |
+| `GET /rules/guide` | 设置规则时的辅助：三组参考值（适合什么样的账户、怎么设计、规则、过去 3 年回测），全部参加巡检的策略和它们的过去表现、是否有效 | 见 [选股和风控规则](../domains/accounts.md#rules) |
 | `GET /accounts` | 当前用户的账户：总资产、今日盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的 |
-| `POST /accounts` | 新建账户，返回 201 和详情，并生成第一份建议 | 请求体 `{name, style, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
-| `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比、盈亏、止损价、趋势均线）；修改名字、风格、高级设置 `overrides`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [风格](../domains/accounts.md#styles)，之后重新生成建议 |
+| `POST /accounts` | 新建账户（规则用稳健型的参考值），返回 201 和详情，并生成第一份建议 | 请求体 `{name, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
+| `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比、盈亏、止损价、趋势均线）；修改名字、规则 `rules`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [选股和风控规则](../domains/accounts.md#rules)，之后重新生成建议 |
 | `POST /accounts/{id}/positions/parse` | 识别粘贴的持仓文字，只返回预览 | 请求体 `{text}`，最多 20,000 字；规则见 [持仓](../domains/accounts.md#positions) |
 | `PUT /accounts/{id}/positions` | 校准：整体替换持仓和现金，差异记为校准流水，之后重新生成建议 | 请求体 `{cash, positions: [{thscode, shares, cost_price?, opened_on?}]}`；代码不存在、股数不大于 0、重复时返回 400 |
 | `GET` / `POST /accounts/{id}/trades` | 流水（新的在前，`limit` 默认 100、最多 500）；手动记一笔买入、卖出、转入、转出，之后重新生成建议 | 请求体 `{kind, thscode?, shares?, price?, amount?, fee?, trade_date?, note?}`；现金不够、卖出超过持有时返回 400 |
@@ -79,7 +79,7 @@
 | `POST /accounts/{id}/advice/{advice_id}/items/{key}/execute` | 已执行：按实际成交记一笔，持仓和现金更新，这份建议不重新生成 | 请求体 `{shares?, price?, fee?, trade_date?}`，默认按建议；同一条执行两次、这条不需要操作时返回 400 |
 | `POST` / `DELETE /accounts/{id}/advice/{advice_id}/items/{key}/skip` | 不做这一条 / 撤销「不做」 | 已执行的不能撤销 |
 | `GET /accounts/{id}/review` | 最近 180 天的建议之后 5、10、20 个交易日的涨跌和汇总 | 口径见 [建议回看](../domains/accounts.md#review) |
-| `POST /accounts/{id}/backtest` | 用这个账户实际生效的参数做一次过去 3 年的风格回测 | 全市场计算，十几秒；口径见 [风格回测](../domains/accounts.md#style_backtest) |
+| `POST /accounts/{id}/backtest` | 用这个账户的规则做一次过去 3 年的回测 | 全市场计算，一两分钟；口径见 [规则回测](../domains/accounts.md#rules_backtest) |
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
 | `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线 |
 | `GET /indices/{thscode}/members` | 指数成分 | `date` 默认今天；历史成分从开始采集那天起才有 |

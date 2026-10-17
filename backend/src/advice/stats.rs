@@ -1,4 +1,4 @@
-//! 内置策略的过去表现：最近 3 年全市场的每一个买点，按策略自己的卖出规则卖出时赚不赚钱，
+//! 策略的过去表现（全部参加巡检的策略）：最近 3 年全市场的每一个买点，按策略自己的卖出规则卖出时赚不赚钱，
 //! 以及买点之后 20 个交易日的平均涨跌和同期「随便买」（默认股票池里任意一天买入）的对比。
 //! 买卖点用巡检和 K 线上的同一套规则（`points::run`）。全市场 3 年要算十几秒，所以每周统计一次，
 //! 策略定义变了也重算，结果存在 `app.strategy_stat`。规则见 docs/domains/accounts.md#strategy_stats。
@@ -71,7 +71,7 @@ pub fn definition_hash(d: &Definition) -> String {
     hash_json(&serde_json::to_string(d).unwrap_or_default())
 }
 
-pub fn params_hash(p: &crate::account::style::StyleParams) -> String {
+pub fn rules_hash(p: &crate::account::rules::Rules) -> String {
     hash_json(&serde_json::to_string(p).unwrap_or_default())
 }
 
@@ -177,34 +177,26 @@ pub async fn store(pool: &PgPool, id: i64, hash: &str, stat: &StrategyStat) -> a
     Ok(())
 }
 
-/// 内置策略中需要重算的：还没有统计、定义变了，或已经超过 7 天
+/// 参加巡检的策略中有需要重算的：还没有统计、定义变了，或已经超过 7 天
 pub async fn due(pool: &PgPool) -> anyhow::Result<bool> {
-    let builtin = builtin_definitions(pool).await?;
+    let list = crate::analysis::screener::screening_strategies(pool).await?;
     let rows: Vec<(i64, String, bool)> =
         sqlx::query_as("SELECT strategy_id, definition_hash, computed_at < now() - interval '7 days' FROM app.strategy_stat").fetch_all(pool).await?;
     let known: HashMap<i64, (String, bool)> = rows.into_iter().map(|(id, h, old)| (id, (h, old))).collect();
-    Ok(builtin.iter().any(|(id, d)| known.get(id).is_none_or(|(h, old)| *old || *h != definition_hash(d))))
+    Ok(list.iter().any(|(id, d)| known.get(id).is_none_or(|(h, old)| *old || *h != definition_hash(d))))
 }
 
-/// 全部内置策略的定义（带自定义信号库），按编号
-pub async fn builtin_definitions(pool: &PgPool) -> anyhow::Result<Vec<(i64, Definition)>> {
-    let rows: Vec<(i64, serde_json::Value)> =
-        sqlx::query_as("SELECT strategy_id, definition FROM app.strategy WHERE builtin_key IS NOT NULL ORDER BY strategy_id").fetch_all(pool).await?;
-    let lib = crate::analysis::signal_lib::load(pool).await?;
-    rows.into_iter().map(|(id, v)| Ok((id, serde_json::from_value::<Definition>(v)?.with_lib(lib.clone())))).collect()
-}
-
-/// 重算全部内置策略并保存
+/// 重算全部参加巡检的策略并保存
 pub async fn refresh(pool: &PgPool) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let defs = builtin_definitions(pool).await?;
+    let defs = crate::analysis::screener::screening_strategies(pool).await?;
     let stats = compute(pool, &defs).await?;
     for (id, d) in &defs {
         if let Some(s) = stats.get(id) {
             store(pool, *id, &definition_hash(d), s).await?;
         }
     }
-    tracing::info!(strategies = defs.len(), ms = started.elapsed().as_millis() as u64, "内置策略的过去表现已统计");
+    tracing::info!(strategies = defs.len(), ms = started.elapsed().as_millis() as u64, "策略的过去表现已统计");
     Ok(())
 }
 

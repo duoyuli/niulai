@@ -6,13 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { Fees } from './fees';
-import type { Style } from './style';
-import type { StyleOverrides } from './styleOverrides';
+import type { Rules } from './rules';
 
 export interface AccountUpdate {
   fees: Fees;
   name: string;
   note?: string;
-  overrides?: StyleOverrides;
-  style: Style;
+  rules: Rules;
 }

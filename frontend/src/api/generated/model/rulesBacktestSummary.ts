@@ -6,11 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface StyleBacktestSummary {
+export interface RulesBacktestSummary {
   /** @nullable */
   annual_return?: number | null;
   /** 平均现金占比 */
   avg_cash_ratio: number;
+  avg_effective: number;
   /** 平均每天持有几只 */
   avg_positions: number;
   /** @nullable */
@@ -21,6 +22,11 @@ export interface StyleBacktestSummary {
   /** 最大回撤（0.2 表示从最高点跌了 20%） */
   max_drawdown: number;
   start: string;
+  /**
+     * 参考了几个策略，以及回测期间平均有几个算作有效
+     * @minimum 0
+     */
+  strategies: number;
   /** 区间涨跌（0.1 表示 10%） */
   total_return: number;
   /**

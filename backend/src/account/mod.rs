@@ -7,7 +7,7 @@
 pub mod corp;
 pub mod lots;
 pub mod paste;
-pub mod style;
+pub mod rules;
 
 use std::collections::HashMap;
 
@@ -17,7 +17,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 use utoipa::ToSchema;
 
 use lots::{Fees, round2};
-use style::{Style, StyleOverrides, StyleParams};
+use rules::Rules;
 
 /// 每个用户最多几个账户
 pub const MAX_ACCOUNTS: i64 = 10;
@@ -28,9 +28,8 @@ pub const MAX_POSITIONS: usize = 50;
 pub struct Account {
     pub account_id: i64,
     pub name: String,
-    pub style: Style,
-    /// 高级设置中改过的参数；为空对象表示全部跟着风格
-    pub overrides: StyleOverrides,
+    /// 选股和风控规则
+    pub rules: Rules,
     /// 现金（元）
     pub cash: f64,
     pub fees: Fees,
@@ -39,13 +38,6 @@ pub struct Account {
     pub checked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-}
-
-impl Account {
-    /// 实际生效的风格参数
-    pub fn params(&self) -> StyleParams {
-        self.style.effective(&self.overrides)
-    }
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq)]
@@ -163,7 +155,6 @@ fn invalid<T>(msg: impl Into<String>) -> Result<T> {
 #[derive(Deserialize, ToSchema)]
 pub struct NewAccount {
     pub name: String,
-    pub style: Style,
     /// 现在的现金（元）
     #[serde(default)]
     pub cash: f64,
@@ -174,9 +165,7 @@ pub struct NewAccount {
 #[derive(Deserialize, ToSchema)]
 pub struct AccountUpdate {
     pub name: String,
-    pub style: Style,
-    #[serde(default)]
-    pub overrides: StyleOverrides,
+    pub rules: Rules,
     pub fees: Fees,
     #[serde(default)]
     pub note: String,
@@ -217,15 +206,14 @@ pub struct TradeInput {
     pub note: String,
 }
 
-type AccountRow = (i64, String, String, serde_json::Value, f64, f64, f64, String, Option<DateTime<Utc>>, DateTime<Utc>, DateTime<Utc>);
-const ACCOUNT_COLS: &str = "account_id, name, style, overrides, cash::float8, commission_rate::float8, min_commission::float8, note, checked_at, created_at, updated_at";
+type AccountRow = (i64, String, serde_json::Value, f64, f64, f64, String, Option<DateTime<Utc>>, DateTime<Utc>, DateTime<Utc>);
+const ACCOUNT_COLS: &str = "account_id, name, rules, cash::float8, commission_rate::float8, min_commission::float8, note, checked_at, created_at, updated_at";
 
-fn account((account_id, name, style, overrides, cash, commission_rate, min_commission, note, checked_at, created_at, updated_at): AccountRow) -> anyhow::Result<Account> {
+fn account((account_id, name, rules, cash, commission_rate, min_commission, note, checked_at, created_at, updated_at): AccountRow) -> anyhow::Result<Account> {
     Ok(Account {
         account_id,
         name,
-        style: Style::parse(&style)?,
-        overrides: serde_json::from_value(overrides)?,
+        rules: serde_json::from_value(rules)?,
         cash,
         fees: Fees { commission_rate, min_commission },
         note,
@@ -293,12 +281,12 @@ pub async fn create(pool: &PgPool, user_id: i64, input: &NewAccount) -> Result<A
         return invalid(format!("每人最多 {MAX_ACCOUNTS} 个账户"));
     }
     let id: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO app.account (user_id, name, style, cash, note) VALUES ($1, $2, $3, round($4::float8::numeric, 2), $5)
+        "INSERT INTO app.account (user_id, name, rules, cash, note) VALUES ($1, $2, $3, round($4::float8::numeric, 2), $5)
          ON CONFLICT (user_id, lower(name)) DO NOTHING RETURNING account_id",
     )
     .bind(user_id)
     .bind(&name)
-    .bind(input.style.key())
+    .bind(serde_json::to_value(Rules::default()).map_err(anyhow::Error::from)?)
     .bind(cash)
     .bind(input.note.trim())
     .fetch_optional(&mut *tx)
@@ -311,19 +299,18 @@ pub async fn create(pool: &PgPool, user_id: i64, input: &NewAccount) -> Result<A
     get(pool, user_id, id).await
 }
 
-pub async fn update(pool: &PgPool, user_id: i64, account_id: i64, input: &AccountUpdate, known: &[&str]) -> Result<Account> {
+pub async fn update(pool: &PgPool, user_id: i64, account_id: i64, input: &AccountUpdate) -> Result<Account> {
     let name = validate_name(&input.name)?;
     validate_fees(&input.fees)?;
-    input.style.effective(&input.overrides).validate(known).map_err(AccountError::Invalid)?;
+    input.rules.validate().map_err(AccountError::Invalid)?;
     let r = sqlx::query(
-        "UPDATE app.account SET name = $3, style = $4, overrides = $5, commission_rate = $6, min_commission = $7, note = $8, updated_at = now()
+        "UPDATE app.account SET name = $3, rules = $4, commission_rate = $5, min_commission = $6, note = $7, updated_at = now()
          WHERE user_id = $1 AND account_id = $2",
     )
     .bind(user_id)
     .bind(account_id)
     .bind(&name)
-    .bind(input.style.key())
-    .bind(serde_json::to_value(&input.overrides).map_err(anyhow::Error::from)?)
+    .bind(serde_json::to_value(&input.rules).map_err(anyhow::Error::from)?)
     .bind(input.fees.commission_rate)
     .bind(input.fees.min_commission)
     .bind(input.note.trim())

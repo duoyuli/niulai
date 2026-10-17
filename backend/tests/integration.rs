@@ -1209,17 +1209,24 @@ async fn accounts_positions_and_daily_advice() {
     let (r, v) = call_as(&app, Some(&admin), "PUT", &format!("/api/v1/strategies/{id}"), Some(changed)).await;
     assert_eq!(st(&r), StatusCode::OK, "只改是否在今日展示可以：{v}");
 
-    // 三种风格
-    let (_, styles) = call_as(&app, Some(&mama), "GET", "/api/v1/styles", None).await;
-    assert_eq!(styles.as_array().unwrap().len(), 3);
-    assert!(styles[0]["strategies"].as_array().unwrap().iter().all(|s| s["strategy_id"].is_i64()), "风格引用的内置策略都存在");
+    // 规则的辅助：三组参考值和全部参加巡检的策略
+    let (_, guide) = call_as(&app, Some(&mama), "GET", "/api/v1/rules/guide", None).await;
+    assert_eq!(guide["presets"].as_array().unwrap().len(), 3);
+    assert!(!guide["presets"][0]["design"].as_array().unwrap().is_empty());
+    assert!(guide["strategies"].as_array().unwrap().len() >= builtin.len());
 
     // 普通用户建账户；还没有巡检时建议在等待
-    let (r, v) = call_as(&app, Some(&mama), "POST", "/api/v1/accounts", Some(json!({"name": "华泰主账户", "style": "balanced", "cash": 100000}))).await;
+    let (r, v) = call_as(&app, Some(&mama), "POST", "/api/v1/accounts", Some(json!({"name": "华泰主账户", "cash": 100000}))).await;
     assert_eq!(st(&r), StatusCode::CREATED, "{v}");
     let acc = v["summary"]["account"]["account_id"].as_i64().unwrap();
+    assert_eq!(v["summary"]["account"]["rules"]["stop_loss_pct"], 8.0, "新账户用稳健型的参考值");
     let base = format!("/api/v1/accounts/{acc}");
-    let (r, _) = call_as(&app, Some(&mama), "POST", "/api/v1/accounts", Some(json!({"name": "华泰主账户", "style": "balanced"}))).await;
+    let rules = |stop: f64| json!({"name": "华泰主账户", "fees": {"commission_rate": 0.00025, "min_commission": 5}, "rules": {"stop_loss_pct": stop}});
+    let (r, _) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(50.0))).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "止损线超出范围");
+    let (r, v) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(8.0))).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    let (r, _) = call_as(&app, Some(&mama), "POST", "/api/v1/accounts", Some(json!({"name": "华泰主账户"}))).await;
     assert_eq!(st(&r), StatusCode::CONFLICT, "同一个人不能重名");
     let (r, _) = call_as(&app, Some(&admin), "GET", &base, None).await;
     assert_eq!(st(&r), StatusCode::NOT_FOUND, "管理员也看不到别人的账户");
