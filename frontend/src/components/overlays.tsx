@@ -1,5 +1,5 @@
 import { useQueries } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { Catalog, Condition, SignalEntry, StrategyItem } from "../api/generated/model";
 import {
@@ -7,11 +7,12 @@ import {
   getStrategyPointsQueryOptions,
   signalDays,
 } from "../api/generated/signal/signal";
+import { useSearchState } from "../hooks/useSearchState";
 import { fmtPctValue } from "../lib/format";
 import { findIndicator, groupBy, indicatorName } from "../lib/strategy";
 import { toneOf } from "../lib/tone";
 import type { ChartLine, ChartMarker } from "./PriceChart";
-import { inputClass } from "./ui";
+import { inputClass, Segmented } from "./ui";
 
 /** K 线上叠加的东西，写在地址的 overlay 参数里，逗号分隔：
  * ind:<指标>:<周期> 画指标线，sig:<信号 key> 标出信号出现的日子，strategy:<编号> 标出策略的买卖点 */
@@ -23,6 +24,19 @@ const PALETTE = ["#0ea5e9", "#a855f7", "#f97316", "#14b8a6", "#e11d48", "#84cc16
 
 export function parseOverlays(v: string): Overlay[] {
   return v ? [...new Set(v.split(",").filter(Boolean))] : [];
+}
+
+/** 个股 K 线默认叠加的指标：20 日和 60 日均线，和其他叠加项一样可以去掉 */
+export const DEFAULT_OVERLAYS = "ind:ma:20,ind:ma:60";
+
+/** 个股页地址里的 overlay 参数：K 线卡片和诊断卡片共用（诊断里点信号或策略，就画到 K 线上）。
+ * 全部去掉时记为 -，否则会回到默认值 */
+export function useOverlayParam(): [Overlay[], (o: Overlay[]) => void, (o: Overlay) => void] {
+  const [s, set] = useSearchState({ overlay: DEFAULT_OVERLAYS });
+  const overlays = parseOverlays(s.overlay === "-" ? "" : s.overlay);
+  const setAll = (o: Overlay[]) => set({ overlay: o.join(",") || "-" });
+  const toggle = (o: Overlay) => setAll(overlays.includes(o) ? overlays.filter((x) => x !== o) : [...overlays, o]);
+  return [overlays, setAll, toggle];
 }
 
 export function signalTarget(key: string): Condition {
@@ -195,7 +209,8 @@ export function useOverlays({
   }
 }
 
-/** 选择要叠加的指标、信号、策略，并逐项说明图上画的是什么 */
+/** 叠加到 K 线上的东西：上面一行是已经叠加的（点 × 去掉），最后是「＋ 叠加到图上」按钮，点开后按策略、信号、指标分组挑选，可以搜索。
+ * 每一项在图上怎么看，收在「图例说明」里，需要时展开 */
 export function OverlayPicker({
   overlays,
   onChange,
@@ -211,63 +226,70 @@ export function OverlayPicker({
   signals?: SignalEntry[];
   strategies?: StrategyItem[];
 }) {
-  const [pick, setPick] = useState("");
-  const add = (o: string) => {
-    if (o && !overlays.includes(o)) onChange([...overlays, o]);
-    setPick("");
-  };
+  const [open, setOpen] = useState(false);
+  const [notes, setNotes] = useState(false);
+  const toggle = (o: Overlay) => onChange(overlays.includes(o) ? overlays.filter((x) => x !== o) : [...overlays, o]);
   return (
     <div className="flex flex-col gap-2 text-xs">
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          className={`${inputClass} text-xs`}
-          value={pick}
-          aria-label="在 K 线上叠加"
-          onChange={(e) => add(e.target.value)}
-        >
-          <option value="">＋ 在 K 线上叠加指标、信号或策略买卖点…</option>
-          {(strategies ?? []).length > 0 && (
-            <optgroup label="策略的买卖点">
-              {strategies?.map((s) => (
-                <option key={s.strategy_id} value={`strategy:${s.strategy_id}`}>
-                  {s.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {groupBy(signals ?? []).map(([g, list]) => (
-            <optgroup key={g} label={`信号 · ${g}`}>
-              {list.map((s) => (
-                <option key={s.key} value={`sig:${s.key}`}>
-                  {s.name}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-          {groupBy(catalog?.indicators ?? []).map(([g, list]) => (
-            <optgroup key={g} label={`指标 · ${g}`}>
-              {list
-                .filter((x) => x.id !== "close" && x.id !== "open" && x.id !== "high" && x.id !== "low")
-                .map((x) => (
-                  <option key={x.id} value={`ind:${x.id}${x.n_default ? `:${x.n_default}` : ""}`}>
-                    {indicatorName(x)}
-                  </option>
-                ))}
-            </optgroup>
-          ))}
-        </select>
-        {overlays.length > 0 && (
-          <button
-            type="button"
-            className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-            onClick={() => onChange([])}
+      <div className="relative flex flex-wrap items-center gap-1.5">
+        {infos.map((x) => (
+          <span
+            key={x.overlay}
+            className="inline-flex items-center gap-1 rounded-full border border-zinc-200 py-0.5 pr-1 pl-2 dark:border-zinc-700"
+            title={x.loading ? "加载中…" : x.error ? "加载失败" : x.note}
           >
-            全部清除
-          </button>
+            <span className="size-2 rounded-full" style={{ background: x.color }} />
+            <span style={{ color: x.color }}>{x.label}</span>
+            {x.loading && <span className="text-zinc-400">…</span>}
+            <button
+              type="button"
+              className="rounded-full px-1 text-zinc-400 hover:text-red-600"
+              aria-label={`去掉 ${x.label}`}
+              onClick={() => onChange(overlays.filter((o) => o !== x.overlay))}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <button
+          type="button"
+          className="rounded-full border border-dashed border-zinc-300 px-2.5 py-0.5 text-zinc-600 hover:border-accent hover:text-accent dark:border-zinc-600 dark:text-zinc-300"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          ＋ 叠加到图上
+        </button>
+        {infos.length > 0 && (
+          <>
+            <button
+              type="button"
+              className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+              onClick={() => setNotes((v) => !v)}
+            >
+              {notes ? "收起说明" : "图例说明"}
+            </button>
+            <button
+              type="button"
+              className="text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+              onClick={() => onChange([])}
+            >
+              全部去掉
+            </button>
+          </>
+        )}
+        {open && (
+          <OverlayMenu
+            overlays={overlays}
+            onToggle={toggle}
+            onClose={() => setOpen(false)}
+            catalog={catalog}
+            signals={signals}
+            strategies={strategies}
+          />
         )}
       </div>
-      {infos.length > 0 && (
-        <ul className="flex flex-col gap-1">
+      {notes && infos.length > 0 && (
+        <ul className="flex flex-col gap-1 rounded-lg bg-zinc-50 p-2 dark:bg-zinc-800/50">
           {infos.map((x) => (
             <li key={x.overlay} className="flex flex-wrap items-baseline gap-x-2">
               <span className="font-medium" style={{ color: x.color }}>
@@ -279,18 +301,127 @@ export function OverlayPicker({
                   说明
                 </Link>
               )}
-              <button
-                type="button"
-                className="text-zinc-400 hover:text-red-600"
-                aria-label={`去掉 ${x.label}`}
-                onClick={() => onChange(overlays.filter((o) => o !== x.overlay))}
-              >
-                ×
-              </button>
             </li>
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** 挑选叠加项的面板：策略的买卖点、信号、指标三栏，按分组列出，可以搜索；点一下加上，再点一下去掉 */
+function OverlayMenu({
+  overlays,
+  onToggle,
+  onClose,
+  catalog,
+  signals,
+  strategies,
+}: {
+  overlays: Overlay[];
+  onToggle: (o: Overlay) => void;
+  onClose: () => void;
+  catalog?: Catalog;
+  signals?: SignalEntry[];
+  strategies?: StrategyItem[];
+}) {
+  const [tab, setTab] = useState<"strategy" | "signal" | "indicator">(strategies?.length ? "strategy" : "signal");
+  const [q, setQ] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const down = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    // 打开面板的那次点击不算点在外面
+    const t = setTimeout(() => document.addEventListener("mousedown", down));
+    document.addEventListener("keydown", key);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("mousedown", down);
+      document.removeEventListener("keydown", key);
+    };
+  }, [onClose]);
+  const match = (name: string) => !q || name.toLowerCase().includes(q.trim().toLowerCase());
+  const groups: [string, { value: Overlay; label: string; color?: string }[]][] =
+    tab === "strategy"
+      ? [["我的策略", (strategies ?? []).map((s) => ({ value: `strategy:${s.strategy_id}`, label: s.name }))]]
+      : tab === "signal"
+        ? groupBy(signals ?? []).map(([g, list]) => [
+            g,
+            list.map((s) => ({
+              value: `sig:${s.key}`,
+              label: `${toneOf(s.tone).arrow} ${s.name}`,
+              color: toneOf(s.tone).color,
+            })),
+          ])
+        : groupBy((catalog?.indicators ?? []).filter((x) => !["close", "open", "high", "low"].includes(x.id))).map(
+            ([g, list]) => [
+              g,
+              list.map((x) => ({
+                value: `ind:${x.id}${x.n_default ? `:${x.n_default}` : ""}`,
+                label: indicatorName(x),
+              })),
+            ],
+          );
+  const shown = groups
+    .map(([g, list]) => [g, list.filter((x) => match(x.label))] as const)
+    .filter(([, l]) => l.length > 0);
+  const TABS = [
+    { value: "strategy", label: "策略买卖点", hint: "标出策略在这只股票上的每一次买入和卖出" },
+    { value: "signal", label: "信号", hint: "标出信号出现的日子" },
+    { value: "indicator", label: "指标", hint: "画出指标的线：价格类画在 K 线上，其他画在下方副图" },
+  ] as const;
+  return (
+    <div
+      ref={ref}
+      className="absolute top-full left-0 z-20 mt-1 flex max-h-[28rem] w-[min(40rem,calc(100vw-2rem))] flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Segmented value={tab} options={TABS} onChange={setTab} />
+        <input
+          className={`${inputClass} min-w-0 flex-1 py-1 text-xs`}
+          placeholder="搜索，例如 MACD、均线、背离"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <button type="button" className="text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+      <div className="flex flex-col gap-3 overflow-y-auto pr-1">
+        {shown.length === 0 && (
+          <p className="py-4 text-center text-zinc-400">
+            {tab === "strategy" && !strategies?.length ? "还没有策略" : "没有找到"}
+          </p>
+        )}
+        {shown.map(([g, list]) => (
+          <section key={g}>
+            <h4 className="mb-1 text-zinc-400">{g}</h4>
+            <div className="flex flex-wrap gap-1">
+              {list.map((x) => {
+                const on = overlays.includes(x.value);
+                return (
+                  <button
+                    key={x.value}
+                    type="button"
+                    onClick={() => onToggle(x.value)}
+                    className={
+                      on
+                        ? "rounded-md bg-accent px-2 py-1 text-white"
+                        : "rounded-md border border-zinc-200 px-2 py-1 hover:border-accent/60 dark:border-zinc-700"
+                    }
+                    style={!on && x.color ? { color: x.color } : undefined}
+                    title={on ? "已在图上，点一下去掉" : "点一下画到图上"}
+                  >
+                    {x.label}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

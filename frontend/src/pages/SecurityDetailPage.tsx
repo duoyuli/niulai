@@ -8,7 +8,7 @@ import { useCatalog, useListStrategies } from "../api/generated/strategy/strateg
 import { COST_DEFAULTS, CostFields, costParams, Loaded, Result, RulesNote } from "../components/backtest";
 import { DiagnosisCard } from "../components/DiagnosisCard";
 import { MaControls } from "../components/MaControls";
-import { OverlayPicker, parseOverlays, useOverlays } from "../components/overlays";
+import { OverlayPicker, useOverlayParam, useOverlays } from "../components/overlays";
 import { PriceChart } from "../components/PriceChart";
 import { RangePicker, rangeQuery } from "../components/RangePicker";
 import { Badge, Card, Empty, ErrorState, Field, inputClass, Segmented, Spinner } from "../components/ui";
@@ -16,9 +16,6 @@ import { WatchButton } from "../components/WatchButton";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtInt, fmtPercent, fmtPrice, RANGES, rangeStart, toNumber, upDownClass } from "../lib/format";
 import { ADJUSTS, type Adjust, BOARDS } from "../lib/labels";
-
-/** K 线默认叠加的指标：20 日和 60 日均线，和其他叠加项一样可以去掉 */
-const DEFAULT_OVERLAYS = "ind:ma:20,ind:ma:60";
 
 const TABS = [
   { value: "chart", label: "走势与诊断" },
@@ -56,20 +53,8 @@ export function SecurityDetailPage() {
               <span className="text-xs text-zinc-500">{bars.at(-1)?.trade_date} 收盘</span>
             </p>
           )}
-        </div>
-        <WatchButton thscode={thscode} withLabel />
-      </div>
-      <div>
-        <Segmented value={s.tab as (typeof TABS)[number]["value"]} options={TABS} onChange={(tab) => set({ tab })} />
-      </div>
-      {s.tab === "backtest" ? (
-        <StockBacktest thscode={thscode} />
-      ) : (
-        <>
-          <DiagnosisCard thscode={thscode} />
-          <ChartCard thscode={thscode} earliest={sec?.first_bar} />
           {sec && (
-            <p className="text-xs text-zinc-400">
+            <p className="mt-1 text-xs text-zinc-400">
               上市 {sec.list_date ?? "—"} · 本地日线 {sec.first_bar ?? "—"} 至 {sec.last_bar ?? "—"}，共{" "}
               {fmtInt(sec.bars)} 根
               {sec.name_history.length > 1 && (
@@ -84,6 +69,18 @@ export function SecurityDetailPage() {
               )}
             </p>
           )}
+        </div>
+        <WatchButton thscode={thscode} withLabel />
+      </div>
+      <div>
+        <Segmented value={s.tab as (typeof TABS)[number]["value"]} options={TABS} onChange={(tab) => set({ tab })} />
+      </div>
+      {s.tab === "backtest" ? (
+        <StockBacktest thscode={thscode} />
+      ) : (
+        <>
+          <DiagnosisCard thscode={thscode} />
+          <ChartCard thscode={thscode} earliest={sec?.first_bar} />
         </>
       )}
     </>
@@ -96,8 +93,6 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
     range: "3",
     from: "",
     to: "",
-    // 默认画 20 日和 60 日均线；全部去掉时记为 -，否则会回到默认值
-    overlay: DEFAULT_OVERLAYS,
   });
   const catalog = useCatalog({ query: { staleTime: Number.POSITIVE_INFINITY } });
   const signals = useListSignals({ query: { staleTime: 60_000 } });
@@ -109,7 +104,7 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
     { adjust, start, end, limit: 10000 },
     { query: { placeholderData: keepPreviousData } },
   );
-  const overlays = parseOverlays(s.overlay === "-" ? "" : s.overlay);
+  const [overlays, setOverlays] = useOverlayParam();
   const ov = useOverlays({
     thscode,
     overlays,
@@ -132,7 +127,7 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
         <RangePicker value={s} earliest={earliest} loading={bars.isPlaceholderData} onChange={set} />
         <OverlayPicker
           overlays={overlays}
-          onChange={(o) => set({ overlay: o.join(",") || "-" })}
+          onChange={setOverlays}
           infos={ov.infos}
           catalog={catalog.data}
           signals={signals.data}

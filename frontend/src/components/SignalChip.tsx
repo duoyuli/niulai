@@ -9,16 +9,22 @@ export function SignalChip({
   event,
   withDate = false,
   link = true,
+  onClick,
+  active,
 }: {
   event: SignalEvent;
   withDate?: boolean;
   link?: boolean;
+  /** 传入时点击执行它（例如画到 K 线上），不再跳转；active 表示已经画上了 */
+  onClick?: () => void;
+  active?: boolean;
 }) {
   const t = toneOf(event.tone);
   const className = clsx(
     "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap",
     t.chip,
-    link && "hover:ring-1 hover:ring-current",
+    (link || onClick) && "hover:ring-1 hover:ring-current",
+    active && "ring-1 ring-current",
   );
   const title = `${event.trade_date} ${event.name}（${t.word}）${link ? "，点击看这个信号是什么意思" : ""}`;
   const body = (
@@ -27,6 +33,17 @@ export function SignalChip({
       {withDate && <span className="num font-normal opacity-70">{event.trade_date.slice(5)}</span>}
     </>
   );
+  if (onClick)
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={`${event.trade_date} ${event.name}（${t.word}），${active ? "已画在下面的 K 线上，点一下去掉" : "点一下画到下面的 K 线上"}`}
+        className={className}
+      >
+        {body}
+      </button>
+    );
   return link ? (
     <Link to={`/signals/${event.signal}`} title={title} className={className}>
       {body}

@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { useSecurityDiagnosis } from "../api/generated/market/market";
 import type { Diagnosis, Level, Verdict } from "../api/generated/model";
 import { fmtPctValue, fmtPrice } from "../lib/format";
+import { useOverlayParam } from "./overlays";
 import { SignalChip } from "./SignalChip";
 import { Card, ErrorState, Spinner } from "./ui";
 
@@ -29,6 +30,8 @@ export function DiagnosisCard({ thscode }: { thscode: string }) {
 }
 
 function Body({ d, thscode }: { d: Diagnosis; thscode: string }) {
+  // 点信号或策略，画到下面的 K 线上
+  const [overlays, , toggle] = useOverlayParam();
   // 价位按价格从高到低排列：上方压力里最后一个离当前价最近，下方支撑里第一个最近
   const resistance = d.levels.filter((l) => l.kind === "resistance").at(-1);
   const support = d.levels.find((l) => l.kind === "support");
@@ -51,13 +54,21 @@ function Body({ d, thscode }: { d: Diagnosis; thscode: string }) {
 
       <div className="flex flex-col gap-3 border-t border-zinc-100 pt-4 text-sm lg:flex-row lg:gap-8 dark:border-zinc-800">
         <div className="min-w-0 flex-1">
-          <span className="mr-2 text-xs text-zinc-500">最近 20 个交易日</span>
+          <span className="mr-2 text-xs text-zinc-500" title="点一下画到下面的 K 线上">
+            最近 20 个交易日
+          </span>
           {d.recent_signals.length === 0 ? (
             <span className="text-zinc-400">没有出现信号</span>
           ) : (
             <span className="inline-flex flex-wrap gap-1.5 align-middle">
               {d.recent_signals.slice(0, 6).map((e) => (
-                <SignalChip key={`${e.trade_date}-${e.signal}`} event={e} withDate />
+                <SignalChip
+                  key={`${e.trade_date}-${e.signal}`}
+                  event={e}
+                  withDate
+                  active={overlays.includes(`sig:${e.signal}`)}
+                  onClick={() => toggle(`sig:${e.signal}`)}
+                />
               ))}
               {d.recent_signals.length > 6 && (
                 <span
@@ -88,13 +99,17 @@ function Body({ d, thscode }: { d: Diagnosis; thscode: string }) {
           {d.strategies.map((s, i) => (
             <span key={s.strategy_id}>
               {i > 0 && "、"}
-              <Link
-                to={`/strategies/${s.strategy_id}`}
-                className="font-medium hover:underline"
-                title={s.reasons.join("；")}
+              <button
+                type="button"
+                className={clsx(
+                  "font-medium hover:underline",
+                  overlays.includes(`strategy:${s.strategy_id}`) && "text-accent",
+                )}
+                title={`${s.reasons.join("；")}。点一下在下面的 K 线上标出它的买卖点`}
+                onClick={() => toggle(`strategy:${s.strategy_id}`)}
               >
                 {s.name}
-              </Link>
+              </button>
               <Link
                 to={`/securities/${thscode}?tab=backtest&method=${s.strategy_id}`}
                 className="ml-1 text-xs text-accent hover:underline"
