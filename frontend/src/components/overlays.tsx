@@ -9,6 +9,7 @@ import {
 } from "../api/generated/signal/signal";
 import { fmtPctValue } from "../lib/format";
 import { findIndicator, groupBy, indicatorName } from "../lib/strategy";
+import { toneOf } from "../lib/tone";
 import type { ChartLine, ChartMarker } from "./PriceChart";
 import { inputClass } from "./ui";
 
@@ -124,23 +125,18 @@ export function useOverlays({
       }
       if (kind === "sig") {
         const entry = signals?.find((s) => s.key === a);
-        const bullish = entry?.tone !== "bearish";
+        const t = toneOf(entry?.tone);
         const dates = (r?.data as { dates: string[] } | undefined)?.dates ?? [];
         const label = entry?.name ?? a;
         for (const d of dates)
-          markers.push({
-            date: d,
-            position: bullish ? "below" : "above",
-            shape: bullish ? "arrowUp" : "arrowDown",
-            color: bullish ? UP : DOWN,
-          });
+          markers.push({ date: d, position: t.marker.position, shape: t.marker.shape, color: t.color });
         infos.push({
           ...base,
-          color: bullish ? UP : DOWN,
-          label: `${bullish ? "▲" : "▼"} ${label}`,
+          color: t.color,
+          label: `${t.arrow} ${label}`,
           href: `/signals/${a}`,
           note: r?.data
-            ? `${bullish ? "红色向上" : "绿色向下"}箭头是出现的日子，图上区间内 ${dates.length} 次（连续几天都满足只标第一天）`
+            ? `${t.marker.word}是出现的日子，图上区间内 ${dates.length} 次（连续几天都满足只标第一天）`
             : "",
         });
         return;

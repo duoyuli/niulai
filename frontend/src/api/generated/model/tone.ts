@@ -12,4 +12,5 @@ export type Tone = typeof Tone[keyof typeof Tone];
 export const Tone = {
   bullish: 'bullish',
   bearish: 'bearish',
+  neutral: 'neutral',
 } as const;

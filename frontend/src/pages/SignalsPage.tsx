@@ -9,6 +9,7 @@ import { SignalStatsCard, SignalTodayCard, useSignalToday } from "../components/
 import { StrategyNav } from "../components/StrategyNav";
 import { Badge, buttonClass, Card, ErrorState, errorText, PageHeader, QueryView, Spinner } from "../components/ui";
 import { groupBy } from "../lib/strategy";
+import { toneOf } from "../lib/tone";
 
 /** 信号：起了名字的条件。内置的按分组列出，自己定义的放在最前面 */
 export function SignalsPage() {
@@ -75,8 +76,8 @@ function SignalGrid({ items }: { items: SignalEntry[] }) {
           to={`/signals/${s.key}`}
           className="flex flex-col gap-1 rounded-lg border border-zinc-200 p-3 transition hover:border-accent/60 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50"
         >
-          <span className={clsx("font-medium", s.tone === "bullish" ? "text-up" : "text-down")}>
-            {s.tone === "bullish" ? "▲" : "▼"} {s.name}
+          <span className={clsx("font-medium", toneOf(s.tone).text)}>
+            {toneOf(s.tone).arrow} {s.name}
           </span>
           <span className="line-clamp-2 text-xs text-zinc-500">{s.explained.join("，并且") || s.description}</span>
           <span className="mt-auto flex flex-wrap gap-1 pt-1">
@@ -110,7 +111,7 @@ function SignalDetail({ s }: { s: SignalEntry }) {
       },
     },
   });
-  const bullish = s.tone === "bullish";
+  const t = toneOf(s.tone);
   const target = { condition: signalTarget(s.key) as Condition };
   const today = useSignalToday(target);
   return (
@@ -121,11 +122,11 @@ function SignalDetail({ s }: { s: SignalEntry }) {
           <Link to="/signals" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
             ← 全部信号
           </Link>
-          <h1 className={clsx("mt-1 text-xl font-semibold", bullish ? "text-up" : "text-down")}>
-            {bullish ? "▲" : "▼"} {s.name}
+          <h1 className={clsx("mt-1 text-xl font-semibold", t.text)}>
+            {t.arrow} {s.name}
           </h1>
           <div className="mt-1 flex flex-wrap gap-1">
-            <Badge tone={bullish ? "bad" : "ok"}>{bullish ? "偏多：常被看作走强" : "偏空：常被看作走弱"}</Badge>
+            <Badge tone={s.tone === "bullish" ? "bad" : s.tone === "bearish" ? "ok" : "warn"}>{t.explain}</Badge>
             <Badge>{s.kind === "state" ? "状态：持续成立" : "事件：某一天发生"}</Badge>
             <Badge>{s.builtin ? `内置 · ${s.group}` : "我的信号"}</Badge>
           </div>

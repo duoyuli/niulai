@@ -744,6 +744,39 @@ pub fn templates() -> Vec<Template> {
                 by(I::Momentum, Some(20), true),
             ),
         },
+        Template {
+            key: "macd_bottom_divergence",
+            name: "MACD 底背离",
+            description: "股价创了新低，MACD 的低点却抬高了，下跌的力量在减弱；当天收涨，确认有人买",
+            definition: def(vec![sig(S::MacdBottomDivergence, &[], 3), cmp(I::ChangePct, None, Op::Gt, 0.0)], amount.clone()),
+        },
+        Template {
+            key: "supertrend_follow",
+            name: "Supertrend 趋势跟随",
+            description: "Supertrend 翻多时买入，翻空时卖出，中间不管涨跌一直拿着；亏损 10% 止损",
+            definition: Definition {
+                exit: ExitRule { any: vec![sig(S::SupertrendDown, &[], 1)], stop_loss_pct: Some(10.0), take_profit_pct: None, max_hold_days: None },
+                ..def(vec![sig(S::SupertrendUp, &[], 1)], amount.clone())
+            },
+        },
+        Template {
+            key: "adx_ma_golden",
+            name: "趋势确认的均线金叉",
+            description: "5 日均线上穿 20 日均线，同时 ADX 高于 20、+DI 在 −DI 上方：只做趋势明确时的金叉，过滤横盘中的假金叉",
+            definition: def(
+                vec![sig(S::MaCrossUp, &[("fast", 5.0), ("slow", 20.0)], 1), cmp(I::Adx, Some(14), Op::Gt, 20.0), cmp_ind(I::PlusDi, Some(14), Op::Gt, I::MinusDi, Some(14))],
+                by(I::Adx, Some(14), true),
+            ),
+        },
+        Template {
+            key: "shrink_pullback",
+            name: "缩量回踩 20 日均线",
+            description: "上升趋势中回落到 20 日均线附近（上下 2% 以内），成交量缩到前 5 天平均的 0.7 倍以下：回调时卖的人不多",
+            definition: def(
+                vec![sig(S::MaBullish, &[], 1), cmp(I::MaGap, Some(20), Op::Ge, -2.0), cmp(I::MaGap, Some(20), Op::Le, 2.0), sig(S::VolumeShrink, &[("ratio", 0.7)], 1)],
+                amount.clone(),
+            ),
+        },
     ]
 }
 

@@ -49,6 +49,13 @@ pub enum IndicatorId {
     PctFromLow,
     PrevHighClose,
     PrevLowClose,
+    PlusDi,
+    MinusDi,
+    Adx,
+    Supertrend,
+    Cci,
+    BollWidth,
+    MaSpread,
 }
 
 /// 一个指标及其周期，例如「20 日均线」是 {id: ma, n: 20}
@@ -112,19 +119,26 @@ pub const CATALOG: &[IndicatorInfo] = &[
     info(IndicatorId::VolRatio, "量比", "量能", "ratio", "当天成交量是前 {n} 天平均成交量的几倍，大于 1 表示放量", Some((5, 2, 60))).usage("大于 1 放量，小于 1 缩量；1.5 倍以上算明显放量，0.7 倍以下算明显缩量。").formula("今天成交量 ÷ 前 n 天（不含今天）平均成交量"),
     info(IndicatorId::Ma, "{n} 日均线", "均线", "price", "最近 {n} 个交易日收盘价的平均值", Some((20, 2, MAX_WINDOW))).usage("最常用的指标。5 日、10 日看短线，20 日、60 日看中期，120 日、250 日看长期。股价在均线上方，说明这段时间买入的人平均在赚钱。").formula("最近 n 天（含今天）前复权收盘价的平均值"),
     info(IndicatorId::Ema, "{n} 日指数均线", "均线", "price", "越近的价格权重越大的均线，比普通均线反应更快", Some((20, 2, MAX_WINDOW))).usage("对最近的价格反应更快，转折时比普通均线早几天，但也更容易被短期波动带偏。").formula("指数加权平均：今天的值 = α × 今天收盘 + (1 − α) × 昨天的值，α = 2 ÷ (n + 1)"),
+    info(IndicatorId::MaSpread, "均线粘合度", "均线", "pct", "5、10、20、60 日均线中最高的与最低的相差多少（占收盘价的百分比），越小说明几条均线越靠拢", None).usage("小于 2 说明几条均线几乎拧在一起（粘合），常见于长时间横盘；之后一旦明显散开（大于 3），往往是选择方向的开始。").formula("(四条均线的最大值 − 最小值) ÷ 收盘价 × 100，均线是 5、10、20、60 日简单均线"),
     info(IndicatorId::MaGap, "相对 {n} 日均线偏离", "均线", "pct", "收盘价比 {n} 日均线高出（正）或低于（负）多少，2 表示高 2%", Some((20, 2, MAX_WINDOW))).usage("偏离太大时（例如高出 20 日均线 15% 以上），价格往往会向均线靠拢。").formula("(收盘价 ÷ n 日均线 − 1) × 100"),
     info(IndicatorId::MacdDif, "MACD 快线（DIF）", "MACD", "price", "12 日与 26 日指数均线之差，大于 0 表示短期强于长期", None).usage("MACD 的主线，大于 0 表示中期走势偏强。").formula("12 日指数均线 − 26 日指数均线，用前复权收盘价"),
     info(IndicatorId::MacdDea, "MACD 慢线（DEA）", "MACD", "price", "DIF 的 9 日指数均线", None).usage("DIF 的平滑线，用来判断 DIF 的交叉。").formula("DIF 的 9 日指数均线"),
     info(IndicatorId::MacdHist, "MACD 柱", "MACD", "price", "2 ×（DIF − DEA），由负转正常被看作转强", None).usage("柱子由负转正、越来越长，表示动能在增强；柱子变短说明动能减弱，常常比价格转折更早出现。").formula("2 × (DIF − DEA)"),
     info(IndicatorId::Rsi, "RSI（{n}）", "超买超卖", "index", "0 到 100，反映最近 {n} 天涨的力量占比；高于 70 常被看作超买，低于 30 看作超卖", Some((14, 2, 60))).usage("70 以上超买、30 以下超卖是常用的分界。强势股可以长期在 50 到 80 之间，弱势股长期在 20 到 50 之间。").formula("最近 n 天上涨幅度的平滑平均 ÷ 涨跌幅度（取绝对值）的平滑平均 × 100；平滑方法与通达信、同花顺一致"),
+    info(IndicatorId::Cci, "CCI（{n}）", "超买超卖", "index", "顺势指标：价格偏离近期平均水平的程度，高于 100 说明明显偏强，低于 −100 明显偏弱", Some((14, 5, 60))).usage("大部分时间在 −100 到 100 之间。上穿 100 常被看作进入强势、可能有一段行情，下穿 −100 说明进入弱势。和 RSI 不同，它没有上下限。").formula("典型价 = (最高 + 最低 + 收盘) ÷ 3；CCI = (典型价 − 典型价的 n 日均值) ÷ (0.015 × 典型价的 n 日平均绝对偏差)；与通达信、同花顺一致"),
     info(IndicatorId::KdjK, "KDJ 的 K 值", "超买超卖", "index", "随机指标 K（9、3、3），0 到 100 附近，高位超买、低位超卖", None).usage("短线指标，变化很快。").formula("RSV = (收盘 − 9 日最低) ÷ (9 日最高 − 9 日最低) × 100；K 是 RSV 的 3 日平滑，初值 50"),
     info(IndicatorId::KdjD, "KDJ 的 D 值", "超买超卖", "index", "K 值的平滑", None).usage("比 K 慢，K 上穿 D 就是 KDJ 金叉。").formula("K 的 3 日平滑，初值 50"),
     info(IndicatorId::KdjJ, "KDJ 的 J 值", "超买超卖", "index", "3K − 2D，最敏感，可以超出 0 到 100", None).usage("三条线里最敏感的，常超出 0 到 100：大于 100 说明短期极强，小于 0 说明短期极弱。").formula("3K − 2D"),
     info(IndicatorId::BollUpper, "布林带上轨", "波动", "price", "20 日均线加 2 倍标准差，收盘突破上轨表示走势很强", None).usage("价格大部分时间在上下轨之间。上下轨的距离变窄说明波动在收敛，常常预示快要选择方向。").formula("20 日均线 + 2 × 最近 20 天收盘价的标准差"),
     info(IndicatorId::BollMid, "布林带中轨", "波动", "price", "20 日均线", None).usage("就是 20 日均线。").formula("20 日均线"),
     info(IndicatorId::BollLower, "布林带下轨", "波动", "price", "20 日均线减 2 倍标准差", None).usage("跌破下轨说明跌势超出平常。").formula("20 日均线 − 2 × 最近 20 天收盘价的标准差"),
+    info(IndicatorId::BollWidth, "布林带宽度", "波动", "pct", "布林带上下轨相距多少（占中轨的百分比），越小说明最近波动越小", None).usage("宽度缩到近几个月最小（布林带收口）时，常常预示快要变盘；随后宽度迅速变大（开口），说明新的方向开始了。宽度本身不说明方向。").formula("(上轨 − 下轨) ÷ 中轨 × 100，即 4 倍 20 日标准差 ÷ 20 日均线 × 100"),
     info(IndicatorId::Atr, "ATR（{n}）", "波动", "price", "平均真实波幅：最近 {n} 天每天的平均波动金额", Some((14, 2, 60))).usage("估计这只股票正常一天会波动多少钱，常用来决定止损设在多远。").formula("每天的真实波幅取「最高 − 最低」「最高 − 昨收」「昨收 − 最低」中的最大值，再求最近 n 天的平均"),
     info(IndicatorId::AtrPct, "ATR 占股价（{n}）", "波动", "pct", "ATR 除以收盘价，用百分比比较不同价格的股票波动有多大", Some((14, 2, 60))).usage("可以比较不同价格的股票：3 表示正常一天波动约 3%。数值越大，波动和风险越大。").formula("ATR ÷ 收盘价 × 100"),
+    info(IndicatorId::PlusDi, "+DI（{n}）", "趋势强度", "index", "上升方向的力量：最近 {n} 天创新高的幅度占波动的比例", Some((14, 2, 60))).usage("和 −DI 一起看：+DI 在 −DI 上方说明多方占优，+DI 上穿 −DI 常被看作转强。").formula("最近 n 天「上升动向」之和 ÷ 最近 n 天真实波幅之和 × 100。上升动向：今天最高 − 昨天最高，大于 0 且大于下降动向时取它，否则为 0。与通达信、同花顺的 DMI 一致"),
+    info(IndicatorId::MinusDi, "−DI（{n}）", "趋势强度", "index", "下降方向的力量：最近 {n} 天创新低的幅度占波动的比例", Some((14, 2, 60))).usage("−DI 在 +DI 上方说明空方占优。").formula("最近 n 天「下降动向」之和 ÷ 最近 n 天真实波幅之和 × 100。下降动向：昨天最低 − 今天最低，大于 0 且大于上升动向时取它，否则为 0"),
+    info(IndicatorId::Adx, "ADX（{n}）", "趋势强度", "index", "趋势强度：0 到 100，只说明趋势有多明确，不说明方向", Some((14, 2, 60))).usage("高于 25 说明趋势明确（不管涨还是跌），低于 20 说明在盘整。均线金叉这类趋势信号在 ADX 高时更可靠，盘整时容易反复。方向看 +DI 和 −DI 谁在上面。").formula("DX = |+DI − −DI| ÷ (+DI + −DI) × 100，ADX 是 DX 的 6 日均线；与通达信、同花顺一致"),
+    info(IndicatorId::Supertrend, "Supertrend（{n}）", "趋势强度", "price", "超级趋势线：上升趋势时在股价下方，下降趋势时在股价上方，收盘越过它就翻转", Some((10, 2, 60))).usage("TradingView 上最常用的趋势指标。线在股价下方时可以把它当作移动止损线：收盘跌破就离场。横盘时会来回翻转。").formula("中价 = (最高 + 最低) ÷ 2；上下轨 = 中价 ± 3 × ATR(n)，ATR 用 Wilder 平滑；下轨只升不降、上轨只降不升，收盘越过当前的线就换到另一条；与 TradingView 一致"),
     info(IndicatorId::Momentum, "{n} 日涨跌幅", "动量", "pct", "相对 {n} 个交易日前收盘价的涨跌，20 表示涨了 20%", Some((20, 1, MAX_WINDOW))).usage("最直观的强弱：近 20 日涨得最多的就是最近最强的股票。「强者恒强」和「超跌反弹」都基于它。").formula("(今天收盘 ÷ n 天前收盘 − 1) × 100"),
     info(IndicatorId::HighN, "{n} 日最高价", "区间", "price", "最近 {n} 个交易日（含当天）的最高价", Some((60, 2, MAX_WINDOW))).usage("区间高点常被看作压力：涨到这里容易遇到之前被套的人卖出。").formula("最近 n 天（含今天）最高价中的最大值"),
     info(IndicatorId::LowN, "{n} 日最低价", "区间", "price", "最近 {n} 个交易日（含当天）的最低价", Some((60, 2, MAX_WINDOW))).usage("区间低点常被看作支撑。").formula("最近 n 天（含今天）最低价中的最小值"),
@@ -174,7 +188,11 @@ impl IndicatorRef {
             IndicatorId::MacdDif | IndicatorId::MacdDea | IndicatorId::MacdHist => 120,
             IndicatorId::Rsi | IndicatorId::Atr | IndicatorId::AtrPct => self.period() * 4,
             IndicatorId::KdjK | IndicatorId::KdjD | IndicatorId::KdjJ => 40,
-            IndicatorId::BollUpper | IndicatorId::BollMid | IndicatorId::BollLower => 20,
+            IndicatorId::BollUpper | IndicatorId::BollMid | IndicatorId::BollLower | IndicatorId::BollWidth => 20,
+            IndicatorId::PlusDi | IndicatorId::MinusDi | IndicatorId::Adx => self.period() + 10,
+            // 路径相关（翻转与否取决于之前的状态），多读一些让开头的状态不影响结果
+            IndicatorId::Supertrend => self.period() * 4 + 60,
+            IndicatorId::MaSpread => 61,
             _ => self.period() + 1,
         }
     }
@@ -354,6 +372,33 @@ impl<'a> Frame<'a> {
                 let lo = rolling(&c, n, f64::min);
                 c.iter().zip(lo).map(|(c, l)| (c / l - 1.0) * 100.0).collect()
             }
+            I::PlusDi | I::MinusDi | I::Adx => {
+                let (pdi, mdi, adx) = dmi(self.bars, n, 6);
+                match id {
+                    I::PlusDi => pdi,
+                    I::MinusDi => mdi,
+                    _ => adx,
+                }
+            }
+            I::Supertrend => supertrend(self.bars, n, 3.0),
+            I::Cci => cci(self.bars, n),
+            I::BollWidth => {
+                let (up, lo, mid) = (self.get(IndicatorRef::new(I::BollUpper, None)), self.get(IndicatorRef::new(I::BollLower, None)), self.get(IndicatorRef::new(I::BollMid, None)));
+                (0..up.len()).map(|i| (up[i] - lo[i]) / mid[i] * 100.0).collect()
+            }
+            I::MaSpread => {
+                let mas: Vec<Rc<Vec<f64>>> = [5, 10, 20, 60].iter().map(|k| self.get(IndicatorRef::new(I::Ma, Some(*k)))).collect();
+                (0..self.len())
+                    .map(|i| {
+                        let v: Vec<f64> = mas.iter().map(|m| m[i]).collect();
+                        if v.iter().any(|x| x.is_nan()) {
+                            return f64::NAN;
+                        }
+                        let (hi, lo) = (v.iter().copied().fold(f64::MIN, f64::max), v.iter().copied().fold(f64::MAX, f64::min));
+                        (hi - lo) / self.bars[i].q_close * 100.0
+                    })
+                    .collect()
+            }
         }
     }
 
@@ -477,7 +522,12 @@ fn kdj(bars: &[DailyBar], n: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
 }
 
 fn atr(bars: &[DailyBar], n: usize) -> Vec<f64> {
-    let tr: Vec<f64> = (0..bars.len())
+    sma(&true_range(bars), n).into_iter().map(|v| v.unwrap_or(f64::NAN)).collect()
+}
+
+/// 真实波幅：最高 − 最低、最高 − 昨收、昨收 − 最低中的最大值；第一天没有昨收，取最高 − 最低
+fn true_range(bars: &[DailyBar]) -> Vec<f64> {
+    (0..bars.len())
         .map(|i| {
             let b = &bars[i];
             if i == 0 {
@@ -486,8 +536,96 @@ fn atr(bars: &[DailyBar], n: usize) -> Vec<f64> {
             let pc = bars[i - 1].q_close;
             (b.q_high - b.q_low).max((b.q_high - pc).abs()).max((b.q_low - pc).abs())
         })
-        .collect();
-    sma(&tr, n).into_iter().map(|v| v.unwrap_or(f64::NAN)).collect()
+        .collect()
+}
+
+/// 最近 n 个值（含当天）之和；不足 n 个或含 NaN 时为 NaN
+fn rolling_sum(values: &[f64], n: usize) -> Vec<f64> {
+    (0..values.len()).map(|i| if i + 1 < n { f64::NAN } else { values[i + 1 - n..=i].iter().sum() }).collect()
+}
+
+/// DMI，与通达信、同花顺的公式一致：
+/// MTR = SUM(TR, n)；HD = 最高 − 昨最高，LD = 昨最低 − 最低；
+/// DMP = SUM(HD > 0 且 HD > LD 时取 HD，否则 0, n)，DMM 同理；+DI = DMP × 100 ÷ MTR，−DI = DMM × 100 ÷ MTR；
+/// ADX = MA(|−DI − +DI| ÷ (−DI + +DI) × 100, m)
+fn dmi(bars: &[DailyBar], n: usize, m: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let len = bars.len();
+    let mut tr = true_range(bars);
+    let (mut dmp, mut dmm) = (vec![f64::NAN; len], vec![f64::NAN; len]);
+    for i in 1..len {
+        let hd = bars[i].q_high - bars[i - 1].q_high;
+        let ld = bars[i - 1].q_low - bars[i].q_low;
+        dmp[i] = if hd > 0.0 && hd > ld { hd } else { 0.0 };
+        dmm[i] = if ld > 0.0 && ld > hd { ld } else { 0.0 };
+    }
+    // 第一天没有昨天的价格，三个序列都从第二天开始累计
+    if let Some(t) = tr.first_mut() {
+        *t = f64::NAN;
+    }
+    let (mtr, sp, sm) = (rolling_sum(&tr, n), rolling_sum(&dmp, n), rolling_sum(&dmm, n));
+    let pdi: Vec<f64> = (0..len).map(|i| if mtr[i] > 0.0 { sp[i] * 100.0 / mtr[i] } else { f64::NAN }).collect();
+    let mdi: Vec<f64> = (0..len).map(|i| if mtr[i] > 0.0 { sm[i] * 100.0 / mtr[i] } else { f64::NAN }).collect();
+    let dx: Vec<f64> = (0..len).map(|i| if pdi[i] + mdi[i] > 0.0 { (mdi[i] - pdi[i]).abs() / (mdi[i] + pdi[i]) * 100.0 } else { f64::NAN }).collect();
+    let adx = (0..len).map(|i| if i + 1 < m || dx[i + 1 - m..=i].iter().any(|v| v.is_nan()) { f64::NAN } else { dx[i + 1 - m..=i].iter().sum::<f64>() / m as f64 }).collect();
+    (pdi, mdi, adx)
+}
+
+/// Wilder 平滑（TradingView 的 RMA）：第一个值是前 n 个的简单平均，之后 Y = (X + (n − 1) × Y') ÷ n
+fn rma(values: &[f64], n: usize) -> Vec<f64> {
+    let mut out = vec![f64::NAN; values.len()];
+    if values.len() < n {
+        return out;
+    }
+    let mut prev = values[..n].iter().sum::<f64>() / n as f64;
+    out[n - 1] = prev;
+    for i in n..values.len() {
+        prev = (values[i] + (n as f64 - 1.0) * prev) / n as f64;
+        out[i] = prev;
+    }
+    out
+}
+
+/// Supertrend，与 TradingView 的 ta.supertrend 一致：中价 ± mult × ATR(n)（Wilder 平滑），
+/// 下轨只升不降（除非昨收跌破它）、上轨只降不升（除非昨收突破它）；下降趋势中收盘高于上轨转为上升，上升趋势中收盘低于下轨转为下降。
+/// 上升趋势时取下轨，下降趋势时取上轨。开始时按下降趋势
+fn supertrend(bars: &[DailyBar], n: usize, mult: f64) -> Vec<f64> {
+    let atr = rma(&true_range(bars), n);
+    let mut out = vec![f64::NAN; bars.len()];
+    let (mut fu, mut fl, mut up) = (f64::NAN, f64::NAN, false);
+    for i in 0..bars.len() {
+        if atr[i].is_nan() {
+            continue;
+        }
+        let b = &bars[i];
+        let hl2 = (b.q_high + b.q_low) / 2.0;
+        let (bu, bl) = (hl2 + mult * atr[i], hl2 - mult * atr[i]);
+        if fu.is_nan() {
+            (fu, fl) = (bu, bl);
+        } else {
+            let pc = bars[i - 1].q_close;
+            fl = if bl > fl || pc < fl { bl } else { fl };
+            fu = if bu < fu || pc > fu { bu } else { fu };
+            up = if up { b.q_close >= fl } else { b.q_close > fu };
+        }
+        out[i] = if up { fl } else { fu };
+    }
+    out
+}
+
+/// CCI，与通达信、同花顺一致：(典型价 − MA(典型价, n)) ÷ (0.015 × AVEDEV(典型价, n))
+fn cci(bars: &[DailyBar], n: usize) -> Vec<f64> {
+    let tp: Vec<f64> = bars.iter().map(|b| (b.q_high + b.q_low + b.q_close) / 3.0).collect();
+    (0..tp.len())
+        .map(|i| {
+            if i + 1 < n {
+                return f64::NAN;
+            }
+            let w = &tp[i + 1 - n..=i];
+            let mean = w.iter().sum::<f64>() / n as f64;
+            let dev = w.iter().map(|v| (v - mean).abs()).sum::<f64>() / n as f64;
+            if dev > 0.0 { (tp[i] - mean) / (0.015 * dev) } else { 0.0 }
+        })
+        .collect()
 }
 
 /// 最近 n 个值（含当天）的样本标准差
@@ -557,6 +695,34 @@ pub(crate) mod tests {
         assert!((f.at(IndicatorRef::new(IndicatorId::Rsi, Some(14)), 29) - 100.0).abs() < 1e-9);
         assert_eq!(f.at(IndicatorRef::new(IndicatorId::Ema, Some(5)), 0), 1.0);
         assert!(f.at(IndicatorRef::new(IndicatorId::MacdDif, None), 29) > 0.0, "持续上涨时 DIF 为正");
+    }
+
+    #[test]
+    fn dmi_supertrend_and_cci() {
+        // 先涨 40 天再跌 40 天
+        let closes: Vec<f64> = (0..40).map(|i| 10.0 + i as f64 * 0.2).chain((0..40).map(|i| 18.0 - i as f64 * 0.2)).collect();
+        let b = bars_from(&closes);
+        let f = Frame::new(&b, None);
+        let at = |id, n, i| f.at(IndicatorRef::new(id, n), i);
+        // 上涨段：+DI 在 −DI 上方，趋势明确；下跌段相反
+        assert!(at(IndicatorId::PlusDi, Some(14), 39) > at(IndicatorId::MinusDi, Some(14), 39));
+        assert!(at(IndicatorId::MinusDi, Some(14), 79) > at(IndicatorId::PlusDi, Some(14), 79));
+        assert!(at(IndicatorId::Adx, Some(14), 39) > 25.0 && at(IndicatorId::Adx, Some(14), 79) > 25.0);
+        assert!(at(IndicatorId::PlusDi, Some(14), 13).is_nan(), "前 n 天算不出");
+        assert!(at(IndicatorId::Adx, Some(14), 18).is_nan() && !at(IndicatorId::Adx, Some(14), 19).is_nan(), "ADX 再晚 5 天");
+        // Supertrend：上涨时在股价下方，下跌时翻到上方
+        assert!(at(IndicatorId::Supertrend, Some(10), 39) < closes[39]);
+        assert!(at(IndicatorId::Supertrend, Some(10), 79) > closes[79]);
+        // CCI：典型价匀速上涨时，最新一天在均值上方，(n − 1) / 2 个步长 ÷ (0.015 × 平均绝对偏差)
+        let cci = at(IndicatorId::Cci, Some(5), 20);
+        let step = 0.2;
+        let mad = (2.0 + 1.0 + 0.0 + 1.0 + 2.0) * step / 5.0;
+        assert!((cci - 2.0 * step / (0.015 * mad)).abs() < 1e-6, "{cci}");
+        // 布林带宽度、均线粘合度
+        let w = at(IndicatorId::BollWidth, None, 30);
+        let (u, l, m) = (at(IndicatorId::BollUpper, None, 30), at(IndicatorId::BollLower, None, 30), at(IndicatorId::BollMid, None, 30));
+        assert!((w - (u - l) / m * 100.0).abs() < 1e-9);
+        assert!(at(IndicatorId::MaSpread, None, 58).is_nan() && at(IndicatorId::MaSpread, None, 59) > 0.0);
     }
 
     #[test]

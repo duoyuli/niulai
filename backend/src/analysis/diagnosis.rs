@@ -12,7 +12,7 @@ use super::strategy::Definition;
 
 /// 最近信号看多少个交易日
 pub const RECENT_DAYS: usize = 20;
-/// 诊断需要的日线根数：覆盖 60 日均线和 MACD 的收敛期
+/// 诊断需要的日线根数：覆盖每个信号的预热（最多的是 MACD 背离，约 190 根）再加最近 20 天
 pub const BARS_NEEDED: i64 = 300;
 
 #[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,12 +77,13 @@ fn pct(v: f64) -> String {
     if v.is_nan() { "—".into() } else { format!("{}{:.1}%", if v > 0.0 { "+" } else { "" }, v) }
 }
 
-/// 最近 days 个交易日内出现过的事件类信号（每个信号用默认参数），新的在前
+/// 最近 days 个交易日内出现过的事件类信号（每个信号用默认参数），新的在前。
+/// 中性的信号（十字星、缩量）很常见、本身不说明方向，不列出
 pub fn recent_signals(f: &Frame, days: usize) -> Vec<SignalEvent> {
     let n = f.len();
     let from = n.saturating_sub(days);
     let mut out = vec![];
-    for s in signals::CATALOG.iter().filter(|s| s.kind == SignalKind::Event) {
+    for s in signals::CATALOG.iter().filter(|s| s.kind == SignalKind::Event && s.tone != signals::Tone::Neutral) {
         let params = Params::new();
         let series = signals::series(f, s.id, &params);
         for i in from..n {
@@ -200,6 +201,12 @@ pub fn diagnose(bars: &[DailyBar], meta: &StockMeta, strategies: &[(i64, String,
 mod tests {
     use super::*;
     use crate::analysis::indicators::tests::bars_from;
+
+    #[test]
+    fn enough_history_for_every_signal() {
+        let most = signals::CATALOG.iter().map(|s| signals::warmup(s.id, &Params::new())).max().unwrap();
+        assert!(most as i64 + RECENT_DAYS as i64 <= BARS_NEEDED, "诊断要读 {} 根", most as usize + RECENT_DAYS);
+    }
 
     #[test]
     fn rising_stock_is_diagnosed_as_uptrend() {

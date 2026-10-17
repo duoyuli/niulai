@@ -475,6 +475,12 @@ fn examples(id: IndicatorId) -> Vec<Condition> {
         I::PctFromLow => vec![cmp(I::PctFromLow, Some(60), Le, 10.0)],
         I::PrevHighClose => vec![cmp_ind(I::Close, None, Gt, I::PrevHighClose, Some(60))],
         I::PrevLowClose => vec![cmp_ind(I::Close, None, Lt, I::PrevLowClose, Some(60))],
+        I::PlusDi | I::MinusDi => vec![cmp_ind(I::PlusDi, Some(14), CrossesAbove, I::MinusDi, Some(14)), cmp_ind(I::PlusDi, Some(14), Gt, I::MinusDi, Some(14))],
+        I::Adx => vec![cmp(I::Adx, Some(14), Gt, 25.0), cmp(I::Adx, Some(14), Lt, 20.0)],
+        I::Supertrend => vec![cmp_ind(I::Close, None, CrossesAbove, I::Supertrend, Some(10)), cmp_ind(I::Close, None, Gt, I::Supertrend, Some(10))],
+        I::Cci => vec![cmp(I::Cci, Some(14), CrossesAbove, 100.0), cmp(I::Cci, Some(14), CrossesBelow, -100.0)],
+        I::BollWidth => vec![cmp(I::BollWidth, None, Lt, 10.0)],
+        I::MaSpread => vec![cmp(I::MaSpread, None, Le, 2.0)],
         I::High | I::Low | I::Volume | I::Atr | I::HighN | I::LowN => vec![],
     }
 }

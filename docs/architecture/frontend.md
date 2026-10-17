@@ -20,7 +20,7 @@
 | `src/components/ui.tsx` | 通用组件：卡片、表格、标签、分段按钮、加载与错误状态 |
 | `src/components/PriceChart.tsx`、`EquityChart.tsx` | K 线、成交量、均线、叠加的指标线和标记；回测的账户总值曲线（策略与买入持有，可切换对数坐标） |
 | `src/components/SecuritySearch.tsx` | 按代码或名称搜索股票的下拉框：页头的全局搜索和自选页添加股票共用 |
-| `src/components/DiagnosisCard.tsx`、`SignalChip.tsx` | 个股诊断卡片；信号标签（偏多红色、偏空绿色） |
+| `src/components/DiagnosisCard.tsx`、`SignalChip.tsx` | 个股诊断卡片；信号标签（偏多红色、偏空绿色、中性橙色，样式在 `src/lib/tone.ts`，K 线上的信号标记也用它） |
 | `src/components/backtest.tsx` | 回测的共用部分：交易成本输入、结果展示（单只股票和全市场组合）、规则说明；个股页和策略页共用 |
 | `src/lib/strategy.ts` | 信号和指标名称模板的填充、条件的白话（和后端写法一致）、时间范围、卖出原因的中文名 |
 | `src/components/conditions.tsx` | 条件编辑器：策略的买入卖出和自定义信号共用，每条条件下实时显示白话，信号和指标链接到说明页 |
@@ -78,7 +78,7 @@
 <a id="conventions"></a>
 ## 展示约定
 
-- **红涨绿跌**：按 A 股习惯，上涨、金叉用红色，下跌、死叉用绿色。颜色令牌是 `src/index.css` 中的 `up`、`down`，数值的涨跌颜色统一用 `upDownClass`。
+- **红涨绿跌**：按 A 股习惯，上涨、金叉用红色，下跌、死叉用绿色；不说明方向的中性信号（十字星、缩量等）用橙色圆点。颜色令牌是 `src/index.css` 中的 `up`、`down`，数值的涨跌颜色统一用 `upDownClass`。
 - **价格是字符串**：后端的价格和成交额是十进制字符串，只在展示和画图时转成数字，不在前端做价格运算后再提交。
 - **复权口径**：K 线默认等比前复权（`qfq`）。按钮上写明「等比」和「同花顺」，避免把同花顺的减法复权当成计算口径。均线和交叉信号固定按等比前复权计算（见 [均线与交叉信号](../domains/ma_signals.md)），所以只有选择前复权时才把均线画在 K 线上，选择其他口径时只显示说明。
 - **K 线区间**：股票详情和指数详情用 `RangePicker`（`src/components/RangePicker.tsx`）选择要加载的区间：1 月、3 月、6 月、1 年、3 年、5 年、10 年、全部，或自定义起止日期（URL 参数 `range=custom&from=&to=`）。起点已经早于最早日线的区间看到的和「全部」一样，置灰并提示数据从哪天开始：个股按本地最早的日线，指数和板块从 2022-01-04 开始。加载新区间时旁边显示加载中。回测的区间只按年（`RANGES`）。

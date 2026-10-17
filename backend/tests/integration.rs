@@ -835,12 +835,12 @@ async fn strategies_screening_diagnosis_and_backtests() {
     let engine = Engine::new(settings, db.pool.clone()).await.unwrap();
     let app = logged_in(niulai::api::router(engine)).await;
 
-    // 首次启动时复制了 10 个模板
+    // 首次启动时复制了全部模板
     let (st, list) = call(&app, "GET", "/api/v1/strategies", None).await;
     assert_eq!(st, StatusCode::OK);
-    assert_eq!(list.as_array().unwrap().len(), 10);
+    assert_eq!(list.as_array().unwrap().len(), niulai::analysis::strategy::templates().len());
     let (_, cat) = call(&app, "GET", "/api/v1/strategies/catalog", None).await;
-    assert!(cat["signals"].as_array().unwrap().len() >= 20);
+    assert_eq!(cat["signals"].as_array().unwrap().len(), niulai::analysis::signals::CATALOG.len());
 
     // 试运行：最后一天放量（9 倍）且站在 20 日均线上方
     let def = json!({
@@ -919,7 +919,12 @@ async fn signals_indicators_and_strategy_points() {
     // 内置信号：能写成条件的给出定义和白话，特殊信号给出规则
     let (st, list) = call(&app, "GET", "/api/v1/signals", None).await;
     assert_eq!(st, StatusCode::OK, "{list}");
-    assert_eq!(list.as_array().unwrap().len(), 25);
+    assert_eq!(list.as_array().unwrap().len(), niulai::analysis::signals::CATALOG.len());
+    // 不说明方向的信号（十字星等）是 neutral；连续上涨用「连续 N 天」写成条件
+    let (_, doji) = call(&app, "GET", "/api/v1/signals/doji", None).await;
+    assert_eq!((doji["tone"].as_str(), doji["special"].as_bool()), (Some("neutral"), Some(true)), "{doji}");
+    let (_, streak) = call(&app, "GET", "/api/v1/signals/up_streak", None).await;
+    assert!(streak["explained"][0].as_str().unwrap().contains("连续 3 个交易日"), "{streak}");
     let (_, cross) = call(&app, "GET", "/api/v1/signals/ma_cross_up", None).await;
     assert_eq!(cross["special"], false);
     assert!(cross["explained"][0].as_str().unwrap().contains("上穿"), "{cross}");

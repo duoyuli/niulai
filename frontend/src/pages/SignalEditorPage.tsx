@@ -28,7 +28,8 @@ export function SignalEditorPage() {
     ? {
         name: key ? e.name : `${e.name}（我的）`,
         description: e.description,
-        bullish: e.tone === "bullish",
+        // 中性的内置信号复制后先按偏多，可以在编辑页改
+        bullish: e.tone !== "bearish",
         definition: { match_all: e.definition?.match_all ?? true, conditions: e.definition?.conditions ?? [] },
         based_on: key ? e.based_on : e.builtin ? e.key : e.based_on,
       }

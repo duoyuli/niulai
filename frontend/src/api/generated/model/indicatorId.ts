@@ -41,4 +41,11 @@ export const IndicatorId = {
   pct_from_low: 'pct_from_low',
   prev_high_close: 'prev_high_close',
   prev_low_close: 'prev_low_close',
+  plus_di: 'plus_di',
+  minus_di: 'minus_di',
+  adx: 'adx',
+  supertrend: 'supertrend',
+  cci: 'cci',
+  boll_width: 'boll_width',
+  ma_spread: 'ma_spread',
 } as const;

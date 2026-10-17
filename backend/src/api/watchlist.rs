@@ -21,7 +21,7 @@ use crate::error::{ApiError, ApiResult};
 
 /// 每只股票取最近多少根前复权日线做诊断：约两年，足够算出 250 日均线并找到最近一次交叉
 const LOOKBACK: i64 = 500;
-/// 计算最近信号需要的日线根数：覆盖 60 日新高和 MACD 的收敛期
+/// 计算最近 5 天信号需要的日线根数：覆盖每个信号的预热（最多的是 MACD 背离，约 190 根）
 const RECENT_BARS: i64 = 200;
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -177,6 +177,13 @@ async fn remove_watch(State(s): State<AppState>, Path(code): Path<String>) -> Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enough_history_for_recent_signals() {
+        use crate::analysis::signals;
+        let most = signals::CATALOG.iter().map(|s| signals::warmup(s.id, &signals::Params::new())).max().unwrap();
+        assert!(most as i64 + 5 <= RECENT_BARS);
+    }
 
     fn pts(closes: &[f64]) -> Vec<(NaiveDate, f64)> {
         let d0 = NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
