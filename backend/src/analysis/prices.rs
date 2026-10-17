@@ -54,13 +54,21 @@ pub async fn recent_bars(pool: &PgPool, code: &str, n: i64) -> sqlx::Result<Vec<
     Ok(rows.into_iter().map(bar).collect())
 }
 
+/// 同时进行的全市场计算最多几个。每个都要读几百万行日线、算几秒到十几秒，
+/// 不限制的话几个页面同时打开就会占满数据库连接和 CPU，拖慢接口和同步任务；多出来的排队等待
+pub const MARKET_SCANS: usize = 2;
+static SCAN_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MARKET_SCANS);
+
+// @project-doc docs/architecture/sync_pipeline.md#rate_limit
 /// 全市场在 (lo, hi] 内的日线，按股票代码顺序逐只交给 f，同一时刻只有一只股票的数据在内存中。
-/// 全市场扫描、每日巡检和组合回测都用它：几年的全市场日线有几百万行，一次性读入会占用大量内存
+/// 每日巡检、市场概况、信号的过去表现和组合回测都用它：几年的全市场日线有几百万行，一次性读入会占用大量内存。
+/// 同时最多 [`MARKET_SCANS`] 个；f 里的计算交给 [`run_cpu`]，不占住异步线程
 pub async fn for_each_stock<F>(pool: &PgPool, lo: NaiveDate, hi: NaiveDate, mut f: F) -> sqlx::Result<()>
 where
     F: FnMut(&str, &[DailyBar]),
 {
     use futures_util::TryStreamExt;
+    let _slot = SCAN_SLOTS.acquire().await.expect("信号量不会被关闭");
     let mut tx = pool.begin().await?;
     // 一次性的大查询：JIT 编译的耗时比它省下的多；排序放在内存里，不落盘
     sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
@@ -76,7 +84,7 @@ where
     while let Some((c, d, o, h, l, cl, qo, qh, ql, qc, v, a)) = rows.try_next().await? {
         if c != code {
             if !bars.is_empty() {
-                f(&code, &bars);
+                run_cpu(|| f(&code, &bars));
                 bars.clear();
             }
             code = c;
@@ -84,34 +92,22 @@ where
         bars.push(bar((d, o, h, l, cl, qo, qh, ql, qc, v, a)));
     }
     if !bars.is_empty() {
-        f(&code, &bars);
+        run_cpu(|| f(&code, &bars));
     }
     drop(rows);
     tx.commit().await?;
     Ok(())
 }
 
+/// 执行一段耗 CPU 的计算：多线程运行时（服务）里用 block_in_place，让这个线程上的其他异步任务（接口、同步任务的续租）
+/// 挪到别的线程继续；单线程运行时（测试）里直接执行
+pub fn run_cpu<R>(f: impl FnOnce() -> R) -> R {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    if Handle::try_current().is_ok_and(|h| h.runtime_flavor() == RuntimeFlavor::MultiThread) { tokio::task::block_in_place(f) } else { f() }
+}
+
 /// 前复权收盘价序列，按股票分组、日期升序
 pub type CloseSeries = HashMap<String, Vec<(NaiveDate, f64)>>;
-
-// @project-doc docs/domains/ma_signals.md#market_scan
-/// 全市场在 (lo, hi] 内的前复权收盘价。日线按日期索引读取，复权分段只有几万行，整表参与关联
-pub async fn closes_between(pool: &PgPool, lo: NaiveDate, hi: NaiveDate) -> sqlx::Result<CloseSeries> {
-    let mut tx = pool.begin().await?;
-    // 这是一次性的大查询：JIT 编译的耗时比它省下的多；排序放在内存里，不落盘
-    sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
-    sqlx::query("SET LOCAL work_mem = '64MB'").execute(&mut *tx).await?;
-    let rows: Vec<(String, NaiveDate, f64)> = sqlx::query_as(
-        "SELECT thscode, trade_date, close FROM mkt.v_stock_bar_qfq
-         WHERE trade_date > $1 AND trade_date <= $2 ORDER BY thscode, trade_date",
-    )
-    .bind(lo)
-    .bind(hi)
-    .fetch_all(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(group(rows))
-}
 
 /// 指定股票各自最近 n 根前复权收盘价
 pub async fn recent_closes(pool: &PgPool, codes: &[String], n: i64) -> sqlx::Result<CloseSeries> {

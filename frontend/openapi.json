@@ -1405,109 +1405,6 @@
         }
       }
     },
-    "/securities/{thscode}/ma": {
-      "get": {
-        "tags": [
-          "market"
-        ],
-        "summary": "个股均线与交叉信号（等比前复权）",
-        "operationId": "security_ma",
-        "parameters": [
-          {
-            "name": "thscode",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "fast",
-            "in": "query",
-            "description": "快线周期，默认 15",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            }
-          },
-          {
-            "name": "slow",
-            "in": "query",
-            "description": "慢线周期，默认 30",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            }
-          },
-          {
-            "name": "start",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "format": "date"
-            }
-          },
-          {
-            "name": "end",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "format": "date"
-            }
-          },
-          {
-            "name": "signals_only",
-            "in": "query",
-            "description": "true 时只返回发生交叉的日期",
-            "required": false,
-            "schema": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MaSeries"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "参数不合法",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/securities/{thscode}/signal-days": {
       "post": {
         "tags": [
@@ -1766,88 +1663,6 @@
           },
           "400": {
             "description": "定义不合法",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/signals/ma-cross": {
-      "get": {
-        "tags": [
-          "market"
-        ],
-        "summary": "全市场均线交叉扫描：指定交易日发生金叉或死叉的股票。结果按复权价版本缓存在进程内",
-        "operationId": "ma_cross_scan",
-        "parameters": [
-          {
-            "name": "date",
-            "in": "query",
-            "description": "交易日，默认本地最新的交易日",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "format": "date"
-            }
-          },
-          {
-            "name": "fast",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            }
-          },
-          {
-            "name": "slow",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            }
-          },
-          {
-            "name": "signal",
-            "in": "query",
-            "description": "golden / death，默认两者都返回",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScanResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "参数不合法",
             "content": {
               "application/json": {
                 "schema": {
@@ -3502,7 +3317,6 @@
           "priority",
           "enabled",
           "schedule",
-          "plan",
           "only_current",
           "open_tasks",
           "dead_tasks",
@@ -3554,17 +3368,13 @@
             "type": "integer",
             "format": "int64"
           },
-          "plan": {
-            "type": "string",
-            "description": "所属同步计划：daily / weekly / monthly / report_season / manual"
-          },
           "priority": {
             "type": "string",
             "description": "P0–P3"
           },
           "schedule": {
             "type": "string",
-            "description": "更新频率：after_close / daily / weekly / monthly / report_season / after_open"
+            "description": "所属同步计划：daily / weekly / monthly / report_season / manual"
           },
           "summary": {
             "type": "string"
@@ -4458,77 +4268,6 @@
             "type": "string"
           },
           "username": {
-            "type": "string"
-          }
-        }
-      },
-      "MaPoint": {
-        "type": "object",
-        "required": [
-          "trade_date",
-          "close",
-          "ma_fast",
-          "ma_slow"
-        ],
-        "properties": {
-          "close": {
-            "type": "number",
-            "format": "double",
-            "description": "等比前复权收盘价"
-          },
-          "ma_fast": {
-            "type": "number",
-            "format": "double"
-          },
-          "ma_slow": {
-            "type": "number",
-            "format": "double"
-          },
-          "signal": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/CrossSignal"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "trade_date": {
-            "type": "string",
-            "format": "date"
-          }
-        }
-      },
-      "MaSeries": {
-        "type": "object",
-        "required": [
-          "thscode",
-          "fast",
-          "slow",
-          "price_basis",
-          "points"
-        ],
-        "properties": {
-          "fast": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "points": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MaPoint"
-            }
-          },
-          "price_basis": {
-            "type": "string",
-            "description": "计算口径：等比前复权收盘价的简单移动平均"
-          },
-          "slow": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "thscode": {
             "type": "string"
           }
         }
@@ -5457,76 +5196,6 @@
               "string",
               "null"
             ],
-            "format": "date"
-          }
-        }
-      },
-      "ScanHit": {
-        "type": "object",
-        "required": [
-          "thscode",
-          "signal",
-          "close",
-          "ma_fast",
-          "ma_slow"
-        ],
-        "properties": {
-          "close": {
-            "type": "number",
-            "format": "double"
-          },
-          "ma_fast": {
-            "type": "number",
-            "format": "double"
-          },
-          "ma_slow": {
-            "type": "number",
-            "format": "double"
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "signal": {
-            "$ref": "#/components/schemas/CrossSignal"
-          },
-          "thscode": {
-            "type": "string"
-          }
-        }
-      },
-      "ScanResult": {
-        "type": "object",
-        "required": [
-          "trade_date",
-          "fast",
-          "slow",
-          "scanned",
-          "hits"
-        ],
-        "properties": {
-          "fast": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "hits": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ScanHit"
-            }
-          },
-          "scanned": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "slow": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "trade_date": {
-            "type": "string",
             "format": "date"
           }
         }
@@ -7133,7 +6802,7 @@
               "string",
               "null"
             ],
-            "description": "要升级到的版本，例如 1.2.0；为空时升级到最新版本"
+            "description": "要升级到的版本，例如 2026.10.18；为空时升级到最新版本"
           }
         }
       },
@@ -7171,7 +6840,7 @@
               "string",
               "null"
             ],
-            "description": "当前步骤或结果，例如「拉取镜像」「已升级到 1.2.0」"
+            "description": "当前步骤或结果，例如「拉取镜像」「已升级到 2026.10.18」"
           },
           "state": {
             "$ref": "#/components/schemas/UpgradeState"
@@ -7181,7 +6850,7 @@
             "items": {
               "$ref": "#/components/schemas/UpgradeStep"
             },
-            "description": "每一步的进度（下载、更新升级助手、备份、部署迁移、启动新版本）；旧版本的升级助手不写，为空"
+            "description": "每一步的进度（下载、更新升级助手、备份、部署迁移、启动新版本）；升级助手还没接手时为空"
           },
           "target": {
             "type": [
@@ -7280,7 +6949,7 @@
           },
           "current": {
             "type": "string",
-            "description": "正在运行的版本，例如 1.1.0；本机编译的是 dev"
+            "description": "正在运行的版本，例如 2026.10.18；本机编译的是 dev"
           },
           "has_update": {
             "type": "boolean"

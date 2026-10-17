@@ -89,10 +89,8 @@ pub struct DatasetStatus {
     /// P0–P3
     pub priority: String,
     pub enabled: bool,
-    /// 更新频率：after_close / daily / weekly / monthly / report_season / after_open
-    pub schedule: String,
     /// 所属同步计划：daily / weekly / monthly / report_season / manual
-    pub plan: String,
+    pub schedule: String,
     /// 只有当天的值，错过当天就补不回来
     pub only_current: bool,
     pub last_done_at: Option<DateTime<Utc>>,
@@ -137,8 +135,7 @@ async fn list_datasets(State(s): State<AppState>) -> ApiResult<Json<Vec<DatasetS
                 title: spec.map_or_else(|| dataset_id.clone(), |s| s.title.clone()),
                 category: spec.map_or_else(|| "其他".into(), |s| s.category.clone()),
                 summary: spec.map(|s| s.summary.clone()).unwrap_or_default(),
-                schedule: spec.map_or("after_close", |s| s.schedule.as_str()).into(),
-                plan: spec.map_or("daily", |s| crate::sync::scheduler::Plan::of(s.schedule).key()).into(),
+                schedule: spec.map_or("daily", |s| s.schedule.key()).into(),
                 only_current: spec.is_some_and(|s| s.trade_date_guard && s.recover_with.is_none()),
                 dataset_id,
                 domain,

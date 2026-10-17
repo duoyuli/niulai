@@ -6,19 +6,19 @@ use std::time::Instant;
 
 use sqlx::PgPool;
 
-const PRICE_DATASETS: &[&str] = &["a_share.bar_1d", "a_share.snapshot", "a_share.corp_action", "a_share.corp_action_dump"];
 /// 运行进行中时，两次重算之间至少间隔多久
 pub const REFRESH_INTERVAL: &str = "5 minutes";
 /// ops.scheduler 中记录上次重算时刻的作业名
 const JOB: &str = "adj_rebuild";
 
 /// 返回行情或公司行动是否有变化（有变化时才重算，调用方据此决定是否巡检）
-pub async fn after_run(pool: &PgPool, run_id: i64) -> anyhow::Result<bool> {
+/// price_datasets：写入影响复权价的表的数据集（[`crate::sync::spec::Registry::writing_to`] 加 [`crate::sync::spec::PRICE_TABLES`]）
+pub async fn after_run(pool: &PgPool, run_id: i64, price_datasets: &[String]) -> anyhow::Result<bool> {
     let changed: i64 = sqlx::query_scalar(
         "SELECT coalesce(sum(changed), 0) FROM ops.task WHERE run_id = $1 AND dataset_id = ANY($2) AND status = 'done'",
     )
     .bind(run_id)
-    .bind(PRICE_DATASETS)
+    .bind(price_datasets)
     .fetch_one(pool)
     .await?;
     if changed == 0 {
@@ -32,12 +32,12 @@ pub async fn after_run(pool: &PgPool, run_id: i64) -> anyhow::Result<bool> {
 // @project-doc docs/architecture/sync_pipeline.md#postprocess
 /// 自上次重算以来有新的行情或公司行动写入，且距上次重算超过 REFRESH_INTERVAL 时重算。
 /// 多个进程同时调用时，只有抢到 ops.scheduler 作业的那个执行。返回是否执行了重算。
-pub async fn refresh_if_stale(pool: &PgPool) -> anyhow::Result<bool> {
+pub async fn refresh_if_stale(pool: &PgPool, price_datasets: &[String]) -> anyhow::Result<bool> {
     let pending: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM ops.task WHERE dataset_id = ANY($1) AND status = 'done' AND changed > 0
                           AND finished_at > coalesce((SELECT fired_at FROM ops.scheduler WHERE job = $2), '-infinity'))",
     )
-    .bind(PRICE_DATASETS)
+    .bind(price_datasets)
     .bind(JOB)
     .fetch_one(pool)
     .await?;

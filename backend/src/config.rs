@@ -35,9 +35,6 @@ pub struct Settings {
     /// 请求超时（秒）
     #[serde(default = "default_http_timeout_s")]
     pub http_timeout_s: u64,
-    /// 每日收盘后增量的触发时间（Asia/Shanghai，HH:MM）
-    #[serde(default = "default_after_close")]
-    pub schedule_after_close: String,
     /// 是否在 worker 中启用定时调度
     #[serde(default = "default_true")]
     pub scheduler_enabled: bool,
@@ -89,9 +86,6 @@ fn default_rate_limit_rps() -> u32 {
 fn default_http_timeout_s() -> u64 {
     60
 }
-fn default_after_close() -> String {
-    "18:00".into()
-}
 fn default_true() -> bool {
     true
 }
@@ -119,13 +113,7 @@ impl Settings {
         if self.worker_concurrency == 0 || self.rate_limit_rps == 0 {
             bail!("NIULAI_WORKER_CONCURRENCY 和 NIULAI_RATE_LIMIT_RPS 必须大于 0");
         }
-        self.after_close_time()?;
         Ok(())
-    }
-
-    pub fn after_close_time(&self) -> anyhow::Result<chrono::NaiveTime> {
-        chrono::NaiveTime::parse_from_str(&self.schedule_after_close, "%H:%M")
-            .with_context(|| format!("NIULAI_SCHEDULE_AFTER_CLOSE 格式应为 HH:MM：{}", self.schedule_after_close))
     }
 
     pub fn datasets_file(&self) -> anyhow::Result<PathBuf> {

@@ -544,8 +544,8 @@ mod tests {
         crossing(a, &vec![level; a.len()], up)
     }
 
-    /// 改写前的实现，只用来核对条件定义的结果逐位一致
-        fn legacy(f: &Frame, id: SignalId, params: &Params) -> Vec<bool> {
+    /// 直接按规则写的参照实现，核对这 19 个信号的条件定义逐位一致
+    fn reference(f: &Frame, id: SignalId, params: &Params) -> Vec<bool> {
         let ind = |id: IndicatorId, n: Option<u32>| f.get(IndicatorRef::new(id, n));
         let pv = |k: &str| param(id, params, k);
         let n = f.len();
@@ -618,11 +618,11 @@ mod tests {
                     })
                     .collect()
             }
-            _ => unreachable!("只核对改写前就有的信号"),
+            _ => unreachable!("只核对 ORIGINAL 中的信号"),
         }
     }
 
-    /// 改写成条件之前就有的 19 个信号
+    /// 有参照实现的 19 个信号
     const ORIGINAL: &[SignalId] = &[
         S::MaCrossUp,
         S::MaCrossDown,
@@ -676,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn condition_definitions_match_the_old_implementation_bit_for_bit() {
+    fn condition_definitions_match_the_reference_bit_for_bit() {
         let param_sets: Vec<Vec<(&str, f64)>> = vec![
             vec![],
             vec![("fast", 3.0), ("slow", 10.0), ("short", 3.0), ("mid", 8.0), ("long", 21.0), ("n", 10.0), ("level", 40.0), ("ratio", 1.5), ("pct", 3.0)],
@@ -689,7 +689,7 @@ mod tests {
                     let params: Params = ps.iter().filter(|(k, _)| info.params.iter().any(|p| p.key == *k)).map(|(k, v)| (k.to_string(), *v)).collect();
                     let f = Frame::new(&b, None);
                     let new = series(&f, info.id, &params);
-                    let old = legacy(&f, info.id, &params);
+                    let old = reference(&f, info.id, &params);
                     assert_eq!(*new, old, "{:?} {params:?} seed {seed}", info.id);
                     if old.iter().any(|v| *v) {
                         fired.insert(info.id);

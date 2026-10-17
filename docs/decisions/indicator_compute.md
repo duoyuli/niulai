@@ -1,6 +1,6 @@
 # ADR：指标在 Rust 中计算，扫描结果按复权版本缓存
 
-- 状态：已采纳（accepted），2026-10-16。决策第 2 条中的因子表日期索引和第 4 条的默认扫描日期已被 [ADR：等比复权因子按区间存储](adj_factor_segments.md) 取代：因子表已删除，扫描默认取日线表的最新交易日。
+- 状态：已采纳（accepted），2026-10-16。决策第 2 条中的因子表日期索引和第 4 条的默认扫描日期已被 [ADR：等比复权因子按区间存储](adj_factor_segments.md) 取代：因子表已删除，扫描默认取日线表的最新交易日。决策第 3 条的扫描缓存和全市场扫描接口 `GET /signals/ma-cross` 于 2026-10-17 删除（没有页面使用）；第 1 条「指标在 Rust 中计算」仍然有效。
 - 相关文档：[均线与交叉信号](../domains/ma_signals.md)、[回测](../domains/backtest.md)、[运行结束后的计算](../architecture/sync_pipeline.md#postprocess)、[数据库分层](../architecture/data_model.md#ops_tables)。
 
 ## 背景

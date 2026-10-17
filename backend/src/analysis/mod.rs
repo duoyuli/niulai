@@ -11,7 +11,6 @@ pub mod market;
 pub mod points;
 pub mod portfolio;
 pub mod prices;
-pub mod scan;
 pub mod screener;
 pub mod signal_lib;
 pub mod signal_stats;

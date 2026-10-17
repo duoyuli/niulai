@@ -31,8 +31,11 @@ const REPORT_SEASON_MONTHS: [u32; 5] = [1, 4, 7, 8, 10];
 const SETTING: &str = "sync_schedule";
 
 pub async fn run(engine: Arc<Engine>, mut stop: watch::Receiver<bool>) -> anyhow::Result<()> {
-    let times = load_times(&engine).await?;
-    tracing::info!(daily = %times.daily_time, weekly = %times.weekly_rule(), "调度器已启动（上海时间）");
+    match load_times(&engine).await {
+        Ok(times) => tracing::info!(daily = %times.daily_time, weekly = %times.weekly_rule(), "调度器已启动（上海时间）"),
+        // 读不到时照常运行：每次检查都会重新读取
+        Err(e) => tracing::warn!(error = %format!("{e:#}"), "调度器已启动，同步时间暂时读不到"),
+    }
     loop {
         if *stop.borrow() {
             return Ok(());
@@ -77,9 +80,9 @@ pub struct ScheduleTimes {
 }
 
 impl ScheduleTimes {
-    /// 网页上没有改过时：每日用 NIULAI_SCHEDULE_AFTER_CLOSE（默认 18:00），每周六 08:00
-    fn defaults(engine: &Engine) -> Self {
-        ScheduleTimes { daily_time: engine.settings.schedule_after_close.clone(), weekly_weekday: 6, weekly_time: "08:00".into() }
+    /// 网页上没有改过时：每个交易日 18:00（收盘后 3 小时，当天数据基本都已出齐），每周六 08:00（周末供应商空闲，不和每日同步抢请求额度）
+    fn defaults() -> Self {
+        ScheduleTimes { daily_time: "18:00".into(), weekly_weekday: 6, weekly_time: "08:00".into() }
     }
 
     pub fn daily_at(&self) -> anyhow::Result<NaiveTime> {
@@ -123,7 +126,7 @@ pub async fn load_times(engine: &Engine) -> anyhow::Result<ScheduleTimes> {
     Ok(saved
         .and_then(|v| serde_json::from_str::<ScheduleTimes>(&v).ok())
         .filter(|t| t.validate().is_ok())
-        .unwrap_or_else(|| ScheduleTimes::defaults(engine)))
+        .unwrap_or_else(ScheduleTimes::defaults))
 }
 
 pub async fn save_times(pool: &PgPool, times: &ScheduleTimes) -> anyhow::Result<()> {
@@ -144,71 +147,25 @@ pub async fn save_times(pool: &PgPool, times: &ScheduleTimes) -> anyhow::Result<
     Ok(())
 }
 
-/// 数据集属于哪个同步计划
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Plan {
-    Daily,
-    Weekly,
-    Monthly,
-    ReportSeason,
-    /// 不自动同步，只手动发起
-    Manual,
-}
-
-impl Plan {
-    pub const ALL: [Plan; 5] = [Plan::Daily, Plan::Weekly, Plan::Monthly, Plan::ReportSeason, Plan::Manual];
-
-    pub fn of(schedule: Schedule) -> Plan {
-        match schedule {
-            Schedule::AfterClose | Schedule::Daily => Plan::Daily,
-            Schedule::Weekly => Plan::Weekly,
-            Schedule::Monthly => Plan::Monthly,
-            Schedule::ReportSeason => Plan::ReportSeason,
-            // 开盘后的调度尚未启用：竞价终态在收盘后同样可取
-            Schedule::AfterOpen => Plan::Manual,
-        }
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Plan::Daily => "daily",
-            Plan::Weekly => "weekly",
-            Plan::Monthly => "monthly",
-            Plan::ReportSeason => "report_season",
-            Plan::Manual => "manual",
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Plan::Daily => "每日收盘后",
-            Plan::Weekly => "每周",
-            Plan::Monthly => "每月",
-            Plan::ReportSeason => "财报季",
-            Plan::Manual => "不自动同步",
-        }
-    }
-}
-
 fn in_report_season(d: NaiveDate) -> bool {
     REPORT_SEASON_MONTHS.contains(&d.month())
 }
 
 /// 每日同步包括的数据集：每天的，以及财报季里的财报季数据
 pub fn due_daily(schedule: Schedule, today: NaiveDate) -> bool {
-    match Plan::of(schedule) {
-        Plan::Daily => true,
-        Plan::ReportSeason => in_report_season(today),
+    match schedule {
+        Schedule::Daily => true,
+        Schedule::ReportSeason => in_report_season(today),
         _ => false,
     }
 }
 
 /// 每周同步包括的数据集：每周的、财报季以外月份的财报季数据，以及本月第一次每周同步时的每月数据
 pub fn due_weekly(schedule: Schedule, today: NaiveDate, monthly: bool) -> bool {
-    match Plan::of(schedule) {
-        Plan::Weekly => true,
-        Plan::ReportSeason => !in_report_season(today),
-        Plan::Monthly => monthly,
+    match schedule {
+        Schedule::Weekly => true,
+        Schedule::ReportSeason => !in_report_season(today),
+        Schedule::Monthly => monthly,
         _ => false,
     }
 }
@@ -260,7 +217,7 @@ async fn tick(engine: &Engine) -> anyhow::Result<()> {
 
 /// 每日收盘后：交易日到点触发一次
 async fn daily_tick(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
-    if today.weekday().number_from_monday() > 5 || !claim(&engine.pool, "after_close", today, "day").await? {
+    if today.weekday().number_from_monday() > 5 || !claim(&engine.pool, "daily", today, "day").await? {
         return Ok(());
     }
     if !is_trading_day(engine, today).await? {
@@ -270,7 +227,7 @@ async fn daily_tick(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
     let due: Vec<&DatasetSpec> = engine.registry.datasets.iter().filter(|d| d.enabled && due_daily(d.schedule, today)).collect();
     let opts = planner::PlanOptions { trade_date: Some(today), trigger: Some("daily".into()), ..Default::default() };
     let (run_id, summary) = engine.planner().plan_run(RunKind::Incremental, &due, opts).await?;
-    sqlx::query("UPDATE ops.scheduler SET run_id = $2 WHERE job = $1").bind("after_close").bind(run_id).execute(&engine.pool).await?;
+    sqlx::query("UPDATE ops.scheduler SET run_id = $2 WHERE job = $1").bind("daily").bind(run_id).execute(&engine.pool).await?;
     let tasks: usize = summary.iter().map(|(_, n)| n).sum();
     tracing::info!(run_id, datasets = due.len(), tasks, "每日同步已规划");
     Ok(())
@@ -307,8 +264,8 @@ async fn catch_up(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
         .await?;
     let Some(prev) = prev else { return Ok(()) };
     // 系统还没开始每日同步（例如刚部署、还在首次回补）时不补
-    let last: Option<NaiveDate> = sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'after_close'").fetch_optional(&engine.pool).await?;
-    if last.is_none_or(|l| l >= prev) || !claim(&engine.pool, "after_close", prev, "day").await? {
+    let last: Option<NaiveDate> = sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'daily'").fetch_optional(&engine.pool).await?;
+    if last.is_none_or(|l| l >= prev) || !claim(&engine.pool, "daily", prev, "day").await? {
         return Ok(());
     }
     let due: Vec<&DatasetSpec> = engine.registry.datasets.iter().filter(|d| d.enabled && due_daily(d.schedule, prev)).collect();
@@ -363,7 +320,7 @@ pub async fn overview(engine: &Engine) -> anyhow::Result<SyncSchedule> {
     let now = now_cn();
     let (daily_at, weekly_at, weekday) = (times.daily_at()?, times.weekly_at()?, times.weekday()?);
 
-    let fired_today: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ops.scheduler WHERE job = 'after_close' AND last_fired >= $1)")
+    let fired_today: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ops.scheduler WHERE job = 'daily' AND last_fired >= $1)")
         .bind(now.date())
         .fetch_one(&engine.pool)
         .await?;
@@ -379,15 +336,15 @@ pub async fn overview(engine: &Engine) -> anyhow::Result<SyncSchedule> {
     let weekly_rule = times.weekly_rule();
 
     let mut plans = vec![];
-    for plan in Plan::ALL {
+    for plan in Schedule::ALL {
         let (rule, next, job) = match plan {
-            Plan::Daily => (format!("每个交易日 {}", times.daily_time), Some(next_daily), Some("after_close")),
-            Plan::Weekly => (weekly_rule.clone(), Some(next_weekly), Some("weekly")),
-            Plan::Monthly => (format!("每月第一次每周同步时（当月第一个{} {}）", weekday_name(times.weekly_weekday), times.weekly_time), Some(next_monthly), Some("monthly")),
-            Plan::ReportSeason => ("1、4、7、8、10 月随每日同步，其余月份随每周同步".to_string(), Some(next_season), None),
-            Plan::Manual => ("不自动同步，需要时手动发起".to_string(), None, None),
+            Schedule::Daily => (format!("每个交易日 {}", times.daily_time), Some(next_daily), Some("daily")),
+            Schedule::Weekly => (weekly_rule.clone(), Some(next_weekly), Some("weekly")),
+            Schedule::Monthly => (format!("每月第一次每周同步时（当月第一个{} {}）", weekday_name(times.weekly_weekday), times.weekly_time), Some(next_monthly), Some("monthly")),
+            Schedule::ReportSeason => ("1、4、7、8、10 月随每日同步，其余月份随每周同步".to_string(), Some(next_season), None),
+            Schedule::Manual => ("不自动同步，需要时手动发起".to_string(), None, None),
         };
-        let datasets: Vec<String> = engine.registry.datasets.iter().filter(|d| d.enabled && Plan::of(d.schedule) == plan).map(|d| d.id.clone()).collect();
+        let datasets: Vec<String> = engine.registry.datasets.iter().filter(|d| d.enabled && d.schedule == plan).map(|d| d.id.clone()).collect();
         let (last_at, last_run_id, last_status) = match job {
             Some(job) => last_fired(&engine.pool, job).await?,
             None => (None, None, None),
@@ -456,7 +413,7 @@ mod tests {
         assert!(!due_daily(Schedule::Weekly, nov));
         assert!(!due_weekly(Schedule::Monthly, nov, false));
         assert!(due_weekly(Schedule::Monthly, nov, true));
-        assert!(!due_daily(Schedule::AfterOpen, nov) && !due_weekly(Schedule::AfterOpen, nov, true));
+        assert!(!due_daily(Schedule::Manual, nov) && !due_weekly(Schedule::Manual, nov, true));
     }
 
     #[test]

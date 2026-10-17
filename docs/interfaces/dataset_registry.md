@@ -33,14 +33,14 @@
 | `key` | 是 | 主键模板，生成 `raw.record.rkey` |
 | `thscode`、`obs_date` | 否 | 记录关联的证券和业务日期的模板，写入 `raw.record` 的同名列 |
 | `incremental` | 否 | 增量规则：`rerun`（与回补相同的分区，整份重取）、`{since_cursor: {overlap_days: N}}`（从游标往后，重叠 N 天）、`{latest_n: {params: {...}}}` 或 `{latest_n: {n: N}}`（只取最近 N 期） |
-| `schedule` | 否 | `after_close`、`daily`、`weekly`、`monthly`、`report_season`、`after_open`，到期规则见 [定时调度](../architecture/sync_pipeline.md#scheduling) |
+| `schedule` | 否 | `daily`（默认）、`weekly`、`monthly`、`report_season`、`manual`（不自动同步），到期规则见 [定时调度](../architecture/sync_pipeline.md#scheduling) |
 | `store_record` | 否 | 是否写入通用记录库 `raw.record`，默认 true |
 | `sink` | 否 | 要写入的类型化表列表，必须是 `sinks.rs` 中已实现的组合 |
 | `trade_date_guard` | 否 | 快照类数据集设为 true：执行前做交易日校验，未收盘或数据未就绪时推迟，已经错过的交易日记为失败，见 [交易日校验](../domains/market_data_rules.md#trade_date_guard)。默认 false |
 | `recover_with` | 否 | 这个数据集取不到时，由哪个有历史的数据集补回同样的数据，例如收盘快照由个股日线补。兜底补偿按它规划，见 [完整性核对与兜底补偿](../architecture/sync_pipeline.md#audit)。没有配置的只有当天值的数据集，错过就补不回来 |
 | `empty_codes` | 否 | 按「没有数据」处理的供应商错误码列表，例如 `a_share.fin_indicator` 的 `[5003]`。命中时不重试，任务记为 `empty`，原因写在 `last_error` |
 
-说明性字段（程序不读取）：`capture`（`upsert` 表示参考类数据，`snapshot` 表示观察类数据，实际语义由 `key` 决定）、`backfill`（回补范围实际由分区决定）、`format`、`notes`。
+`notes` 是给人看的说明，程序不读取。回补范围由分区决定，覆盖还是追加由 `key` 决定，不另设字段。
 
 <a id="partitions"></a>
 ## 分区类型
@@ -109,6 +109,8 @@
 | 数据量很大、已有类型化表 | `store_record: false`，只写类型化表 |
 
 目前 `store_record: false` 的数据集是 `a_share.bar_1d`、`a_share.snapshot`、`index.bar_1d`、`index.snapshot`。已实现的 sink 组合见 [类型化表](../architecture/data_model.md#typed_tables)。
+
+数据集在流程中的角色由 `sink` 和分区推出，代码里不写死数据集 ID（`spec.rs` 的 `Registry`）：`sink` 中有 `mkt.stock_bar_1d` 或 `mkt.corp_action` 的，有变化时运行结束后重算复权；按证券和时间窗口取、写日线表的，参加数据核检，其中写个股日线的那个用于兜底补偿时按股票补。
 
 <a id="adding_dataset"></a>
 ## 新增数据集

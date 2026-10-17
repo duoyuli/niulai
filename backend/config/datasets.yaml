@@ -1,59 +1,27 @@
-# niulai 数据集注册表：同花顺金融数据服务（https://fuyao.aicubes.cn），免费 API Key
+# niulai 数据集注册表：同花顺金融数据服务（https://fuyao.aicubes.cn）
 #
-# 每个条目声明一个可同步的数据集。同步程序是通用的：读取这份配置，按 partition 生成任务，
-# 按 paging 翻页，按 records 取出记录，按 key 生成主键，写入 raw.record（见 backend/migrations/20261015000001_sync.sql）；
-# 配置了 sink 的数据集，再投影到类型化表。新增数据集只需在这里加一个条目。
-#
-# 每个数据集的探测结果（2026-10-15，免费 Key）写在 notes 里。字段说明见 docs/interfaces/dataset_registry.md，
-# 数据内容与历史深度见 docs/interfaces/dataset_catalog.md。
+# 每个条目是一个可同步的数据集。同步程序是通用的：按 partition 切分任务，按 paging 翻页，按 records 取出记录，
+# 按 key 生成主键写入 raw.record，配置了 sink 的再投影到类型化表。新增数据集只需在这里加一个条目。
+# 每个数据集的实测结论写在 notes 里（程序不读取）。
 #
 # @project-doc docs/interfaces/dataset_registry.md#fields
-# ── 字段说明 ─────────────────────────────────────────────────────────────
-# id          数据集 ID，格式 <domain>.<name>
-# endpoint    GET 路径；params 中 {var} 由分区变量填充
-# title       中文名，数据同步页上显示
-# category    分类，数据同步页按它分组：基础信息、行情、公司行动、财务、估值与市值、指数与板块、涨跌停、龙虎榜、
-#             热点与异动、新股、基金、期货、期权、港股新股
-# summary     一句话说明：是什么数据、用在哪里
-# recover_with 可选。只有当天值的快照类数据集取不到时，由哪个有历史的数据集补回同样的数据（例如收盘快照由个股日线补）
-# priority    P0 当前功能必需 | P1 A 股相关、建议现在就开始同步积累 | P2 其他资产 | P3 低价值或按需
-# partition   任务怎么切分：
-#   once                         一个任务
-#   enum: {param: [v1, v2]}      对参数取值做笛卡尔积
-#   security                     每只证券一个任务；universe 指定范围（SQL 条件，作用于 ref.security 或 raw.record）
-#   security_batch: N            每 N 只证券一个任务，代码用逗号拼接后填入 {thscodes}
-#   security_window              每只证券 × 时间窗口；window_days 为窗口长度，floor 为最早日期，
-#                                start_from: list_date 表示从上市日开始
-#   trading_day                  每个交易日一个任务；变量 {date}（yyyy-MM-dd）、{date_ms}
-#   report_period                每只证券 × 报告期；变量 {report}（例：2025-4）
-#   from_dataset                 取另一个数据集记录中的字段作为分区，例如营业部 ID；
-#                                字段写 rkey / thscode / obs_date，或者以 $ 开头的 JSONPath（作用在 payload 上）；
-#                                filter 是作用于来源记录 r 的额外 SQL 条件
-# paging      none | offset{limit_param, offset_param, size} | page{page_param, size_param, size}
-#             | cursor{...}；翻到返回条数 < size 为止
-# records     从响应中取记录数组的路径；可以是列表（多个数组合并），也可以是 "data"（整个对象作为一条记录）
-# key         主键模板，拼接时用 '|' 分隔；{_part.x} 引用分区变量；{field:date} 把毫秒时间戳转成日期
-# obs_date    记录的业务日期（写入 raw.record.obs_date）
-# capture     说明性字段，程序不读取：upsert 表示参考类数据（按主键覆盖，旧值进 raw.record_version），
-#             snapshot 表示观察类数据（主键里带 {_run.trade_date}，每天一份）。实际语义由 key 决定
-# backfill    说明性字段，程序不读取。回补范围由 partition 决定（trading_day.from、security_window.floor 等）
-# notes       说明性字段：实测结论和注意事项
-# incremental 每日增量的规则：rerun（整份重取）| since_cursor{overlap}（从游标往后，重叠 N 天）
-#             | latest_n{n}（只取最近 N 期）| none（不做增量）
-# schedule    当前约定：日线和只有当天值的数据用 after_close，其余用 weekly
-#             after_close（交易日收盘后，默认 18:00）| daily | weekly | monthly | report_season
-#             | after_open（交易日开盘后）
-# empty_codes 这些供应商错误码按「没有数据」处理：不重试，任务记为 empty，原因写在 last_error
-# trade_date_guard  快照类数据集设为 true：只在运行交易日收盘后、且供应商已出当天日线时执行，否则推迟或跳过
-# store_record 是否写入通用记录库 raw.record（默认 true）。日线这类大数据集设为 false，只写 sink 指定的类型化表
-# sink        除 raw.record 外，还要投影到的类型化表
-# ─────────────────────────────────────────────────────────────────────────
+# 字段的完整说明见 docs/interfaces/dataset_registry.md，摘要：
+#   id / title / category / summary   数据集 ID（<domain>.<name>）、中文名、分类、一句话说明
+#   endpoint / params                 GET 路径；params 中的 {变量} 由分区变量填充
+#   priority / enabled                P0–P3；没写 enabled 时 P0、P1 开启，P2、P3 关闭
+#   partition                         once | enum | security | security_batch | security_window | trading_day | report_period | from_dataset
+#   paging                            none | offset{limit_param, offset_param, size} | page{page_param, size_param, size}
+#   records                           记录在响应中的路径、路径列表，或 parquet（全市场导出文件）
+#   key / thscode / obs_date          主键、关联证券、业务日期的模板
+#   incremental                       rerun | since_cursor{overlap_days} | latest_n{n 或 params}
+#   schedule                          daily | weekly | monthly | report_season | manual（同步计划，见 docs/architecture/sync_pipeline.md#scheduling）
+#   trade_date_guard / recover_with   快照类数据集的交易日校验；取不到时由哪个有历史的数据集补回
+#   store_record / sink / empty_codes 是否写 raw.record；投影到的类型化表；按「没有数据」处理的错误码
 
 defaults:
-  capture: upsert
   paging: none
   incremental: rerun
-  schedule: after_close
+  schedule: daily
   # 单次请求失败后的退避秒数，以及任务的最大尝试次数。哪些错误可以重试固定在 backend/src/vendor/client.rs；
   # 限速和并发由环境变量 NIULAI_RATE_LIMIT_RPS、NIULAI_WORKER_CONCURRENCY 控制
   retry: {max_attempts: 4, backoff_s: [2, 8, 30]}
@@ -76,7 +44,6 @@ datasets:
     key: "{thscode}"
     thscode: "{thscode}"
     schedule: weekly
-    backfill: none
     sink: [ref.security, ref.index_info]       # a-share → ref.security（ST、改名写入 ref.security_name_hist）；a-share-index → ref.index_info
     notes: >-
       a-share 5580、a-share-index 1431、fund-etf 1712、fund-lof 404、fund-reits 90、futures 1175、
@@ -94,7 +61,6 @@ datasets:
     key: "{date}"
     obs_date: "{date_ms:date}"
     schedule: weekly
-    backfill: none
     sink: [ref.trading_day]
     notes: 固定返回最近一年（243 天）。更早的交易日从行情日期推导。
 
@@ -129,7 +95,7 @@ datasets:
     store_record: false
     endpoint: /api/a-share/prices/snapshot
     priority: P0
-    schedule: after_close
+    schedule: daily
     trade_date_guard: true
     partition: once
     paging: {offset: {limit_param: limit, offset_param: offset, size: 200}}
@@ -137,32 +103,10 @@ datasets:
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
-    capture: snapshot
-    backfill: none
     sink: [mkt.stock_bar_1d]                   # source='snapshot'，同时写 pre_close；成交量为 0 的不写
     notes: >-
       全市场 28 页（size=200）。价格与历史接口一致；成交量和成交额只保留约 9 位有效数字。
       prev_price 是交易所调整过的前收，除权日与上一日收盘价不同。
-
-  - id: a_share.corp_action
-    title: 复权因子（逐只）
-    category: 公司行动
-    summary: 按股票逐只取分红送转，缺配股字段，默认关闭，由「分红送转配股」代替
-    endpoint: /api/a-share/corporate-actions/adjustment-factors
-    priority: P0
-    enabled: false                             # 缺配股字段，默认用 a_share.corp_action_dump；两者不要同时开启
-    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active"}}
-    params: {thscode: "{thscode}"}
-    records: data.item
-    key: "{_part.thscode}|{ex_date_ms:date}|{_seq}"   # _seq = 同一除权日内的源顺序
-    thscode: "{_part.thscode}"
-    obs_date: "{ex_date_ms:date}"
-    schedule: weekly
-    backfill: none                             # 每次返回全部历史
-    sink: [mkt.corp_action]
-    notes: >-
-      最早 1991 年。缺配股字段（rights_*），全市场有 987 次配股，配股复权会算错。
-      完整数据只能从 a_share.corp_action_dump 获取，两者二选一，见方案文档 5.2。
 
   - id: a_share.corp_action_dump
     title: 分红送转配股
@@ -171,12 +115,11 @@ datasets:
     endpoint: /api/dump/market-dumps/adjustment-factors/download-url
     priority: P0
     partition: once
-    format: parquet_via_presigned_url          # 第一步取 data.presigned_url（5 分钟内有效），第二步下载 Parquet
     records: parquet
     key: "{thscode}|{ex_date_ms:date}|{_seq}"
     thscode: "{thscode}"
     obs_date: "{ex_date_ms:date}"
-    schedule: after_close
+    schedule: daily
     sink: [mkt.corp_action]
     notes: 全市场 5.8 万条、约 300KB，含配股字段和已公告未除权的事件（113 条）。
 
@@ -186,7 +129,7 @@ datasets:
     summary: 每只股票当天的市盈率、市净率、市销率、市现率；只有当天的值，每天存一份
     endpoint: /api/a-share/valuations/snapshot
     priority: P1
-    schedule: after_close
+    schedule: daily
     trade_date_guard: true
     partition: {security_batch: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", size: 100}}
     params: {thscodes: "{thscodes}"}
@@ -194,7 +137,6 @@ datasets:
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
-    capture: snapshot
     sink: [fin.valuation_1d]
     notes: 只有最新值（PE TTM/MRQ、PB、PS、PCF），没有历史，每天存一份积累；56 次请求。
 
@@ -204,7 +146,7 @@ datasets:
     summary: 开盘集合竞价的最终价格和成交，以及流通市值；只有当天的值，每天存一份
     endpoint: /api/a-share/auction/snapshot
     priority: P1
-    schedule: after_close
+    schedule: daily
     trade_date_guard: true
     partition: {security_batch: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share' AND active", size: 100}}
     params: {thscodes: "{thscodes}", stage: final}
@@ -212,7 +154,6 @@ datasets:
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
-    capture: snapshot
     sink: [fin.valuation_1d]                   # float_market_cap
     notes: >-
       集合竞价终态：竞价价格、量、额、未匹配量、竞价换手率、量比，另有 float_market_cap（流通市值）。
@@ -310,7 +251,6 @@ datasets:
     key: "{_run.trade_date}|{_part.thscode}|{thscode}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
-    capture: snapshot
     schedule: weekly
     sink: [ref.index_member]                   # 与前一天对比后写成区间
     notes: 只有当前成分，没有历史，每天积累。约 1431 次请求，可以按需缩小到行业和概念板块。
@@ -342,7 +282,7 @@ datasets:
     store_record: false
     endpoint: /api/a-share-index/prices/snapshot
     priority: P0
-    schedule: after_close
+    schedule: daily
     trade_date_guard: true
     # 快照接口不接受中证指数（.CSI），整批会返回 1002；这两个指数的日线由 index.bar_1d 每周补齐
     partition: {security_batch: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'a-share-index' AND active AND thscode NOT LIKE '%.CSI'", size: 100}}
@@ -351,7 +291,6 @@ datasets:
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
-    capture: snapshot
     sink: [mkt.index_bar_1d]
     notes: 每次最多 100 个；不接受 .CSI 代码（2026-10-16 实测）。
 
@@ -417,7 +356,6 @@ datasets:
     records: data.item
     key: "{date}"
     obs_date: "{date}"
-    backfill: none
     notes: 固定返回最近 30 个交易日的连板梯队，每天重取，按日期覆盖即可积累出历史。
 
   - id: special.limit_up_stats
@@ -526,7 +464,6 @@ datasets:
     records: data.item
     key: "{_run.trade_date}|{_part.period}|{rank}"
     thscode: "{thscode}"
-    capture: snapshot
     notes: 只有当前榜单；日榜的历史由 special.hot_stock_daily 覆盖。
 
   - id: special.skyrocket
@@ -540,7 +477,6 @@ datasets:
     records: data.item
     key: "{_run.trade_date}|{_part.period}|{rank}"
     thscode: "{thscode}"
-    capture: snapshot
 
   - id: special.anomaly_reason
     title: 异动原因
@@ -548,15 +484,13 @@ datasets:
     summary: 当天大涨、涨停、快速拉升等个股异动的原因和关键词；只有当天的值
     endpoint: /api/a-share/special-data/anomaly-analysis-list
     priority: P1
-    schedule: after_close
+    schedule: daily
     trade_date_guard: true
     partition: once
     records: data.item
     key: "{_run.trade_date}|{thscode}|{tag_name}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
-    capture: snapshot
-    backfill: none
     notes: 当日个股异动原因（涨停、跌停、大涨、快速拉升……）和关键词，约 350 条/天；没有历史，必须当天收盘后取。
 
   - id: special.abnormal_monitor
@@ -663,7 +597,6 @@ datasets:
     records: data.item
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
-    capture: snapshot
     notes: 每次只能查 1 只（不支持批量），约 2100 次/天；含换手率。
 
   - id: fund.nav
@@ -858,7 +791,6 @@ datasets:
     params: {thscode: "{thscode}"}
     records: data.item
     key: "{_run.trade_date}|{_part.thscode}"
-    capture: snapshot
     schedule: weekly
     notes: 供应商算好的区间收益和同类排名，可由净值自行计算；按周存快照。
 
@@ -872,7 +804,6 @@ datasets:
     params: {thscode: "{thscode}"}
     records: data.item
     key: "{_run.trade_date}|{_part.thscode}"
-    capture: snapshot
     schedule: weekly
 
   - id: fund.indicators_history
@@ -900,7 +831,6 @@ datasets:
     params: {thscode: "{thscode}"}
     records: data.item
     key: "{_run.trade_date}|{_part.thscode}"
-    capture: snapshot
     schedule: monthly
 
   - id: fund.manager_detail
@@ -987,7 +917,6 @@ datasets:
     params: {tab: "{tab}"}
     records: data
     key: "{_run.trade_date}|{_part.tab}|{_seq}"
-    capture: snapshot
     schedule: weekly
 
   - id: fund.backtest_indicators
@@ -1064,7 +993,6 @@ datasets:
     records: data.item
     key: "{_run.trade_date}|{variety_code}"
     thscode: "{thscode}"
-    capture: snapshot
     schedule: daily
     notes: 每天记录主力合约是谁，积累出主力合约切换的历史。
 
@@ -1078,7 +1006,6 @@ datasets:
     records: data.item
     key: "{_run.trade_date}|{variety_code}"
     thscode: "{thscode}"
-    capture: snapshot
 
   - id: futures.main_continuous
     title: 主力连续
@@ -1129,8 +1056,7 @@ datasets:
     partition: once
     records: data.item
     key: "{_run.trade_date}|{thscode}"
-    capture: snapshot
-    schedule: after_close
+    schedule: daily
 
   - id: futures.basis_history
     title: 基差历史
@@ -1330,4 +1256,5 @@ datasets:
 #                   /api/fund/quota/summary（fund.qdii_quota 的分类汇总，需要时再加）
 # 与其他数据集重复：/api/a-share/special-data/anomaly-analysis-stock（与 special.anomaly_reason 重复）、
 #                    /api/a-share/special-data/hot-stock-rank-trend（只有前 30 名的排名，与 special.hot_stock_daily 重复）
+# 缺字段：/api/a-share/corporate-actions/adjustment-factors（逐只取公司行动，不返回配股字段；用 a_share.corp_action_dump）
 # 全市场导出：/api/dump/market-dumps/daily-k[-10d]/download-url（用户决定行情走 REST；可作为对账和灾备的备选）

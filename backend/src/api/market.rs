@@ -20,9 +20,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
-use crate::analysis::ma::{self, CrossSignal};
-use crate::analysis::prices;
-use crate::analysis::scan::ScanResult;
+use crate::analysis::ma;
 use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -30,8 +28,6 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list_securities))
         .routes(routes!(get_security))
         .routes(routes!(security_bars))
-        .routes(routes!(security_ma))
-        .routes(routes!(ma_cross_scan))
         .routes(routes!(list_indices))
         .routes(routes!(index_bars))
         .routes(routes!(index_members))
@@ -213,91 +209,11 @@ async fn security_bars(State(s): State<AppState>, Path(code): Path<String>, Quer
     Ok(Json(BarSeries { thscode: code, adjust, bars }))
 }
 
-// ───────────────────────── 均线与交叉信号 ─────────────────────────
-
-#[derive(Deserialize, IntoParams)]
-pub struct MaQuery {
-    /// 快线周期，默认 15
-    pub fast: Option<i32>,
-    /// 慢线周期，默认 30
-    pub slow: Option<i32>,
-    pub start: Option<NaiveDate>,
-    pub end: Option<NaiveDate>,
-    /// true 时只返回发生交叉的日期
-    pub signals_only: Option<bool>,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct MaPoint {
-    pub trade_date: NaiveDate,
-    /// 等比前复权收盘价
-    pub close: f64,
-    pub ma_fast: f64,
-    pub ma_slow: f64,
-    pub signal: Option<CrossSignal>,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct MaSeries {
-    pub thscode: String,
-    pub fast: i32,
-    pub slow: i32,
-    /// 计算口径：等比前复权收盘价的简单移动平均
-    pub price_basis: &'static str,
-    pub points: Vec<MaPoint>,
-}
-
 /// 校验快慢线周期，返回 (fast, slow)
 pub(super) fn windows(fast: Option<i32>, slow: Option<i32>) -> ApiResult<(usize, usize)> {
     ma::validate_windows(fast.unwrap_or(15), slow.unwrap_or(30)).map_err(ApiError::BadRequest)
 }
 
-/// 个股均线与交叉信号（等比前复权）
-#[utoipa::path(get, path = "/securities/{thscode}/ma", tag = "market", params(("thscode" = String, Path), MaQuery),
-    responses((status = 200, description = "成功", body = MaSeries), (status = 400, description = "参数不合法", body = crate::error::ErrorBody)))]
-async fn security_ma(State(s): State<AppState>, Path(code): Path<String>, Query(q): Query<MaQuery>) -> ApiResult<Json<MaSeries>> {
-    let (fast, slow) = windows(q.fast, q.slow)?;
-    let bars = prices::stock_bars(&s.pool, &code, q.end).await?;
-    let closes: Vec<f64> = bars.iter().map(|b| b.q_close).collect();
-    let signals_only = q.signals_only.unwrap_or(false);
-    let points = bars
-        .iter()
-        .zip(ma::ma_cross(&closes, fast, slow))
-        .filter_map(|(b, row)| row.map(|r| (b, r)))
-        .filter(|(b, r)| q.start.is_none_or(|st| b.date >= st) && (!signals_only || r.signal.is_some()))
-        .map(|(b, r)| MaPoint { trade_date: b.date, close: b.q_close, ma_fast: r.ma_fast, ma_slow: r.ma_slow, signal: r.signal })
-        .collect();
-    Ok(Json(MaSeries { thscode: code, fast: fast as i32, slow: slow as i32, price_basis: "等比前复权收盘价", points }))
-}
-
-#[derive(Deserialize, IntoParams)]
-pub struct ScanQuery {
-    /// 交易日，默认本地最新的交易日
-    pub date: Option<NaiveDate>,
-    pub fast: Option<i32>,
-    pub slow: Option<i32>,
-    /// golden / death，默认两者都返回
-    pub signal: Option<String>,
-}
-
-/// 全市场均线交叉扫描：指定交易日发生金叉或死叉的股票。结果按复权价版本缓存在进程内
-#[utoipa::path(get, path = "/signals/ma-cross", tag = "market", params(ScanQuery),
-    responses((status = 200, description = "成功", body = ScanResult), (status = 400, description = "参数不合法", body = crate::error::ErrorBody)))]
-async fn ma_cross_scan(State(s): State<AppState>, Query(q): Query<ScanQuery>) -> ApiResult<Json<ScanResult>> {
-    let (fast, slow) = windows(q.fast, q.slow)?;
-    let want = match q.signal.as_deref() {
-        None => None,
-        Some("golden") => Some(CrossSignal::Golden),
-        Some("death") => Some(CrossSignal::Death),
-        Some(o) => return Err(ApiError::BadRequest(format!("signal 只能是 golden 或 death：{o}"))),
-    };
-    let all = s.scans.scan(&s.pool, q.date, fast, slow).await?;
-    let mut result = ScanResult::clone(&all);
-    if let Some(w) = want {
-        result.hits.retain(|h| h.signal == w);
-    }
-    Ok(Json(result))
-}
 
 // ───────────────────────── 指数 ─────────────────────────
 

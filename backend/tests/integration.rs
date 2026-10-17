@@ -146,7 +146,6 @@ async fn adjustment_and_api_end_to_end() {
         worker_concurrency: 1,
         rate_limit_rps: 1,
         http_timeout_s: 1,
-        schedule_after_close: "18:00".into(),
         scheduler_enabled: false,
         web_dir: Some(web.clone()),
         admin_user: "admin".into(),
@@ -217,14 +216,6 @@ async fn adjustment_and_api_end_to_end() {
     let (_, body) = get("/api/v1/watchlist").await;
     assert_eq!(body["items"].as_array().unwrap().len(), 0);
 
-    // 全市场扫描：默认日期是本地最新交易日；第二次命中缓存，结果相同
-    let (st, scan1) = get("/api/v1/signals/ma-cross?fast=2&slow=3").await;
-    assert_eq!(st, StatusCode::OK);
-    assert_eq!(scan1["trade_date"], "2026-06-29");
-    assert_eq!(scan1["scanned"], 1);
-    let (_, scan2) = get("/api/v1/signals/ma-cross?fast=2&slow=3").await;
-    assert_eq!(scan1, scan2);
-
     // 回测：每个交易日一个账户总值；参数不合法时 400
     let (st, bt) = get("/api/v1/backtest/ma-cross?thscode=600519.SH&fast=2&slow=3").await;
     assert_eq!(st, StatusCode::OK, "{bt}");
@@ -237,7 +228,7 @@ async fn adjustment_and_api_end_to_end() {
 
     let (st, body) = get("/api/v1/openapi.json").await;
     assert_eq!(st, StatusCode::OK);
-    assert!(body["paths"]["/securities/{thscode}/ma"].is_object());
+    assert!(body["paths"]["/securities/{thscode}/bars"].is_object());
 
     // 前端：页面路径回退到 index.html，静态资源长期缓存，未知接口仍是 JSON 404
     let page = |uri: &str| {
@@ -384,7 +375,6 @@ fn bare_settings(vendor: &str, api_key: Option<&str>) -> Settings {
         worker_concurrency: 1,
         rate_limit_rps: 20,
         http_timeout_s: 5,
-        schedule_after_close: "18:00".into(),
         scheduler_enabled: false,
         web_dir: None,
         admin_user: "admin".into(),
@@ -495,23 +485,23 @@ async fn one_click_upgrade_hands_request_to_upgrader() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(v["current"], "dev");
     assert_eq!(v["upgrade"]["available"], false);
-    let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "1.2.0"}))).await;
+    let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "2026.10.18"}))).await;
     assert_eq!(st, StatusCode::CONFLICT);
 
     // upgrader 在运行：提交请求，写入版本号
     std::fs::write(dir.join("heartbeat"), chrono::Utc::now().timestamp().to_string()).unwrap();
-    let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "1.2.0; rm -rf /"}))).await;
+    let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "2026.10.18; rm -rf /"}))).await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "只接受正式版本号");
-    let (st, body) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "v1.2.0"}))).await;
+    let (st, body) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "v2026.10.18"}))).await;
     assert_eq!(st, StatusCode::ACCEPTED, "{body}");
     assert_eq!(body["state"], "requested");
-    assert_eq!(std::fs::read_to_string(dir.join("request")).unwrap(), "1.2.0");
-    let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "1.2.0"}))).await;
+    assert_eq!(std::fs::read_to_string(dir.join("request")).unwrap(), "2026.10.18");
+    let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "2026.10.18"}))).await;
     assert_eq!(st, StatusCode::CONFLICT, "正在升级时不能再提交");
 
     // upgrader 接手并报告进度
     std::fs::remove_file(dir.join("request")).unwrap();
-    std::fs::write(dir.join("status"), r#"{"state":"running","target":"1.2.0","message":"拉取镜像","at":1}"#).unwrap();
+    std::fs::write(dir.join("status"), r#"{"state":"running","target":"2026.10.18","message":"拉取镜像","at":1}"#).unwrap();
     let (_, v) = call(&app, "GET", "/api/v1/system/version", None).await;
     assert_eq!(v["upgrade"]["state"], "running");
     assert_eq!(v["upgrade"]["message"], "拉取镜像");
@@ -651,6 +641,45 @@ async fn data_check_finds_gaps_refetches_and_confirms_suspensions() {
 
     let (st, _) = call(&app, "POST", "/api/v1/sync/check", None).await;
     assert_eq!(st, StatusCode::ACCEPTED);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn old_tasks_and_call_logs_are_pruned() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let pool = db.pool.clone();
+    niulai::sync::registry::sync_to_db(&pool, &registry()).await.unwrap();
+    let old = "now() - interval '90 days'";
+    let run: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind, status) VALUES ('incremental', 'succeeded') RETURNING run_id").fetch_one(&pool).await.unwrap();
+    let open_run: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind) VALUES ('backfill') RETURNING run_id").fetch_one(&pool).await.unwrap();
+    let task = |run: i64, ds: &str, part: &str, status: &str, finished: &str| {
+        let sql = format!("INSERT INTO ops.task (run_id, dataset_id, part_key, params, status, finished_at) VALUES ($1, $2, $3, '{{}}', $4, {finished}) RETURNING task_id");
+        let pool = pool.clone();
+        let (ds, part, status) = (ds.to_string(), part.to_string(), status.to_string());
+        async move { sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql)).bind(run).bind(ds).bind(part).bind(status).fetch_one(&pool).await.unwrap() }
+    };
+    let resolved_dead = task(run, "special.dragon_tiger", "a", "dead", old).await;
+    let old_done = task(run, "special.dragon_tiger", "a", "done", old).await;
+    let unresolved_dead = task(run, "special.dragon_tiger", "b", "dead", old).await;
+    let newest_done = task(run, "special.dragon_tiger", "c", "done", old).await;
+    let in_open_run = task(open_run, "a_share.calendar", "*", "done", old).await;
+    let recent = task(run, "a_share.calendar", "*", "done", "now()").await;
+    sqlx::query("INSERT INTO ops.api_call (dataset_id, endpoint, params, called_at) VALUES ('a_share.calendar', '/x', '{}', now() - interval '90 days'), ('a_share.calendar', '/x', '{}', now())")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let p = niulai::sync::retention::prune(&pool).await.unwrap();
+    assert_eq!((p.tasks, p.api_calls), (2, 1), "{p:?}");
+    let left: Vec<i64> = sqlx::query_scalar("SELECT task_id FROM ops.task ORDER BY task_id").fetch_all(&pool).await.unwrap();
+    assert!(!left.contains(&resolved_dead) && !left.contains(&old_done), "已经解决的失败和过期的成功删掉");
+    for (id, why) in [(unresolved_dead, "还没解决的失败"), (newest_done, "数据集最近一个成功的任务"), (in_open_run, "进行中的运行"), (recent, "保留期内的")] {
+        assert!(left.contains(&id), "{why}要保留");
+    }
+    assert_eq!(niulai::sync::retention::prune(&pool).await.unwrap(), niulai::sync::retention::Pruned::default(), "再清理一次没有可删的");
     db.drop().await;
 }
 

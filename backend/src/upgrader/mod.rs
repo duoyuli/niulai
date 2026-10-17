@@ -91,7 +91,7 @@ fn name(c: &Value) -> String {
     c["Name"].as_str().unwrap_or_default().trim_start_matches('/').to_string()
 }
 
-/// 只接受正式版本号（`YYYY.MM.DD`、`YYYY.MM.DD.N`，以及以前的 `X.Y.Z`），版本号会拼进镜像标签
+/// 只接受正式版本号（`YYYY.MM.DD`、`YYYY.MM.DD.N`），版本号会拼进镜像标签
 pub fn valid_version(v: &str) -> bool {
     crate::version::parse(v).is_some()
 }
@@ -152,7 +152,7 @@ impl Files {
         Ok(std::fs::write(self.dir.join("handoff"), serde_json::to_string(h)?)?)
     }
 
-    /// 状态文件：页面读它显示进度。message 是当前步骤的一句话，给只认 message 的旧页面
+    /// 状态文件：页面读它显示进度。message 是当前步骤或结果的一句话，失败时页面显示它
     fn status(&self, state: &str, target: &str, message: &str, steps: &[Step]) {
         let body = json!({ "state": state, "target": target, "message": message, "at": chrono::Utc::now().timestamp(), "steps": steps });
         let tmp = self.dir.join("status.tmp");
@@ -537,19 +537,19 @@ mod tests {
 
     #[test]
     fn accepts_only_release_versions_and_images() {
-        assert!(valid_version("1.2.0") && valid_version("2026.10.18") && valid_version("2026.10.18.1"));
-        for bad in ["1.2", "1.2.0-rc.1", "1.0;id", "", "a.b.c", "2026.10.18.1.1", "2026.10.18 x"] {
+        assert!(valid_version("2026.10.18") && valid_version("2026.10.18.1"));
+        for bad in ["1.2.0", "1.2", "2026.10.18-rc.1", "2026.10.18;id", "", "a.b.c", "2026.10.18.1.1", "2026.10.18 x"] {
             assert!(!valid_version(bad), "{bad}");
         }
-        assert_eq!(release_repo("ghcr.io/duoyuli/niulai:1.1.0"), Some("ghcr.io/duoyuli/niulai"));
+        assert_eq!(release_repo("ghcr.io/duoyuli/niulai:2026.10.18"), Some("ghcr.io/duoyuli/niulai"));
         assert_eq!(release_repo("niulai:local"), None);
         assert_eq!(release_repo("ghcr.io/duoyuli/other:1.0.0"), None);
     }
 
     #[test]
     fn edits_env_line() {
-        let t = "A=1\nNIULAI_IMAGE=ghcr.io/x/niulai:1.0.0\n# 注释\n";
-        assert_eq!(set_env_line(t, "NIULAI_IMAGE", "ghcr.io/x/niulai:1.1.0"), "A=1\nNIULAI_IMAGE=ghcr.io/x/niulai:1.1.0\n# 注释\n");
+        let t = "A=1\nNIULAI_IMAGE=ghcr.io/x/niulai:2026.10.17\n# 注释\n";
+        assert_eq!(set_env_line(t, "NIULAI_IMAGE", "ghcr.io/x/niulai:2026.10.18"), "A=1\nNIULAI_IMAGE=ghcr.io/x/niulai:2026.10.18\n# 注释\n");
         assert_eq!(set_env_line("A=1", "NIULAI_IMAGE", "i:2"), "A=1\nNIULAI_IMAGE=i:2\n");
     }
 
@@ -558,17 +558,17 @@ mod tests {
         let old = json!({
             "Config": {
                 "Hostname": "abc123",
-                "Image": "ghcr.io/x/niulai:1.0.0",
+                "Image": "ghcr.io/x/niulai:2026.10.17",
                 "Cmd": ["niulai", "serve"],
                 "Env": ["DATABASE_URL=postgres://u:p@postgres:5432/niulai", "NIULAI_WEB_DIR=/app/web", "PATH=/usr/bin"],
-                "Labels": { "com.docker.compose.project": "niulai", "org.opencontainers.image.version": "1.0.0" }
+                "Labels": { "com.docker.compose.project": "niulai", "org.opencontainers.image.version": "2026.10.17" }
             },
             "HostConfig": { "Binds": ["niulai_upgrade:/upgrade"], "PortBindings": { "8080/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "8080" }] } },
             "NetworkSettings": { "Networks": { "niulai_default": { "Aliases": ["niulai"], "NetworkID": "n1", "IPAddress": "172.0.0.2", "IPAMConfig": null } } }
         });
-        let old_image = json!({ "Config": { "Env": ["NIULAI_WEB_DIR=/app/web", "PATH=/usr/bin"], "Labels": { "org.opencontainers.image.version": "1.0.0" } } });
-        let b = create_body(&old, &old_image, "ghcr.io/x/niulai:1.1.0");
-        assert_eq!(b["Image"], "ghcr.io/x/niulai:1.1.0");
+        let old_image = json!({ "Config": { "Env": ["NIULAI_WEB_DIR=/app/web", "PATH=/usr/bin"], "Labels": { "org.opencontainers.image.version": "2026.10.17" } } });
+        let b = create_body(&old, &old_image, "ghcr.io/x/niulai:2026.10.18");
+        assert_eq!(b["Image"], "ghcr.io/x/niulai:2026.10.18");
         assert!(b.get("Hostname").is_none());
         assert_eq!(b["Env"], json!(["DATABASE_URL=postgres://u:p@postgres:5432/niulai"]));
         assert_eq!(b["Labels"], json!({ "com.docker.compose.project": "niulai" }));

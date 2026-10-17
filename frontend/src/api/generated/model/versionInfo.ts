@@ -20,7 +20,7 @@ export interface VersionInfo {
   check_error?: string | null;
   /** @nullable */
   checked_at?: string | null;
-  /** 正在运行的版本，例如 1.1.0；本机编译的是 dev */
+  /** 正在运行的版本，例如 2026.10.18；本机编译的是 dev */
   current: string;
   has_update: boolean;
   /**

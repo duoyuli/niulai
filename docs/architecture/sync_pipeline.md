@@ -13,7 +13,8 @@
 - [定时调度](#scheduling)：修改同步计划（每日、每周、每月、财报季）或触发规则时。
 - [完整性核对与兜底补偿](#audit)：修改缺口核对、自动补偿，或想知道数据有没有丢时。
 - [数据核检](#data_check)：修改按证券 × 交易日的日线核检、缺口重取和停牌确认时。
-- [限速与单一执行进程](#rate_limit)：修改请求频率，或想同时运行多个执行任务的进程时。
+- [限速与单一执行进程](#rate_limit)：修改请求频率、全市场计算的并发，或想同时运行多个执行任务的进程时。
+- [定期清理](#retention)：修改任务、调用日志的保留期限，或这两张表变大时。
 
 <a id="pipeline_flow"></a>
 ## 总体流程
@@ -44,7 +45,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 | 层 | 模块 | 职责 |
 | --- | --- | --- |
-| 入口 | `scheduler.rs`、`executor.rs`、`audit.rs`、`check.rs` | 同步计划与定时触发；执行循环、单个任务的编排和运行结束后的衔接；完整性核对与兜底补偿；数据核检 |
+| 入口 | `scheduler.rs`、`executor.rs`、`audit.rs`、`check.rs`、`retention.rs` | 同步计划与定时触发；执行循环、单个任务的编排和运行结束后的衔接；完整性核对与兜底补偿；数据核检；定期清理 |
 | 规划 | `planner.rs` | 把分区展开为任务，按波次创建运行 |
 | 执行步骤 | `fetch.rs`、`records.rs`、`sinks.rs`、`postprocess.rs` | HTTP 取数与调用日志；记录主键与 `raw.record`；类型化表投影；运行结束后的计算 |
 | 状态 | `queue.rs`、`run.rs`、`cursor.rs`、`calendar.rs` | `ops.task` 的状态变更；`ops.run` 的创建与结束；`ops.cursor`；`ref.trading_day` 与交易日校验 |
@@ -96,7 +97,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 | 层 | 任务 |
 | --- | --- |
-| 0 | 定时同步中每个交易日执行的数据集（`schedule` 是 `after_close` 或 `daily`），包括只有当天值的估值、异动原因等 |
+| 0 | 定时同步中每个交易日执行的数据集（`schedule` 是 `daily`），包括只有当天值的估值、异动原因等 |
 | 50 | 兜底补偿和数据核检的重取（`repair` 运行），以及补偿时重新排队的失败任务 |
 | 100 | 定时同步中的其他数据集（每周、每月、财报季） |
 | 200 | 历史回补 |
@@ -132,10 +133,10 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 <a id="postprocess"></a>
 ## 运行结束后的计算
 
-运行结束时，如果日线（`a_share.bar_1d`、`a_share.snapshot`）或公司行动（`a_share.corp_action`、`a_share.corp_action_dump`）有变化（成功任务的 `changed` 合计大于 0），依次执行：
+运行结束时，如果影响复权价的数据集有变化（`sink` 中有 `mkt.stock_bar_1d` 或 `mkt.corp_action` 的数据集，见 `spec.rs` 的 `PRICE_TABLES`）（成功任务的 `changed` 合计大于 0），依次执行：
 1. 把行情中出现过的日期补进 `ref.trading_day`（来源记为 `derived`）。供应商日历只有最近一年。
 2. `CALL mkt.rebuild_adj_segment(run_id)`：全量重算复权分段，包括等比复权因子和同花顺减法复权的系数，约 2 秒。
-3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的进程内缓存（全市场扫描、市场概况、信号的过去表现）失效。
+3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的进程内缓存（市场概况、信号的过去表现）失效。
 
 重算完成后，用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)；巡检失败只写日志，不影响运行的状态。之后规划下一个波次（如果有）。复权的计算规则见 [复权](../domains/price_adjustment.md)。
 
@@ -148,22 +149,22 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 | 同步计划 | `schedule` | 什么时候同步 |
 | --- | --- | --- |
-| 每日收盘后 | `after_close`、`daily` | 每个交易日到了每日时间（默认 18:00） |
+| 每日收盘后 | `daily`（不写时的默认值） | 每个交易日到了每日时间（默认 18:00） |
 | 每周 | `weekly` | 每周到了每周的星期和时间（默认周六 08:00），不论是不是交易日 |
 | 每月 | `monthly` | 每月第一次每周同步时，一起同步 |
 | 财报季 | `report_season` | 1、4、7、8、10 月随每日同步，其余月份随每周同步 |
-| 不自动同步 | `after_open` | 只手动发起（开盘后的调度尚未启用） |
+| 不自动同步 | `manual` | 只手动发起 |
 
-**时间：** 都是上海时间，见 [时区](../interfaces/configuration.md#time_zone)。每日时间、每周的星期和时间可以在同步页上修改，保存在 `app.setting` 的 `sync_schedule` 行（JSON：`daily_time`、`weekly_weekday`、`weekly_time`），调度器每 30 秒检查时重新读取，不用重启。网页上没有改过时，每日时间取 `NIULAI_SCHEDULE_AFTER_CLOSE`（默认 18:00），每周是周六 08:00。每周默认放在周末，几万个任务不和每日数据抢请求额度。
+**时间：** 都是上海时间，见 [时区](../interfaces/configuration.md#time_zone)。每日时间、每周的星期和时间可以在同步页上修改，保存在 `app.setting` 的 `sync_schedule` 行（JSON：`daily_time`、`weekly_weekday`、`weekly_time`），调度器每 30 秒检查时重新读取，不用重启。网页上没有改过时，每日是 18:00，每周是周六 08:00。每周默认放在周末，几万个任务不和每日数据抢请求额度。
 
 调度器每 30 秒检查一次：
 
-1. **每日：** 上海时间已到每日时间、当天是周一到周五，并成功抢占 `ops.scheduler` 中的 `after_close` 作业（条件 UPDATE 把 `last_fired` 推进到今天，多个进程并存时也只有一个成功）。再现取交易日历并写入 `ref.trading_day`，今天是交易日才规划。日历取不到时退回本地记录；本地日历还没有覆盖到今天时按交易日处理，快照的交易日校验会兜底。运行的交易日是今天。
+1. **每日：** 上海时间已到每日时间、当天是周一到周五，并成功抢占 `ops.scheduler` 中的 `daily` 作业（条件 UPDATE 把 `last_fired` 推进到今天，多个进程并存时也只有一个成功）。再现取交易日历并写入 `ref.trading_day`，今天是交易日才规划。日历取不到时退回本地记录；本地日历还没有覆盖到今天时按交易日处理，快照的交易日校验会兜底。运行的交易日是今天。
 2. **每周：** 算出不晚于现在的最近一个每周时刻，`weekly` 作业的 `fired_at` 早于这个时刻就抢占并触发。所以服务在那个时刻停机，启动后立即补上；改了每周时间，下一个时刻起按新时间。第一次（还没有 `weekly` 这一行）只记下现在、不触发：刚部署的系统正在做首次回补。触发时再按自然月抢占 `monthly` 作业，抢到就把每月的数据集一起规划。运行的交易日是最近一个交易日，按天积累的数据（例如指数成分）记在这一天。
 
-每次运行在 `params.trigger` 记下谁发起的，同步记录据此显示来源：`daily`、`catch_up`（补发每日同步）、`weekly`、`weekly+monthly`、`manual`（网页上发起）、`setup`（首次补历史）、`cli`（命令行）、`repair`（兜底补偿）、`data_check`（数据核检重取缺口）。以前的运行没有这个字段，按 `kind` 显示。
+每次运行在 `params.trigger` 记下谁发起的，同步记录据此显示来源：`daily`、`catch_up`（补发每日同步）、`weekly`、`weekly+monthly`、`manual`（网页上发起）、`setup`（首次补历史）、`cli`（命令行）、`repair`（兜底补偿）、`data_check`（数据核检重取缺口）。没有这个字段时按 `kind` 显示。
 
-**补发：** 调度器每 30 秒还会检查上一个交易日（10 天以内）的每日同步有没有发起过。例如那天到点后服务一直没有运行，就立即为那一天补发一次，只包括每日同步的数据集。只有当天值的数据还能不能取到由交易日校验决定：下一个交易日的数据出来之前补发就能取到，之后会记为「已错过」。系统还没有开始每日同步时（`ops.scheduler` 中没有 `after_close`）不补发。
+**补发：** 调度器每 30 秒还会检查上一个交易日（10 天以内）的每日同步有没有发起过。例如那天到点后服务一直没有运行，就立即为那一天补发一次，只包括每日同步的数据集。只有当天值的数据还能不能取到由交易日校验决定：下一个交易日的数据出来之前补发就能取到，之后会记为「已错过」。系统还没有开始每日同步时（`ops.scheduler` 中没有 `daily`）不补发。
 
 **同步计划总览：** `GET /api/v1/sync/schedule` 返回时间设置，以及每个计划的规则、包含的已开启数据集、下次同步时刻和上次同步（发起时刻、运行和状态，状态包括后续波次）。`PUT` 修改时间。
 
@@ -229,3 +230,18 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 限速在进程内：每次请求前检查最近 1 秒内的请求数，达到 `NIULAI_RATE_LIMIT_RPS`（默认 2）时等到最早那次请求满 1 秒。`niulai plan`、`niulai daily` 规划时偶尔请求几次接口，不取锁，会与执行循环短暂叠加。为什么不用 Redis 跨进程限速，见 [ADR：限速在进程内](../decisions/in_process_rate_limit.md)。
 
 单个进程同时执行的任务数由 `NIULAI_WORKER_CONCURRENCY`（默认 3）控制。实测每秒 2 次、并发 3 的强度下没有触发供应商限流，实际吞吐约每秒 1.7 次。
+
+**全市场计算：** 每日巡检、信号的过去表现、市场概况等要逐只股票读出全部日线再计算，一次要几秒的 CPU。同一进程最多同时做 2 个（`analysis/prices.rs` 的 `MARKET_SCANS`），其余排队，避免几个页面同时打开时把 CPU 和连接池占满；逐只股票的计算用 `block_in_place` 执行，不占住处理 API 请求的异步线程。
+
+**组件监督：** `niulai serve` 中的 API、执行循环、调度器是同一进程里的几个组件。任何一个提前退出（出错或 panic），进程通知其余组件停止，然后以非零状态退出，由 Docker 的 `restart: unless-stopped` 或 systemd 重新启动；不会出现 API 还在、同步已经停了的半死状态。
+
+<a id="retention"></a>
+## 定期清理
+
+`ops.task` 和 `ops.api_call` 每天都在增长：一次全量回补几十万个任务，每次请求一行日志。执行循环的维护每天做一次清理（抢占 `ops.scheduler` 的 `prune` 作业），实现在 `retention.rs`，分批删除（每批 2 万行）避免长时间锁表：
+
+- 结束超过 60 天、之后同一分区已经成功过的失败任务（问题已经解决）。还没解决的失败一直保留，兜底补偿和同步页还要用。
+- 结束超过 60 天的成功、没有数据、跳过的任务；进行中的运行里的任务不删，每个数据集最近一个成功的任务保留（「最近同步」从它来）。
+- 超过 30 天的调用日志。
+
+[完整性核对](#audit) 只看最近 20 个交易日，[数据核检](#data_check) 只看发现缺口之后的任务，都在保留期内，不受影响。按分区查任务用索引 `ops.task (dataset_id, part_key, task_id)`。

@@ -8,7 +8,7 @@
 
 export interface UpgradeInput {
   /**
-     * 要升级到的版本，例如 1.2.0；为空时升级到最新版本
+     * 要升级到的版本，例如 2026.10.18；为空时升级到最新版本
      * @nullable
      */
   version?: string | null;

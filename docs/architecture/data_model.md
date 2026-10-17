@@ -60,7 +60,7 @@
 | `ref.index_member` | `index.members` | 每天与当前成分对比：退出的关闭区间（`valid_to`），新进入的打开区间 |
 | `mkt.stock_bar_1d` | `a_share.bar_1d`（`source = hist`）、`a_share.snapshot`（`source = snapshot`） | 未复权日线。两种来源的覆盖规则见 [快照精度](../domains/market_data_rules.md#snapshot_precision) |
 | `mkt.index_bar_1d` | `index.bar_1d`、`index.snapshot` | 指数日线，没有复权；快照只补 `pre_close` |
-| `mkt.corp_action` | `a_share.corp_action_dump`（`source = dump`）、`a_share.corp_action`（`source = rest`） | 公司行动原样保存，`seq` 是同一除权日内的源顺序。覆盖规则见 [公司行动规则](../domains/price_adjustment.md#corp_action_rules) |
+| `mkt.corp_action` | `a_share.corp_action_dump` | 公司行动原样保存，`seq` 是同一除权日内的源顺序。覆盖规则见 [公司行动规则](../domains/price_adjustment.md#corp_action_rules) |
 | `fin.valuation_1d` | `a_share.valuation`（PE、PB、PS、PCF）、`a_share.auction_final`（`float_market_cap`） | 每个交易日一行，两个数据集分别更新各自的列 |
 
 `mkt.adj_segment` 不由 sink 写入，由运行结束后的存储过程全量重算，见 [复权](../domains/price_adjustment.md)。
@@ -70,12 +70,12 @@
 
 - `ops.dataset`：`datasets.yaml` 的数据库副本。`spec` 保存完整配置，`spec_hash` 用于判断配置是否变化。
 - `ops.run`：运行。`kind` 是 `backfill`（历史回补）、`incremental`（定时同步和手动增量）或 `repair`（兜底补偿，见 [完整性核对与兜底补偿](sync_pipeline.md#audit)）。`params` 中有 `datasets`、`pending_waves`、`root_run`、`only_thscodes`、`trigger`（谁发起的，见 [定时调度](sync_pipeline.md#scheduling)）。
-- `ops.task`：任务队列，状态机见 [任务生命周期](sync_pipeline.md#task_lifecycle)。`params` 包含 `vars`（分区变量）和 `query`（已展开的请求参数）。部分唯一索引 `task_open_uniq` 保证同一分区同时只有一个未完成任务；部分索引 `task_run_open_idx` 只含未完成任务，用于判断运行是否结束。
+- `ops.task`：任务队列，状态机见 [任务生命周期](sync_pipeline.md#task_lifecycle)。`params` 包含 `vars`（分区变量）和 `query`（已展开的请求参数）。部分唯一索引 `task_open_uniq` 保证同一分区同时只有一个未完成任务；部分索引 `task_run_open_idx` 只含未完成任务，用于判断运行是否结束；索引 `task_part_idx`（`dataset_id, part_key, task_id`）用于按分区查最近的任务。结束超过 60 天的任务定期清理，见 [定期清理](sync_pipeline.md#retention)。
 - `ops.cursor`：每个数据集、每个分区的进度，`state` 是 JSON，例如 `{"synced_to": "2026-10-15"}`。`part_key = '_plan'` 的行是 `from_dataset` 增量规划的时间水位。
-- `ops.api_call`：每次 HTTP 尝试一行，含状态码、供应商 `code`、`request_id`、延迟。表声明为按 `called_at` 的范围分区，但只有默认分区；没有自动清理旧数据。
+- `ops.api_call`：每次 HTTP 尝试一行，含状态码、供应商 `code`、`request_id`、延迟。表声明为按 `called_at` 的范围分区，但只有默认分区；超过 30 天的行定期清理，见 [定期清理](sync_pipeline.md#retention)。
 - `ops.bar_gap`、`ops.data_check`：数据核检发现的日线缺口（`open` 还缺、`suspended` 确认停牌，补上了就删掉）和每次核检的结果，见 [数据核检](sync_pipeline.md#data_check)。
-- `ops.scheduler`：定时作业最近一次触发的日期和时刻：`after_close`（每日同步，也用于判断要不要补发）、`weekly`（按触发时刻 `fired_at` 判断每周时刻有没有触发过）、`monthly`、`repair`（每个交易日一次的兜底补偿）、`data_check`（每周一次的数据核检），见 [定时调度](sync_pipeline.md#scheduling)。
-- `ops.derived_version`：派生数据最近一次重算完成的时刻。目前只有 `adj_factor` 一行，复权因子重算完成后更新，进程内的扫描缓存以它为版本，见 [ADR：指标在 Rust 中计算](../decisions/indicator_compute.md)。
+- `ops.scheduler`：定时作业最近一次触发的日期和时刻：`daily`（每日同步，也用于判断要不要补发）、`weekly`（按触发时刻 `fired_at` 判断每周时刻有没有触发过）、`monthly`、`repair`（每个交易日一次的兜底补偿）、`data_check`（每周一次的数据核检）、`adj_rebuild`（回补期间定期重算复权）、`prune`（每天一次的 [定期清理](sync_pipeline.md#retention)），见 [定时调度](sync_pipeline.md#scheduling)。
+- `ops.derived_version`：派生数据最近一次重算完成的时刻。目前只有 `adj_factor` 一行，复权因子重算完成后更新，进程内依赖复权价的缓存以它为版本，见 [ADR：指标在 Rust 中计算](../decisions/indicator_compute.md)。
 - `ops.v_progress`：按运行和数据集汇总任务状态，API 的运行详情使用它。
 
 <a id="migrations"></a>

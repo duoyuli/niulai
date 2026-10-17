@@ -147,7 +147,7 @@ git push origin v2026.10.18
 <a id="one_click_upgrade"></a>
 ### 一键升级（Docker 部署）
 
-niulai 每 6 小时查一次 GitHub 上的版本标签（`NIULAI_UPDATE_REPO`，默认 `duoyuli/niulai`），并确认镜像已经能从 GHCR 拉取（推送标签后要等 CI 构建完），有新版本时页面左上角的版本号亮红点，点开即可升级。版本号的比较：`vYYYY.MM.DD`、同一天的补丁 `vYYYY.MM.DD.N`，以前的 `vX.Y.Z` 都比它们旧；1.5.0 及更早的版本只认三段数字，要先升到当天的三段版本才能看到补丁版本。
+niulai 每 6 小时查一次 GitHub 上的版本标签（`NIULAI_UPDATE_REPO`，默认 `duoyuli/niulai`），并确认镜像已经能从 GHCR 拉取（推送标签后要等 CI 构建完），有新版本时页面左上角的版本号亮红点，点开即可升级。版本号是 `vYYYY.MM.DD`，同一天的补丁是 `vYYYY.MM.DD.N`，按发布先后比较，其他写法的标签不认。
 
 执行升级的是 `upgrader` 容器（与 niulai 同一个镜像，运行 `niulai upgrader`，由 `.env` 的 `COMPOSE_PROFILES=upgrader` 启用），它通过 `/var/run/docker.sock` 调用 Docker Engine API。niulai 和它通过卷 `upgrade`（`NIULAI_UPGRADE_DIR=/upgrade`）交换文件：niulai 写 `request`（只有版本号）；upgrader 每 3 秒写 `heartbeat`（30 秒没更新时页面显示手动升级的命令），把进度写在 `status`、输出写在 `log`。
 
@@ -199,7 +199,7 @@ docker run --rm -v niulai_pgdata:/from:ro -v "$PWD/data/postgres":/to postgres:1
 docker compose up -d
 ```
 
-暂时不迁移：在 `.env` 中写 `POSTGRES_DATA=pgdata` 继续用卷。不要没迁移就换上新的 `compose.yml`，否则数据库会从空的开始（原来的数据还在卷里，按上面的步骤迁移即可）。
+不要没迁移就换上新的 `compose.yml`，否则数据库会从空的开始（原来的数据还在卷里，按上面的步骤迁移即可）。
 
 <a id="upgrade"></a>
 ### 手动升级与回滚
@@ -240,4 +240,4 @@ docker compose start niulai
 
 在 `frontend/` 下：`pnpm typecheck`、`pnpm lint`、`pnpm test`，都应通过。
 
-集成测试覆盖迁移、写入幂等、复权、任务去重与超时回收、运行结束判定、交易日校验与过期日期、完整性核对与补偿、数据核检、同步计划、登录、一键升级的文件交换和主要 API，不调用供应商接口。
+集成测试覆盖迁移、写入幂等、复权、任务去重与超时回收、运行结束判定、交易日校验与过期日期、完整性核对与补偿、数据核检、同步计划、定期清理、登录、一键升级的文件交换和主要 API，不调用供应商接口。

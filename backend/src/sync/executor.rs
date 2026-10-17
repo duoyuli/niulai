@@ -58,6 +58,11 @@ impl Executor {
         }
     }
 
+    /// 写入影响复权价的表（个股日线、公司行动）的数据集
+    fn price_datasets(&self) -> Vec<String> {
+        self.registry.writing_to(&super::spec::PRICE_TABLES).into_iter().map(|d| d.id.clone()).collect()
+    }
+
     /// 循环认领并执行任务，直到收到停止信号；`until_idle` 为真时，整个队列空了就返回
     pub async fn run_loop(self: Arc<Self>, slot: usize, mut stop: watch::Receiver<bool>, until_idle: bool) -> anyhow::Result<()> {
         // 队列一直有任务时也要定期维护，所以按时间而不是按空闲轮数触发
@@ -108,7 +113,7 @@ impl Executor {
         }
     }
 
-    /// 回收租约过期的任务，结束已经没有未完成任务、却没人结束的运行，并在回补期间定期重算复权因子
+    /// 回收租约过期的任务，结束已经没有未完成任务、却没人结束的运行，在回补期间定期重算复权因子，每天清理一次过期的任务和日志
     async fn maintain(&self) -> anyhow::Result<()> {
         let n = self.queue.requeue_stale().await?;
         if n > 0 {
@@ -117,7 +122,8 @@ impl Executor {
         for run_id in run::stalled(&self.pool).await? {
             self.after_task(run_id).await?;
         }
-        postprocess::refresh_if_stale(&self.pool).await?;
+        postprocess::refresh_if_stale(&self.pool, &self.price_datasets()).await?;
+        super::retention::prune_if_due(&self.pool).await?;
         Ok(())
     }
 
@@ -238,7 +244,7 @@ impl Executor {
         let Some(status) = run::try_complete(&self.pool, run_id).await? else { return Ok(()) };
         tracing::info!(run_id, %status, "运行结束，开始后处理");
         // 行情有变化时，按最新交易日执行每日巡检；巡检失败不影响同步
-        if postprocess::after_run(&self.pool, run_id).await?
+        if postprocess::after_run(&self.pool, run_id, &self.price_datasets()).await?
             && let Err(e) = crate::analysis::screener::run_and_store(&self.pool, None, None).await
         {
             tracing::error!(run_id, error = %format!("{e:#}"), "每日巡检失败");

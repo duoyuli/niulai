@@ -16,7 +16,7 @@ use utoipa::ToSchema;
 use super::Engine;
 use super::planner::PlanOptions;
 use super::run::RunKind;
-use super::spec::{DatasetSpec, Registry};
+use super::spec::{DatasetSpec, Registry, Schedule};
 use crate::time::now_cn;
 
 /// 核对最近多少个交易日
@@ -117,7 +117,7 @@ async fn due_days(engine: &Engine) -> anyhow::Result<Vec<NaiveDate>> {
 }
 
 fn daily_specs(registry: &Registry) -> Vec<&DatasetSpec> {
-    registry.datasets.iter().filter(|d| d.enabled && d.schedule.is_daily()).collect()
+    registry.datasets.iter().filter(|d| d.enabled && d.schedule == Schedule::Daily).collect()
 }
 
 /// 每日数据集每天的任务结果，按分区汇总：同一个分区在任何一次运行中成功过就算成功
@@ -192,7 +192,7 @@ pub async fn gaps(engine: &Engine) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, 
     .fetch_all(&engine.pool)
     .await?;
     let mut missing_bars = BTreeMap::new();
-    let bar_spec = engine.registry.get("a_share.bar_1d");
+    let bar_spec = engine.registry.stock_bar_history();
     for (d, have, expected) in bars {
         if expected > 0 && (have as f64) < expected as f64 * BAR_COVERAGE {
             let codes: Vec<String> = sqlx::query_scalar(
@@ -204,7 +204,7 @@ pub async fn gaps(engine: &Engine) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, 
             .await?;
             out.push(Gap {
                 trade_date: d,
-                dataset_id: "a_share.bar_1d".into(),
+                dataset_id: bar_spec.map_or_else(String::new, |s| s.id.clone()),
                 title: bar_spec.map_or("个股日线".into(), |s| s.title.clone()),
                 kind: GapKind::Incomplete,
                 message: format!("只有 {have} 只股票有日线，在市的有 {expected} 只"),
@@ -357,7 +357,7 @@ pub async fn auto_repair(engine: &Engine, today: NaiveDate) -> anyhow::Result<()
     let days = due_days(engine).await?;
     let Some(&latest) = days.last() else { return Ok(()) };
     // 最近一个交易日的每日同步还没发起（例如今天还没到 18:00 就已是今天）时不补，等调度器先跑
-    let fired: Option<NaiveDate> = sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'after_close'").fetch_optional(&engine.pool).await?;
+    let fired: Option<NaiveDate> = sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'daily'").fetch_optional(&engine.pool).await?;
     if fired.is_none_or(|f| f < latest) || latest > today {
         return Ok(());
     }
@@ -377,10 +377,11 @@ pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
     // 每个要补的数据集，补到哪些交易日；个股日线只补缺的股票
     let mut targets: BTreeMap<String, BTreeSet<NaiveDate>> = BTreeMap::new();
     let mut whole_bars = false;
+    let bar_id = engine.registry.stock_bar_history().map(|s| s.id.clone());
     for g in gaps.iter().filter(|g| g.recoverable) {
         let spec = engine.registry.get(&g.dataset_id);
         let target = spec.and_then(|s| s.recover_with.clone()).unwrap_or_else(|| g.dataset_id.clone());
-        if target == "a_share.bar_1d" && g.kind != GapKind::Incomplete {
+        if Some(&target) == bar_id.as_ref() && g.kind != GapKind::Incomplete {
             whole_bars = true;
         }
         targets.entry(target).or_default().insert(g.trade_date);
@@ -388,7 +389,7 @@ pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
     for (id, dates) in targets {
         let Some(spec) = engine.registry.get(&id).filter(|s| s.enabled) else { continue };
         let latest = *dates.iter().max().expect("至少一个日期");
-        let only_thscodes: Vec<String> = if id == "a_share.bar_1d" && !whole_bars {
+        let only_thscodes: Vec<String> = if Some(&id) == bar_id.as_ref() && !whole_bars {
             dates.iter().flat_map(|d| missing_bars.get(d).cloned().unwrap_or_default()).collect::<BTreeSet<_>>().into_iter().collect()
         } else {
             vec![]

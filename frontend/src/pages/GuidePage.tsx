@@ -1,13 +1,9 @@
 import type { ReactNode } from "react";
-import { Link, Navigate, useLocation } from "react-router";
+import { Link } from "react-router";
 import { Card, PageHeader } from "../components/ui";
 
 /** 说明页：指标、条件、信号、策略四个概念和买卖点的规则。每个信号、指标的详细说明在各自的页面上 */
 export function GuidePage() {
-  const { hash } = useLocation();
-  // 旧链接：/guide#sig-<信号>、/guide?tab=indicators#ind-<指标>
-  if (hash.startsWith("#sig-")) return <Navigate replace to={`/signals/${hash.slice(5)}`} />;
-  if (hash.startsWith("#ind-")) return <Navigate replace to={`/indicators/${hash.slice(5)}`} />;
   return (
     <>
       <PageHeader title="说明" desc="牛来里的选股方法由四层东西搭起来，下一层由上一层组成，每一层都能点进去看清楚。" />
@@ -20,7 +16,8 @@ export function GuidePage() {
         </Concept>
         <Concept n="3" title="信号" to="/signals" link="看全部信号" example="例：均线金叉、放量、创新高">
           起了名字的条件，一条或几条组合。<span className="text-up">红色偏多</span>，常被看作走强；
-          <span className="text-down">绿色偏空</span>，常被看作走弱。可以自己定义。
+          <span className="text-down">绿色偏空</span>，常被看作走弱；
+          <span className="text-amber-600 dark:text-amber-400">橙色中性</span>，本身不说明方向。可以自己定义。
         </Concept>
         <Concept n="4" title="策略" to="/strategies" link="看我的策略" example="例：金叉时买，跌破 20 日线时卖">
           买入条件 + 卖出规则。每天收盘后在全市场算一遍，给出今日买点、今日卖点和持有中。

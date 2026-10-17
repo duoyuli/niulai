@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use tokio::sync::watch;
+use tokio::task::{JoinError, JoinSet};
 
 use crate::api;
 use crate::sync::{Engine, scheduler};
@@ -18,10 +19,15 @@ pub struct ServeOptions {
     pub scheduler: bool,
 }
 
+/// 一个后台组件的运行结果：名字和返回值
+type Component = (&'static str, anyhow::Result<()>);
+
 // @project-doc docs/architecture/sync_pipeline.md#pipeline_flow
+/// 任何一个组件在收到停止信号之前退出（出错或 panic），都按故障处理：停止其他组件，进程以错误退出，
+/// 由 Docker 的 `restart: unless-stopped` 或 systemd 重新拉起。否则执行循环或调度器悄悄停了，API 却还显示正常
 pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()> {
     let (stop_tx, stop_rx) = watch::channel(false);
-    let mut handles: Vec<tokio::task::JoinHandle<anyhow::Result<()>>> = vec![];
+    let mut set: JoinSet<Component> = JoinSet::new();
 
     // 持有到函数返回：进程退出前一直独占任务执行
     let _executor_lock = if opts.worker { Some(engine.lock_executor().await?) } else { None };
@@ -29,11 +35,13 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
         let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".into());
         for slot in 0..engine.settings.worker_concurrency {
             let ex = engine.executor(format!("{host}-{}-{slot}", std::process::id()));
-            handles.push(tokio::spawn(ex.run_loop(slot, stop_rx.clone(), false)));
+            let stop = stop_rx.clone();
+            set.spawn(async move { ("执行循环", ex.run_loop(slot, stop, false).await) });
         }
     }
     if opts.scheduler {
-        handles.push(tokio::spawn(scheduler::run(engine.clone(), stop_rx.clone())));
+        let (e, stop) = (engine.clone(), stop_rx.clone());
+        set.spawn(async move { ("调度器", scheduler::run(e, stop).await) });
     }
     if opts.api {
         let bind = engine.settings.api_bind.clone();
@@ -41,16 +49,14 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
         let app = api::router(engine.clone());
         let mut rx = stop_rx.clone();
         tracing::info!(%bind, "API 已启动，接口规范：/api/v1/openapi.json");
-        handles.push(tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = rx.wait_for(|stop| *stop).await;
-                })
-                .await?;
-            Ok(())
-        }));
+        set.spawn(async move {
+            let r = axum::serve(listener, app).with_graceful_shutdown(async move {
+                let _ = rx.wait_for(|stop| *stop).await;
+            });
+            ("API", r.await.map_err(anyhow::Error::from))
+        });
     }
-    if handles.is_empty() {
+    if set.is_empty() {
         anyhow::bail!("--no-api、--no-worker、--no-scheduler 不能同时使用");
     }
     tracing::info!(
@@ -62,15 +68,43 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
         "niulai 服务已启动"
     );
 
-    shutdown_signal().await;
-    tracing::info!("收到停止信号，等待正在执行的任务结束");
+    let failure = tokio::select! {
+        _ = shutdown_signal() => {
+            tracing::info!("收到停止信号，等待正在执行的任务结束");
+            None
+        }
+        Some(done) = set.join_next() => Some(describe(done)),
+    };
+    if let Some(why) = &failure {
+        tracing::error!(error = %why, "服务组件意外退出，停止整个服务等待重启");
+    }
     stop_tx.send(true).ok();
-    for h in handles {
-        if let Err(e) = h.await? {
-            tracing::error!(error = %format!("{e:#}"), "服务组件异常退出");
+    while let Some(done) = set.join_next().await {
+        if let Err(e) = describe_result(done) {
+            tracing::error!(error = %e, "服务组件异常退出");
         }
     }
-    Ok(())
+    match failure {
+        Some(why) => anyhow::bail!("服务组件意外退出：{why}"),
+        None => Ok(()),
+    }
+}
+
+/// 收到停止信号之前退出的组件：不论有没有出错，都说明它不该停
+fn describe(done: Result<Component, JoinError>) -> String {
+    match describe_result(done) {
+        Ok(name) => format!("{name}提前结束"),
+        Err(e) => e,
+    }
+}
+
+fn describe_result(done: Result<Component, JoinError>) -> Result<&'static str, String> {
+    match done {
+        Ok((name, Ok(()))) => Ok(name),
+        Ok((name, Err(e))) => Err(format!("{name}：{e:#}")),
+        Err(e) if e.is_panic() => Err(format!("组件 panic：{e}")),
+        Err(e) => Err(format!("组件被取消：{e}")),
+    }
 }
 
 async fn shutdown_signal() {
@@ -84,4 +118,25 @@ async fn shutdown_signal() {
     }
     #[cfg(not(unix))]
     tokio::signal::ctrl_c().await.ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn early_exit_error_and_panic_are_all_failures() {
+        let mut set: JoinSet<Component> = JoinSet::new();
+        set.spawn(async { ("调度器", Ok(())) });
+        assert_eq!(describe(set.join_next().await.unwrap()), "调度器提前结束");
+        set.spawn(async { ("执行循环", Err(anyhow::anyhow!("连不上数据库"))) });
+        assert_eq!(describe(set.join_next().await.unwrap()), "执行循环：连不上数据库");
+        set.spawn(async {
+            if std::hint::black_box(true) {
+                panic!("出错了");
+            }
+            ("API", Ok(()))
+        });
+        assert!(describe(set.join_next().await.unwrap()).starts_with("组件 panic"));
+    }
 }

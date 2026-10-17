@@ -41,8 +41,7 @@ pub async fn apply(pool: &PgPool, sink: &str, ctx: &SinkContext<'_>, rows: &[Rec
         ("mkt.stock_bar_1d", "a_share.snapshot") => exec_dated(pool, STOCK_BAR_SNAPSHOT, &data, run_id, trade_date).await?,
         ("mkt.index_bar_1d", "index.bar_1d") => exec(pool, INDEX_BAR_HIST, &data, run_id).await?,
         ("mkt.index_bar_1d", "index.snapshot") => exec_dated(pool, INDEX_BAR_SNAPSHOT, &data, run_id, trade_date).await?,
-        ("mkt.corp_action", "a_share.corp_action") => corp_action(pool, &data, run_id, "rest").await?,
-        ("mkt.corp_action", "a_share.corp_action_dump") => corp_action(pool, &data, run_id, "dump").await?,
+        ("mkt.corp_action", "a_share.corp_action_dump") => corp_action(pool, &data, run_id).await?,
         ("ref.index_member", "index.members") => index_member(pool, &data, trade_date, var("thscode").as_deref()).await?,
         ("fin.valuation_1d", "a_share.valuation") => exec_dated(pool, VALUATION, &data, run_id, trade_date).await?,
         ("fin.valuation_1d", "a_share.auction_final") => exec_dated(pool, FLOAT_CAP, &data, run_id, trade_date).await?,
@@ -138,25 +137,23 @@ FROM jsonb_array_elements($1) e WHERE e->'p'->>'float_market_cap' IS NOT NULL
 ON CONFLICT (thscode, trade_date) DO UPDATE SET float_market_cap = EXCLUDED.float_market_cap";
 
 // @project-doc docs/domains/price_adjustment.md#corp_action_rules
-async fn corp_action(pool: &PgPool, data: &Value, run_id: i64, source: &str) -> anyhow::Result<usize> {
-    // 逐只 REST 接口没有配股字段：REST 数据只覆盖 REST 写入的行，不覆盖导出文件写入的完整数据
+/// 全市场导出文件里的公司行动（含配股字段），按 (证券, 除权日, 源顺序) 覆盖
+async fn corp_action(pool: &PgPool, data: &Value, run_id: i64) -> anyhow::Result<usize> {
     let res = sqlx::query(
         "INSERT INTO mkt.corp_action AS t (thscode, ex_date, seq, cash_div, bonus_ratio, rights_ratio, rights_price, source, run_id)
          SELECT e->>'thscode', ops.ms_to_cn_date((e->'p'->>'ex_date_ms')::bigint), (e->>'seq')::smallint,
                 coalesce((e->'p'->>'dividend_per_share')::numeric, 0), coalesce((e->'p'->>'per_share_bonus')::numeric, 0),
-                coalesce((e->'p'->>'allotment_ratio')::numeric, 0), coalesce((e->'p'->>'allotment_price')::numeric, 0), $3, $2
+                coalesce((e->'p'->>'allotment_ratio')::numeric, 0), coalesce((e->'p'->>'allotment_price')::numeric, 0), 'dump', $2
          FROM jsonb_array_elements($1) e
          WHERE e->>'thscode' IS NOT NULL AND e->'p'->>'ex_date_ms' IS NOT NULL
          ON CONFLICT (thscode, ex_date, seq) DO UPDATE
            SET cash_div = EXCLUDED.cash_div, bonus_ratio = EXCLUDED.bonus_ratio, rights_ratio = EXCLUDED.rights_ratio,
                rights_price = EXCLUDED.rights_price, source = EXCLUDED.source, run_id = EXCLUDED.run_id, updated_at = now()
-           WHERE (t.source = EXCLUDED.source OR EXCLUDED.source = 'dump')
-             AND (t.cash_div, t.bonus_ratio, t.rights_ratio, t.rights_price, t.source)
+           WHERE (t.cash_div, t.bonus_ratio, t.rights_ratio, t.rights_price, t.source)
                  IS DISTINCT FROM (EXCLUDED.cash_div, EXCLUDED.bonus_ratio, EXCLUDED.rights_ratio, EXCLUDED.rights_price, EXCLUDED.source)",
     )
     .bind(data)
     .bind(run_id)
-    .bind(source)
     .execute(pool)
     .await?;
     Ok(res.rows_affected() as usize)

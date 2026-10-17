@@ -512,7 +512,7 @@ function Category({ name, rows }: { name: string; rows: DatasetStatus[] }) {
                 <p className="text-xs text-zinc-500">{d.summary}</p>
               </div>
               <div className="flex shrink-0 items-center gap-3 text-xs text-zinc-500">
-                <span className="w-24">{PLANS[d.plan] ?? d.plan}</span>
+                <span className="w-24">{PLANS[d.schedule] ?? d.schedule}</span>
                 <span className="w-20" title={fmtDateTime(d.last_done_at)}>
                   {d.last_done_at ? fmtAgo(d.last_done_at) : "—"}
                 </span>
@@ -607,7 +607,7 @@ function ManualSync({ datasets, onDone }: { datasets: DatasetStatus[]; onDone: (
     const out: { key: string; name: string; rows: DatasetStatus[] }[] = MANUAL_GROUPS.map((k) => ({
       key: k,
       name: PLANS[k] ?? k,
-      rows: on.filter((d) => d.plan === k),
+      rows: on.filter((d) => d.schedule === k),
     })).filter((g) => g.rows.length > 0);
     const off = datasets.filter((d) => !d.enabled);
     if (off.length > 0) out.push({ key: "off", name: "没有开启的数据（基金、期货、期权等）", rows: off });

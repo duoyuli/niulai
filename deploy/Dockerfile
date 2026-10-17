@@ -18,6 +18,7 @@ COPY backend/rust-toolchain.toml backend/Cargo.toml backend/Cargo.lock ./
 # 先只编译依赖，源码变化时可以复用这一层缓存
 RUN mkdir -p src/bin && echo 'fn main() {}' > src/bin/niulai.rs && echo '' > src/lib.rs \
     && cargo build --release --locked && rm -rf src
+COPY backend/build.rs ./
 COPY backend/src/ src/
 COPY backend/migrations/ migrations/
 # 版本号编译进程序（CI 传入 git 标签，例如 v2026.10.18；本机构建是 dev），页面据此判断有没有新版本

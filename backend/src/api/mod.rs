@@ -27,7 +27,6 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::error::ApiResult;
-use crate::analysis::scan::ScanCache;
 use crate::sync::Engine;
 
 /// 请求处理共享的状态：同步引擎（数据集、规划）、连接池和分析结果缓存
@@ -35,7 +34,6 @@ use crate::sync::Engine;
 pub struct AppState {
     pub engine: Arc<Engine>,
     pub pool: sqlx::PgPool,
-    pub scans: Arc<ScanCache>,
     /// 登录状态的签名密钥，第一次用到时从数据库读取
     pub session_secret: Arc<tokio::sync::OnceCell<Vec<u8>>>,
     /// GitHub 上最新版本的查询结果
@@ -65,7 +63,7 @@ pub struct ApiDoc;
 
 // @project-doc docs/interfaces/rest_api.md#conventions
 pub fn router(engine: Arc<Engine>) -> Router {
-    let state = AppState { pool: engine.pool.clone(), engine, scans: Arc::new(ScanCache::default()), session_secret: Arc::default(), latest: Arc::default(), overview: Arc::default(), stats: Arc::default() };
+    let state = AppState { pool: engine.pool.clone(), engine, session_secret: Arc::default(), latest: Arc::default(), overview: Arc::default(), stats: Arc::default() };
     let st = &state.engine.settings;
     if st.admin_user == crate::config::DEFAULT_ADMIN_USER && st.admin_password == crate::config::DEFAULT_ADMIN_PASSWORD {
         tracing::warn!("网页登录仍在使用默认账号密码 niulai / niulai，请设置 NIULAI_ADMIN_USER 和 NIULAI_ADMIN_PASSWORD");

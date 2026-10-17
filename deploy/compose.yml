@@ -14,9 +14,8 @@ x-logging: &logging
 
 services:
   # 内置数据库：端口不对外暴露，只有 niulai 容器能连接。
-  # 数据默认放在部署目录下的 data/postgres：宿主机上的普通目录，删除容器、docker compose down -v、docker volume prune 都不影响。
-  # 2026-10-17 之前的部署数据在 Docker 卷 pgdata 中，换成这个 compose.yml 之前先迁移，或在 .env 中写 POSTGRES_DATA=pgdata 继续用卷，
-  # 否则数据库会从空的开始（原来的数据还在卷里，没有丢）。见 docs/operations/runbook.md#data_dir
+  # 数据放在 .env 的 POSTGRES_DATA（默认部署目录下的 data/postgres）：宿主机上的普通目录，删除容器、docker compose down -v、
+  # docker volume prune 都不影响。见 docs/operations/runbook.md#data_dir
   postgres:
     image: postgres:18.6
     environment:
@@ -74,6 +73,5 @@ services:
     logging: *logging
 
 volumes:
-  pgdata:                      # 只有 .env 中写了 POSTGRES_DATA=pgdata 的老部署用它
   # 一键升级时 niulai 和 upgrader 交换的临时文件（升级请求、进度、心跳），丢了也没关系，所以用卷
   upgrade:

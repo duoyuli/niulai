@@ -24,8 +24,6 @@ use super::run::RunKind;
 use super::spec::{DatasetSpec, Partition};
 use crate::time::today_cn;
 
-/// 核检的数据集和对应的日线表
-const TARGETS: [(&str, &str); 2] = [("a_share.bar_1d", "mkt.stock_bar_1d"), ("index.bar_1d", "mkt.index_bar_1d")];
 
 /// 进程内同时只做一次核检
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -85,8 +83,9 @@ async fn run_locked(engine: &Engine, trigger: &str) -> anyhow::Result<i64> {
     let mut results = vec![];
     let mut error = None;
     if let Some(end) = end {
-        for (id, table) in TARGETS {
-            let Some(spec) = engine.registry.get(id).filter(|s| s.enabled) else { continue };
+        // 核检的是按证券和时间窗口取历史日线的数据集（个股日线、指数日线），由配置的分区和 sink 决定
+        for (spec, table) in engine.registry.bar_histories().into_iter().filter(|(s, _)| s.enabled) {
+            let id = &spec.id;
             match check_dataset(engine, spec, table, end).await {
                 Ok(r) => results.push(r),
                 Err(e) => {

@@ -18,6 +18,7 @@ pub mod postprocess;
 pub mod queue;
 pub mod records;
 pub mod registry;
+pub mod retention;
 pub mod run;
 pub mod scheduler;
 pub mod sinks;

@@ -44,9 +44,8 @@
 | `NIULAI_RATE_LIMIT_RPS` | 否 | `2` | 每秒请求供应商的次数，必须大于 0。同一时刻只有一个进程执行同步任务，所以这就是全局上限，见 [限速与单一执行进程](../architecture/sync_pipeline.md#rate_limit) |
 | `NIULAI_HTTP_TIMEOUT_S` | 否 | `60` | 请求供应商的超时秒数；下载导出文件固定为 600 秒 |
 | `NIULAI_VENDOR_BASE_URL` | 否 | `https://fuyao.aicubes.cn` | 供应商地址 |
-| `NIULAI_SCHEDULE_AFTER_CLOSE` | 否 | `18:00` | 每日同步的默认时间，Asia/Shanghai，`HH:MM` 格式。在同步页上改过时间后以网页上的为准，见 [定时调度](../architecture/sync_pipeline.md#scheduling) |
 | `NIULAI_WEB_DIR` | 否 | 无；Docker 镜像中是 `/app/web` | 前端构建产物目录（`frontend/dist`）。配置后 `niulai serve` 同时提供前端页面，见 [由 niulai serve 提供](../architecture/frontend.md#serving) |
-| `NIULAI_SCHEDULER_ENABLED` | 否 | `true` | 是否在 `niulai serve` 中运行定时调度；`--no-scheduler` 效果相同 |
+| `NIULAI_SCHEDULER_ENABLED` | 否 | `true` | 是否在 `niulai serve` 中运行定时调度；`--no-scheduler` 效果相同。同步时间在同步页上设置，见 [定时调度](../architecture/sync_pipeline.md#scheduling) |
 | `RUST_LOG` | 否 | `info,sqlx=warn,tower_http=info` | 日志级别 |
 | `NIULAI_LOG_FORMAT` | 否 | 文本 | 设为 `json` 时输出结构化日志；Docker 镜像中默认 `json` |
 | `HOSTNAME` | 否 | `local` | 用于生成执行者标识（`ops.task.locked_by`） |
@@ -65,7 +64,7 @@ Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.examp
 | `NIULAI_IMAGE` | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；建议固定版本号，例如 `ghcr.io/duoyuli/niulai:2026.10.18`。一键升级会改写这一行 |
 | `NIULAI_LISTEN_ADDR`、`NIULAI_PORT` | `127.0.0.1`、`8080` | niulai 在宿主机上监听的地址和端口；端口被占用时改 `NIULAI_PORT`，要从其他机器访问时把地址改成 `0.0.0.0` |
 | `POSTGRES_PASSWORD` | `niulai` | 内置数据库的密码，要与 `DATABASE_URL` 中的一致；只在第一次启动（创建数据目录）之前修改才生效 |
-| `POSTGRES_DATA` | `./data/postgres` | 内置数据库的数据放在哪：默认是部署目录下的普通目录；写 `pgdata` 表示 2026-10-17 之前的 Docker 卷，见 [数据目录](../operations/runbook.md#data_dir) |
+| `POSTGRES_DATA` | `./data/postgres` | 内置数据库的数据目录，默认在部署目录下，见 [数据目录](../operations/runbook.md#data_dir) |
 
 `DATABASE_URL` 默认是 `postgres://niulai:niulai@postgres:5432/niulai`，指向同一个 Compose 中的内置数据库。容器内的监听地址、前端目录和数据集配置路径由镜像固定（`NIULAI_API_BIND=0.0.0.0:8080`、`NIULAI_WEB_DIR`、`NIULAI_DATASETS_PATH`），不要在 `.env` 中修改。
 

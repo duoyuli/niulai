@@ -59,7 +59,32 @@ impl Registry {
     pub fn get(&self, id: &str) -> Option<&DatasetSpec> {
         self.datasets.iter().find(|d| d.id == id)
     }
+
+    /// 写入任一指定类型化表的数据集。数据集在流程里扮演什么角色由它的 sink 决定，代码里不写死数据集 ID
+    pub fn writing_to(&self, tables: &[&str]) -> Vec<&DatasetSpec> {
+        self.datasets.iter().filter(|d| d.sink.iter().any(|s| tables.contains(&s.as_str()))).collect()
+    }
+
+    /// 按证券和时间窗口取历史日线的数据集，以及它写入的日线表：数据核检逐只核对它们，补偿时按股票补
+    pub fn bar_histories(&self) -> Vec<(&DatasetSpec, &'static str)> {
+        self.datasets
+            .iter()
+            .filter(|d| matches!(d.partition, Partition::SecurityWindow { .. }))
+            .filter_map(|d| BAR_TABLES.iter().find(|t| d.sink.iter().any(|s| s == *t)).map(|t| (d, *t)))
+            .collect()
+    }
+
+    /// 个股历史日线的数据集（写 `mkt.stock_bar_1d`、按证券和时间窗口取）
+    pub fn stock_bar_history(&self) -> Option<&DatasetSpec> {
+        self.bar_histories().into_iter().find(|(_, t)| *t == STOCK_BARS).map(|(d, _)| d)
+    }
 }
+
+/// 日线表
+pub const STOCK_BARS: &str = "mkt.stock_bar_1d";
+pub const BAR_TABLES: [&str; 2] = [STOCK_BARS, "mkt.index_bar_1d"];
+/// 影响复权价的表：个股日线和公司行动。写入它们的数据集有变化时，运行结束后重算复权
+pub const PRICE_TABLES: [&str; 2] = [STOCK_BARS, "mkt.corp_action"];
 
 #[derive(Debug, Clone)]
 pub struct DatasetSpec {
@@ -360,45 +385,47 @@ impl Incremental {
     }
 }
 
+/// 同步计划：数据集多久同步一次，见 docs/architecture/sync_pipeline.md#scheduling
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Schedule {
-    AfterClose,
+    /// 每个交易日收盘后
     Daily,
     Weekly,
+    /// 每月第一次每周同步时
     Monthly,
-    /// 财报季（1、4、7、8、10 月）每天，其余月份每周
+    /// 财报季（1、4、7、8、10 月）随每日同步，其余月份随每周同步
     ReportSeason,
-    AfterOpen,
+    /// 不自动同步，只手动发起
+    Manual,
 }
 
 impl Schedule {
-    /// 每个交易日都执行
-    pub fn is_daily(self) -> bool {
-        matches!(self, Schedule::AfterClose | Schedule::Daily)
-    }
+    pub const ALL: [Schedule; 5] = [Schedule::Daily, Schedule::Weekly, Schedule::Monthly, Schedule::ReportSeason, Schedule::Manual];
 
-    /// 配置中的写法
-    pub fn as_str(self) -> &'static str {
+    /// 配置和接口中的写法
+    pub fn key(self) -> &'static str {
         match self {
-            Schedule::AfterClose => "after_close",
             Schedule::Daily => "daily",
             Schedule::Weekly => "weekly",
             Schedule::Monthly => "monthly",
             Schedule::ReportSeason => "report_season",
-            Schedule::AfterOpen => "after_open",
+            Schedule::Manual => "manual",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Schedule::Daily => "每日收盘后",
+            Schedule::Weekly => "每周",
+            Schedule::Monthly => "每月",
+            Schedule::ReportSeason => "财报季",
+            Schedule::Manual => "不自动同步",
         }
     }
 
     fn from_value(v: &Value) -> anyhow::Result<Self> {
-        Ok(match v.as_str().unwrap_or("after_close") {
-            "after_close" => Schedule::AfterClose,
-            "daily" => Schedule::Daily,
-            "weekly" => Schedule::Weekly,
-            "monthly" => Schedule::Monthly,
-            "report_season" => Schedule::ReportSeason,
-            "after_open" => Schedule::AfterOpen,
-            other => bail!("未知的调度类型：{other}"),
-        })
+        let key = v.as_str().unwrap_or("daily");
+        Schedule::ALL.into_iter().find(|s| s.key() == key).ok_or_else(|| anyhow::anyhow!("未知的同步计划：{key}"))
     }
 }
 
@@ -411,6 +438,12 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/datasets.yaml");
         let reg = Registry::load(&path).expect("config/datasets.yaml 应能解析");
         assert!(reg.datasets.len() >= 80);
+        // 数据集的角色由 sink 和分区决定
+        let price: Vec<&str> = reg.writing_to(&PRICE_TABLES).iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(price, ["a_share.bar_1d", "a_share.snapshot", "a_share.corp_action_dump"]);
+        let bars: Vec<(&str, &str)> = reg.bar_histories().iter().map(|(d, t)| (d.id.as_str(), *t)).collect();
+        assert_eq!(bars, [("a_share.bar_1d", "mkt.stock_bar_1d"), ("index.bar_1d", "mkt.index_bar_1d")]);
+        assert_eq!(reg.stock_bar_history().map(|d| d.id.as_str()), Some("a_share.bar_1d"));
         let bar = reg.get("a_share.bar_1d").unwrap();
         assert!(matches!(bar.partition, Partition::SecurityWindow { window_days: 3650, start_from_list_date: true, .. }));
         assert!(!bar.store_record);

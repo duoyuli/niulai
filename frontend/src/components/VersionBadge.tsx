@@ -211,7 +211,7 @@ const STEP_ICON: Record<string, { icon: string; className: string }> = {
   failed: { icon: "✕", className: "text-red-600 dark:text-red-400" },
 };
 
-/** 升级进度：进度条和每一步的状态。旧版本的升级助手不写步骤，只显示一句当前在做什么 */
+/** 升级进度：进度条和每一步的状态；升级助手还没接手（没有步骤）时只显示一句当前在做什么 */
 export function UpgradeProgress({
   u,
   target,

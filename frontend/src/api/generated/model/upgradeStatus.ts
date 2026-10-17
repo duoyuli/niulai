@@ -17,12 +17,12 @@ export interface UpgradeStatus {
      */
   log_tail?: string | null;
   /**
-     * 当前步骤或结果，例如「拉取镜像」「已升级到 1.2.0」
+     * 当前步骤或结果，例如「拉取镜像」「已升级到 2026.10.18」
      * @nullable
      */
   message?: string | null;
   state: UpgradeState;
-  /** 每一步的进度（下载、更新升级助手、备份、部署迁移、启动新版本）；旧版本的升级助手不写，为空 */
+  /** 每一步的进度（下载、更新升级助手、备份、部署迁移、启动新版本）；升级助手还没接手时为空 */
   steps: UpgradeStep[];
   /**
      * 正在升级或最近一次升级的目标版本

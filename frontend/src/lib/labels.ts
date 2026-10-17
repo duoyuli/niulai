@@ -85,7 +85,7 @@ export const PLANS: Record<string, string> = {
 
 export const WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
-/** 一次同步是谁发起的：看运行的 params.trigger；以前的运行没有记，按类型显示 */
+/** 一次同步是谁发起的：看运行的 params.trigger，没有时按类型显示 */
 export function runSource(kind: string, params: unknown): string {
   const trigger = (params as { trigger?: string | null } | null)?.trigger;
   switch (trigger) {

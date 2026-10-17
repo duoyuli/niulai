@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use sqlx::{AssertSqlSafe, PgConnection, PgPool};
 
 use super::run::{self, RunKind};
-use super::spec::{DatasetSpec, Incremental, Partition, Registry};
+use super::spec::{DatasetSpec, Incremental, Partition, Registry, Schedule};
 use super::template::{self, Scope};
 use super::{calendar, cursor};
 use crate::time::{cn_date_end_ms, cn_date_start_ms, today_cn};
@@ -207,7 +207,7 @@ pub fn task_priority(spec: &DatasetSpec, kind: RunKind) -> i16 {
     let tier = match kind {
         RunKind::Backfill => 200,
         RunKind::Repair => 50,
-        RunKind::Incremental if spec.schedule.is_daily() => 0,
+        RunKind::Incremental if spec.schedule == Schedule::Daily => 0,
         RunKind::Incremental => 100,
     };
     tier + spec.priority_rank()

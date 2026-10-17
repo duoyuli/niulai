@@ -58,8 +58,6 @@
 | `/login` | 登录，成功后回到 `next` 参数指向的页面；不在 `Layout` 中 | `POST /auth/login` |
 | `/setup` | API Key 引导和更换：验证并保存，显示来源和末尾 4 位 | `GET /setup`、`PUT /setup/api-key` |
 
-旧地址 `/securities`、`/backtest`、`/screener/...` 跳转到新页面。均线接口 `GET /securities/{thscode}/ma` 和全市场扫描 `GET /signals/ma-cross` 仍然保留，但没有页面使用。
-
 全局行为（`Layout`、`VersionBadge`）：
 - 请求收到 401 时整页跳到 `/login?next=<当前地址>`；登录后还没配置 API Key（`GET /setup` 的 `api_key_configured` 为 false）时，所有页面跳到 `/setup`；仍在用默认账号密码时页面顶部提示。
 - 版本号每 30 分钟请求一次 `GET /system/version`，有新版本时亮红点，点开可以一键升级。升级进行中每 2 秒刷新（服务重启时请求失败也继续），版本号弹窗和每个页面顶部都显示进度条和每一步的状态（`UpgradeProgress`、`UpgradeBanner`，步骤来自升级助手写的状态）；所有步骤结束、运行的版本变成目标版本后整页刷新。

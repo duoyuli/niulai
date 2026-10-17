@@ -13,7 +13,7 @@
 
 1. **升级逻辑在 niulai 程序里。** 子命令 `niulai upgrader` 通过 Unix socket 直接调用 Docker Engine API：拉取镜像、在 postgres 容器中执行 `pg_dump`、按原容器的配置用新镜像重建 niulai、等待 healthy、失败时换回。部署目录中只有 `compose.yml` 和 `.env`，没有脚本。
 2. **单独的 upgrader 容器运行它。** upgrader 用与 niulai 相同的镜像，以 root 运行，挂载 `/var/run/docker.sock` 和部署目录。由 `.env` 中的 `COMPOSE_PROFILES=upgrader` 启用，默认开启。
-3. **提供网页的 niulai 进程不能操作 Docker。** 两者只通过共享卷交换文件：niulai 写要升级到的版本号，upgrader 写心跳、进度和日志。upgrader 只接受 `X.Y.Z` 格式的版本号（2026-10-17 起改为日期版本号，见 [ADR：版本号按发布日期定](calendar_versioning.md)；升级的顺序和部署迁移见 [ADR：部署迁移与升级进度](deploy_migrations.md)），只换发布镜像（`ghcr.io/<所有者>/niulai`）的标签。
+3. **提供网页的 niulai 进程不能操作 Docker。** 两者只通过共享卷交换文件：niulai 写要升级到的版本号，upgrader 写心跳、进度和日志。upgrader 只接受 `X.Y.Z` 格式的版本号（2026-10-17 起改为只接受日期版本号，见 [ADR：版本号按发布日期定](calendar_versioning.md)；升级的顺序和部署迁移见 [ADR：部署迁移与升级进度](deploy_migrations.md)），只换发布镜像（`ghcr.io/<所有者>/niulai`）的标签。
 4. **先下载、再备份、再切换，失败时换回。** 新镜像下载成功后才动 `.env` 和容器；使用内置数据库时先备份；新容器启动后退出、被重启，或 5 分钟内没有恢复 healthy，就删掉它，换回旧容器和原来的 `.env`。
 5. **upgrader 也跟着升级。** niulai 升级成功后，upgrader 用新镜像重建自己，新的 upgrader 启动时删掉旧容器。
 6. **版本号编译进镜像。** CI 把 git 标签作为构建参数传入（`NIULAI_VERSION`），niulai 查 GitHub 上最大的正式版本标签来判断有没有新版本。

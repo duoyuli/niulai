@@ -18,7 +18,7 @@ use super::AppState;
 use crate::version::parse;
 use crate::error::{ApiError, ApiResult};
 
-/// 构建时写入的版本号（CI 用 git 标签，例如 v1.2.0）；本机编译的是 dev
+/// 构建时写入的版本号（CI 用 git 标签，例如 v2026.10.18）；本机编译的是 dev
 pub fn current_version() -> &'static str {
     option_env!("NIULAI_VERSION").map(|v| v.trim_start_matches('v')).filter(|v| !v.is_empty()).unwrap_or("dev")
 }
@@ -50,7 +50,7 @@ struct Checked {
 
 #[derive(Serialize, ToSchema)]
 pub struct VersionInfo {
-    /// 正在运行的版本，例如 1.1.0；本机编译的是 dev
+    /// 正在运行的版本，例如 2026.10.18；本机编译的是 dev
     pub current: String,
     /// GitHub 上最新的正式版本；还没查到或查询失败时为空
     pub latest: Option<String>,
@@ -82,12 +82,12 @@ pub struct UpgradeStatus {
     pub state: UpgradeState,
     /// 正在升级或最近一次升级的目标版本
     pub target: Option<String>,
-    /// 当前步骤或结果，例如「拉取镜像」「已升级到 1.2.0」
+    /// 当前步骤或结果，例如「拉取镜像」「已升级到 2026.10.18」
     pub message: Option<String>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     /// 失败时 upgrader 日志的最后几行
     pub log_tail: Option<String>,
-    /// 每一步的进度（下载、更新升级助手、备份、部署迁移、启动新版本）；旧版本的升级助手不写，为空
+    /// 每一步的进度（下载、更新升级助手、备份、部署迁移、启动新版本）；升级助手还没接手时为空
     pub steps: Vec<UpgradeStep>,
 }
 
@@ -134,7 +134,7 @@ async fn version(State(s): State<AppState>, Query(q): Query<VersionQuery>) -> Js
 
 #[derive(Deserialize, ToSchema)]
 pub struct UpgradeInput {
-    /// 要升级到的版本，例如 1.2.0；为空时升级到最新版本
+    /// 要升级到的版本，例如 2026.10.18；为空时升级到最新版本
     pub version: Option<String>,
 }
 
@@ -200,7 +200,7 @@ struct Tag {
     name: String,
 }
 
-/// 可以升级到的最新正式版本（vYYYY.MM.DD[.N]，以前是 vX.Y.Z，见 [`crate::version`]）：GitHub 上的标签，并且镜像已经构建好、能从 GHCR 拉取。
+/// 可以升级到的最新正式版本（vYYYY.MM.DD[.N]，见 [`crate::version`]）：GitHub 上的标签，并且镜像已经构建好、能从 GHCR 拉取。
 /// 推送标签后 CI 要几分钟才把镜像推上去，这期间不提示新版本，避免一键升级拉取镜像失败
 async fn fetch_latest(repo: &str) -> anyhow::Result<Option<String>> {
     let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).user_agent(concat!("niulai/", env!("CARGO_PKG_VERSION"))).build()?;
@@ -304,8 +304,8 @@ mod tests {
 
     #[test]
     fn picks_newest_stable_tag() {
-        let tags = ["v1.1.0", "v1.10.0", "v2026.10.18", "v2026.10.18.1", "v2026.10.9", "v2.0.0-rc.1", "latest", "v1.2"];
-        assert_eq!(versions_desc(tags.into_iter()), vec!["2026.10.18.1".to_string(), "2026.10.18".into(), "2026.10.9".into(), "1.10.0".into(), "1.1.0".into()]);
+        let tags = ["v1.5.0", "v2026.10.18", "v2026.10.18.1", "v2026.10.09", "v2026.10.18-rc.1", "latest", "v1.2"];
+        assert_eq!(versions_desc(tags.into_iter()), vec!["2026.10.18.1".to_string(), "2026.10.18".into(), "2026.10.09".into()]);
         assert_eq!(parse("dev"), None);
     }
 
@@ -317,12 +317,12 @@ mod tests {
         std::fs::write(dir.join("heartbeat"), chrono::Utc::now().timestamp().to_string()).unwrap();
         let st = upgrade_status(Some(&dir));
         assert!(st.available && st.state == UpgradeState::Idle);
-        std::fs::write(dir.join("status"), r#"{"state":"failed","target":"1.2.0","message":"拉取镜像失败","at":1}"#).unwrap();
+        std::fs::write(dir.join("status"), r#"{"state":"failed","target":"2026.10.18","message":"拉取镜像失败","at":1}"#).unwrap();
         std::fs::write(dir.join("log"), (1..=30).map(|i| format!("line {i}\n")).collect::<String>()).unwrap();
         let st = upgrade_status(Some(&dir));
-        assert_eq!((st.state, st.target.as_deref()), (UpgradeState::Failed, Some("1.2.0")));
+        assert_eq!((st.state, st.target.as_deref()), (UpgradeState::Failed, Some("2026.10.18")));
         assert!(st.log_tail.unwrap().starts_with("line 11"));
-        assert!(st.steps.is_empty(), "旧版本的升级助手不写步骤");
+        assert!(st.steps.is_empty(), "状态里没有步骤时为空");
         // 新版本的升级助手写出每一步的进度
         std::fs::write(
             dir.join("status"),
@@ -332,7 +332,7 @@ mod tests {
         let st = upgrade_status(Some(&dir));
         assert_eq!(st.steps.len(), 2);
         assert_eq!((st.steps[0].state.as_str(), st.steps[0].detail.as_str(), st.steps[1].detail.as_str()), ("running", "45%", ""));
-        std::fs::write(dir.join("request"), "1.3.0").unwrap();
+        std::fs::write(dir.join("request"), "2026.10.19").unwrap();
         assert_eq!(upgrade_status(Some(&dir)).state, UpgradeState::Requested);
         std::fs::write(dir.join("heartbeat"), "1").unwrap();
         assert!(!upgrade_status(Some(&dir)).available, "心跳过期");
