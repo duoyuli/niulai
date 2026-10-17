@@ -67,6 +67,8 @@ enum Cmd {
     },
     /// 立即发起一次每日增量（按调度规则选择到期的数据集）
     Daily,
+    /// 数据核检：按证券 × 交易日检查个股日线和指数日线有没有缺，发现缺口就安排重取（由执行循环执行）
+    Check,
     /// 重算复权因子和同花顺分段系数
     Recompute,
     /// 查看最近的运行
@@ -143,6 +145,13 @@ async fn main() -> anyhow::Result<()> {
             let (run_id, summary) = engine.planner().plan_run(RunKind::Incremental, &specs, planner::PlanOptions { trade_date: Some(today), trigger: Some("cli".into()), ..Default::default() }).await?;
             println!("run_id = {run_id}，{} 个数据集，{} 个任务", summary.len(), summary.iter().map(|(_, n)| n).sum::<usize>());
         }
+        Cmd::Check => match niulai::sync::check::run(&engine, "cli").await? {
+            Some(id) => {
+                let s = niulai::sync::check::status(&engine.pool).await?;
+                println!("check_id = {id}\n{}", serde_json::to_string_pretty(&s.last.and_then(|l| l.result))?);
+            }
+            None => println!("正在核检"),
+        },
         Cmd::Recompute => {
             postprocess::recompute_adjustments(&engine.pool, 0).await?;
             println!("已重算");

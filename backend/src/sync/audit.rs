@@ -393,7 +393,7 @@ pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
         } else {
             vec![]
         };
-        let (run_id, _) = engine.planner().plan_run(RunKind::Repair, &[spec], PlanOptions { trade_date: Some(latest), only_thscodes, trigger: Some("repair".into()) }).await?;
+        let (run_id, _) = engine.planner().plan_run(RunKind::Repair, &[spec], PlanOptions { trade_date: Some(latest), only_thscodes, trigger: Some("repair".into()), ..Default::default() }).await?;
         summary.runs.push(run_id);
     }
 

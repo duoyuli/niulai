@@ -25,6 +25,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(sync_health))
         .routes(routes!(sync_repair))
         .routes(routes!(get_schedule, update_schedule))
+        .routes(routes!(data_check_status, start_data_check))
 }
 
 /// 同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口、没有解决的失败、历史回补进度
@@ -52,6 +53,28 @@ async fn update_schedule(State(s): State<AppState>, Json(body): Json<crate::sync
     body.validate().map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
     crate::sync::scheduler::save_times(&s.pool, &body).await?;
     Ok(Json(crate::sync::scheduler::overview(&s.engine).await?))
+}
+
+/// 数据核检：最近一次核检的结果（每个数据集查了多少、新发现、已补回、确认停牌、仍缺），以及还缺数据的证券
+#[utoipa::path(get, path = "/sync/check", tag = "sync", responses((status = 200, description = "成功", body = crate::sync::check::DataCheckStatus)))]
+async fn data_check_status(State(s): State<AppState>) -> ApiResult<Json<crate::sync::check::DataCheckStatus>> {
+    Ok(Json(crate::sync::check::status(&s.pool).await?))
+}
+
+/// 立即核检：在后台按证券 × 交易日检查个股日线和指数日线，发现缺口就安排重取；要几十秒，用 GET 看结果
+#[utoipa::path(post, path = "/sync/check", tag = "sync",
+    responses((status = 202, description = "已开始"), (status = 409, description = "正在核检", body = crate::error::ErrorBody)))]
+async fn start_data_check(State(s): State<AppState>) -> ApiResult<StatusCode> {
+    if crate::sync::check::is_running() {
+        return Err(ApiError::Conflict("正在核检，稍后再看结果".into()));
+    }
+    let engine = s.engine.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::sync::check::run(&engine, "manual").await {
+            tracing::error!(error = %format!("{e:#}"), "数据核检失败");
+        }
+    });
+    Ok(StatusCode::ACCEPTED)
 }
 
 #[derive(Serialize, ToSchema)]

@@ -27,6 +27,7 @@ import type {
 import type {
   CreateRun,
   CreatedRun,
+  DataCheckStatus,
   DatasetRecordsParams,
   DatasetStatus,
   ErrorBody,
@@ -277,7 +278,180 @@ export function useDatasetRecords<TData = Awaited<ReturnType<typeof datasetRecor
 
 
 
-export const getSyncHealthUrl = () => {
+export const getDataCheckStatusUrl = () => {
+
+
+
+
+  return `/api/v1/sync/check`
+}
+
+/**
+ * @summary 数据核检：最近一次核检的结果（每个数据集查了多少、新发现、已补回、确认停牌、仍缺），以及还缺数据的证券
+ */
+export const dataCheckStatus = async ( options?: Parameters<typeof apiFetch>[1]): Promise<DataCheckStatus> => {
+
+  return apiFetch<DataCheckStatus>(getDataCheckStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getDataCheckStatusQueryKey = () => {
+    return [
+    `/api/v1/sync/check`
+    ] as const;
+    }
+
+
+export const getDataCheckStatusQueryOptions = <TData = Awaited<ReturnType<typeof dataCheckStatus>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataCheckStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDataCheckStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof dataCheckStatus>>> = ({ signal }) => dataCheckStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof dataCheckStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type DataCheckStatusQueryResult = NonNullable<Awaited<ReturnType<typeof dataCheckStatus>>>
+export type DataCheckStatusQueryError = unknown
+
+
+export function useDataCheckStatus<TData = Awaited<ReturnType<typeof dataCheckStatus>>, TError = unknown>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataCheckStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof dataCheckStatus>>,
+          TError,
+          Awaited<ReturnType<typeof dataCheckStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useDataCheckStatus<TData = Awaited<ReturnType<typeof dataCheckStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataCheckStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof dataCheckStatus>>,
+          TError,
+          Awaited<ReturnType<typeof dataCheckStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useDataCheckStatus<TData = Awaited<ReturnType<typeof dataCheckStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataCheckStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 数据核检：最近一次核检的结果（每个数据集查了多少、新发现、已补回、确认停牌、仍缺），以及还缺数据的证券
+ */
+
+export function useDataCheckStatus<TData = Awaited<ReturnType<typeof dataCheckStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataCheckStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getDataCheckStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getStartDataCheckUrl = () => {
+
+
+
+
+  return `/api/v1/sync/check`
+}
+
+/**
+ * @summary 立即核检：在后台按证券 × 交易日检查个股日线和指数日线，发现缺口就安排重取；要几十秒，用 GET 看结果
+ */
+export const startDataCheck = async ( options?: Parameters<typeof apiFetch>[1]): Promise<void> => {
+
+  return apiFetch<void>(getStartDataCheckUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getStartDataCheckMutationKey = () => ['startDataCheck'] as const;
+
+export const getStartDataCheckMutationOptions = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startDataCheck>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startDataCheck>>, TError,void, TContext> => {
+
+const mutationKey = getStartDataCheckMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startDataCheck>>, void> = () => {
+
+
+          return  startDataCheck(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartDataCheckMutationResult = NonNullable<Awaited<ReturnType<typeof startDataCheck>>>
+
+    export type StartDataCheckMutationError = ErrorBody
+
+
+    /**
+ * @summary 立即核检：在后台按证券 × 交易日检查个股日线和指数日线，发现缺口就安排重取；要几十秒，用 GET 看结果
+ */
+export const useStartDataCheck = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startDataCheck>>, TError,void, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof startDataCheck>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getStartDataCheckMutationOptions(options), queryClient);
+    }
+    export const getSyncHealthUrl = () => {
 
 
 

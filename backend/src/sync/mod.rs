@@ -1,7 +1,7 @@
 //! 通用同步框架：注册表 → 规划器 → 任务队列 → 执行器 → raw.record / 类型化表。
 //!
 //! 模块分层（上层依赖下层，同层之间不互相依赖）：
-//! - 入口：scheduler（定时触发）、executor（执行循环与单个任务的编排）
+//! - 入口：scheduler（定时触发）、executor（执行循环与单个任务的编排）、audit（完整性核对与兜底补偿）、check（按证券 × 交易日的数据核检）
 //! - 规划：planner（分区展开为任务）
 //! - 执行步骤：fetch（HTTP 取数）、records（记录与 raw.record）、sinks（类型化表）、postprocess（运行结束后的计算）
 //! - 状态：queue（ops.task）、run（ops.run）、cursor（ops.cursor）、calendar（ref.trading_day 与交易日校验）
@@ -9,6 +9,7 @@
 
 pub mod audit;
 pub mod calendar;
+pub mod check;
 pub mod cursor;
 pub mod executor;
 pub mod fetch;

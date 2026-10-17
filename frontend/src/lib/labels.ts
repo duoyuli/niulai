@@ -105,6 +105,8 @@ export function runSource(kind: string, params: unknown): string {
       return "命令行";
     case "repair":
       return "补齐缺口";
+    case "data_check":
+      return "核检重取";
     default:
       return RUN_KINDS[kind] ?? kind;
   }

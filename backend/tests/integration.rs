@@ -571,6 +571,90 @@ async fn sync_schedule_can_be_viewed_and_changed() {
 }
 
 #[tokio::test]
+async fn data_check_finds_gaps_refetches_and_confirms_suspensions() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let pool = db.pool.clone();
+    let engine = Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), pool.clone()).await.unwrap();
+    // 两只股票，10 个交易日；B 缺 01-07、01-08。还有一只没有上市日、也没有日线的（还没上市），不查
+    for (code, list_date) in [("000001.SZ", Some("2026-01-05")), ("000002.SZ", Some("2026-01-05")), ("301999.SZ", None)] {
+        sqlx::query(
+            "INSERT INTO raw.record (dataset_id, rkey, thscode, payload, payload_hash)
+             VALUES ('meta.tickers', $1, $1, jsonb_build_object('thscode', $1, 'asset_type', 'a-share', 'list_date', $2::text), 'x')",
+        )
+        .bind(code)
+        .bind(list_date)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("INSERT INTO ref.trading_day SELECT d::date, 'api' FROM generate_series('2026-01-05'::date, '2026-01-16'::date, '1 day') d WHERE extract(isodow FROM d) < 6")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let run_id: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind) VALUES ('backfill') RETURNING run_id").fetch_one(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO mkt.stock_bar_1d (thscode, trade_date, open, high, low, close, volume, amount, run_id)
+         SELECT c, d.cal_date, 10, 10, 10, 10, 100, 1000, $1 FROM ref.trading_day d, unnest(ARRAY['000001.SZ', '000002.SZ']) c
+         WHERE NOT (c = '000002.SZ' AND d.cal_date IN ('2026-01-07', '2026-01-08'))",
+    )
+    .bind(run_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = |v: &Value| v["last"]["result"].as_array().unwrap().iter().find(|r| r["dataset_id"] == "a_share.bar_1d").cloned().unwrap();
+    let app = logged_in(niulai::api::router(Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), pool.clone()).await.unwrap())).await;
+
+    // 第一次：发现 2 个缺口，合并成一个窗口重取，排在补偿那一层
+    niulai::sync::check::run(&engine, "manual").await.unwrap().unwrap();
+    let (st, v) = call(&app, "GET", "/api/v1/sync/check", None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let r = result(&v);
+    assert_eq!((r["securities"].as_i64(), r["security_days"].as_i64(), r["new_gaps"].as_i64(), r["open"].as_i64()), (Some(2), Some(20), Some(2), Some(2)), "{r}");
+    assert_eq!(r["refetch_tasks"], 1);
+    let refetch = r["refetch_run"].as_i64().unwrap();
+    let (part, priority): (String, i16) = sqlx::query_as("SELECT part_key, priority FROM ops.task WHERE run_id = $1").bind(refetch).fetch_one(&pool).await.unwrap();
+    assert_eq!(part, "thscode=000002.SZ|2026-01-07..2026-01-08");
+    assert!((50..100).contains(&priority));
+    assert_eq!(v["open"][0]["thscode"], "000002.SZ");
+    assert_eq!(v["open"][0]["days"], 2);
+
+    // 重取期间这只股票有未完成任务：先不查，也不重复安排
+    niulai::sync::check::run(&engine, "manual").await.unwrap().unwrap();
+    let (_, v) = call(&app, "GET", "/api/v1/sync/check", None).await;
+    let r = result(&v);
+    assert_eq!((r["securities"].as_i64(), r["busy"].as_i64(), r["refetch_tasks"].as_i64(), r["open"].as_i64()), (Some(1), Some(1), Some(0), Some(2)), "{r}");
+
+    // 重取成功：01-07 取回来了，01-08 接口仍然没有，确认是停牌
+    sqlx::query("INSERT INTO mkt.stock_bar_1d (thscode, trade_date, open, high, low, close, volume, amount, run_id) VALUES ('000002.SZ', '2026-01-07', 10, 10, 10, 10, 100, 1000, $1)")
+        .bind(refetch)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ops.task SET status = 'done', finished_at = now() WHERE run_id = $1").bind(refetch).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE ops.run SET status = 'succeeded', finished_at = now() WHERE run_id = $1").bind(refetch).execute(&pool).await.unwrap();
+    niulai::sync::check::run(&engine, "followup").await.unwrap().unwrap();
+    let (_, v) = call(&app, "GET", "/api/v1/sync/check", None).await;
+    let r = result(&v);
+    assert_eq!((r["filled"].as_i64(), r["confirmed_now"].as_i64(), r["suspended"].as_i64(), r["open"].as_i64()), (Some(1), Some(1), Some(1), Some(0)), "{r}");
+    assert!(r["refetch_run"].is_null());
+    assert_eq!(v["open"].as_array().unwrap().len(), 0);
+
+    // 再查一次：停牌日不再报，也不再重取
+    niulai::sync::check::run(&engine, "weekly").await.unwrap().unwrap();
+    let (_, v) = call(&app, "GET", "/api/v1/sync/check", None).await;
+    let r = result(&v);
+    assert_eq!((r["new_gaps"].as_i64(), r["suspended"].as_i64(), r["refetch_tasks"].as_i64()), (Some(0), Some(1), Some(0)), "{r}");
+
+    let (st, _) = call(&app, "POST", "/api/v1/sync/check", None).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn audit_finds_gaps_and_plans_repairs() {
     let Some(db) = TestDb::create().await else {
         eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");

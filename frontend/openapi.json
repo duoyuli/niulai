@@ -2383,6 +2383,49 @@
         }
       }
     },
+    "/sync/check": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "数据核检：最近一次核检的结果（每个数据集查了多少、新发现、已补回、确认停牌、仍缺），以及还缺数据的证券",
+        "operationId": "data_check_status",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataCheckStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "立即核检：在后台按证券 × 交易日检查个股日线和指数日线，发现缺口就安排重取；要几十秒，用 GET 看结果",
+        "operationId": "start_data_check",
+        "responses": {
+          "202": {
+            "description": "已开始"
+          },
+          "409": {
+            "description": "正在核检",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/sync/health": {
       "get": {
         "tags": [
@@ -3063,6 +3106,81 @@
           }
         }
       },
+      "CheckResult": {
+        "type": "object",
+        "description": "一个数据集的核检结果",
+        "required": [
+          "dataset_id",
+          "title",
+          "securities",
+          "security_days",
+          "busy",
+          "new_gaps",
+          "filled",
+          "confirmed_now",
+          "suspended",
+          "open",
+          "refetch_tasks"
+        ],
+        "properties": {
+          "busy": {
+            "type": "integer",
+            "format": "int64",
+            "description": "正在同步、这次先不查的证券"
+          },
+          "confirmed_now": {
+            "type": "integer",
+            "format": "int64",
+            "description": "这次确认为停牌的，以及累计确认为停牌的"
+          },
+          "dataset_id": {
+            "type": "string"
+          },
+          "filled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "以前发现的缺口，这次已经有数据了"
+          },
+          "new_gaps": {
+            "type": "integer",
+            "format": "int64",
+            "description": "这次新发现的缺口"
+          },
+          "open": {
+            "type": "integer",
+            "format": "int64",
+            "description": "还缺、正在或将要重取的"
+          },
+          "refetch_run": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "这次为缺口安排的重取：运行编号和任务数"
+          },
+          "refetch_tasks": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "securities": {
+            "type": "integer",
+            "format": "int64",
+            "description": "查了多少只证券、多少个「证券 × 交易日」"
+          },
+          "security_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "suspended": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "Condition": {
         "oneOf": [
           {
@@ -3235,6 +3353,89 @@
           "incomplete",
           "not_started"
         ]
+      },
+      "DataCheckRun": {
+        "type": "object",
+        "description": "最近一次核检",
+        "required": [
+          "check_id",
+          "trigger",
+          "started_at"
+        ],
+        "properties": {
+          "check_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "end_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "查到哪个交易日为止"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "result": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CheckResult"
+            }
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "trigger": {
+            "type": "string",
+            "description": "weekly / followup / manual"
+          }
+        }
+      },
+      "DataCheckStatus": {
+        "type": "object",
+        "required": [
+          "running",
+          "open"
+        ],
+        "properties": {
+          "last": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DataCheckRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "open": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenGap"
+            },
+            "description": "还缺数据的证券，缺的天数多的在前，最多 50 只"
+          },
+          "running": {
+            "type": "boolean",
+            "description": "正在核检"
+          }
+        }
       },
       "DatasetProgress": {
         "type": "object",
@@ -4430,6 +4631,50 @@
           "crosses_above",
           "crosses_below"
         ]
+      },
+      "OpenGap": {
+        "type": "object",
+        "description": "一只证券还缺的日子",
+        "required": [
+          "dataset_id",
+          "thscode",
+          "days",
+          "dates"
+        ],
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "dates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "最早的 10 天"
+          },
+          "days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refetch_run": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "正在重取的运行（第一批的编号）"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
       },
       "Operand": {
         "oneOf": [

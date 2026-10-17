@@ -49,6 +49,13 @@ pub async fn run(engine: Arc<Engine>, mut stop: watch::Receiver<bool>) -> anyhow
             if let Err(e) = super::audit::auto_repair(&engine, today).await {
                 tracing::error!(error = %format!("{e:#}"), "兜底补偿失败");
             }
+            // 核检要几十秒，放到后台，不耽误下一次检查；同时只会有一次核检
+            let e = engine.clone();
+            tokio::spawn(async move {
+                if let Err(err) = super::check::auto(&e).await {
+                    tracing::error!(error = %format!("{err:#}"), "数据核检失败");
+                }
+            });
         }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(30)) => {}

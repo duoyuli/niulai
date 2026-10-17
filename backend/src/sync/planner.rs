@@ -36,7 +36,12 @@ pub struct PlanContext<'a> {
     pub kind: RunKind,
     /// 只规划这些证券（为空表示不限）；作用于按证券展开的分区
     pub only: &'a [String],
+    /// 只取这些窗口（为空表示按规则展开）；作用于 security_window 分区，数据核检用它重取缺口
+    pub windows: &'a [Window],
 }
+
+/// 一只证券的一段日期（含两端）
+pub type Window = (String, NaiveDate, NaiveDate);
 
 /// 规划选项
 #[derive(Debug, Default, Clone)]
@@ -46,6 +51,8 @@ pub struct PlanOptions {
     pub only_thscodes: Vec<String>,
     /// 谁发起的（写进运行的 params.trigger，同步记录据此显示来源）
     pub trigger: Option<String>,
+    /// 只取这些窗口，见 [`PlanContext::windows`]。只作用于第一个波次
+    pub windows: Vec<Window>,
 }
 
 /// 依赖层级（波次）：
@@ -79,6 +86,7 @@ struct Wave<'a> {
     root_run: Option<i64>,
     only: &'a [String],
     trigger: Option<&'a str>,
+    windows: &'a [Window],
 }
 
 /// 一个数据集规划出的任务种子
@@ -115,7 +123,7 @@ impl<'a> Planner<'a> {
         }
         let datasets = waves.remove(0);
         let trade_date = opts.trade_date.unwrap_or_else(today_cn);
-        self.plan_wave(Wave { kind, trade_date, datasets, pending: waves, root_run: None, only: &opts.only_thscodes, trigger: opts.trigger.as_deref() }).await
+        self.plan_wave(Wave { kind, trade_date, datasets, pending: waves, root_run: None, only: &opts.only_thscodes, trigger: opts.trigger.as_deref(), windows: &opts.windows }).await
     }
 
     /// 某个波次结束后，规划下一个波次（如果有）。返回新的 run_id。
@@ -134,7 +142,7 @@ impl<'a> Planner<'a> {
         let root = params.get("root_run").and_then(Value::as_i64).unwrap_or(finished_run);
         let only: Vec<String> = serde_json::from_value(list("only_thscodes")).unwrap_or_default();
         let trigger = params.get("trigger").and_then(Value::as_str);
-        let (run_id, _) = self.plan_wave(Wave { kind: kind.parse()?, trade_date, datasets, pending, root_run: Some(root), only: &only, trigger }).await?;
+        let (run_id, _) = self.plan_wave(Wave { kind: kind.parse()?, trade_date, datasets, pending, root_run: Some(root), only: &only, trigger, windows: &[] }).await?;
         Ok(Some(run_id))
     }
 
@@ -142,7 +150,7 @@ impl<'a> Planner<'a> {
     /// 不会出现前几个数据集的任务做完、后面的还没写入，运行就被判定结束的情况。
     async fn plan_wave(&self, wave: Wave<'_>) -> anyhow::Result<(i64, Vec<(String, usize)>)> {
         let specs: Vec<&DatasetSpec> = wave.datasets.iter().filter_map(|id| self.registry.get(id)).collect();
-        let ctx = PlanContext { pool: self.pool, client: self.client, today: today_cn(), kind: wave.kind, only: wave.only };
+        let ctx = PlanContext { pool: self.pool, client: self.client, today: today_cn(), kind: wave.kind, only: wave.only, windows: wave.windows };
         let mut planned = Vec::with_capacity(specs.len());
         let mut failed = vec![];
         for spec in specs {
@@ -328,6 +336,9 @@ async fn window_seeds(ctx: &PlanContext<'_>, spec: &DatasetSpec) -> anyhow::Resu
                 })
                 .collect())
         }
+        Partition::SecurityWindow { window_days, .. } if !ctx.windows.is_empty() => {
+            Ok(ctx.windows.iter().flat_map(|(code, from, to)| window_range_seeds(code, *from, *to, *window_days, today)).collect())
+        }
         Partition::SecurityWindow { universe, window_days, floor, start_from_list_date } => {
             let floor = floor.resolve(today);
             let rows = universe_rows(ctx, universe).await?;
@@ -357,18 +368,7 @@ async fn window_seeds(ctx: &PlanContext<'_>, spec: &DatasetSpec) -> anyhow::Resu
                     && let (Incremental::SinceCursor { overlap_days }, Some(synced)) = (&spec.incremental, cursors.get(&part)) {
                         start = start.max(*synced - Duration::days(*overlap_days));
                     }
-                let mut s = start;
-                while s <= today {
-                    let e = (s + Duration::days(window_days - 1)).min(today);
-                    let mut vars = base_vars();
-                    vars.insert("thscode".into(), json!(code));
-                    vars.insert("start".into(), json!(s.to_string()));
-                    vars.insert("end".into(), json!(e.to_string()));
-                    vars.insert("start_ms".into(), json!(cn_date_start_ms(s)));
-                    vars.insert("end_ms".into(), json!(cn_date_end_ms(e)));
-                    seeds.push(TaskSeed { part_key: format!("{part}|{s}..{e}"), vars });
-                    s = e + Duration::days(1);
-                }
+                seeds.extend(window_range_seeds(&code, start, today, *window_days, today));
             }
             Ok(seeds)
         }
@@ -459,6 +459,24 @@ fn base_vars(today: NaiveDate) -> Map<String, Value> {
     m.insert("today".into(), json!(today.to_string()));
     m.insert("today+60d".into(), json!((today + Duration::days(60)).to_string()));
     m
+}
+
+/// 一只证券 from 到 to（含）按窗口长度切成的任务，分区键 `thscode=<代码>|<起>..<止>`
+fn window_range_seeds(code: &str, from: NaiveDate, to: NaiveDate, window_days: i64, today: NaiveDate) -> Vec<TaskSeed> {
+    let mut seeds = vec![];
+    let mut s = from;
+    while s <= to {
+        let e = (s + Duration::days(window_days - 1)).min(to);
+        let mut vars = base_vars(today);
+        vars.insert("thscode".into(), json!(code));
+        vars.insert("start".into(), json!(s.to_string()));
+        vars.insert("end".into(), json!(e.to_string()));
+        vars.insert("start_ms".into(), json!(cn_date_start_ms(s)));
+        vars.insert("end_ms".into(), json!(cn_date_end_ms(e)));
+        seeds.push(TaskSeed { part_key: format!("thscode={code}|{s}..{e}"), vars });
+        s = e + Duration::days(1);
+    }
+    seeds
 }
 
 async fn universe_rows(ctx: &PlanContext<'_>, universe: &str) -> anyhow::Result<Vec<(String, Option<NaiveDate>)>> {
