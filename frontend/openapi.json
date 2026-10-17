@@ -661,6 +661,30 @@
         }
       }
     },
+    "/indicators": {
+      "get": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "全部指标：说明、公式、常用写法、被哪些信号和策略用到",
+        "operationId": "list_indicators",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IndicatorEntry"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/indices": {
       "get": {
         "tags": [
@@ -1283,6 +1307,104 @@
         }
       }
     },
+    "/securities/{thscode}/indicator": {
+      "get": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "这只股票上一个指标每天的值（K 线下方画图用）",
+        "operationId": "indicator_series",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "description": "指标，例如 rsi",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IndicatorId"
+            }
+          },
+          {
+            "name": "n",
+            "in": "query",
+            "description": "周期，不带周期的指标忽略",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndicatorSeries"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "周期不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "证券不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/securities/{thscode}/ma": {
       "get": {
         "tags": [
@@ -1386,6 +1508,130 @@
         }
       }
     },
+    "/securities/{thscode}/signal-days": {
+      "post": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "这只股票上，信号在哪些交易日出现（K 线上画标记用）",
+        "operationId": "signal_days",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DaysInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalDays"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "定义不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "证券不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/securities/{thscode}/strategy-points": {
+      "get": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "一个策略在这只股票上的买卖点（K 线上画标记用），和每日巡检同一套规则",
+        "operationId": "strategy_points",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "strategy_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "description": "从哪天开始算（空仓起步），默认 3 年前",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyPoints"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "证券或策略不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/setup": {
       "get": {
         "tags": [
@@ -1468,6 +1714,69 @@
         }
       }
     },
+    "/signals": {
+      "get": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "全部信号：内置的按分组，自定义的在最后",
+        "operationId": "list_signals",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SignalEntry"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "新建自定义信号",
+        "operationId": "create_signal",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "已创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "定义不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/signals/ma-cross": {
       "get": {
         "tags": [
@@ -1539,6 +1848,225 @@
           },
           "400": {
             "description": "参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/signals/my/{signal_id}": {
+      "put": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "修改自定义信号。用到它的策略下一次巡检起按新定义",
+        "operationId": "update_signal",
+        "parameters": [
+          {
+            "name": "signal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "定义不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "删除自定义信号；有策略在用时拒绝，并列出这些策略",
+        "operationId": "delete_signal",
+        "parameters": [
+          {
+            "name": "signal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已删除"
+          },
+          "409": {
+            "description": "有策略在用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/signals/stats": {
+      "post": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "过去表现：最近几年默认股票池中每次出现之后 5、10、20 个交易日的涨跌，和同期所有股票对比。全市场计算约几秒，结果缓存到有新数据为止",
+        "operationId": "signal_stats",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "定义不合法或没有日线",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/signals/today": {
+      "post": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "今天哪些股票出现了这个信号（默认股票池，按成交额排序）",
+        "operationId": "signal_today",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodayInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalToday"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "定义不合法或没有日线",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/signals/{key}": {
+      "get": {
+        "tags": [
+          "signal"
+        ],
+        "summary": "一个信号",
+        "operationId": "get_signal",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "内置信号的名字（例如 ma_cross_up）或 my-<编号>",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalEntry"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -2479,7 +3007,7 @@
         "oneOf": [
           {
             "type": "object",
-            "description": "某个信号在最近 within_days 个交易日内（含当天）发生过",
+            "description": "出现内置信号",
             "required": [
               "signal",
               "kind"
@@ -2496,6 +3024,41 @@
               },
               "signal": {
                 "$ref": "#/components/schemas/SignalId"
+              },
+              "streak_days": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "within_days": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "出现自己定义的信号（app.signal）",
+            "required": [
+              "signal_id",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "my_signal"
+                ]
+              },
+              "signal_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "streak_days": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
               },
               "within_days": {
                 "type": "integer",
@@ -2528,10 +3091,21 @@
               },
               "right": {
                 "$ref": "#/components/schemas/Operand"
+              },
+              "streak_days": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "within_days": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
               }
             }
           }
-        ]
+        ],
+        "description": "条件：一句话的判断，结果是「是」或「否」。信号、策略的买入和卖出都用这一种写法。\n时间范围：默认看当天；within_days > 1 表示最近 N 个交易日内出现过，streak_days > 1 表示连续 N 个交易日都满足"
       },
       "CreateRun": {
         "type": "object",
@@ -2732,6 +3306,31 @@
           }
         }
       },
+      "DaysInput": {
+        "type": "object",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "end": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "start": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "target": {
+            "$ref": "#/components/schemas/SignalTarget"
+          }
+        }
+      },
       "Definition": {
         "type": "object",
         "properties": {
@@ -2751,7 +3350,7 @@
           },
           "exit": {
             "$ref": "#/components/schemas/ExitRule",
-            "description": "卖出规则，回测时使用"
+            "description": "卖出规则：每日巡检据此给出卖点，回测据此卖出"
           },
           "limit": {
             "type": "integer",
@@ -3068,7 +3667,7 @@
       },
       "Hit": {
         "type": "object",
-        "description": "入选的一只股票",
+        "description": "入选的一只股票：今日买点，或预览时今天满足买入条件",
         "required": [
           "thscode",
           "name",
@@ -3111,6 +3710,66 @@
           },
           "thscode": {
             "type": "string"
+          }
+        }
+      },
+      "HorizonStat": {
+        "type": "object",
+        "required": [
+          "days",
+          "samples"
+        ],
+        "properties": {
+          "avg_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "平均涨跌（%）"
+          },
+          "days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "出现后第几个交易日",
+            "minimum": 0
+          },
+          "market_avg_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "同期所有股票、所有交易日的平均涨跌和上涨比例，作为对比"
+          },
+          "market_up_ratio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "median_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "涨跌的中位数（%）"
+          },
+          "samples": {
+            "type": "integer",
+            "format": "int64",
+            "description": "有这么多天后续数据的出现次数",
+            "minimum": 0
+          },
+          "up_ratio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "上涨的比例（0.55 表示 55%）"
           }
         }
       },
@@ -3168,6 +3827,60 @@
           }
         }
       },
+      "IndicatorEntry": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/IndicatorInfo"
+          },
+          {
+            "type": "object",
+            "required": [
+              "examples",
+              "signals",
+              "strategies"
+            ],
+            "properties": {
+              "examples": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/IndicatorExample"
+                }
+              },
+              "signals": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SignalRefItem"
+                },
+                "description": "哪些信号用到它（key 和名称）"
+              },
+              "strategies": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/UsedBy"
+                },
+                "description": "哪些策略用到它（条件或排序）"
+              }
+            }
+          }
+        ]
+      },
+      "IndicatorExample": {
+        "type": "object",
+        "description": "一个常用写法：可以直接拿去新建信号",
+        "required": [
+          "condition",
+          "text"
+        ],
+        "properties": {
+          "condition": {
+            "$ref": "#/components/schemas/Condition"
+          },
+          "text": {
+            "type": "string",
+            "description": "白话"
+          }
+        }
+      },
       "IndicatorId": {
         "type": "string",
         "enum": [
@@ -3199,7 +3912,9 @@
           "high_n",
           "low_n",
           "pct_from_high",
-          "pct_from_low"
+          "pct_from_low",
+          "prev_high_close",
+          "prev_low_close"
         ]
       },
       "IndicatorInfo": {
@@ -3211,11 +3926,16 @@
           "group",
           "unit",
           "description",
-          "usage"
+          "usage",
+          "formula"
         ],
         "properties": {
           "description": {
             "type": "string"
+          },
+          "formula": {
+            "type": "string",
+            "description": "怎么算：用了哪些数据、公式和固定参数"
           },
           "group": {
             "type": "string"
@@ -3262,6 +3982,23 @@
           }
         }
       },
+      "IndicatorPoint": {
+        "type": "object",
+        "required": [
+          "date",
+          "value"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "value": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "IndicatorRef": {
         "type": "object",
         "description": "一个指标及其周期，例如「20 日均线」是 {id: ma, n: 20}",
@@ -3280,6 +4017,46 @@
             "format": "int32",
             "description": "周期；不带周期的指标忽略它，带周期的指标缺省时用目录中的默认值",
             "minimum": 0
+          }
+        }
+      },
+      "IndicatorSeries": {
+        "type": "object",
+        "required": [
+          "label",
+          "unit",
+          "points"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "带周期的名称"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IndicatorPoint"
+            }
+          },
+          "unit": {
+            "type": "string",
+            "description": "单位，同指标目录"
+          }
+        }
+      },
+      "IndicatorUse": {
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/IndicatorId"
+          },
+          "label": {
+            "type": "string",
+            "description": "带周期的名称，例如「20 日均线」"
           }
         }
       },
@@ -3311,23 +4088,35 @@
           "trade_date",
           "matched",
           "hits",
-          "new_hits"
+          "new_hits",
+          "sells",
+          "holdings"
         ],
         "properties": {
           "hits": {
             "type": "integer",
             "format": "int64",
-            "description": "保存的结果数"
+            "description": "保存的买点数"
+          },
+          "holdings": {
+            "type": "integer",
+            "format": "int64",
+            "description": "持有中的股票数"
           },
           "matched": {
             "type": "integer",
             "format": "int32",
-            "description": "满足条件的股票数（截断前）"
+            "description": "今日买点数（截断前）"
           },
           "new_hits": {
             "type": "integer",
             "format": "int64",
-            "description": "其中新入选的数量"
+            "description": "其中上一次巡检没有出现的"
+          },
+          "sells": {
+            "type": "integer",
+            "format": "int64",
+            "description": "今日卖点数"
           },
           "trade_date": {
             "type": "string",
@@ -3515,13 +4304,43 @@
           }
         }
       },
+      "Occurrence": {
+        "type": "object",
+        "required": [
+          "trade_date",
+          "thscode",
+          "name"
+        ],
+        "properties": {
+          "after_20d_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "出现后 20 个交易日的涨跌（%）；还不满 20 个交易日时为空"
+          },
+          "name": {
+            "type": "string"
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
       "Op": {
         "type": "string",
         "enum": [
           ">",
           ">=",
           "<",
-          "<="
+          "<=",
+          "crosses_above",
+          "crosses_below"
         ]
       },
       "Operand": {
@@ -3710,6 +4529,84 @@
           "tasks": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "PointTrade": {
+        "type": "object",
+        "description": "一次买卖",
+        "required": [
+          "signal_date",
+          "entry_date",
+          "entry_price",
+          "return_pct",
+          "bars_held"
+        ],
+        "properties": {
+          "bars_held": {
+            "type": "integer",
+            "format": "int64",
+            "description": "持有的交易日数"
+          },
+          "entry_date": {
+            "type": "string",
+            "format": "date",
+            "description": "下一个交易日开盘买入"
+          },
+          "entry_price": {
+            "type": "number",
+            "format": "double",
+            "description": "买入价（未复权开盘价）"
+          },
+          "exit_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "下一个交易日开盘卖出；还没卖出时为空"
+          },
+          "exit_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "exit_reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit_signal_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "触发卖出规则的那天；还在持有时为空"
+          },
+          "exit_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "卖出原因的白话，例如「收盘价下穿 20 日均线」「亏损达到 8% 止损」"
+          },
+          "return_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "收益率（%，按前复权价，含分红送转，不扣费用）：卖出时按卖出价，还在持有时按最新收盘价"
+          },
+          "signal_date": {
+            "type": "string",
+            "format": "date",
+            "description": "满足买入条件的那天（收盘后知道）"
           }
         }
       },
@@ -4072,21 +4969,6 @@
           }
         }
       },
-      "RemovedHit": {
-        "type": "object",
-        "required": [
-          "thscode",
-          "name"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "thscode": {
-            "type": "string"
-          }
-        }
-      },
       "RepairSummary": {
         "type": "object",
         "required": [
@@ -4278,7 +5160,8 @@
         "type": "object",
         "required": [
           "hits",
-          "removed",
+          "sells",
+          "holdings",
           "dates"
         ],
         "properties": {
@@ -4294,7 +5177,15 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/StoredHit"
-            }
+            },
+            "description": "今日买点：今天满足买入条件、之前空仓，明天开盘买入"
+          },
+          "holdings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoredHit"
+            },
+            "description": "持有中：按最近一年的买卖点推算"
           },
           "matched": {
             "type": [
@@ -4310,19 +5201,19 @@
             ],
             "format": "date-time"
           },
-          "removed": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/RemovedHit"
-            },
-            "description": "上一次巡检入选、这一次不在结果中的股票"
-          },
           "scanned": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int32"
+          },
+          "sells": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoredHit"
+            },
+            "description": "今日卖点：持有中触发了卖出规则，明天开盘卖出；reasons 是原因"
           },
           "trade_date": {
             "type": [
@@ -4550,6 +5441,156 @@
           }
         }
       },
+      "SignalDays": {
+        "type": "object",
+        "required": [
+          "dates"
+        ],
+        "properties": {
+          "dates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "出现的日子：连续几天都满足只给第一天"
+          }
+        }
+      },
+      "SignalDef": {
+        "type": "object",
+        "description": "信号的定义：几条条件，全部满足或任一满足。只能用指标和内置信号，不能引用别的自定义信号",
+        "required": [
+          "conditions"
+        ],
+        "properties": {
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Condition"
+            }
+          },
+          "match_all": {
+            "type": "boolean",
+            "description": "true：全部满足；false：任一满足"
+          }
+        }
+      },
+      "SignalEntry": {
+        "type": "object",
+        "description": "信号目录中的一项：内置或自定义",
+        "required": [
+          "key",
+          "builtin",
+          "name",
+          "group",
+          "tone",
+          "kind",
+          "description",
+          "usage",
+          "params",
+          "explained",
+          "special",
+          "indicators",
+          "used_by"
+        ],
+        "properties": {
+          "based_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "自定义信号从哪个内置信号复制来"
+          },
+          "builtin": {
+            "type": "boolean"
+          },
+          "definition": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SignalDef",
+                "description": "条件定义（内置信号代入默认参数）；写不成条件的特殊信号为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "是什么"
+          },
+          "explained": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "定义的白话：每条条件一句；特殊信号是它的判断规则"
+          },
+          "group": {
+            "type": "string",
+            "description": "内置信号的分组；自定义信号是「我的信号」"
+          },
+          "indicators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IndicatorUse"
+            },
+            "description": "用到的指标"
+          },
+          "key": {
+            "type": "string",
+            "description": "内置信号是 SignalId，例如 ma_cross_up；自定义信号是 my-<编号>"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SignalKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "名称，内置信号代入默认参数，例如「5 日均线上穿 20 日均线」"
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParamInfo"
+            },
+            "description": "内置信号的可调参数"
+          },
+          "signal_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "自定义信号的编号"
+          },
+          "special": {
+            "type": "boolean",
+            "description": "写不成条件、逻辑在代码里的特殊信号"
+          },
+          "tone": {
+            "$ref": "#/components/schemas/Tone"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "usage": {
+            "type": "string",
+            "description": "怎么看、要注意什么"
+          },
+          "used_by": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsedBy"
+            },
+            "description": "哪些策略在用"
+          }
+        }
+      },
       "SignalEvent": {
         "type": "object",
         "required": [
@@ -4648,12 +5689,170 @@
           }
         }
       },
+      "SignalInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "definition"
+        ],
+        "properties": {
+          "based_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "从哪个内置信号复制来（只作记录）"
+          },
+          "bullish": {
+            "type": "boolean",
+            "description": "偏多（true）或偏空"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/SignalDef"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "SignalKind": {
         "type": "string",
         "enum": [
           "event",
           "state"
         ]
+      },
+      "SignalRefItem": {
+        "type": "object",
+        "required": [
+          "key",
+          "name"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SignalStats": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "occurrences",
+          "stocks",
+          "horizons",
+          "recent",
+          "universe"
+        ],
+        "properties": {
+          "end": {
+            "type": "string",
+            "format": "date"
+          },
+          "horizons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HorizonStat"
+            }
+          },
+          "occurrences": {
+            "type": "integer",
+            "format": "int64",
+            "description": "出现的次数：连续几天都满足只算第一天",
+            "minimum": 0
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Occurrence"
+            },
+            "description": "最近的几次出现，新的在前"
+          },
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "stocks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "出现过的股票数",
+            "minimum": 0
+          },
+          "universe": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "统计时用的股票池（白话）"
+          }
+        }
+      },
+      "SignalTarget": {
+        "type": "object",
+        "description": "要看的信号：一个条件（例如「当天出现 ma_cross_up」或某个自定义信号），或者还没保存的草稿定义",
+        "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Condition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "draft": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SignalDef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SignalToday": {
+        "type": "object",
+        "required": [
+          "trade_date",
+          "matched",
+          "hits",
+          "universe"
+        ],
+        "properties": {
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Hit"
+            },
+            "description": "按成交额排在前面的 50 只"
+          },
+          "matched": {
+            "type": "integer",
+            "description": "默认股票池中，今天满足的股票数",
+            "minimum": 0
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "universe": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "统计时用的股票池（白话）"
+          }
+        }
       },
       "Sort": {
         "type": "object",
@@ -4666,6 +5865,26 @@
           },
           "desc": {
             "type": "boolean"
+          }
+        }
+      },
+      "StatsInput": {
+        "type": "object",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/SignalTarget"
+          },
+          "years": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "统计最近几年，默认 3，范围 1 到 5",
+            "minimum": 0
           }
         }
       },
@@ -4686,6 +5905,13 @@
             ],
             "format": "double"
           },
+          "bars_held": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "change_pct": {
             "type": [
               "number",
@@ -4694,6 +5920,21 @@
             "format": "double"
           },
           "close": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "entry_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "买入日、买入价（未复权开盘价）、买入以来的涨跌（%）、已持有的交易日数：卖点和持有中才有"
+          },
+          "entry_price": {
             "type": [
               "number",
               "null"
@@ -4716,6 +5957,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "return_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
           },
           "sort_value": {
             "type": [
@@ -4888,6 +6136,52 @@
           "strategy_id": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "StrategyPoints": {
+        "type": "object",
+        "required": [
+          "strategy_id",
+          "strategy_name",
+          "trades",
+          "today"
+        ],
+        "properties": {
+          "strategy_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "strategy_name": {
+            "type": "string"
+          },
+          "today": {
+            "type": "string",
+            "description": "最后一个交易日：buy 今天是买点、sell 今天是卖点、holding 持有中、flat 空仓"
+          },
+          "today_exit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExitReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "today_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "今天是卖点时的原因"
+          },
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PointTrade"
+            },
+            "description": "历次买卖，按买入时间排序"
           }
         }
       },
@@ -5149,6 +6443,25 @@
           }
         }
       },
+      "TodayInput": {
+        "type": "object",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "交易日，默认最新"
+          },
+          "target": {
+            "$ref": "#/components/schemas/SignalTarget"
+          }
+        }
+      },
       "Tone": {
         "type": "string",
         "enum": [
@@ -5368,6 +6681,22 @@
           }
         }
       },
+      "UsedBy": {
+        "type": "object",
+        "required": [
+          "strategy_id",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "strategy_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "Verdict": {
         "type": "string",
         "enum": [
@@ -5572,6 +6901,10 @@
     {
       "name": "strategy",
       "description": "选股策略与每日巡检"
+    },
+    {
+      "name": "signal",
+      "description": "指标、信号与买卖点"
     },
     {
       "name": "backtest",

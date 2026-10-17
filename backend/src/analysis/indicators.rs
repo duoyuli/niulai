@@ -47,6 +47,8 @@ pub enum IndicatorId {
     LowN,
     PctFromHigh,
     PctFromLow,
+    PrevHighClose,
+    PrevLowClose,
 }
 
 /// 一个指标及其周期，例如「20 日均线」是 {id: ma, n: 20}
@@ -70,6 +72,8 @@ pub struct IndicatorInfo {
     pub description: &'static str,
     /// 怎么看、要注意什么，给没有金融背景的人看
     pub usage: &'static str,
+    /// 怎么算：用了哪些数据、公式和固定参数
+    pub formula: &'static str,
     /// 周期的默认值和范围；不带周期时为空
     pub n_default: Option<u32>,
     pub n_min: Option<u32>,
@@ -81,7 +85,7 @@ const fn info(id: IndicatorId, name: &'static str, group: &'static str, unit: &'
         Some((d, lo, hi)) => (Some(d), Some(lo), Some(hi)),
         None => (None, None, None),
     };
-    IndicatorInfo { id, name, group, unit, description, usage: "", n_default, n_min, n_max }
+    IndicatorInfo { id, name, group, unit, description, usage: "", formula: "", n_default, n_min, n_max }
 }
 
 impl IndicatorInfo {
@@ -89,38 +93,45 @@ impl IndicatorInfo {
         self.usage = usage;
         self
     }
+
+    const fn formula(mut self, formula: &'static str) -> Self {
+        self.formula = formula;
+        self
+    }
 }
 
 pub const CATALOG: &[IndicatorInfo] = &[
-    info(IndicatorId::Close, "收盘价", "价格", "price", "当天收盘价（前复权）", None).usage("最基本的数。条件里的价格默认都用收盘价，因为它是一天交易的最终结果。"),
-    info(IndicatorId::Open, "开盘价", "价格", "price", "当天开盘价（前复权）", None).usage("反映隔夜消息和开盘时的情绪。回测里的买卖都按开盘价成交。"),
-    info(IndicatorId::High, "最高价", "价格", "price", "当天最高价（前复权）", None).usage("当天波动的上沿。"),
-    info(IndicatorId::Low, "最低价", "价格", "price", "当天最低价（前复权）", None).usage("当天波动的下沿。"),
-    info(IndicatorId::ChangePct, "涨跌幅", "价格", "pct", "相对前一个交易日收盘的涨跌，5 表示涨 5%", None).usage("判断当天强弱最直接的数。不同板块的涨跌幅上限不同：主板 10%，创业板、科创板 20%。"),
-    info(IndicatorId::Amplitude, "振幅", "价格", "pct", "（最高 − 最低）/ 前收盘，衡量当天波动有多大", None).usage("振幅大说明当天买卖双方分歧大。"),
-    info(IndicatorId::Amount, "成交额", "量能", "yuan", "当天成交金额（元），常用来排除成交太少的股票", None).usage("衡量交易活跃程度最常用的数。成交额太小的股票买卖都困难，策略默认排除成交额低于 5000 万元的股票。"),
-    info(IndicatorId::Volume, "成交量", "量能", "shares", "当天成交股数", None).usage("成交的股数。不同股价的股票之间不好直接比较，比较时用成交额或量比。"),
-    info(IndicatorId::VolRatio, "量比", "量能", "ratio", "当天成交量是前 {n} 天平均成交量的几倍，大于 1 表示放量", Some((5, 2, 60))).usage("大于 1 放量，小于 1 缩量；1.5 倍以上算明显放量，0.7 倍以下算明显缩量。"),
-    info(IndicatorId::Ma, "{n} 日均线", "均线", "price", "最近 {n} 个交易日收盘价的平均值", Some((20, 2, MAX_WINDOW))).usage("最常用的指标。5 日、10 日看短线，20 日、60 日看中期，120 日、250 日看长期。股价在均线上方，说明这段时间买入的人平均在赚钱。"),
-    info(IndicatorId::Ema, "{n} 日指数均线", "均线", "price", "越近的价格权重越大的均线，比普通均线反应更快", Some((20, 2, MAX_WINDOW))).usage("对最近的价格反应更快，转折时比普通均线早几天，但也更容易被短期波动带偏。"),
-    info(IndicatorId::MaGap, "相对 {n} 日均线偏离", "均线", "pct", "收盘价比 {n} 日均线高出（正）或低于（负）多少，2 表示高 2%", Some((20, 2, MAX_WINDOW))).usage("偏离太大时（例如高出 20 日均线 15% 以上），价格往往会向均线靠拢。"),
-    info(IndicatorId::MacdDif, "MACD 快线（DIF）", "MACD", "price", "12 日与 26 日指数均线之差，大于 0 表示短期强于长期", None).usage("MACD 的主线，大于 0 表示中期走势偏强。"),
-    info(IndicatorId::MacdDea, "MACD 慢线（DEA）", "MACD", "price", "DIF 的 9 日指数均线", None).usage("DIF 的平滑线，用来判断 DIF 的交叉。"),
-    info(IndicatorId::MacdHist, "MACD 柱", "MACD", "price", "2 ×（DIF − DEA），由负转正常被看作转强", None).usage("柱子由负转正、越来越长，表示动能在增强；柱子变短说明动能减弱，常常比价格转折更早出现。"),
-    info(IndicatorId::Rsi, "RSI（{n}）", "超买超卖", "index", "0 到 100，反映最近 {n} 天涨的力量占比；高于 70 常被看作超买，低于 30 看作超卖", Some((14, 2, 60))).usage("70 以上超买、30 以下超卖是常用的分界。强势股可以长期在 50 到 80 之间，弱势股长期在 20 到 50 之间。"),
-    info(IndicatorId::KdjK, "KDJ 的 K 值", "超买超卖", "index", "随机指标 K（9、3、3），0 到 100 附近，高位超买、低位超卖", None).usage("短线指标，变化很快。"),
-    info(IndicatorId::KdjD, "KDJ 的 D 值", "超买超卖", "index", "K 值的平滑", None).usage("比 K 慢，K 上穿 D 就是 KDJ 金叉。"),
-    info(IndicatorId::KdjJ, "KDJ 的 J 值", "超买超卖", "index", "3K − 2D，最敏感，可以超出 0 到 100", None).usage("三条线里最敏感的，常超出 0 到 100：大于 100 说明短期极强，小于 0 说明短期极弱。"),
-    info(IndicatorId::BollUpper, "布林带上轨", "波动", "price", "20 日均线加 2 倍标准差，收盘突破上轨表示走势很强", None).usage("价格大部分时间在上下轨之间。上下轨的距离变窄说明波动在收敛，常常预示快要选择方向。"),
-    info(IndicatorId::BollMid, "布林带中轨", "波动", "price", "20 日均线", None).usage("就是 20 日均线。"),
-    info(IndicatorId::BollLower, "布林带下轨", "波动", "price", "20 日均线减 2 倍标准差", None).usage("跌破下轨说明跌势超出平常。"),
-    info(IndicatorId::Atr, "ATR（{n}）", "波动", "price", "平均真实波幅：最近 {n} 天每天的平均波动金额", Some((14, 2, 60))).usage("估计这只股票正常一天会波动多少钱，常用来决定止损设在多远。"),
-    info(IndicatorId::AtrPct, "ATR 占股价（{n}）", "波动", "pct", "ATR 除以收盘价，用百分比比较不同价格的股票波动有多大", Some((14, 2, 60))).usage("可以比较不同价格的股票：3 表示正常一天波动约 3%。数值越大，波动和风险越大。"),
-    info(IndicatorId::Momentum, "{n} 日涨跌幅", "动量", "pct", "相对 {n} 个交易日前收盘价的涨跌，20 表示涨了 20%", Some((20, 1, MAX_WINDOW))).usage("最直观的强弱：近 20 日涨得最多的就是最近最强的股票。「强者恒强」和「超跌反弹」都基于它。"),
-    info(IndicatorId::HighN, "{n} 日最高价", "区间", "price", "最近 {n} 个交易日（含当天）的最高价", Some((60, 2, MAX_WINDOW))).usage("区间高点常被看作压力：涨到这里容易遇到之前被套的人卖出。"),
-    info(IndicatorId::LowN, "{n} 日最低价", "区间", "price", "最近 {n} 个交易日（含当天）的最低价", Some((60, 2, MAX_WINDOW))).usage("区间低点常被看作支撑。"),
-    info(IndicatorId::PctFromHigh, "距 {n} 日最高收盘", "区间", "pct", "收盘价比最近 {n} 天最高收盘价低多少，0 表示就在最高点，−10 表示低 10%", Some((60, 2, MAX_WINDOW))).usage("接近 0 说明在近期高位；−30 说明从高点跌了 30%。"),
-    info(IndicatorId::PctFromLow, "距 {n} 日最低收盘", "区间", "pct", "收盘价比最近 {n} 天最低收盘价高多少，0 表示就在最低点", Some((60, 2, MAX_WINDOW))).usage("接近 0 说明在近期低位；50 说明比低点涨了 50%。"),
+    info(IndicatorId::Close, "收盘价", "价格", "price", "当天收盘价（前复权）", None).usage("最基本的数。条件里的价格默认都用收盘价，因为它是一天交易的最终结果。").formula("当天的收盘价，按等比前复权调整（除权除息不会造成价格断崖）"),
+    info(IndicatorId::Open, "开盘价", "价格", "price", "当天开盘价（前复权）", None).usage("反映隔夜消息和开盘时的情绪。回测里的买卖都按开盘价成交。").formula("当天的开盘价，前复权"),
+    info(IndicatorId::High, "最高价", "价格", "price", "当天最高价（前复权）", None).usage("当天波动的上沿。").formula("当天的最高价，前复权"),
+    info(IndicatorId::Low, "最低价", "价格", "price", "当天最低价（前复权）", None).usage("当天波动的下沿。").formula("当天的最低价，前复权"),
+    info(IndicatorId::ChangePct, "涨跌幅", "价格", "pct", "相对前一个交易日收盘的涨跌，5 表示涨 5%", None).usage("判断当天强弱最直接的数。不同板块的涨跌幅上限不同：主板 10%，创业板、科创板 20%。").formula("(今天收盘 ÷ 昨天收盘 − 1) × 100，用前复权收盘价"),
+    info(IndicatorId::Amplitude, "振幅", "价格", "pct", "（最高 − 最低）/ 前收盘，衡量当天波动有多大", None).usage("振幅大说明当天买卖双方分歧大。").formula("(最高 − 最低) ÷ 昨天收盘 × 100，用前复权价"),
+    info(IndicatorId::Amount, "成交额", "量能", "yuan", "当天成交金额（元），常用来排除成交太少的股票", None).usage("衡量交易活跃程度最常用的数。成交额太小的股票买卖都困难，策略默认排除成交额低于 5000 万元的股票。").formula("交易所公布的当天成交金额（元），不复权"),
+    info(IndicatorId::Volume, "成交量", "量能", "shares", "当天成交股数", None).usage("成交的股数。不同股价的股票之间不好直接比较，比较时用成交额或量比。").formula("交易所公布的当天成交股数，不复权"),
+    info(IndicatorId::VolRatio, "量比", "量能", "ratio", "当天成交量是前 {n} 天平均成交量的几倍，大于 1 表示放量", Some((5, 2, 60))).usage("大于 1 放量，小于 1 缩量；1.5 倍以上算明显放量，0.7 倍以下算明显缩量。").formula("今天成交量 ÷ 前 n 天（不含今天）平均成交量"),
+    info(IndicatorId::Ma, "{n} 日均线", "均线", "price", "最近 {n} 个交易日收盘价的平均值", Some((20, 2, MAX_WINDOW))).usage("最常用的指标。5 日、10 日看短线，20 日、60 日看中期，120 日、250 日看长期。股价在均线上方，说明这段时间买入的人平均在赚钱。").formula("最近 n 天（含今天）前复权收盘价的平均值"),
+    info(IndicatorId::Ema, "{n} 日指数均线", "均线", "price", "越近的价格权重越大的均线，比普通均线反应更快", Some((20, 2, MAX_WINDOW))).usage("对最近的价格反应更快，转折时比普通均线早几天，但也更容易被短期波动带偏。").formula("指数加权平均：今天的值 = α × 今天收盘 + (1 − α) × 昨天的值，α = 2 ÷ (n + 1)"),
+    info(IndicatorId::MaGap, "相对 {n} 日均线偏离", "均线", "pct", "收盘价比 {n} 日均线高出（正）或低于（负）多少，2 表示高 2%", Some((20, 2, MAX_WINDOW))).usage("偏离太大时（例如高出 20 日均线 15% 以上），价格往往会向均线靠拢。").formula("(收盘价 ÷ n 日均线 − 1) × 100"),
+    info(IndicatorId::MacdDif, "MACD 快线（DIF）", "MACD", "price", "12 日与 26 日指数均线之差，大于 0 表示短期强于长期", None).usage("MACD 的主线，大于 0 表示中期走势偏强。").formula("12 日指数均线 − 26 日指数均线，用前复权收盘价"),
+    info(IndicatorId::MacdDea, "MACD 慢线（DEA）", "MACD", "price", "DIF 的 9 日指数均线", None).usage("DIF 的平滑线，用来判断 DIF 的交叉。").formula("DIF 的 9 日指数均线"),
+    info(IndicatorId::MacdHist, "MACD 柱", "MACD", "price", "2 ×（DIF − DEA），由负转正常被看作转强", None).usage("柱子由负转正、越来越长，表示动能在增强；柱子变短说明动能减弱，常常比价格转折更早出现。").formula("2 × (DIF − DEA)"),
+    info(IndicatorId::Rsi, "RSI（{n}）", "超买超卖", "index", "0 到 100，反映最近 {n} 天涨的力量占比；高于 70 常被看作超买，低于 30 看作超卖", Some((14, 2, 60))).usage("70 以上超买、30 以下超卖是常用的分界。强势股可以长期在 50 到 80 之间，弱势股长期在 20 到 50 之间。").formula("最近 n 天上涨幅度的平滑平均 ÷ 涨跌幅度（取绝对值）的平滑平均 × 100；平滑方法与通达信、同花顺一致"),
+    info(IndicatorId::KdjK, "KDJ 的 K 值", "超买超卖", "index", "随机指标 K（9、3、3），0 到 100 附近，高位超买、低位超卖", None).usage("短线指标，变化很快。").formula("RSV = (收盘 − 9 日最低) ÷ (9 日最高 − 9 日最低) × 100；K 是 RSV 的 3 日平滑，初值 50"),
+    info(IndicatorId::KdjD, "KDJ 的 D 值", "超买超卖", "index", "K 值的平滑", None).usage("比 K 慢，K 上穿 D 就是 KDJ 金叉。").formula("K 的 3 日平滑，初值 50"),
+    info(IndicatorId::KdjJ, "KDJ 的 J 值", "超买超卖", "index", "3K − 2D，最敏感，可以超出 0 到 100", None).usage("三条线里最敏感的，常超出 0 到 100：大于 100 说明短期极强，小于 0 说明短期极弱。").formula("3K − 2D"),
+    info(IndicatorId::BollUpper, "布林带上轨", "波动", "price", "20 日均线加 2 倍标准差，收盘突破上轨表示走势很强", None).usage("价格大部分时间在上下轨之间。上下轨的距离变窄说明波动在收敛，常常预示快要选择方向。").formula("20 日均线 + 2 × 最近 20 天收盘价的标准差"),
+    info(IndicatorId::BollMid, "布林带中轨", "波动", "price", "20 日均线", None).usage("就是 20 日均线。").formula("20 日均线"),
+    info(IndicatorId::BollLower, "布林带下轨", "波动", "price", "20 日均线减 2 倍标准差", None).usage("跌破下轨说明跌势超出平常。").formula("20 日均线 − 2 × 最近 20 天收盘价的标准差"),
+    info(IndicatorId::Atr, "ATR（{n}）", "波动", "price", "平均真实波幅：最近 {n} 天每天的平均波动金额", Some((14, 2, 60))).usage("估计这只股票正常一天会波动多少钱，常用来决定止损设在多远。").formula("每天的真实波幅取「最高 − 最低」「最高 − 昨收」「昨收 − 最低」中的最大值，再求最近 n 天的平均"),
+    info(IndicatorId::AtrPct, "ATR 占股价（{n}）", "波动", "pct", "ATR 除以收盘价，用百分比比较不同价格的股票波动有多大", Some((14, 2, 60))).usage("可以比较不同价格的股票：3 表示正常一天波动约 3%。数值越大，波动和风险越大。").formula("ATR ÷ 收盘价 × 100"),
+    info(IndicatorId::Momentum, "{n} 日涨跌幅", "动量", "pct", "相对 {n} 个交易日前收盘价的涨跌，20 表示涨了 20%", Some((20, 1, MAX_WINDOW))).usage("最直观的强弱：近 20 日涨得最多的就是最近最强的股票。「强者恒强」和「超跌反弹」都基于它。").formula("(今天收盘 ÷ n 天前收盘 − 1) × 100"),
+    info(IndicatorId::HighN, "{n} 日最高价", "区间", "price", "最近 {n} 个交易日（含当天）的最高价", Some((60, 2, MAX_WINDOW))).usage("区间高点常被看作压力：涨到这里容易遇到之前被套的人卖出。").formula("最近 n 天（含今天）最高价中的最大值"),
+    info(IndicatorId::LowN, "{n} 日最低价", "区间", "price", "最近 {n} 个交易日（含当天）的最低价", Some((60, 2, MAX_WINDOW))).usage("区间低点常被看作支撑。").formula("最近 n 天（含今天）最低价中的最小值"),
+    info(IndicatorId::PctFromHigh, "距 {n} 日最高收盘", "区间", "pct", "收盘价比最近 {n} 天最高收盘价低多少，0 表示就在最高点，−10 表示低 10%", Some((60, 2, MAX_WINDOW))).usage("接近 0 说明在近期高位；−30 说明从高点跌了 30%。").formula("(收盘价 ÷ 最近 n 天最高收盘 − 1) × 100"),
+    info(IndicatorId::PrevHighClose, "前 {n} 日最高收盘", "区间", "price", "当天之前 {n} 个交易日（不含当天）的最高收盘价", Some((60, 2, MAX_WINDOW))).usage("收盘价高于它，就是创 {n} 日新高；常用来写突破类信号。").formula("今天之前 n 天收盘价的最大值，不含今天"),
+    info(IndicatorId::PrevLowClose, "前 {n} 日最低收盘", "区间", "price", "当天之前 {n} 个交易日（不含当天）的最低收盘价", Some((60, 2, MAX_WINDOW))).usage("收盘价低于它，就是创 {n} 日新低。").formula("今天之前 n 天收盘价的最小值，不含今天"),
+    info(IndicatorId::PctFromLow, "距 {n} 日最低收盘", "区间", "pct", "收盘价比最近 {n} 天最低收盘价高多少，0 表示就在最低点", Some((60, 2, MAX_WINDOW))).usage("接近 0 说明在近期低位；50 说明比低点涨了 50%。").formula("(收盘价 ÷ 最近 n 天最低收盘 − 1) × 100"),
 ];
 
 pub fn info_of(id: IndicatorId) -> &'static IndicatorInfo {
@@ -324,6 +335,19 @@ impl<'a> Frame<'a> {
                 let c = close();
                 let hi = rolling(&c, n, f64::max);
                 c.iter().zip(hi).map(|(c, h)| (c / h - 1.0) * 100.0).collect()
+            }
+            I::PrevHighClose | I::PrevLowClose => {
+                let c = close();
+                let high = id == I::PrevHighClose;
+                (0..c.len())
+                    .map(|i| {
+                        if i < n {
+                            return f64::NAN;
+                        }
+                        let w = c[i - n..i].iter().copied();
+                        if high { w.fold(f64::MIN, f64::max) } else { w.fold(f64::MAX, f64::min) }
+                    })
+                    .collect()
             }
             I::PctFromLow => {
                 let c = close();

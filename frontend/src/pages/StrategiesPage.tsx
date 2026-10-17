@@ -2,8 +2,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 import type { StrategyItem } from "../api/generated/model";
 import { useListStrategies, useRunScreening } from "../api/generated/strategy/strategy";
+import { StrategyNav } from "../components/StrategyNav";
 import { Badge, buttonClass, Card, Empty, errorText, PageHeader, QueryView } from "../components/ui";
 import { fmtInt } from "../lib/format";
+import { holdingsText } from "../lib/strategy";
 
 export function StrategiesPage() {
   const qc = useQueryClient();
@@ -15,9 +17,10 @@ export function StrategiesPage() {
 
   return (
     <>
+      <StrategyNav />
       <PageHeader
-        title="策略"
-        desc="策略是一组用白话说得清的选股条件，例如「5 日均线上穿 20 日均线，并且成交额不低于 5000 万」。每天收盘数据同步完后自动在全市场选一遍；点进策略可以看选出的股票，也可以看它过去几年的表现。"
+        title="我的策略"
+        desc="策略 = 买入条件 + 卖出规则，例如「5 日均线上穿 20 日均线时买，跌破 20 日均线或亏损 8% 时卖」。每天收盘数据同步完后在全市场算一遍，给出今日买点、今日卖点和持有中的股票；也可以看它过去几年的表现。条件由信号和指标组成，在上面的「信号」「指标」里能看到每一个是什么。"
         extra={
           <div className="flex items-center gap-2">
             <button
@@ -81,13 +84,13 @@ function StrategyCard({ s }: { s: StrategyItem }) {
       <div className="mt-auto flex items-baseline gap-2 text-sm">
         {latest ? (
           <>
-            <span className="num text-lg font-semibold">{fmtInt(latest.matched)}</span>
-            <span className="text-xs text-zinc-500">只符合</span>
-            {latest.new_hits > 0 && (
-              <span className="text-xs text-up" title="上一次巡检时不在结果中">
-                新入选 {latest.new_hits}
-              </span>
-            )}
+            <span className="text-xs text-zinc-500">买点</span>
+            <span className="num text-lg font-semibold text-up">{fmtInt(latest.matched)}</span>
+            <span className="text-xs text-zinc-500">卖点</span>
+            <span className="num text-lg font-semibold text-down">{fmtInt(latest.sells)}</span>
+            <span className="text-xs text-zinc-500" title="按规则推算的持有中股票数">
+              持有 {holdingsText(latest.holdings)}
+            </span>
             <span className="num ml-auto text-xs text-zinc-400">{latest.trade_date}</span>
           </>
         ) : (

@@ -4,10 +4,12 @@ import { useParams } from "react-router";
 import { useMaCrossBacktest, useStrategyBacktest } from "../api/generated/backtest/backtest";
 import { useGetSecurity, useSecurityBars, useSecurityMa } from "../api/generated/market/market";
 import type { MaPoint } from "../api/generated/model";
-import { useListStrategies } from "../api/generated/strategy/strategy";
+import { useListSignals } from "../api/generated/signal/signal";
+import { useCatalog, useListStrategies } from "../api/generated/strategy/strategy";
 import { COST_DEFAULTS, CostFields, costParams, Loaded, Result, RulesNote } from "../components/backtest";
 import { DiagnosisCard } from "../components/DiagnosisCard";
 import { MaControls } from "../components/MaControls";
+import { OverlayPicker, parseOverlays, useOverlays } from "../components/overlays";
 import { PriceChart } from "../components/PriceChart";
 import { RangePicker, rangeQuery } from "../components/RangePicker";
 import {
@@ -98,7 +100,18 @@ export function SecurityDetailPage() {
 }
 
 function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string | null }) {
-  const [s, set] = useSearchState({ adjust: "qfq", range: "3", from: "", to: "", fast: "15", slow: "30" });
+  const [s, set] = useSearchState({
+    adjust: "qfq",
+    range: "3",
+    from: "",
+    to: "",
+    fast: "15",
+    slow: "30",
+    overlay: "",
+  });
+  const catalog = useCatalog({ query: { staleTime: Number.POSITIVE_INFINITY } });
+  const signals = useListSignals({ query: { staleTime: 60_000 } });
+  const strategies = useListStrategies();
   const adjust = s.adjust as Adjust;
   const fast = Number(s.fast) || 15;
   const slow = Number(s.slow) || 30;
@@ -111,6 +124,22 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
   // 均线和交叉信号固定按等比前复权计算，与 K 线口径无关
   const ma = useSecurityMa(thscode, { fast, slow, start, end }, { query: { placeholderData: keepPreviousData } });
   const maOverlay = adjust === "qfq" && ma.data ? { points: ma.data.points, fast, slow } : undefined;
+  const overlays = parseOverlays(s.overlay);
+  const ov = useOverlays({
+    thscode,
+    overlays,
+    start,
+    end,
+    lastDate: bars.data?.bars.at(-1)?.trade_date,
+    catalog: catalog.data,
+    signals: signals.data,
+    strategies: strategies.data,
+  });
+  // 指标按等比前复权价计算，画在其他口径的 K 线上会对不上
+  const lines = useMemo(
+    () => (adjust === "qfq" ? ov.lines : ov.lines.filter((l) => l.pane !== "price")),
+    [adjust, ov.lines],
+  );
   return (
     <Card
       title="K 线"
@@ -128,8 +157,18 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
       ) : bars.data.bars.length === 0 ? (
         <Empty>本地还没有这只股票的日线，可能仍在回补中</Empty>
       ) : (
-        <PriceChart bars={bars.data.bars} ma={maOverlay} />
+        <PriceChart bars={bars.data.bars} ma={maOverlay} lines={lines} markers={ov.markers} />
       )}
+      <div className="mt-3">
+        <OverlayPicker
+          overlays={overlays}
+          onChange={(o) => set({ overlay: o.join(",") })}
+          infos={ov.infos}
+          catalog={catalog.data}
+          signals={signals.data}
+          strategies={strategies.data}
+        />
+      </div>
       <p className="mt-2 text-xs text-zinc-500">
         {adjust === "qfq" ? (
           <>

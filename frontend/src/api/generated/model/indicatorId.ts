@@ -39,4 +39,6 @@ export const IndicatorId = {
   low_n: 'low_n',
   pct_from_high: 'pct_from_high',
   pct_from_low: 'pct_from_low',
+  prev_high_close: 'prev_high_close',
+  prev_low_close: 'prev_low_close',
 } as const;

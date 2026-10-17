@@ -1,6 +1,6 @@
 # ADR：选股策略是 JSON 定义，指标和信号用固定目录
 
-- 状态：已采纳（accepted），2026-10-16。部分取代 [ADR：采用等比复权](equal_ratio_adjustment.md) 决策第 3 条：全市场组合回测的成交价和市值用前复权价。
+- 状态：已采纳（accepted），2026-10-16；决策第 1 条和第 3 条已被 [ADR：信号是起了名字的条件](custom_signals.md) 取代。部分取代 [ADR：采用等比复权](equal_ratio_adjustment.md) 决策第 3 条：全市场组合回测的成交价和市值用前复权价。
 - 相关文档：[选股策略与诊断](../domains/strategies.md)、[回测](../domains/backtest.md#portfolio)、[运行结束后的计算](../architecture/sync_pipeline.md#postprocess)。
 
 ## 背景

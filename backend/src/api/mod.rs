@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod market;
 pub mod setup;
+pub mod signal;
 pub mod strategy;
 pub mod backtest;
 pub mod insight;
@@ -41,6 +42,8 @@ pub struct AppState {
     pub latest: Arc<system::LatestCache>,
     /// 市场概况，有新日线后失效
     pub overview: Arc<crate::analysis::market::OverviewCache>,
+    /// 信号的过去表现，有新日线或改了定义后失效
+    pub stats: Arc<signal::StatsCache>,
 }
 
 #[derive(OpenApi)]
@@ -53,6 +56,7 @@ pub struct AppState {
         (name = "market", description = "证券、日线、指数与均线信号"),
         (name = "watchlist", description = "自选股与快速诊断"),
         (name = "strategy", description = "选股策略与每日巡检"),
+        (name = "signal", description = "指标、信号与买卖点"),
         (name = "backtest", description = "回测"),
         (name = "sync", description = "数据集与同步运行"),
     )
@@ -61,7 +65,7 @@ pub struct ApiDoc;
 
 // @project-doc docs/interfaces/rest_api.md#conventions
 pub fn router(engine: Arc<Engine>) -> Router {
-    let state = AppState { pool: engine.pool.clone(), engine, scans: Arc::new(ScanCache::default()), session_secret: Arc::default(), latest: Arc::default(), overview: Arc::default() };
+    let state = AppState { pool: engine.pool.clone(), engine, scans: Arc::new(ScanCache::default()), session_secret: Arc::default(), latest: Arc::default(), overview: Arc::default(), stats: Arc::default() };
     let st = &state.engine.settings;
     if st.admin_user == crate::config::DEFAULT_ADMIN_USER && st.admin_password == crate::config::DEFAULT_ADMIN_PASSWORD {
         tracing::warn!("网页登录仍在使用默认账号密码 niulai / niulai，请设置 NIULAI_ADMIN_USER 和 NIULAI_ADMIN_PASSWORD");
@@ -102,6 +106,7 @@ fn routes() -> OpenApiRouter<AppState> {
         .merge(market::routes())
         .merge(insight::routes())
         .merge(strategy::routes())
+        .merge(signal::routes())
         .merge(watchlist::routes())
         .merge(backtest::routes())
         .merge(sync::routes())

@@ -2,12 +2,15 @@ import { createBrowserRouter, Navigate, useParams, useSearchParams } from "react
 import { Layout } from "./components/Layout";
 import { GuidePage } from "./pages/GuidePage";
 import { IndexDetailPage } from "./pages/IndexDetailPage";
+import { IndicatorDetailPage, IndicatorsPage } from "./pages/IndicatorsPage";
 import { IndicesPage } from "./pages/IndicesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { RunDetailPage } from "./pages/RunDetailPage";
 import { SecurityDetailPage } from "./pages/SecurityDetailPage";
 import { SetupPage } from "./pages/SetupPage";
+import { SignalEditorPage } from "./pages/SignalEditorPage";
+import { SignalDetailPage, SignalsPage } from "./pages/SignalsPage";
 import { StrategiesPage } from "./pages/StrategiesPage";
 import { StrategyEditorPage } from "./pages/StrategyEditorPage";
 import { StrategyPage } from "./pages/StrategyPage";
@@ -40,6 +43,12 @@ export const router = createBrowserRouter([
       { path: "/strategies/new", element: <StrategyEditorPage /> },
       { path: "/strategies/:id", element: <StrategyPage /> },
       { path: "/strategies/:id/edit", element: <StrategyEditorPage /> },
+      { path: "/signals", element: <SignalsPage /> },
+      { path: "/signals/new", element: <SignalEditorPage /> },
+      { path: "/signals/:key", element: <SignalDetailPage /> },
+      { path: "/signals/:key/edit", element: <SignalEditorPage /> },
+      { path: "/indicators", element: <IndicatorsPage /> },
+      { path: "/indicators/:id", element: <IndicatorDetailPage /> },
       { path: "/watchlist", element: <WatchlistPage /> },
       { path: "/securities/:thscode", element: <SecurityDetailPage /> },
       { path: "/guide", element: <GuidePage /> },
@@ -50,7 +59,6 @@ export const router = createBrowserRouter([
       { path: "/sync/runs/:runId", element: <RunDetailPage /> },
       // 旧地址
       { path: "/securities", element: <Navigate replace to="/" /> },
-      { path: "/signals", element: <Navigate replace to="/strategies" /> },
       { path: "/backtest", element: <LegacyBacktest /> },
       { path: "/screener", element: <LegacyScreener /> },
       { path: "/screener/new", element: <Navigate replace to="/strategies/new" /> },

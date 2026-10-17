@@ -5,7 +5,9 @@ import type {
   ExitReason,
   IndicatorInfo,
   IndicatorRef,
+  Op,
   Operand,
+  SignalEntry,
   SignalInfo,
 } from "../api/generated/model";
 
@@ -71,3 +73,97 @@ export const EXIT_REASONS: Record<ExitReason, string> = {
   take_profit: "止盈",
   max_hold: "持有到期",
 };
+
+/** 六种比较，和后端 Op 的白话一致 */
+export const OPS: { value: Op; label: string; hint: string }[] = [
+  { value: ">", label: "高于", hint: "当天左边大于右边" },
+  { value: ">=", label: "不低于", hint: "当天左边大于或等于右边" },
+  { value: "<", label: "低于", hint: "当天左边小于右边" },
+  { value: "<=", label: "不高于", hint: "当天左边小于或等于右边" },
+  { value: "crosses_above", label: "上穿", hint: "前一天还不高于、当天变成高于：只在穿过去的那一天成立" },
+  { value: "crosses_below", label: "下穿", hint: "前一天还不低于、当天变成低于：只在穿过去的那一天成立" },
+];
+
+export const OP_WORD = Object.fromEntries(OPS.map((o) => [o.value, o.label])) as Record<Op, string>;
+
+/** 数值加单位，和后端 format_value 一致：5e7 元写成「5000 万元」 */
+export function formatValue(v: number, unit: string): string {
+  const n = String(v);
+  if (unit === "pct") return `${n}%`;
+  if (unit === "ratio") return `${n} 倍`;
+  if (unit === "yuan" && Math.abs(v) >= 1e8) return `${v / 1e8} 亿元`;
+  if (unit === "yuan" && Math.abs(v) >= 1e4) return `${v / 1e4} 万元`;
+  if (unit === "yuan" || unit === "price") return `${n} 元`;
+  return n;
+}
+
+/** 条件的时间范围：当天、最近 N 个交易日内出现过、连续 N 个交易日 */
+export type RangeMode = "today" | "within" | "streak";
+
+export function rangeOf(c: Condition): { mode: RangeMode; n: number } {
+  const within = c.within_days ?? 1;
+  const streak = c.streak_days ?? 1;
+  if (streak > 1) return { mode: "streak", n: streak };
+  if (within > 1) return { mode: "within", n: within };
+  return { mode: "today", n: 1 };
+}
+
+export function withRange(c: Condition, mode: RangeMode, n: number): Condition {
+  return { ...c, within_days: mode === "within" ? n : 1, streak_days: mode === "streak" ? n : 1 };
+}
+
+/** 自定义信号的名称和是否是状态，用来写白话 */
+export type MySignals = Map<number, { name: string; state: boolean }>;
+
+export function mySignalsOf(entries: SignalEntry[] | undefined): MySignals {
+  return new Map(
+    (entries ?? [])
+      .filter((e) => !e.builtin && e.signal_id !== null && e.signal_id !== undefined)
+      .map((e) => [e.signal_id as number, { name: e.name, state: e.kind === "state" }]),
+  );
+}
+
+function wrapSignal(name: string, state: boolean, within: number, streak: number): string {
+  if (streak > 1) return `连续 ${streak} 个交易日${state ? "处于" : "出现"}「${name}」`;
+  if (within <= 1) return `当天${state ? "处于" : "出现"}「${name}」`;
+  return `最近 ${within} 个交易日内${state ? "处于过" : "出现过"}「${name}」`;
+}
+
+export function indicatorLabel(catalog: Catalog, r: IndicatorRef): string {
+  const info = findIndicator(catalog, r.id);
+  return info ? indicatorName(info, r.n) : r.id;
+}
+
+/** 一条条件的白话，和后端 Condition::describe 的写法一致，编辑时边改边看 */
+export function describeCondition(catalog: Catalog, c: Condition, mine: MySignals): string {
+  const within = c.within_days ?? 1;
+  const streak = c.streak_days ?? 1;
+  if (c.kind === "signal") {
+    const info = findSignal(catalog, c.signal);
+    return wrapSignal(info ? signalName(info, c.params) : c.signal, info?.kind === "state", within, streak);
+  }
+  if (c.kind === "my_signal") {
+    const m = mine.get(c.signal_id);
+    return wrapSignal(m?.name ?? `自定义信号 ${c.signal_id}`, m?.state ?? false, within, streak);
+  }
+  const unit = findIndicator(catalog, c.left.id)?.unit ?? "";
+  const right = isIndicatorOperand(c.right) ? indicatorLabel(catalog, c.right) : formatValue(c.right.value, unit);
+  const core = `${indicatorLabel(catalog, c.left)}${OP_WORD[c.op]} ${right}`;
+  if (within > 1) return `最近 ${within} 个交易日内出现过「${core}」`;
+  if (streak > 1) return `连续 ${streak} 个交易日${core}`;
+  return core;
+}
+
+/** 条件里引用的信号在信号页的地址 */
+export function signalHref(c: Condition): string | null {
+  if (c.kind === "signal") return `/signals/${c.signal}`;
+  if (c.kind === "my_signal") return `/signals/my-${c.signal_id}`;
+  return null;
+}
+
+/** 巡检最多保存的持有中股票数，和后端 screener::MAX_HOLDINGS 一致；到了这个数说明实际更多 */
+export const MAX_HOLDINGS = 300;
+
+export function holdingsText(n: number): string {
+  return n >= MAX_HOLDINGS ? `${MAX_HOLDINGS}+` : String(n);
+}

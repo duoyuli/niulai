@@ -12,6 +12,8 @@ import type { IndicatorId } from './indicatorId';
  */
 export interface IndicatorInfo {
   description: string;
+  /** 怎么算：用了哪些数据、公式和固定参数 */
+  formula: string;
   group: string;
   id: IndicatorId;
   /**

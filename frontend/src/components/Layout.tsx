@@ -2,7 +2,6 @@ import { clsx } from "clsx";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { useLogout, useMe } from "../api/generated/auth/auth";
 import { useGetSetup } from "../api/generated/setup/setup";
-import { useReady } from "../api/generated/system/system";
 import { SecuritySearch } from "./SecuritySearch";
 import { VersionBadge } from "./VersionBadge";
 
@@ -15,7 +14,7 @@ const NAV = [
 
 /** 数据同步、指数板块、设置：不是每天用的，放在右侧 */
 const AUX = [
-  { to: "/guide", label: "说明", title: "指标与信号是什么、怎么看" },
+  { to: "/guide", label: "说明", title: "指标、信号、策略是什么，怎么用" },
   { to: "/sync", label: "数据", title: "数据同步与指数板块" },
   { to: "/setup", label: "设置", title: "数据源设置：API Key" },
 ];
@@ -47,7 +46,9 @@ export function Layout() {
                 className={({ isActive }) =>
                   clsx(
                     "rounded-md px-2.5 py-1 text-sm whitespace-nowrap transition",
-                    isActive
+                    isActive ||
+                      (n.to === "/strategies" &&
+                        (pathname.startsWith("/signals") || pathname.startsWith("/indicators")))
                       ? "bg-zinc-100 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
                       : "text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100",
                   )
@@ -84,7 +85,6 @@ export function Layout() {
             >
               退出
             </button>
-            <ServerStatus />
           </div>
         </div>
       </header>
@@ -105,21 +105,5 @@ export function Layout() {
         绘制。
       </footer>
     </div>
-  );
-}
-
-function ServerStatus() {
-  const ready = useReady({ query: { refetchInterval: 30_000, retry: false } });
-  const ok = ready.data?.status === "ready";
-  return (
-    <span
-      className="flex items-center gap-1.5 text-xs text-zinc-500"
-      title={ok ? "后端和数据库正常" : "后端或数据库不可用"}
-    >
-      <span
-        className={clsx("size-2 rounded-full", ready.isPending ? "bg-zinc-300" : ok ? "bg-emerald-500" : "bg-red-500")}
-      />
-      <span className="hidden sm:inline">{ready.isPending ? "连接中" : ok ? "服务正常" : "服务异常"}</span>
-    </span>
   );
 }

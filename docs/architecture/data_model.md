@@ -12,7 +12,7 @@
 | `ref` | 参考数据 | `security`、`security_name_hist`、`trading_day`、`index_info`、`index_member` |
 | `mkt` | 行情与公司行动 | `stock_bar_1d`、`index_bar_1d`、`corp_action`、`adj_segment`（复权分段），复权视图和重算存储过程 |
 | `fin` | 估值等基本面 | `valuation_1d` |
-| `app` | 用户在网页上维护的数据和由它产生的结果，不由同步写入 | `watchlist`（自选股，删除证券时一并删除）、`setting`（网页上配置的设置：API Key、登录 Cookie 的签名密钥 `session_secret`，以及内置策略是否已复制的标记 `strategies_seeded`）、`strategy`（选股策略，`definition` 是 JSON 定义，`screening` 是否巡检，`show_on_today` 是否在今日页展示）、`screen_run`（每个策略每个交易日一次巡检，`scanned` 是当天有日线的股票数）、`screen_hit`（巡检入选的股票）；删除策略时一并删除它的巡检记录。规则见 [选股策略与诊断](../domains/strategies.md#screening) |
+| `app` | 用户在网页上维护的数据和由它产生的结果，不由同步写入 | `watchlist`（自选股，删除证券时一并删除）、`setting`（网页上配置的设置：API Key、登录 Cookie 的签名密钥 `session_secret`，以及内置策略是否已复制的标记 `strategies_seeded`）、`strategy`（选股策略，`definition` 是 JSON 定义，`screening` 是否巡检，`show_on_today` 是否在今日页展示）、`screen_run`（每个策略每个交易日一次巡检，`scanned` 是当天有日线的股票数）、`screen_hit`（巡检结果，`kind` 是 `buy` 今日买点、`sell` 今日卖点或 `holding` 持有中）、`signal`（自定义信号，`definition` 是条件的 JSON，策略用 `my_signal` 条件按编号引用）；删除策略时一并删除它的巡检记录。规则见 [选股策略与诊断](../domains/strategies.md#screening) |
 
 日期约定：业务日期（交易日、报告期、除权日）一律存为 `DATE`，按 Asia/Shanghai 解释；采集和系统事件时间存为 `TIMESTAMPTZ`。供应商毫秒时间戳的换算规则见 [时间戳](../domains/market_data_rules.md#timestamps)。
 

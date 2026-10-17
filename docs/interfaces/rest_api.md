@@ -39,13 +39,23 @@
 | `GET /backtest/ma-cross` | 单只股票的均线交叉策略回测：汇总指标、交易记录、每日账户总值 | `thscode`（必填）、`fast`、`slow`、`start`、`end`、`capital` 默认 100,000；`commission_rate`、`min_commission`、`stamp_tax_rate` 默认万 2.5、5 元、千分之 0.5；规则见 [回测](../domains/backtest.md) |
 | `GET /backtest/strategy` | 单只股票的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
 | `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金和成本同上；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
-| `GET /strategies/catalog` | 指标、信号（含白话说明）、模板目录和默认股票池，前端据此生成策略编辑器和「指标与信号」页 | — |
+| `GET /strategies/catalog` | 指标、内置信号（含白话说明）、模板目录和默认股票池，前端据此生成条件编辑器 | — |
 | `GET /strategies` | 全部策略，含白话说明（`explained`）和最近一次巡检的数量 | — |
 | `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, show_on_today, template}`，`screening`、`show_on_today` 默认 true；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |
 | `GET` / `PUT` / `DELETE /strategies/{id}` | 读取、修改（请求体同新建）、删除策略；删除返回 204 | 不存在时返回 404 |
-| `POST /strategies/preview` | 试算：不保存，在某个交易日上执行一个策略定义 | 请求体 `{definition, date}`，`date` 默认最新交易日 |
-| `GET /strategies/{id}/results` | 某次巡检的结果：入选股票、命中条件、是否新入选、上次入选这次不在的股票，以及有结果的交易日 | `date` 默认最近一次巡检 |
+| `POST /strategies/preview` | 试算：不保存，在某个交易日上看哪些股票满足买入条件 | 请求体 `{definition, date}`，`date` 默认最新交易日 |
+| `GET /strategies/{id}/results` | 某次巡检的结果：今日买点（命中条件、是否新入选）、今日卖点（原因）、持有中（买入日、买入价、买入以来涨跌），以及有结果的交易日 | `date` 默认最近一次巡检；规则见 [买卖点](../domains/strategies.md#points) |
 | `POST /screening/run` | 立即巡检 | `strategy_id` 默认全部开启巡检的策略、`date` 默认最新交易日 |
+| `GET /signals` | 全部信号：内置的和自定义的，含定义、白话、用到的指标、被哪些策略用到 | 内置信号的 `key` 是名称（例如 `ma_cross_up`），自定义的是 `my-<编号>` |
+| `GET /signals/{key}` | 一个信号 | 不存在时返回 404 |
+| `POST /signals` | 新建自定义信号，返回 201 | 请求体 `{name, description, bullish, definition, based_on}`；名称 1 到 30 字；规则见 [信号](../domains/strategies.md#signals) |
+| `PUT` / `DELETE /signals/my/{signal_id}` | 修改、删除自定义信号；删除返回 204 | 有策略在用时删除返回 409，`message` 列出这些策略 |
+| `POST /signals/today` | 今天出现这个信号的股票，默认股票池，按成交额前 50 只 | 请求体 `{target, date}`；`target` 是 `{condition}` 或未保存的 `{draft}` 定义 |
+| `POST /signals/stats` | 信号的过去表现：出现后 5、10、20 个交易日的涨跌和同期所有股票对比 | 请求体 `{target, years}`，`years` 默认 3、范围 1 到 5；第一次约十几秒，之后缓存；规则见 [信号的过去表现](../domains/strategies.md#signal_stats) |
+| `POST /securities/{thscode}/signal-days` | 一只股票上出现这个信号的日子（连续几天只给第一天） | 请求体 `{target, start, end}` |
+| `GET /indicators` | 全部指标：说明、怎么算、常用写法、被哪些信号和策略用到 | — |
+| `GET /securities/{thscode}/indicator` | 一只股票上一个指标每天的值 | `id`（必填）、`n`、`start`、`end`；按等比前复权价计算 |
+| `GET /securities/{thscode}/strategy-points` | 一个策略在这只股票上的历次买卖点和今天的状态（买点、卖点、持有中、空仓） | `strategy_id`（必填）、`start` 默认 3 年前 |
 | `GET /securities/{thscode}/diagnosis` | 个股诊断：四个维度的结论、最近 20 个交易日的信号、关键价位、当天符合的策略 | 规则见 [个股诊断](../domains/strategies.md#diagnosis) |
 | `GET /market/overview` | 市场概况：涨跌家数、涨跌停数、涨跌幅中位数、站上 20 日均线的比例 | `date` 默认最新交易日 |
 | `GET /market/sectors` | 板块强弱排名 | `category`（`industry` 默认 / `cn_concept`）、`days` 默认 5、范围 1 到 60、`date`；规则见 [市场环境](../domains/strategies.md#market) |
@@ -106,7 +116,7 @@
 | 400 | `bad_request` | 参数不合法，`message` 说明原因，例如 `adjust` 取值不对、`fast` 不小于 `slow`、回测区间内没有日线、策略定义没有通过校验 |
 | 401 | `unauthorized` | 没有登录、登录已过期，或账号密码不对 |
 | 404 | `not_found` | 证券、数据集、运行或策略不存在 |
-| 409 | `conflict` | 与当前状态冲突，例如 API Key 由环境变量提供时在网页上修改 |
+| 409 | `conflict` | 与当前状态冲突，例如 API Key 由环境变量提供时在网页上修改、删除有策略在用的自定义信号 |
 | 500 | `internal` | 服务器内部错误；详细原因只写日志，响应中不包含 |
 | 503 | `unavailable` | 依赖的外部服务暂时不可用，例如验证 API Key 时连不上同花顺接口 |
 

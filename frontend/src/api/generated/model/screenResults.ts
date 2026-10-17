@@ -5,21 +5,23 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
-import type { RemovedHit } from './removedHit';
 import type { StoredHit } from './storedHit';
 
 export interface ScreenResults {
   /** 有巡检结果的交易日（最近 60 个，新的在前） */
   dates: string[];
+  /** 今日买点：今天满足买入条件、之前空仓，明天开盘买入 */
   hits: StoredHit[];
+  /** 持有中：按最近一年的买卖点推算 */
+  holdings: StoredHit[];
   /** @nullable */
   matched?: number | null;
   /** @nullable */
   ran_at?: string | null;
-  /** 上一次巡检入选、这一次不在结果中的股票 */
-  removed: RemovedHit[];
   /** @nullable */
   scanned?: number | null;
+  /** 今日卖点：持有中触发了卖出规则，明天开盘卖出；reasons 是原因 */
+  sells: StoredHit[];
   /**
      * 没有巡检过时为空
      * @nullable

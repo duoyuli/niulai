@@ -2,6 +2,7 @@ export * from './auth/auth';
 export * from './backtest/backtest';
 export * from './market/market';
 export * from './setup/setup';
+export * from './signal/signal';
 export * from './strategy/strategy';
 export * from './sync/sync';
 export * from './system/system';

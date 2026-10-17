@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::indicators::{Frame, IndicatorId, IndicatorRef};
+use super::indicators::{Frame, IndicatorId};
 use super::ma::{CrossSignal, cross_signals};
+use super::strategy::{Condition, Op, SignalDef, SignalLib, cmp, cmp_ind};
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -185,7 +186,7 @@ pub fn warmup(id: SignalId, params: &Params) -> u32 {
 }
 
 /// 两条线的上穿（golden = true）或下穿事件，与均线交叉同一套容差规则（见 ma::cross_signals）
-fn crossing(a: &[f64], b: &[f64], up: bool) -> Vec<bool> {
+pub fn crossing(a: &[f64], b: &[f64], up: bool) -> Vec<bool> {
     let pairs: Vec<(f64, f64)> = a.iter().zip(b).map(|(x, y)| (*x, *y)).collect();
     // 数据不足的开头部分（NaN）不参与，状态从第一个完整的点开始
     let start = pairs.iter().position(|(x, y)| !x.is_nan() && !y.is_nan()).unwrap_or(pairs.len());
@@ -195,68 +196,51 @@ fn crossing(a: &[f64], b: &[f64], up: bool) -> Vec<bool> {
     out
 }
 
-/// 一条线越过一个固定水平
-fn crossing_level(a: &[f64], level: f64, up: bool) -> Vec<bool> {
-    crossing(a, &vec![level; a.len()], up)
-}
-
 /// 信号序列，同一只股票上相同的信号和参数只算一次
 pub fn series(f: &Frame, id: SignalId, params: &Params) -> std::rc::Rc<Vec<bool>> {
-    f.memo_bools(format!("{id:?}{params:?}"), || compute(f, id, params))
+    f.memo_bools(format!("{id:?}{params:?}"), || match definition(id, params) {
+        Some(d) => d.series(f, &SignalLib::default()),
+        None => special(f, id, params),
+    })
 }
 
+/// 能写成条件的内置信号，它的条件定义（参数代入后）；逻辑特殊、写不成条件的返回 None
 // @project-doc docs/domains/strategies.md#signals
-/// 信号序列（与日线等长）
-pub fn compute(f: &Frame, id: SignalId, params: &Params) -> Vec<bool> {
-    let ind = |id: IndicatorId, n: Option<u32>| f.get(IndicatorRef::new(id, n));
+pub fn definition(id: SignalId, params: &Params) -> Option<SignalDef> {
+    use IndicatorId as I;
+    use Op::*;
+    let pv = |k: &str| param(id, params, k);
+    let n = |k: &str| Some(pv(k) as u32);
+    let all = |conditions: Vec<Condition>| Some(SignalDef { match_all: true, conditions });
+    match id {
+        S::MaCrossUp => all(vec![cmp_ind(I::Ma, n("fast"), CrossesAbove, I::Ma, n("slow"))]),
+        S::MaCrossDown => all(vec![cmp_ind(I::Ma, n("fast"), CrossesBelow, I::Ma, n("slow"))]),
+        S::MaBullish => all(vec![cmp_ind(I::Ma, n("short"), Gt, I::Ma, n("mid")), cmp_ind(I::Ma, n("mid"), Gt, I::Ma, n("long"))]),
+        S::MaBearish => all(vec![cmp_ind(I::Ma, n("short"), Lt, I::Ma, n("mid")), cmp_ind(I::Ma, n("mid"), Lt, I::Ma, n("long"))]),
+        S::PriceCrossAboveMa => all(vec![cmp_ind(I::Close, None, CrossesAbove, I::Ma, n("n"))]),
+        S::PriceCrossBelowMa => all(vec![cmp_ind(I::Close, None, CrossesBelow, I::Ma, n("n"))]),
+        S::MacdGolden => all(vec![cmp_ind(I::MacdDif, None, CrossesAbove, I::MacdDea, None)]),
+        S::MacdDeath => all(vec![cmp_ind(I::MacdDif, None, CrossesBelow, I::MacdDea, None)]),
+        S::MacdTurnPositive => all(vec![cmp(I::MacdDif, None, CrossesAbove, 0.0)]),
+        S::KdjGolden => all(vec![cmp_ind(I::KdjK, None, CrossesAbove, I::KdjD, None)]),
+        S::KdjDeath => all(vec![cmp_ind(I::KdjK, None, CrossesBelow, I::KdjD, None)]),
+        S::RsiLeaveOversold | S::RsiEnterOverbought => all(vec![cmp(I::Rsi, Some(14), CrossesAbove, pv("level"))]),
+        S::BollBreakUpper => all(vec![cmp_ind(I::Close, None, CrossesAbove, I::BollUpper, None)]),
+        S::BollBreakLower => all(vec![cmp_ind(I::Close, None, CrossesBelow, I::BollLower, None)]),
+        S::NewHigh => all(vec![cmp_ind(I::Close, None, Gt, I::PrevHighClose, n("n"))]),
+        S::NewLow => all(vec![cmp_ind(I::Close, None, Lt, I::PrevLowClose, n("n"))]),
+        S::VolumeSurge => all(vec![cmp(I::VolRatio, Some(5), Ge, pv("ratio"))]),
+        S::BigUp => all(vec![cmp(I::ChangePct, None, Ge, pv("pct")), cmp_ind(I::Close, None, Gt, I::Open, None)]),
+        S::GapUp | S::LongLowerShadow | S::LimitUp | S::LimitDown | S::BrokenLimitUp | S::ConsecutiveLimitUp => None,
+    }
+}
+
+/// 写不成条件的内置信号：依赖前一天的 K 线、K 线形状，或推算出的涨跌停价
+fn special(f: &Frame, id: SignalId, params: &Params) -> Vec<bool> {
     let pv = |k: &str| param(id, params, k);
     let n = f.len();
     let bars = f.bars;
     match id {
-        S::MaCrossUp | S::MaCrossDown => {
-            let fast = ind(IndicatorId::Ma, Some(pv("fast") as u32));
-            let slow = ind(IndicatorId::Ma, Some(pv("slow") as u32));
-            crossing(&fast, &slow, id == S::MaCrossUp)
-        }
-        S::MaBullish | S::MaBearish => {
-            let s = ind(IndicatorId::Ma, Some(pv("short") as u32));
-            let m = ind(IndicatorId::Ma, Some(pv("mid") as u32));
-            let l = ind(IndicatorId::Ma, Some(pv("long") as u32));
-            (0..n).map(|i| if id == S::MaBullish { s[i] > m[i] && m[i] > l[i] } else { s[i] < m[i] && m[i] < l[i] }).collect()
-        }
-        S::PriceCrossAboveMa | S::PriceCrossBelowMa => {
-            let c = ind(IndicatorId::Close, None);
-            let m = ind(IndicatorId::Ma, Some(pv("n") as u32));
-            crossing(&c, &m, id == S::PriceCrossAboveMa)
-        }
-        S::MacdGolden | S::MacdDeath => crossing(&ind(IndicatorId::MacdDif, None), &ind(IndicatorId::MacdDea, None), id == S::MacdGolden),
-        S::MacdTurnPositive => crossing_level(&ind(IndicatorId::MacdDif, None), 0.0, true),
-        S::KdjGolden | S::KdjDeath => crossing(&ind(IndicatorId::KdjK, None), &ind(IndicatorId::KdjD, None), id == S::KdjGolden),
-        S::RsiLeaveOversold => crossing_level(&ind(IndicatorId::Rsi, Some(14)), pv("level"), true),
-        S::RsiEnterOverbought => crossing_level(&ind(IndicatorId::Rsi, Some(14)), pv("level"), true),
-        S::BollBreakUpper => crossing(&ind(IndicatorId::Close, None), &ind(IndicatorId::BollUpper, None), true),
-        S::BollBreakLower => crossing(&ind(IndicatorId::Close, None), &ind(IndicatorId::BollLower, None), false),
-        S::NewHigh | S::NewLow => {
-            let c = ind(IndicatorId::Close, None);
-            let k = pv("n") as usize;
-            (0..n)
-                .map(|i| {
-                    if i < k {
-                        return false;
-                    }
-                    let prior = &c[i - k..i];
-                    if id == S::NewHigh { prior.iter().all(|v| c[i] > *v) } else { prior.iter().all(|v| c[i] < *v) }
-                })
-                .collect()
-        }
-        S::VolumeSurge => {
-            let r = ind(IndicatorId::VolRatio, Some(5));
-            r.iter().map(|v| *v >= pv("ratio")).collect()
-        }
-        S::BigUp => {
-            let ch = ind(IndicatorId::ChangePct, None);
-            (0..n).map(|i| ch[i] >= pv("pct") && bars[i].q_close > bars[i].q_open).collect()
-        }
         S::GapUp => (0..n).map(|i| i > 0 && bars[i].q_low > bars[i - 1].q_high).collect(),
         S::LongLowerShadow => bars
             .iter()
@@ -280,13 +264,169 @@ pub fn compute(f: &Frame, id: SignalId, params: &Params) -> Vec<bool> {
                 })
                 .collect()
         }
+        _ => unreachable!("能写成条件的信号走 definition"),
     }
+}
+
+/// 写不成条件的内置信号，页面上说明它是怎么判断的
+pub fn special_rule(id: SignalId) -> Option<&'static str> {
+    Some(match id {
+        S::GapUp => "当天最低价高于前一天最高价（前复权）",
+        S::LongLowerShadow => "下影线（开盘、收盘中较低的一个减最低价）不短于实体的 2 倍，且不短于收盘价的 3%",
+        S::LimitUp => "收盘价达到按交易所规则推算的涨停价",
+        S::LimitDown => "收盘价达到按交易所规则推算的跌停价",
+        S::BrokenLimitUp => "最高价触及涨停价，收盘没有封住",
+        S::ConsecutiveLimitUp => "连续 N 个交易日收盘涨停",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::indicators::IndicatorRef;
     use crate::analysis::indicators::tests::bars_from;
+
+    fn crossing_level(a: &[f64], level: f64, up: bool) -> Vec<bool> {
+        crossing(a, &vec![level; a.len()], up)
+    }
+
+    /// 改写前的实现，只用来核对条件定义的结果逐位一致
+        fn legacy(f: &Frame, id: SignalId, params: &Params) -> Vec<bool> {
+        let ind = |id: IndicatorId, n: Option<u32>| f.get(IndicatorRef::new(id, n));
+        let pv = |k: &str| param(id, params, k);
+        let n = f.len();
+        let bars = f.bars;
+        match id {
+            S::MaCrossUp | S::MaCrossDown => {
+                let fast = ind(IndicatorId::Ma, Some(pv("fast") as u32));
+                let slow = ind(IndicatorId::Ma, Some(pv("slow") as u32));
+                crossing(&fast, &slow, id == S::MaCrossUp)
+            }
+            S::MaBullish | S::MaBearish => {
+                let s = ind(IndicatorId::Ma, Some(pv("short") as u32));
+                let m = ind(IndicatorId::Ma, Some(pv("mid") as u32));
+                let l = ind(IndicatorId::Ma, Some(pv("long") as u32));
+                (0..n).map(|i| if id == S::MaBullish { s[i] > m[i] && m[i] > l[i] } else { s[i] < m[i] && m[i] < l[i] }).collect()
+            }
+            S::PriceCrossAboveMa | S::PriceCrossBelowMa => {
+                let c = ind(IndicatorId::Close, None);
+                let m = ind(IndicatorId::Ma, Some(pv("n") as u32));
+                crossing(&c, &m, id == S::PriceCrossAboveMa)
+            }
+            S::MacdGolden | S::MacdDeath => crossing(&ind(IndicatorId::MacdDif, None), &ind(IndicatorId::MacdDea, None), id == S::MacdGolden),
+            S::MacdTurnPositive => crossing_level(&ind(IndicatorId::MacdDif, None), 0.0, true),
+            S::KdjGolden | S::KdjDeath => crossing(&ind(IndicatorId::KdjK, None), &ind(IndicatorId::KdjD, None), id == S::KdjGolden),
+            S::RsiLeaveOversold => crossing_level(&ind(IndicatorId::Rsi, Some(14)), pv("level"), true),
+            S::RsiEnterOverbought => crossing_level(&ind(IndicatorId::Rsi, Some(14)), pv("level"), true),
+            S::BollBreakUpper => crossing(&ind(IndicatorId::Close, None), &ind(IndicatorId::BollUpper, None), true),
+            S::BollBreakLower => crossing(&ind(IndicatorId::Close, None), &ind(IndicatorId::BollLower, None), false),
+            S::NewHigh | S::NewLow => {
+                let c = ind(IndicatorId::Close, None);
+                let k = pv("n") as usize;
+                (0..n)
+                    .map(|i| {
+                        if i < k {
+                            return false;
+                        }
+                        let prior = &c[i - k..i];
+                        if id == S::NewHigh { prior.iter().all(|v| c[i] > *v) } else { prior.iter().all(|v| c[i] < *v) }
+                    })
+                    .collect()
+            }
+            S::VolumeSurge => {
+                let r = ind(IndicatorId::VolRatio, Some(5));
+                r.iter().map(|v| *v >= pv("ratio")).collect()
+            }
+            S::BigUp => {
+                let ch = ind(IndicatorId::ChangePct, None);
+                (0..n).map(|i| ch[i] >= pv("pct") && bars[i].q_close > bars[i].q_open).collect()
+            }
+            S::GapUp => (0..n).map(|i| i > 0 && bars[i].q_low > bars[i - 1].q_high).collect(),
+            S::LongLowerShadow => bars
+                .iter()
+                .map(|b| {
+                    let lower = b.q_open.min(b.q_close) - b.q_low;
+                    let body = (b.q_close - b.q_open).abs();
+                    lower >= 2.0 * body && lower >= 0.03 * b.q_close
+                })
+                .collect(),
+            S::LimitUp => f.limits().limit_up.clone(),
+            S::LimitDown => f.limits().limit_down.clone(),
+            S::BrokenLimitUp => f.limits().broken.clone(),
+            S::ConsecutiveLimitUp => {
+                let lu = &f.limits().limit_up;
+                let k = pv("n") as usize;
+                let mut run = 0usize;
+                lu.iter()
+                    .map(|&u| {
+                        run = if u { run + 1 } else { 0 };
+                        run >= k
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    /// 一组起伏明显、有涨停和跳空的日线，覆盖各种信号
+    fn wavy(n: usize, seed: u64) -> Vec<crate::analysis::prices::DailyBar> {
+        let mut x = seed;
+        let mut rnd = || {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (x >> 33) as f64 / (1u64 << 31) as f64
+        };
+        let mut c = 10.0;
+        let closes: Vec<f64> = (0..n)
+            .map(|i| {
+                let drift = ((i as f64) / 17.0).sin() * 0.02;
+                let jump = if rnd() < 0.03 { 0.1 } else { (rnd() - 0.5) * 0.06 };
+                c *= 1.0 + drift + jump;
+                (c * 100.0).round() / 100.0
+            })
+            .collect();
+        let mut b = bars_from(&closes);
+        for (i, bar) in b.iter_mut().enumerate() {
+            let r = rnd();
+            bar.q_open = bar.q_close * (1.0 + (r - 0.5) * 0.04);
+            bar.open = bar.q_open;
+            bar.q_high = bar.q_close.max(bar.q_open) * (1.0 + rnd() * 0.02);
+            bar.high = bar.q_high;
+            bar.q_low = bar.q_close.min(bar.q_open) * (1.0 - rnd() * 0.02);
+            bar.low = bar.q_low;
+            bar.volume = 1e6 * (1.0 + rnd() * if i % 23 == 0 { 6.0 } else { 1.0 });
+        }
+        b
+    }
+
+    #[test]
+    fn condition_definitions_match_the_old_implementation_bit_for_bit() {
+        let param_sets: Vec<Vec<(&str, f64)>> = vec![
+            vec![],
+            vec![("fast", 3.0), ("slow", 10.0), ("short", 3.0), ("mid", 8.0), ("long", 21.0), ("n", 10.0), ("level", 40.0), ("ratio", 1.5), ("pct", 3.0)],
+        ];
+        let mut fired = std::collections::BTreeSet::new();
+        for seed in 1..=6 {
+            let b = wavy(400, seed);
+            for info in CATALOG {
+                if definition(info.id, &Params::new()).is_none() {
+                    continue;
+                }
+                for ps in &param_sets {
+                    let params: Params = ps.iter().filter(|(k, _)| info.params.iter().any(|p| p.key == *k)).map(|(k, v)| (k.to_string(), *v)).collect();
+                    let f = Frame::new(&b, None);
+                    let new = series(&f, info.id, &params);
+                    let old = legacy(&f, info.id, &params);
+                    assert_eq!(*new, old, "{:?} {params:?} seed {seed}", info.id);
+                    if old.iter().any(|v| *v) {
+                        fired.insert(info.id);
+                    }
+                }
+            }
+        }
+        // 每个信号在测试数据里都触发过，比较才有意义
+        let expressible = CATALOG.iter().filter(|i| definition(i.id, &Params::new()).is_some()).count();
+        assert_eq!(fired.len(), expressible, "没有触发过的：{:?}", CATALOG.iter().map(|i| i.id).filter(|id| definition(*id, &Params::new()).is_some() && !fired.contains(id)).collect::<Vec<_>>());
+    }
 
     #[test]
     fn every_catalog_entry_is_explained() {
@@ -294,7 +434,7 @@ mod tests {
             assert!(!s.description.is_empty() && !s.usage.is_empty(), "信号 {:?} 缺少说明", s.id);
         }
         for i in crate::analysis::indicators::CATALOG {
-            assert!(!i.description.is_empty() && !i.usage.is_empty(), "指标 {:?} 缺少说明", i.id);
+            assert!(!i.description.is_empty() && !i.usage.is_empty() && !i.formula.is_empty(), "指标 {:?} 缺少说明", i.id);
         }
     }
 
@@ -306,9 +446,9 @@ mod tests {
         let mut params = Params::new();
         params.insert("fast".into(), 2.0);
         params.insert("slow".into(), 3.0);
-        let sig = compute(&f, SignalId::MaCrossUp, &params);
+        let sig = series(&f, SignalId::MaCrossUp, &params);
         // 与 ma::ma_cross 的测试相同：第 6 根上穿
-        assert_eq!(sig, vec![false, false, false, false, false, true, false]);
+        assert_eq!(*sig, vec![false, false, false, false, false, true, false]);
         assert_eq!(label(SignalId::MaCrossUp, &params), "2 日均线上穿 3 日均线");
     }
 
@@ -318,9 +458,9 @@ mod tests {
         let f = Frame::new(&b, None);
         let mut p = Params::new();
         p.insert("n".into(), 3.0);
-        assert_eq!(compute(&f, SignalId::NewHigh, &p), vec![false, false, false, true]);
+        assert_eq!(*series(&f, SignalId::NewHigh, &p), vec![false, false, false, true]);
         // 成交量逐日增加 1000：第 4 天 4000 是前 5 天平均（不足 5 天）——不足时不判断
-        assert!(compute(&f, SignalId::VolumeSurge, &Params::new()).iter().all(|v| !v));
+        assert!(series(&f, SignalId::VolumeSurge, &Params::new()).iter().all(|v| !v));
     }
 
     #[test]

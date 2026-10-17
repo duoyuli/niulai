@@ -15,7 +15,7 @@ export interface Definition {
   all?: Condition[];
   /** 至少满足一个；为空时不要求 */
   any?: Condition[];
-  /** 卖出规则，回测时使用 */
+  /** 卖出规则：每日巡检据此给出卖点，回测据此卖出 */
   exit?: ExitRule;
   /**
      * 每天最多保留多少只（按排序取前面的）

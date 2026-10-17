@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import type { SignalEvent } from "../api/generated/model";
 
 /** 一个信号：看多用红色、看空用绿色，与 A 股红涨绿跌一致。withDate 时在后面显示日期（月-日）。
- * 默认点击进入「指标与信号」里这个信号的说明；放在本身可点击的行里时传 link={false} */
+ * 默认点击进入这个信号的详情页；放在本身可点击的行里时传 link={false} */
 export function SignalChip({
   event,
   withDate = false,
@@ -27,7 +27,7 @@ export function SignalChip({
     </>
   );
   return link ? (
-    <Link to={`/guide#sig-${event.signal}`} title={title} className={className}>
+    <Link to={`/signals/${event.signal}`} title={title} className={className}>
       {body}
     </Link>
   ) : (

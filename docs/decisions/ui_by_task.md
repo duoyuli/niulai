@@ -1,6 +1,6 @@
 # ADR：界面按任务组织
 
-- 状态：已采纳（accepted），2026-10-16。
+- 状态：已采纳（accepted），2026-10-16；决策第 6 条中「说明集中在「指标与信号」页」已被 [ADR：信号是起了名字的条件](custom_signals.md) 取代，信号和指标各有自己的页面，放在「策略」下面。
 - 相关文档：[前端](../architecture/frontend.md#pages)、[选股策略与诊断](../domains/strategies.md)、[回测](../domains/backtest.md)。
 
 ## 背景

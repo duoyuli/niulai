@@ -12,6 +12,7 @@ use utoipa_axum::routes;
 use super::AppState;
 use crate::analysis::indicators::{self, IndicatorInfo};
 use crate::analysis::screener::{self, Hit, ScreeningSummary};
+use crate::analysis::signal_lib;
 use crate::analysis::signals::{self, SignalInfo};
 use crate::analysis::strategy::{Definition, Template, Universe, templates};
 use crate::error::{ApiError, ApiResult};
@@ -53,7 +54,7 @@ pub struct Explained {
 }
 
 fn explain(d: &Definition) -> Explained {
-    let mut exit: Vec<String> = d.exit.any.iter().map(|c| c.describe()).collect();
+    let mut exit: Vec<String> = d.exit.any.iter().map(|c| d.describe_condition(c)).collect();
     if let Some(v) = d.exit.stop_loss_pct {
         exit.push(format!("亏损 {v}% 止损"));
     }
@@ -65,8 +66,8 @@ fn explain(d: &Definition) -> Explained {
     }
     Explained {
         universe: d.describe_universe(),
-        all: d.all.iter().map(|c| c.describe()).collect(),
-        any: d.any.iter().map(|c| c.describe()).collect(),
+        all: d.all.iter().map(|c| d.describe_condition(c)).collect(),
+        any: d.any.iter().map(|c| d.describe_condition(c)).collect(),
         exit,
     }
 }
@@ -74,12 +75,16 @@ fn explain(d: &Definition) -> Explained {
 #[derive(Serialize, ToSchema)]
 pub struct LatestRun {
     pub trade_date: NaiveDate,
-    /// 满足条件的股票数（截断前）
+    /// 今日买点数（截断前）
     pub matched: i32,
-    /// 保存的结果数
+    /// 保存的买点数
     pub hits: i64,
-    /// 其中新入选的数量
+    /// 其中上一次巡检没有出现的
     pub new_hits: i64,
+    /// 今日卖点数
+    pub sells: i64,
+    /// 持有中的股票数
+    pub holdings: i64,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -109,22 +114,25 @@ async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem
     .bind(id)
     .fetch_all(&s.pool)
     .await?;
-    let latest: Vec<(i64, NaiveDate, i32, i64, i64)> = sqlx::query_as(
+    let latest: Vec<(i64, NaiveDate, i32, i64, i64, i64, i64)> = sqlx::query_as(
         "SELECT DISTINCT ON (r.strategy_id) r.strategy_id, r.trade_date, r.matched,
-                (SELECT count(*) FROM app.screen_hit h WHERE h.run_id = r.run_id),
-                (SELECT count(*) FROM app.screen_hit h WHERE h.run_id = r.run_id AND h.is_new)
+                (SELECT count(*) FROM app.screen_hit h WHERE h.run_id = r.run_id AND h.kind = 'buy'),
+                (SELECT count(*) FROM app.screen_hit h WHERE h.run_id = r.run_id AND h.kind = 'buy' AND h.is_new),
+                (SELECT count(*) FROM app.screen_hit h WHERE h.run_id = r.run_id AND h.kind = 'sell'),
+                (SELECT count(*) FROM app.screen_hit h WHERE h.run_id = r.run_id AND h.kind = 'holding')
          FROM app.screen_run r WHERE ($1::bigint IS NULL OR r.strategy_id = $1) ORDER BY r.strategy_id, r.trade_date DESC",
     )
     .bind(id)
     .fetch_all(&s.pool)
     .await?;
+    let lib = signal_lib::load(&s.pool).await?;
     let mut out = vec![];
     for (strategy_id, name, description, screening, show_on_today, template, v, updated_at) in rows {
-        let definition: Definition = serde_json::from_value(v).map_err(|e| ApiError::Internal(e.into()))?;
+        let definition: Definition = serde_json::from_value::<Definition>(v).map_err(|e| ApiError::Internal(e.into()))?.with_lib(lib.clone());
         let latest = latest
             .iter()
             .find(|l| l.0 == strategy_id)
-            .map(|&(_, trade_date, matched, hits, new_hits)| LatestRun { trade_date, matched, hits, new_hits });
+            .map(|&(_, trade_date, matched, hits, new_hits, sells, holdings)| LatestRun { trade_date, matched, hits, new_hits, sells, holdings });
         out.push(StrategyItem { strategy_id, name, description, screening, show_on_today, template, explained: explain(&definition), definition, latest, updated_at });
     }
     Ok(out)
@@ -157,19 +165,21 @@ fn yes() -> bool {
     true
 }
 
-fn check(input: &StrategyInput) -> ApiResult<()> {
+async fn check(s: &AppState, input: &StrategyInput) -> ApiResult<()> {
     let n = input.name.trim().chars().count();
     if n == 0 || n > 40 {
         return Err(ApiError::BadRequest("策略名称应为 1 到 40 个字".into()));
     }
-    input.definition.validate().map_err(ApiError::BadRequest)
+    // 条件里可能引用自定义信号：带上信号库再校验
+    let lib = signal_lib::load(&s.pool).await?;
+    input.definition.clone().with_lib(lib).validate().map_err(ApiError::BadRequest)
 }
 
 /// 新建策略
 #[utoipa::path(post, path = "/strategies", tag = "strategy", request_body = StrategyInput,
     responses((status = 201, description = "已创建", body = StrategyItem), (status = 400, description = "定义不合法", body = crate::error::ErrorBody)))]
 async fn create_strategy(State(s): State<AppState>, Json(input): Json<StrategyInput>) -> ApiResult<(StatusCode, Json<StrategyItem>)> {
-    check(&input)?;
+    check(&s, &input).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO app.strategy (name, description, definition, screening, template, show_on_today) VALUES ($1, $2, $3, $4, $5, $6) RETURNING strategy_id",
     )
@@ -198,7 +208,7 @@ async fn get_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResu
               (status = 400, description = "定义不合法", body = crate::error::ErrorBody),
               (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
 async fn update_strategy(State(s): State<AppState>, Path(id): Path<i64>, Json(input): Json<StrategyInput>) -> ApiResult<Json<StrategyItem>> {
-    check(&input)?;
+    check(&s, &input).await?;
     let n = sqlx::query("UPDATE app.strategy SET name = $2, description = $3, definition = $4, screening = $5, show_on_today = $6, updated_at = now() WHERE strategy_id = $1")
         .bind(id)
         .bind(input.name.trim())
@@ -244,10 +254,11 @@ pub struct PreviewResult {
 #[utoipa::path(post, path = "/strategies/preview", tag = "strategy", request_body = PreviewInput,
     responses((status = 200, description = "成功", body = PreviewResult), (status = 400, description = "定义不合法或没有日线", body = crate::error::ErrorBody)))]
 async fn preview(State(s): State<AppState>, Json(input): Json<PreviewInput>) -> ApiResult<Json<PreviewResult>> {
-    input.definition.validate().map_err(ApiError::BadRequest)?;
-    let out = screener::screen(&s.pool, &[&input.definition], input.date).await?.ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;
+    let definition = input.definition.with_lib(signal_lib::load(&s.pool).await?);
+    definition.validate().map_err(ApiError::BadRequest)?;
+    let out = screener::screen(&s.pool, &[&definition], input.date, screener::Mode::Preview).await?.ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;
     let r = out.results.into_iter().next().expect("一个策略一个结果");
-    Ok(Json(PreviewResult { trade_date: out.trade_date, scanned: out.scanned, matched: r.matched, hits: r.hits, explained: explain(&input.definition) }))
+    Ok(Json(PreviewResult { trade_date: out.trade_date, scanned: out.scanned, matched: r.matched, hits: r.hits, explained: explain(&definition) }))
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -269,12 +280,11 @@ pub struct StoredHit {
     pub change_pct: Option<f64>,
     pub amount: Option<f64>,
     pub sort_value: Option<f64>,
-}
-
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
-pub struct RemovedHit {
-    pub thscode: String,
-    pub name: String,
+    /// 买入日、买入价（未复权开盘价）、买入以来的涨跌（%）、已持有的交易日数：卖点和持有中才有
+    pub entry_date: Option<NaiveDate>,
+    pub entry_price: Option<f64>,
+    pub return_pct: Option<f64>,
+    pub bars_held: Option<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -284,9 +294,12 @@ pub struct ScreenResults {
     pub scanned: Option<i32>,
     pub matched: Option<i32>,
     pub ran_at: Option<DateTime<Utc>>,
+    /// 今日买点：今天满足买入条件、之前空仓，明天开盘买入
     pub hits: Vec<StoredHit>,
-    /// 上一次巡检入选、这一次不在结果中的股票
-    pub removed: Vec<RemovedHit>,
+    /// 今日卖点：持有中触发了卖出规则，明天开盘卖出；reasons 是原因
+    pub sells: Vec<StoredHit>,
+    /// 持有中：按最近一年的买卖点推算
+    pub holdings: Vec<StoredHit>,
     /// 有巡检结果的交易日（最近 60 个，新的在前）
     pub dates: Vec<NaiveDate>,
 }
@@ -310,29 +323,23 @@ async fn results(State(s): State<AppState>, Path(id): Path<i64>, Query(q): Query
     .fetch_optional(&s.pool)
     .await?;
     let Some((run_id, trade_date, scanned, matched, ran_at)) = run else {
-        return Ok(Json(ScreenResults { trade_date: None, scanned: None, matched: None, ran_at: None, hits: vec![], removed: vec![], dates }));
+        return Ok(Json(ScreenResults { trade_date: None, scanned: None, matched: None, ran_at: None, hits: vec![], sells: vec![], holdings: vec![], dates }));
     };
-    let hits: Vec<StoredHit> = sqlx::query_as(
-        "SELECT thscode, coalesce(metrics->>'name', '') AS name, rank, is_new, reasons,
-                (metrics->>'close')::float8 AS close, (metrics->>'change_pct')::float8 AS change_pct,
-                (metrics->>'amount')::float8 AS amount, (metrics->>'sort_value')::float8 AS sort_value
-         FROM app.screen_hit WHERE run_id = $1 ORDER BY rank",
-    )
-    .bind(run_id)
-    .fetch_all(&s.pool)
-    .await?;
-    let removed: Vec<RemovedHit> = sqlx::query_as(
-        "SELECT p.thscode, coalesce(p.metrics->>'name', '') AS name FROM app.screen_hit p
-         WHERE p.run_id = (SELECT run_id FROM app.screen_run WHERE strategy_id = $1 AND trade_date < $2 ORDER BY trade_date DESC LIMIT 1)
-           AND NOT EXISTS (SELECT 1 FROM app.screen_hit h WHERE h.run_id = $3 AND h.thscode = p.thscode)
-         ORDER BY p.rank",
-    )
-    .bind(id)
-    .bind(trade_date)
-    .bind(run_id)
-    .fetch_all(&s.pool)
-    .await?;
-    Ok(Json(ScreenResults { trade_date: Some(trade_date), scanned: Some(scanned), matched: Some(matched), ran_at: Some(ran_at), hits, removed, dates }))
+    let rows = |kind: &'static str| {
+        sqlx::query_as::<_, StoredHit>(
+            "SELECT thscode, coalesce(metrics->>'name', '') AS name, rank, is_new, reasons,
+                    (metrics->>'close')::float8 AS close, (metrics->>'change_pct')::float8 AS change_pct,
+                    (metrics->>'amount')::float8 AS amount, (metrics->>'sort_value')::float8 AS sort_value,
+                    (metrics->>'entry_date')::date AS entry_date, (metrics->>'entry_price')::float8 AS entry_price,
+                    (metrics->>'return_pct')::float8 AS return_pct, (metrics->>'bars_held')::bigint AS bars_held
+             FROM app.screen_hit WHERE run_id = $1 AND kind = $2 ORDER BY rank",
+        )
+        .bind(run_id)
+        .bind(kind)
+        .fetch_all(&s.pool)
+    };
+    let (hits, sells, holdings) = (rows("buy").await?, rows("sell").await?, rows("holding").await?);
+    Ok(Json(ScreenResults { trade_date: Some(trade_date), scanned: Some(scanned), matched: Some(matched), ran_at: Some(ran_at), hits, sells, holdings, dates }))
 }
 
 #[derive(Deserialize, IntoParams)]

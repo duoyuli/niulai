@@ -5,8 +5,10 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { IndicatorId } from './indicatorId';
 
-export interface RemovedHit {
-  name: string;
-  thscode: string;
+export interface IndicatorUse {
+  id: IndicatorId;
+  /** 带周期的名称，例如「20 日均线」 */
+  label: string;
 }

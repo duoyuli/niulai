@@ -7,11 +7,15 @@
  */
 
 export interface LatestRun {
-  /** 保存的结果数 */
+  /** 保存的买点数 */
   hits: number;
-  /** 满足条件的股票数（截断前） */
+  /** 持有中的股票数 */
+  holdings: number;
+  /** 今日买点数（截断前） */
   matched: number;
-  /** 其中新入选的数量 */
+  /** 其中上一次巡检没有出现的 */
   new_hits: number;
+  /** 今日卖点数 */
+  sells: number;
   trade_date: string;
 }

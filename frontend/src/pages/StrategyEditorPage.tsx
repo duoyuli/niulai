@@ -1,19 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { clsx } from "clsx";
-import { type ReactNode, useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import type {
   Catalog,
   Condition,
   Definition,
   ExitRule,
-  IndicatorRef,
-  Op,
-  Operand,
+  SignalEntry,
   Sort,
   StrategyInput,
   Universe,
 } from "../api/generated/model";
+import { useListSignals } from "../api/generated/signal/signal";
 import {
   useCatalog,
   useCreateStrategy,
@@ -21,6 +19,7 @@ import {
   usePreview,
   useUpdateStrategy,
 } from "../api/generated/strategy/strategy";
+import { ConditionList, IndicatorPicker, Labeled, NumInput } from "../components/conditions";
 import {
   buttonClass,
   Card,
@@ -35,18 +34,7 @@ import {
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtBig, fmtInt, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
 import { BOARDS } from "../lib/labels";
-import {
-  defaults,
-  fillName,
-  findIndicator,
-  findSignal,
-  groupBy,
-  indicatorName,
-  isIndicatorOperand,
-  newSignalCondition,
-  signalName,
-  UNIT_SUFFIX,
-} from "../lib/strategy";
+import { findSignal, newSignalCondition } from "../lib/strategy";
 import { ExplainedView } from "./StrategyPage";
 
 /** 编辑中的策略：定义的每个部分都补齐，控件不用处理缺省 */
@@ -99,8 +87,9 @@ export function StrategyEditorPage() {
   return <Editor key={s.from} catalog={cat} initial={toDraft(cat, initial)} onBack={() => set({ from: "" })} />;
 }
 
-/** 从「指标与信号」页的「用它新建策略」进来时，先放好这一个信号条件 */
+/** 从信号页的「用它新建策略」进来时，先放好这一个信号条件；my-<编号> 是自定义信号 */
 function seedCondition(catalog: Catalog, signal: string): Condition[] {
+  if (signal.startsWith("my-")) return [{ kind: "my_signal", signal_id: Number(signal.slice(3)) }];
   const info = findSignal(catalog, signal);
   return info ? [newSignalCondition(info)] : [];
 }
@@ -155,6 +144,8 @@ function Editor({
 }) {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const signals = useListSignals();
+  const mine: SignalEntry[] = (signals.data ?? []).filter((x) => !x.builtin);
   const [draft, setDraft] = useState(initial);
   const def = draft.definition;
   const setDef = (patch: Partial<Draft["definition"]>) =>
@@ -244,7 +235,10 @@ function Editor({
         <UniverseEditor u={def.universe} onChange={(universe) => setDef({ universe })} />
       </Card>
 
-      <Card title="② 条件：股票要满足什么">
+      <Card title="② 买入条件：满足时就是买点">
+        <p className="-mt-1 mb-4 text-xs text-zinc-500">
+          收盘后判断，满足的股票出现在「今日买点」，下一个交易日开盘买入。已经持有的股票再次满足不算新的买点。
+        </p>
         <div className="flex flex-col gap-5">
           <ConditionList
             title="全部满足"
@@ -252,6 +246,7 @@ function Editor({
             items={def.all}
             onChange={(all) => setDef({ all })}
             catalog={catalog}
+            mine={mine}
           />
           <ConditionList
             title="至少满足一个（可选）"
@@ -259,6 +254,7 @@ function Editor({
             items={def.any}
             onChange={(any) => setDef({ any })}
             catalog={catalog}
+            mine={mine}
           />
         </div>
       </Card>
@@ -289,12 +285,10 @@ function Editor({
       </Card>
 
       <Card>
-        <details>
-          <summary className="cursor-pointer text-sm font-semibold select-none">
-            ④ 卖出规则（回测时使用，选股时不用）
-          </summary>
+        <details open>
+          <summary className="cursor-pointer text-sm font-semibold select-none">④ 卖出规则：买入后什么时候卖</summary>
           <p className="mt-2 text-xs text-zinc-500">
-            回测时，买入后满足下面任意一条就在下一个交易日开盘卖出；一条都不设时，买入后一直持有到回测结束。
+            买入后满足下面任意一条，就是卖点，下一个交易日开盘卖出。每日巡检按它算出「今日卖点」和「持有中」，回测也按它卖出；一条都不设时，买入后一直持有。
           </p>
           <div className="mt-4 flex flex-col gap-5">
             <div className="flex flex-wrap items-end gap-4">
@@ -327,6 +321,7 @@ function Editor({
               items={def.exit.any}
               onChange={(any) => setDef({ exit: { ...def.exit, any } })}
               catalog={catalog}
+              mine={mine}
             />
           </div>
         </details>
@@ -397,54 +392,6 @@ function Editor({
         </Card>
       )}
     </>
-  );
-}
-
-function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
-  return (
-    // biome-ignore lint/a11y/noLabelWithoutControl: 控件通过 children 传入
-    <label className={clsx("flex flex-col gap-1 text-xs text-zinc-500", className)}>
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-/** 数字输入：输入合法数字时立即生效；allowEmpty 时清空表示不设置 */
-function NumInput({
-  value,
-  onChange,
-  allowEmpty = false,
-  integer = false,
-  width = "w-24",
-}: {
-  value: number | null | undefined;
-  onChange: (v: number | null) => void;
-  allowEmpty?: boolean;
-  integer?: boolean;
-  width?: string;
-}) {
-  const [text, setText] = useState(value === null || value === undefined ? "" : String(value));
-  // 外部改了值（例如换了指标、参数被重置）时同步显示
-  useEffect(() => {
-    setText((t) => (t !== "" && Number(t) === value ? t : value === null || value === undefined ? "" : String(value)));
-  }, [value]);
-  const bad =
-    text === "" ? !allowEmpty : !Number.isFinite(Number(text)) || (integer && !Number.isInteger(Number(text)));
-  return (
-    <input
-      className={clsx(inputClass, "num", width, bad && "border-red-400!")}
-      inputMode="decimal"
-      value={text}
-      placeholder={allowEmpty ? "不设置" : undefined}
-      onChange={(e) => {
-        const t = e.target.value.trim();
-        setText(t);
-        if (t === "") {
-          if (allowEmpty) onChange(null);
-        } else if (Number.isFinite(Number(t)) && (!integer || Number.isInteger(Number(t)))) onChange(Number(t));
-      }}
-    />
   );
 }
 
@@ -538,220 +485,5 @@ function UniverseEditor({ u, onChange }: { u: Universe; onChange: (u: Universe) 
         )}
       </div>
     </div>
-  );
-}
-
-function ConditionList({
-  title,
-  hint,
-  items,
-  onChange,
-  catalog,
-}: {
-  title: string;
-  hint: string;
-  items: Condition[];
-  onChange: (items: Condition[]) => void;
-  catalog: Catalog;
-}) {
-  const first = catalog.signals[0];
-  const add = (c: Condition) => onChange([...items, c]);
-  return (
-    <div>
-      <h3 className="text-sm font-medium">{title}</h3>
-      <p className="mb-2 text-xs text-zinc-500">{hint}</p>
-      <div className="flex flex-col gap-2">
-        {items.map((c, i) => (
-          <div
-            // biome-ignore lint/suspicious/noArrayIndexKey: 条件没有自己的 id，顺序就是身份
-            key={i}
-            className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/50 p-2 text-sm dark:border-zinc-800 dark:bg-zinc-800/30"
-          >
-            <ConditionRow
-              c={c}
-              catalog={catalog}
-              onChange={(nc) => onChange(items.map((x, j) => (j === i ? nc : x)))}
-            />
-            <button
-              type="button"
-              className="ml-auto rounded px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-red-600 dark:hover:bg-zinc-800"
-              title="删除这条"
-              aria-label="删除这条"
-              onClick={() => onChange(items.filter((_, j) => j !== i))}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-        <div className="flex flex-wrap gap-2">
-          {first && (
-            <button type="button" className={buttonClass("ghost")} onClick={() => add(newSignalCondition(first))}>
-              + 信号
-            </button>
-          )}
-          <button
-            type="button"
-            className={buttonClass("ghost")}
-            title="比较一个指标和一个数值或另一个指标，例如「RSI（14）< 30」「收盘价 > 60 日均线」"
-            onClick={() => add({ kind: "compare", left: { id: "rsi", n: 14 }, op: "<", right: { value: 30 } })}
-          >
-            + 数值比较
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const WITHIN = [1, 2, 3, 5, 10, 20];
-
-function ConditionRow({ c, catalog, onChange }: { c: Condition; catalog: Catalog; onChange: (c: Condition) => void }) {
-  if (c.kind === "signal") {
-    const info = findSignal(catalog, c.signal);
-    const within = c.within_days ?? 1;
-    return (
-      <>
-        <select
-          className={inputClass}
-          value={c.signal}
-          onChange={(e) => {
-            const next = findSignal(catalog, e.target.value);
-            if (next) onChange({ ...newSignalCondition(next), within_days: next.kind === "state" ? 1 : within });
-          }}
-        >
-          {groupBy(catalog.signals).map(([g, list]) => (
-            <optgroup key={g} label={g}>
-              {list.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {signalName(s)}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-        {info?.params.map((p) => (
-          <span key={p.key} className="flex items-center gap-1 text-xs text-zinc-500">
-            {p.label}
-            <NumInput
-              value={c.params?.[p.key] ?? p.default}
-              integer={p.integer}
-              width="w-16"
-              onChange={(v) => v !== null && onChange({ ...c, params: { ...c.params, [p.key]: v } })}
-            />
-          </span>
-        ))}
-        {info?.kind === "state" ? (
-          <span className="text-xs text-zinc-500">当天处于这个状态</span>
-        ) : (
-          <select
-            className={inputClass}
-            value={within}
-            onChange={(e) => onChange({ ...c, within_days: Number(e.target.value) })}
-          >
-            {[...new Set([...WITHIN, within])]
-              .sort((a, b) => a - b)
-              .map((d) => (
-                <option key={d} value={d}>
-                  {d === 1 ? "当天出现" : `最近 ${d} 个交易日内出现过`}
-                </option>
-              ))}
-          </select>
-        )}
-        {info && (
-          <span className="w-full text-xs text-zinc-400 sm:w-auto">
-            {fillName(info.description, { ...defaults(info), ...c.params })}
-            <Link to={`/guide#sig-${info.id}`} target="_blank" className="ml-2 text-accent hover:underline">
-              这是什么？
-            </Link>
-          </span>
-        )}
-      </>
-    );
-  }
-  const right = c.right;
-  const unit = findIndicator(catalog, c.left.id)?.unit ?? "";
-  return (
-    <>
-      <IndicatorPicker catalog={catalog} value={c.left} onChange={(left) => onChange({ ...c, left })} />
-      <select className={inputClass} value={c.op} onChange={(e) => onChange({ ...c, op: e.target.value as Op })}>
-        <option value=">">大于</option>
-        <option value=">=">不低于</option>
-        <option value="<">小于</option>
-        <option value="<=">不高于</option>
-      </select>
-      <select
-        className={inputClass}
-        value={isIndicatorOperand(right) ? "indicator" : "value"}
-        onChange={(e) =>
-          onChange({ ...c, right: (e.target.value === "value" ? { value: 0 } : { id: "ma", n: 20 }) as Operand })
-        }
-      >
-        <option value="value">数值</option>
-        <option value="indicator">另一个指标</option>
-      </select>
-      {isIndicatorOperand(right) ? (
-        <IndicatorPicker catalog={catalog} value={right} onChange={(r) => onChange({ ...c, right: r })} />
-      ) : (
-        <span className="flex items-center gap-1">
-          <NumInput value={right.value} onChange={(v) => v !== null && onChange({ ...c, right: { value: v } })} />
-          <span className="text-xs text-zinc-500">{UNIT_SUFFIX[unit]}</span>
-        </span>
-      )}
-    </>
-  );
-}
-
-function IndicatorPicker({
-  catalog,
-  value,
-  onChange,
-}: {
-  catalog: Catalog;
-  value: IndicatorRef;
-  onChange: (v: IndicatorRef) => void;
-}) {
-  const info = findIndicator(catalog, value.id);
-  return (
-    <span className="flex items-center gap-1" title={info?.description}>
-      <select
-        className={inputClass}
-        value={value.id}
-        onChange={(e) => {
-          const next = findIndicator(catalog, e.target.value);
-          if (next) onChange({ id: next.id, n: next.n_default ?? null });
-        }}
-      >
-        {groupBy(catalog.indicators).map(([g, list]) => (
-          <optgroup key={g} label={g}>
-            {list.map((x) => (
-              <option key={x.id} value={x.id}>
-                {indicatorName(x, x.id === value.id ? value.n : undefined)}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
-      {info && info.n_default !== null && info.n_default !== undefined && (
-        <span className="flex items-center gap-1 text-xs text-zinc-500">
-          周期
-          <NumInput
-            value={value.n ?? info.n_default}
-            integer
-            width="w-16"
-            onChange={(n) => n !== null && onChange({ ...value, n })}
-          />
-        </span>
-      )}
-      {info && (
-        <Link
-          to={`/guide?tab=indicators#ind-${info.id}`}
-          target="_blank"
-          className="px-1 text-xs text-zinc-400 hover:text-accent"
-          title={`${info.description}。点击看详细说明`}
-        >
-          ?
-        </Link>
-      )}
-    </span>
   );
 }

@@ -28,8 +28,11 @@ async fn security_diagnosis(State(s): State<AppState>, Path(code): Path<String>)
     let bars = prices::recent_bars(&s.pool, &code, diagnosis::BARS_NEEDED).await?;
     let rows: Vec<(i64, String, serde_json::Value)> =
         sqlx::query_as("SELECT strategy_id, name, definition FROM app.strategy ORDER BY strategy_id").fetch_all(&s.pool).await?;
-    let strategies: Vec<(i64, String, Definition)> =
-        rows.into_iter().filter_map(|(id, name, v)| serde_json::from_value(v).ok().map(|d| (id, name, d))).collect();
+    let lib = crate::analysis::signal_lib::load(&s.pool).await?;
+    let strategies: Vec<(i64, String, Definition)> = rows
+        .into_iter()
+        .filter_map(|(id, name, v)| serde_json::from_value::<Definition>(v).ok().map(|d| (id, name, d.with_lib(lib.clone()))))
+        .collect();
     diagnosis::diagnose(&bars, meta, &strategies).map(Json).ok_or_else(|| ApiError::NotFound(format!("本地还没有 {code} 的日线")))
 }
 

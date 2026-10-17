@@ -8,6 +8,7 @@ import { useListWatchlist } from "../api/generated/watchlist/watchlist";
 import { SignalChip } from "../components/SignalChip";
 import { Card, Empty, ErrorState, QueryView, Spinner } from "../components/ui";
 import { fmtInt, fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
+import { holdingsText } from "../lib/strategy";
 
 /** 每天打开看的一页：大盘怎么样 → 我的策略今天选出了什么 → 我关注的股票有什么变化 */
 export function TodayPage() {
@@ -111,7 +112,7 @@ function Sectors() {
   );
 }
 
-/** 每个开启巡检的策略今天选出的股票，新入选的排在前面 */
+/** 每个开启巡检的策略今天的买点和卖点，新出现的买点排在前面 */
 function Picks() {
   const list = useListStrategies();
   // 只为测试建的策略可以关掉「在今日展示」
@@ -119,7 +120,7 @@ function Picks() {
   const results = useQueries({ queries: active.map((s) => getResultsQueryOptions(s.strategy_id)) });
   return (
     <Card
-      title="策略今天选出的股票"
+      title="策略今天的买点和卖点"
       extra={
         <Link to="/strategies" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
           管理策略 →
@@ -149,8 +150,11 @@ function Picks() {
 function PickRow({ s, r }: { s: StrategyItem; r?: ScreenResults }) {
   const latest = s.latest;
   const hits = r ? [...r.hits].sort((a, b) => Number(b.is_new) - Number(a.is_new) || a.rank - b.rank).slice(0, 6) : [];
+  const sells = r?.sells.slice(0, 4) ?? [];
+  const chip =
+    "inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-0.5 text-sm hover:border-accent/60 dark:border-zinc-700";
   return (
-    <li className="flex flex-col gap-1.5 py-3 sm:flex-row sm:items-center sm:gap-4">
+    <li className="flex flex-col gap-1.5 py-3 sm:flex-row sm:items-start sm:gap-4">
       <Link
         to={`/strategies/${s.strategy_id}`}
         className="flex shrink-0 flex-col hover:underline sm:w-48"
@@ -160,34 +164,57 @@ function PickRow({ s, r }: { s: StrategyItem; r?: ScreenResults }) {
         <span className="text-xs text-zinc-500">
           {latest ? (
             <>
-              {fmtInt(latest.matched)} 只符合
-              {latest.new_hits > 0 && <span className="text-up"> · 新 {latest.new_hits}</span>}
+              买点 {fmtInt(latest.matched)} · 卖点 {fmtInt(latest.sells)} · 持有 {holdingsText(latest.holdings)}
             </>
           ) : (
             "还没有巡检"
           )}
         </span>
       </Link>
-      <div className="flex min-w-0 flex-wrap gap-1.5">
-        {hits.length === 0 && latest && latest.matched === 0 && (
-          <span className="text-sm text-zinc-400">今天没有符合的股票</span>
-        )}
-        {hits.map((h) => (
-          <Link
-            key={h.thscode}
-            to={`/securities/${h.thscode}`}
-            title={h.reasons.join("；")}
-            className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-0.5 text-sm hover:border-accent/60 dark:border-zinc-700"
-          >
-            {h.name}
-            <span className={`num text-xs ${upDownClass(h.change_pct)}`}>{fmtPctValue(h.change_pct, 1)}</span>
-            {h.is_new && <span className="text-xs text-up">新</span>}
-          </Link>
-        ))}
-        {latest && latest.matched > hits.length && hits.length > 0 && (
-          <Link to={`/strategies/${s.strategy_id}`} className="self-center text-xs text-zinc-500 hover:underline">
-            全部 {fmtInt(latest.matched)} 只 →
-          </Link>
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="text-xs text-up">买</span>
+          {hits.length === 0 && latest && <span className="text-sm text-zinc-400">今天没有新的买点</span>}
+          {hits.map((h) => (
+            <Link
+              key={h.thscode}
+              to={`/securities/${h.thscode}?overlay=strategy:${s.strategy_id}`}
+              title={h.reasons.join("；")}
+              className={chip}
+            >
+              {h.name}
+              <span className={`num text-xs ${upDownClass(h.change_pct)}`}>{fmtPctValue(h.change_pct, 1)}</span>
+              {h.is_new && <span className="text-xs text-up">新</span>}
+            </Link>
+          ))}
+          {latest && latest.matched > hits.length && hits.length > 0 && (
+            <Link to={`/strategies/${s.strategy_id}`} className="text-xs text-zinc-500 hover:underline">
+              全部 {fmtInt(latest.matched)} 只 →
+            </Link>
+          )}
+        </div>
+        {sells.length > 0 && (
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="text-xs text-down">卖</span>
+            {sells.map((h) => (
+              <Link
+                key={h.thscode}
+                to={`/securities/${h.thscode}?overlay=strategy:${s.strategy_id}`}
+                title={`卖出原因：${h.reasons.join("；")}`}
+                className={chip}
+              >
+                {h.name}
+                <span className={`num text-xs ${upDownClass(h.return_pct)}`} title="买入以来">
+                  {fmtPctValue(h.return_pct, 1)}
+                </span>
+              </Link>
+            ))}
+            {latest && latest.sells > sells.length && (
+              <Link to={`/strategies/${s.strategy_id}`} className="text-xs text-zinc-500 hover:underline">
+                全部 {fmtInt(latest.sells)} 只 →
+              </Link>
+            )}
+          </div>
         )}
       </div>
     </li>

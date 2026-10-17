@@ -120,8 +120,8 @@ async fn strategy(s: &AppState, id: i64) -> ApiResult<(String, Definition)> {
     let row: Option<(String, serde_json::Value)> =
         sqlx::query_as("SELECT name, definition FROM app.strategy WHERE strategy_id = $1").bind(id).fetch_optional(&s.pool).await?;
     let (name, v) = row.ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))?;
-    let d = serde_json::from_value(v).map_err(|e| ApiError::Internal(e.into()))?;
-    Ok((name, d))
+    let d: Definition = serde_json::from_value(v).map_err(|e| ApiError::Internal(e.into()))?;
+    Ok((name, d.with_lib(crate::analysis::signal_lib::load(&s.pool).await?)))
 }
 
 /// 均线交叉策略回测：金叉后下一个交易日开盘满仓买入，死叉后下一个交易日开盘全部卖出

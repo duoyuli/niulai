@@ -1,8 +1,8 @@
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { usePortfolioBacktest } from "../api/generated/backtest/backtest";
-import type { Explained, ScreenResults, StrategyItem } from "../api/generated/model";
+import type { Explained, ScreenResults, StoredHit, StrategyItem } from "../api/generated/model";
 import {
   useDeleteStrategy,
   useGetStrategy,
@@ -34,9 +34,10 @@ import {
 import { WatchButton } from "../components/WatchButton";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtBig, fmtDateTime, fmtInt, fmtPctValue, fmtPrice, RANGES, rangeStart, upDownClass } from "../lib/format";
+import { holdingsText, MAX_HOLDINGS } from "../lib/strategy";
 
 const TABS = [
-  { value: "picks", label: "选出的股票" },
+  { value: "picks", label: "今日买卖点" },
   { value: "history", label: "过去表现如何", hint: "假设过去每天都按这个策略买入、按卖出规则卖出，看看整体能赚多少" },
 ] as const;
 
@@ -143,13 +144,16 @@ function Conditions({ e }: { e: Explained }) {
   return (
     <div className="mt-2 max-w-3xl space-y-1 text-sm">
       <p>
-        <span className="text-zinc-500">选：</span>
+        <span className="text-zinc-500">买：</span>
         {buy || "—"}
       </p>
-      <p className="text-xs text-zinc-500">
-        范围：{e.universe.length ? e.universe.join("，") : "全部 A 股"}
-        {e.exit.length > 0 && <> · 回测时的卖出规则：{e.exit.join("，或")}</>}
-      </p>
+      {e.exit.length > 0 && (
+        <p>
+          <span className="text-zinc-500">卖：</span>
+          {e.exit.join("，或")}
+        </p>
+      )}
+      <p className="text-xs text-zinc-500">范围：{e.universe.length ? e.universe.join("，") : "全部 A 股"}</p>
     </div>
   );
 }
@@ -187,7 +191,7 @@ function Picks({ id, st, date, onDate }: { id: number; st: StrategyItem; date: s
           </button>
         </div>
       }
-      title={results.data?.trade_date ? `${results.data.trade_date} 选出的股票` : "选出的股票"}
+      title={results.data?.trade_date ? `${results.data.trade_date} 收盘后` : "买卖点"}
     >
       {!!run.error && <p className="mb-2 text-sm text-red-600">{errorText(run.error)}</p>}
       <QueryView query={results}>{(r) => <Hits r={r} st={st} />}</QueryView>
@@ -266,89 +270,194 @@ export function ExplainedView({ e, compact = false }: { e: Explained; compact?: 
       {block("股票池", e.universe.length ? e.universe : ["全部 A 股"], "先排除不想看的股票，再判断条件")}
       {block("全部满足", e.all)}
       {block("至少满足一个", e.any)}
-      {block("卖出规则（回测用）", e.exit, "选股时不用；回测时按这些规则卖出，满足任意一条就卖")}
+      {block("卖出规则", e.exit, "买入后满足任意一条就是卖点，下一个交易日开盘卖出")}
     </div>
   );
 }
 
 function Hits({ r, st }: { r: ScreenResults; st: StrategyItem }) {
+  const [allHits, setAllHits] = useState(false);
   if (!r.trade_date) return <Empty>还没有选过。点右上角「重新选一次」，或等今天收盘数据同步完成后自动选股。</Empty>;
   const fresh = r.hits.filter((h) => h.is_new).length;
   // 「全部满足」的条件每只股票都一样，只有「至少满足一个」时才值得逐只列出命中了哪条
   const fixed = st.explained.all.length;
   const showReasons = st.explained.any.length > 0;
+  const hits = allHits ? r.hits : r.hits.slice(0, 20);
   return (
-    <>
-      <p className="mb-3 text-sm text-zinc-500">
-        全市场 {fmtInt(r.scanned)} 只中有 <b className="text-zinc-800 dark:text-zinc-200">{fmtInt(r.matched)}</b> 只符合
-        {(r.matched ?? 0) > r.hits.length && `，按排序列出前 ${r.hits.length} 只`}
-        {fresh > 0 && (
-          <>
-            ，<span className="text-up">{fresh} 只是新出现的</span>
-          </>
+    <div className="flex flex-col gap-6">
+      <section>
+        <h3 className="flex flex-wrap items-baseline gap-2 font-medium">
+          <span className="text-up">今日买点</span>
+          <span className="text-sm font-normal text-zinc-500">
+            全市场 {fmtInt(r.scanned)} 只中有 <b className="text-zinc-800 dark:text-zinc-200">{fmtInt(r.matched)}</b>{" "}
+            只满足买入条件
+            {(r.matched ?? 0) > r.hits.length && `，按排序列出前 ${r.hits.length} 只`}
+            {fresh > 0 && <span className="text-up">，{fresh} 只是新出现的</span>}
+          </span>
+        </h3>
+        <p className="mb-2 text-xs text-zinc-500">今天收盘满足买入条件、之前没有持有，按规则下一个交易日开盘买入。</p>
+        {r.hits.length === 0 ? (
+          <p className="py-4 text-sm text-zinc-400">这一天没有新的买点</p>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <th className="w-0" aria-label="收藏" />
+                <th>股票</th>
+                <th className="text-right!">收盘</th>
+                <th className="text-right!">涨跌幅</th>
+                <th className="text-right!">成交额</th>
+                {showReasons && <th>满足的条件</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {hits.map((h) => (
+                <tr key={h.thscode} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+                  <td className="pr-0!">
+                    <WatchButton thscode={h.thscode} />
+                  </td>
+                  <td>
+                    <StockLink h={h} strategyId={st.strategy_id}>
+                      {h.is_new && (
+                        <span className="rounded bg-up/10 px-1 text-xs text-up" title="上一次选股时不在结果中">
+                          新
+                        </span>
+                      )}
+                    </StockLink>
+                  </td>
+                  <td className="num text-right">{fmtPrice(h.close)}</td>
+                  <td className={`num text-right ${upDownClass(h.change_pct)}`}>{fmtPctValue(h.change_pct)}</td>
+                  <td className="num text-right">{fmtBig(h.amount)}</td>
+                  {showReasons && (
+                    <td className="max-w-md text-xs whitespace-normal text-zinc-600 dark:text-zinc-400">
+                      {h.reasons.slice(fixed).join("；")}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </Table>
         )}
-        。
+        {r.hits.length > hits.length && (
+          <button type="button" className="mt-2 text-sm text-accent hover:underline" onClick={() => setAllHits(true)}>
+            显示全部 {r.hits.length} 只
+          </button>
+        )}
+      </section>
+      <PositionTable
+        title="今日卖点"
+        tone="text-down"
+        desc="按最近一年的买卖点推算，之前买入、今天触发了卖出规则的股票，按规则下一个交易日开盘卖出。"
+        empty="今天没有要卖出的"
+        rows={r.sells}
+        strategyId={st.strategy_id}
+        reason
+      />
+      <PositionTable
+        title="持有中"
+        tone="text-zinc-800 dark:text-zinc-200"
+        desc="按最近一年的买卖点推算，买入后还没有触发卖出规则的股票。这是按规则推算的，不是你的实际持仓。"
+        empty="按规则推算，现在没有持有中的股票"
+        rows={r.holdings}
+        strategyId={st.strategy_id}
+      />
+      <p className="text-xs text-zinc-400">
+        选股于 {fmtDateTime(r.ran_at)}。点股票打开 K 线，会标出这个策略在它身上的历次买卖点。
       </p>
-      {r.hits.length === 0 ? (
-        <Empty>这一天没有符合条件的股票</Empty>
+    </div>
+  );
+}
+
+/** 股票名：点进去时带上策略，个股页的 K 线上直接画出这个策略的买卖点 */
+function StockLink({ h, strategyId, children }: { h: StoredHit; strategyId: number; children?: ReactNode }) {
+  return (
+    <Link
+      to={`/securities/${h.thscode}?overlay=strategy:${strategyId}`}
+      className="flex items-baseline gap-1.5 hover:underline"
+    >
+      {h.name}
+      <span className="num font-mono text-xs text-zinc-500">{h.thscode}</span>
+      {children}
+    </Link>
+  );
+}
+
+function PositionTable({
+  title,
+  tone,
+  desc,
+  empty,
+  rows,
+  strategyId,
+  reason = false,
+}: {
+  title: string;
+  tone: string;
+  desc: string;
+  empty: string;
+  rows: StoredHit[];
+  strategyId: number;
+  reason?: boolean;
+}) {
+  const [all, setAll] = useState(false);
+  const shown = all ? rows : rows.slice(0, 20);
+  return (
+    <section>
+      <h3 className="flex items-baseline gap-2 font-medium">
+        <span className={tone}>{title}</span>
+        <span className="text-sm font-normal text-zinc-500">
+          {holdingsText(rows.length)} 只
+          {rows.length >= MAX_HOLDINGS && `（只保存买入以来涨得最多的 ${MAX_HOLDINGS} 只）`}
+        </span>
+      </h3>
+      <p className="mb-2 text-xs text-zinc-500">{desc}</p>
+      {rows.length === 0 ? (
+        <p className="py-4 text-sm text-zinc-400">{empty}</p>
       ) : (
         <Table>
           <thead>
             <tr>
               <th className="w-0" aria-label="收藏" />
               <th>股票</th>
+              <th>买入日</th>
+              <th className="text-right!">买入价</th>
               <th className="text-right!">收盘</th>
-              <th className="text-right!">涨跌幅</th>
-              <th className="text-right!">成交额</th>
-              {showReasons && <th>满足的条件</th>}
+              <th className="text-right!" title="按前复权价计算，含分红送转，不扣费用">
+                买入以来
+              </th>
+              <th className="text-right!">已持有</th>
+              {reason && <th>卖出原因</th>}
             </tr>
           </thead>
           <tbody>
-            {r.hits.map((h) => (
+            {shown.map((h) => (
               <tr key={h.thscode} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
                 <td className="pr-0!">
                   <WatchButton thscode={h.thscode} />
                 </td>
                 <td>
-                  <Link to={`/securities/${h.thscode}`} className="flex items-baseline gap-1.5 hover:underline">
-                    {h.name}
-                    <span className="num font-mono text-xs text-zinc-500">{h.thscode}</span>
-                    {h.is_new && (
-                      <span className="rounded bg-up/10 px-1 text-xs text-up" title="上一次选股时不在结果中">
-                        新
-                      </span>
-                    )}
-                  </Link>
+                  <StockLink h={h} strategyId={strategyId} />
                 </td>
+                <td className="num">{h.entry_date ?? "—"}</td>
+                <td className="num text-right">{fmtPrice(h.entry_price)}</td>
                 <td className="num text-right">{fmtPrice(h.close)}</td>
-                <td className={`num text-right ${upDownClass(h.change_pct)}`}>{fmtPctValue(h.change_pct)}</td>
-                <td className="num text-right">{fmtBig(h.amount)}</td>
-                {showReasons && (
-                  <td className="max-w-md text-xs whitespace-normal text-zinc-600 dark:text-zinc-400">
-                    {h.reasons.slice(fixed).join("；")}
-                  </td>
+                <td className={`num text-right ${upDownClass(h.return_pct)}`}>{fmtPctValue(h.return_pct)}</td>
+                <td className="num text-right">
+                  {h.bars_held === null || h.bars_held === undefined ? "—" : `${h.bars_held} 天`}
+                </td>
+                {reason && (
+                  <td className="text-xs whitespace-normal text-zinc-600 dark:text-zinc-400">{h.reasons.join("；")}</td>
                 )}
               </tr>
             ))}
           </tbody>
         </Table>
       )}
-      {r.removed.length > 0 && (
-        <p className="mt-4 text-xs text-zinc-500">
-          上次选出、这次不再符合：
-          {r.removed.map((x, i) => (
-            <span key={x.thscode}>
-              {i > 0 && "、"}
-              <Link to={`/securities/${x.thscode}`} className="hover:underline">
-                {x.name}
-              </Link>
-            </span>
-          ))}
-        </p>
+      {rows.length > shown.length && (
+        <button type="button" className="mt-2 text-sm text-accent hover:underline" onClick={() => setAll(true)}>
+          显示全部 {rows.length} 只
+        </button>
       )}
-      <p className="mt-3 text-xs text-zinc-400">
-        选股于 {fmtDateTime(r.ran_at)}。点股票看诊断，在股票页的「回测」里可以单独检验这个策略。
-      </p>
-    </>
+    </section>
   );
 }

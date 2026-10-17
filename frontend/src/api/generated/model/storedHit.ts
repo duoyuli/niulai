@@ -10,14 +10,25 @@ export interface StoredHit {
   /** @nullable */
   amount?: number | null;
   /** @nullable */
+  bars_held?: number | null;
+  /** @nullable */
   change_pct?: number | null;
   /** @nullable */
   close?: number | null;
+  /**
+     * 买入日、买入价（未复权开盘价）、买入以来的涨跌（%）、已持有的交易日数：卖点和持有中才有
+     * @nullable
+     */
+  entry_date?: string | null;
+  /** @nullable */
+  entry_price?: number | null;
   /** 上一次巡检时不在结果中 */
   is_new: boolean;
   name: string;
   rank: number;
   reasons: string[];
+  /** @nullable */
+  return_pct?: number | null;
   /** @nullable */
   sort_value?: number | null;
   thscode: string;

@@ -14,4 +14,6 @@ export const Op = {
   '>=': '>=',
   '<': '<',
   '<=': '<=',
+  crosses_above: 'crosses_above',
+  crosses_below: 'crosses_below',
 } as const;

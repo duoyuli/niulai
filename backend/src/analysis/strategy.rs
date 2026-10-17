@@ -24,7 +24,7 @@ pub struct Definition {
     /// 至少满足一个；为空时不要求
     #[serde(default)]
     pub any: Vec<Condition>,
-    /// 卖出规则，回测时使用
+    /// 卖出规则：每日巡检据此给出卖点，回测据此卖出
     #[serde(default)]
     pub exit: ExitRule,
     #[serde(default)]
@@ -32,6 +32,9 @@ pub struct Definition {
     /// 每天最多保留多少只（按排序取前面的）
     #[serde(default = "default_limit")]
     pub limit: u32,
+    /// 条件里引用的自定义信号；读出定义后由 `with_lib` 填上，不存进 JSON
+    #[serde(skip)]
+    pub lib: SignalLib,
 }
 
 fn default_limit() -> u32 {
@@ -81,19 +84,40 @@ pub struct SectorFilter {
     pub top_pct: f64,
 }
 
+// @project-doc docs/domains/strategies.md#definition
+/// 条件：一句话的判断，结果是「是」或「否」。信号、策略的买入和卖出都用这一种写法。
+/// 时间范围：默认看当天；within_days > 1 表示最近 N 个交易日内出现过，streak_days > 1 表示连续 N 个交易日都满足
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Condition {
-    /// 某个信号在最近 within_days 个交易日内（含当天）发生过
+    /// 出现内置信号
     Signal {
         signal: SignalId,
         #[serde(default)]
         params: Params,
         #[serde(default = "one")]
         within_days: u32,
+        #[serde(default = "one")]
+        streak_days: u32,
+    },
+    /// 出现自己定义的信号（app.signal）
+    MySignal {
+        signal_id: i64,
+        #[serde(default = "one")]
+        within_days: u32,
+        #[serde(default = "one")]
+        streak_days: u32,
     },
     /// 指标与一个数或另一个指标比较
-    Compare { left: IndicatorRef, op: Op, right: Operand },
+    Compare {
+        left: IndicatorRef,
+        op: Op,
+        right: Operand,
+        #[serde(default = "one")]
+        within_days: u32,
+        #[serde(default = "one")]
+        streak_days: u32,
+    },
 }
 
 fn one() -> u32 {
@@ -110,6 +134,29 @@ pub enum Op {
     Lt,
     #[serde(rename = "<=")]
     Le,
+    /// 上穿：前一天在下方（或相等），当天在上方；与均线金叉同一套容差规则
+    #[serde(rename = "crosses_above")]
+    CrossesAbove,
+    /// 下穿
+    #[serde(rename = "crosses_below")]
+    CrossesBelow,
+}
+
+impl Op {
+    fn word(self) -> &'static str {
+        match self {
+            Op::Gt => "高于",
+            Op::Ge => "不低于",
+            Op::Lt => "低于",
+            Op::Le => "不高于",
+            Op::CrossesAbove => "上穿",
+            Op::CrossesBelow => "下穿",
+        }
+    }
+
+    fn is_cross(self) -> bool {
+        matches!(self, Op::CrossesAbove | Op::CrossesBelow)
+    }
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
@@ -148,93 +195,238 @@ impl Default for Sort {
     }
 }
 
-impl Condition {
-    pub fn validate(&self) -> Result<(), String> {
-        match self {
-            Condition::Signal { signal, params, within_days } => {
-                if !(1..=MAX_WITHIN_DAYS).contains(within_days) {
-                    return Err(format!("「最近 N 个交易日内」的 N 应在 1 到 {MAX_WITHIN_DAYS} 之间"));
-                }
-                signals::validate(*signal, params)
+/// 信号的定义：几条条件，全部满足或任一满足。只能用指标和内置信号，不能引用别的自定义信号
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
+pub struct SignalDef {
+    /// true：全部满足；false：任一满足
+    #[serde(default = "yes")]
+    pub match_all: bool,
+    pub conditions: Vec<Condition>,
+}
+
+/// 一个自定义信号：名称、偏多或偏空、定义
+#[derive(Clone, Debug)]
+pub struct CustomSignal {
+    pub name: String,
+    pub bullish: bool,
+    pub def: SignalDef,
+}
+
+/// 判断时可用的自定义信号，按 signal_id
+pub type SignalLib = std::sync::Arc<std::collections::BTreeMap<i64, CustomSignal>>;
+
+impl SignalDef {
+    pub fn validate(&self, lib: &SignalLib) -> Result<(), String> {
+        if self.conditions.is_empty() {
+            return Err("信号至少要有一条条件".into());
+        }
+        if self.conditions.len() > MAX_CONDITIONS {
+            return Err(format!("信号的条件最多 {MAX_CONDITIONS} 条"));
+        }
+        for c in &self.conditions {
+            if matches!(c, Condition::MySignal { .. }) {
+                return Err("信号只能由指标和内置信号组成，不能引用别的自定义信号".into());
             }
-            Condition::Compare { left, right, .. } => {
-                left.validate()?;
+            c.validate(lib)?;
+        }
+        Ok(())
+    }
+
+    pub fn warmup(&self, lib: &SignalLib) -> u32 {
+        self.conditions.iter().map(|c| c.warmup(lib)).max().unwrap_or(0)
+    }
+
+    /// 每天是否满足，与日线等长
+    pub fn series(&self, f: &Frame, lib: &SignalLib) -> Vec<bool> {
+        let parts: Vec<std::rc::Rc<Vec<bool>>> = self.conditions.iter().map(|c| c.series(f, lib)).collect();
+        (0..f.len()).map(|i| if self.match_all { parts.iter().all(|p| p[i]) } else { parts.iter().any(|p| p[i]) }).collect()
+    }
+
+    /// 每条条件的白话
+    pub fn describe(&self, lib: &SignalLib) -> Vec<String> {
+        self.conditions.iter().map(|c| c.describe(lib)).collect()
+    }
+
+    /// 是事件（某天发生）还是状态（持续成立）：含上穿下穿、事件类内置信号或时间范围时算事件
+    pub fn is_event(&self) -> bool {
+        self.conditions.iter().any(|c| match c {
+            Condition::Signal { signal, .. } => signals::info_of(*signal).kind == signals::SignalKind::Event,
+            Condition::Compare { op, .. } => op.is_cross(),
+            Condition::MySignal { .. } => false,
+        })
+    }
+
+    /// 用到的指标（去重）
+    pub fn indicators(&self) -> Vec<IndicatorRef> {
+        let mut out: Vec<IndicatorRef> = vec![];
+        for c in &self.conditions {
+            if let Condition::Compare { left, right, .. } = c {
+                out.push(*left);
                 if let Operand::Indicator(r) = right {
-                    r.validate()?;
+                    out.push(*r);
+                }
+            }
+        }
+        out.dedup();
+        out
+    }
+}
+
+impl Condition {
+    fn window(&self) -> (u32, u32) {
+        match self {
+            Condition::Signal { within_days, streak_days, .. }
+            | Condition::MySignal { within_days, streak_days, .. }
+            | Condition::Compare { within_days, streak_days, .. } => (*within_days, *streak_days),
+        }
+    }
+
+    pub fn validate(&self, lib: &SignalLib) -> Result<(), String> {
+        let (within, streak) = self.window();
+        if !(1..=MAX_WITHIN_DAYS).contains(&within) || !(1..=MAX_WITHIN_DAYS).contains(&streak) {
+            return Err(format!("「最近 N 个交易日」「连续 N 个交易日」的 N 应在 1 到 {MAX_WITHIN_DAYS} 之间"));
+        }
+        if within > 1 && streak > 1 {
+            return Err("「最近 N 天内出现过」和「连续 N 天」只能选一个".into());
+        }
+        match self {
+            Condition::Signal { signal, params, .. } => signals::validate(*signal, params),
+            Condition::MySignal { signal_id, .. } => {
+                if lib.contains_key(signal_id) { Ok(()) } else { Err(format!("自定义信号不存在：{signal_id}")) }
+            }
+            Condition::Compare { left, op, right, .. } => {
+                left.validate()?;
+                match right {
+                    Operand::Indicator(r) => r.validate()?,
+                    Operand::Value { value } if !value.is_finite() => return Err("比较的数值不合法".into()),
+                    Operand::Value { .. } if op.is_cross() => {}
+                    Operand::Value { .. } => {}
                 }
                 Ok(())
             }
         }
     }
 
-    fn warmup(&self) -> u32 {
-        match self {
-            Condition::Signal { signal, params, within_days } => signals::warmup(*signal, params) + within_days,
-            Condition::Compare { left, right, .. } => {
+    fn warmup(&self, lib: &SignalLib) -> u32 {
+        let (within, streak) = self.window();
+        let base = match self {
+            Condition::Signal { signal, params, .. } => signals::warmup(*signal, params),
+            Condition::MySignal { signal_id, .. } => lib.get(signal_id).map_or(0, |s| s.def.warmup(lib)),
+            Condition::Compare { left, op, right, .. } => {
                 let r = match right {
                     Operand::Indicator(r) => r.warmup(),
                     Operand::Value { .. } => 0,
                 };
-                left.warmup().max(r)
+                left.warmup().max(r) + if op.is_cross() { 2 } else { 0 }
+            }
+        };
+        base + within.max(streak)
+    }
+
+    /// 不看时间范围、只看当天的结果
+    fn raw_series(&self, f: &Frame, lib: &SignalLib) -> std::rc::Rc<Vec<bool>> {
+        match self {
+            Condition::Signal { signal, params, .. } => signals::series(f, *signal, params),
+            Condition::MySignal { signal_id, .. } => {
+                let key = format!("my:{signal_id}");
+                f.memo_bools(key, || lib.get(signal_id).map_or_else(|| vec![false; f.len()], |s| s.def.series(f, lib)))
+            }
+            Condition::Compare { left, op, right, .. } => {
+                let key = format!("cmp:{left:?}{op:?}{right:?}");
+                f.memo_bools(key, || {
+                    let l = f.get(*left);
+                    let r: std::rc::Rc<Vec<f64>> = match right {
+                        Operand::Value { value } => std::rc::Rc::new(vec![*value; f.len()]),
+                        Operand::Indicator(r) => f.get(*r),
+                    };
+                    match op {
+                        Op::CrossesAbove => signals::crossing(&l, &r, true),
+                        Op::CrossesBelow => signals::crossing(&l, &r, false),
+                        _ => l
+                            .iter()
+                            .zip(r.iter())
+                            .map(|(&a, &b)| {
+                                !a.is_nan()
+                                    && !b.is_nan()
+                                    && match op {
+                                        Op::Gt => a > b,
+                                        Op::Ge => a >= b,
+                                        Op::Lt => a < b,
+                                        _ => a <= b,
+                                    }
+                            })
+                            .collect(),
+                    }
+                })
             }
         }
     }
 
-    // @project-doc docs/domains/strategies.md#definition
+    /// 每天是否满足（含时间范围），与日线等长
+    pub fn series(&self, f: &Frame, lib: &SignalLib) -> std::rc::Rc<Vec<bool>> {
+        let (within, streak) = self.window();
+        let raw = self.raw_series(f, lib);
+        if within <= 1 && streak <= 1 {
+            return raw;
+        }
+        let n = f.len();
+        let out = (0..n)
+            .map(|i| {
+                if within > 1 {
+                    let from = (i + 1).saturating_sub(within as usize);
+                    raw[from..=i].iter().any(|v| *v)
+                } else {
+                    i + 1 >= streak as usize && raw[i + 1 - streak as usize..=i].iter().all(|v| *v)
+                }
+            })
+            .collect();
+        std::rc::Rc::new(out)
+    }
+
     /// 在第 i 天是否满足
-    pub fn eval(&self, f: &Frame, i: usize) -> bool {
-        match self {
-            Condition::Signal { signal, params, within_days } => {
-                let s = signals::series(f, *signal, params);
-                let from = (i + 1).saturating_sub(*within_days as usize);
-                s[from..=i].iter().any(|v| *v)
-            }
-            Condition::Compare { left, op, right } => {
-                let l = f.at(*left, i);
-                let r = match right {
-                    Operand::Value { value } => *value,
-                    Operand::Indicator(r) => f.at(*r, i),
-                };
-                if l.is_nan() || r.is_nan() {
-                    return false;
-                }
-                match op {
-                    Op::Gt => l > r,
-                    Op::Ge => l >= r,
-                    Op::Lt => l < r,
-                    Op::Le => l <= r,
-                }
-            }
-        }
+    pub fn eval(&self, f: &Frame, i: usize, lib: &SignalLib) -> bool {
+        self.series(f, lib)[i]
     }
 
-    /// 白话描述，例如「最近 3 个交易日内出现过「5 日均线上穿 20 日均线」」「RSI（14）低于 70」
-    pub fn describe(&self) -> String {
-        match self {
-            Condition::Signal { signal, params, within_days } => {
-                let name = signals::label(*signal, params);
+    /// 白话描述，例如「最近 3 个交易日内出现过「5 日均线上穿 20 日均线」」「RSI（14）上穿 30」「连续 3 个交易日收盘价高于 20 日均线」
+    pub fn describe(&self, lib: &SignalLib) -> String {
+        let (within, streak) = self.window();
+        let core = match self {
+            Condition::Signal { signal, params, .. } => {
                 let state = signals::info_of(*signal).kind == signals::SignalKind::State;
-                match (*within_days <= 1, state) {
-                    (true, false) => format!("当天出现「{name}」"),
-                    (true, true) => format!("当天处于「{name}」"),
-                    (false, false) => format!("最近 {within_days} 个交易日内出现过「{name}」"),
-                    (false, true) => format!("最近 {within_days} 个交易日内处于过「{name}」"),
-                }
+                return wrap_signal(&signals::label(*signal, params), state, within, streak);
             }
-            Condition::Compare { left, op, right } => {
-                let word = match op {
-                    Op::Gt => "高于",
-                    Op::Ge => "不低于",
-                    Op::Lt => "低于",
-                    Op::Le => "不高于",
-                };
+            Condition::MySignal { signal_id, .. } => {
+                let (name, state) = lib.get(signal_id).map_or((format!("自定义信号 {signal_id}"), false), |s| (s.name.clone(), !s.def.is_event()));
+                return wrap_signal(&name, state, within, streak);
+            }
+            Condition::Compare { left, op, right, .. } => {
                 let r = match right {
                     Operand::Value { value } => format_value(*value, indicators::info_of(left.id).unit),
                     Operand::Indicator(r) => r.label(),
                 };
-                format!("{}{word} {r}", left.label())
+                format!("{}{} {r}", left.label(), op.word())
             }
+        };
+        if within > 1 {
+            format!("最近 {within} 个交易日内出现过「{core}」")
+        } else if streak > 1 {
+            format!("连续 {streak} 个交易日{core}")
+        } else {
+            core
         }
+    }
+}
+
+fn wrap_signal(name: &str, state: bool, within: u32, streak: u32) -> String {
+    if streak > 1 {
+        return format!("连续 {streak} 个交易日{}「{name}」", if state { "处于" } else { "出现" });
+    }
+    match (within <= 1, state) {
+        (true, false) => format!("当天出现「{name}」"),
+        (true, true) => format!("当天处于「{name}」"),
+        (false, false) => format!("最近 {within} 个交易日内出现过「{name}」"),
+        (false, true) => format!("最近 {within} 个交易日内处于过「{name}」"),
     }
 }
 
@@ -266,7 +458,7 @@ impl Definition {
             return Err(format!("条件最多 {MAX_CONDITIONS} 个"));
         }
         for c in self.all.iter().chain(&self.any).chain(&self.exit.any) {
-            c.validate()?;
+            c.validate(&self.lib)?;
         }
         self.sort.by.validate()?;
         if !(1..=200).contains(&self.limit) {
@@ -301,26 +493,26 @@ impl Definition {
     /// 判断需要的历史日线根数
     /// 判断一天需要往前看多少根日线。「上市满 N 个交易日」按读入的日线根数判断，所以也要覆盖 N
     pub fn warmup(&self) -> u32 {
-        let conditions = self.all.iter().chain(&self.any).chain(&self.exit.any).map(Condition::warmup).max().unwrap_or(0);
+        let conditions = self.all.iter().chain(&self.any).chain(&self.exit.any).map(|c| c.warmup(&self.lib)).max().unwrap_or(0);
         conditions.max(self.sort.by.warmup()).max(self.universe.min_listed_days.unwrap_or(0)).max(30)
     }
 
     /// 在第 i 天是否满足买入条件（不含股票池），不生成说明文字；回测逐日判断时用
     pub fn matches(&self, f: &Frame, i: usize) -> bool {
-        self.all.iter().all(|c| c.eval(f, i)) && (self.any.is_empty() || self.any.iter().any(|c| c.eval(f, i)))
+        self.all.iter().all(|c| c.eval(f, i, &self.lib)) && (self.any.is_empty() || self.any.iter().any(|c| c.eval(f, i, &self.lib)))
     }
 
     /// 在第 i 天是否满足买入条件（不含股票池），以及命中了哪些条件
     pub fn eval(&self, f: &Frame, i: usize) -> Evaluation {
         let mut reasons = vec![];
         for c in &self.all {
-            if !c.eval(f, i) {
+            if !c.eval(f, i, &self.lib) {
                 return Evaluation { matched: false, reasons: vec![] };
             }
-            reasons.push(c.describe());
+            reasons.push(c.describe(&self.lib));
         }
         if !self.any.is_empty() {
-            let hit: Vec<String> = self.any.iter().filter(|c| c.eval(f, i)).map(Condition::describe).collect();
+            let hit: Vec<String> = self.any.iter().filter(|c| c.eval(f, i, &self.lib)).map(|c| c.describe(&self.lib)).collect();
             if hit.is_empty() {
                 return Evaluation { matched: false, reasons: vec![] };
             }
@@ -331,7 +523,60 @@ impl Definition {
 
     /// 第 i 天是否满足卖出条件（不含止损、止盈、持有天数）
     pub fn exit_signal(&self, f: &Frame, i: usize) -> bool {
-        self.exit.any.iter().any(|c| c.eval(f, i))
+        self.exit.any.iter().any(|c| c.eval(f, i, &self.lib))
+    }
+
+    /// 每天是否满足买入条件（不含股票池），一次算出整段，供买卖点和回测逐日使用
+    pub fn buy_series(&self, f: &Frame) -> Vec<bool> {
+        let all: Vec<_> = self.all.iter().map(|c| c.series(f, &self.lib)).collect();
+        let any: Vec<_> = self.any.iter().map(|c| c.series(f, &self.lib)).collect();
+        (0..f.len()).map(|i| all.iter().all(|s| s[i]) && (any.is_empty() || any.iter().any(|s| s[i]))).collect()
+    }
+
+    /// 每天是否满足任一卖出条件（不含止损、止盈、持有天数）
+    pub fn exit_series(&self, f: &Frame) -> Vec<bool> {
+        let parts: Vec<_> = self.exit.any.iter().map(|c| c.series(f, &self.lib)).collect();
+        (0..f.len()).map(|i| parts.iter().any(|s| s[i])).collect()
+    }
+
+    /// 第 i 天触发的卖出条件（白话），没有时为空
+    pub fn exit_reason_text(&self, f: &Frame, i: usize) -> Option<String> {
+        self.exit.any.iter().find(|c| c.eval(f, i, &self.lib)).map(|c| c.describe(&self.lib))
+    }
+
+    /// 填上可用的自定义信号
+    pub fn with_lib(mut self, lib: SignalLib) -> Self {
+        self.lib = lib;
+        self
+    }
+
+    /// 一条条件的白话
+    pub fn describe_condition(&self, c: &Condition) -> String {
+        c.describe(&self.lib)
+    }
+
+    /// 引用的自定义信号
+    pub fn my_signals(&self) -> Vec<i64> {
+        self.all.iter().chain(&self.any).chain(&self.exit.any).filter_map(|c| if let Condition::MySignal { signal_id, .. } = c { Some(*signal_id) } else { None }).collect()
+    }
+
+    /// 引用的内置信号
+    pub fn builtin_signals(&self) -> Vec<SignalId> {
+        self.all.iter().chain(&self.any).chain(&self.exit.any).filter_map(|c| if let Condition::Signal { signal, .. } = c { Some(*signal) } else { None }).collect()
+    }
+
+    /// 引用的指标（条件和排序）
+    pub fn indicator_ids(&self) -> Vec<IndicatorId> {
+        let mut out = vec![self.sort.by.id];
+        for c in self.all.iter().chain(&self.any).chain(&self.exit.any) {
+            if let Condition::Compare { left, right, .. } = c {
+                out.push(left.id);
+                if let Operand::Indicator(r) = right {
+                    out.push(r.id);
+                }
+            }
+        }
+        out
     }
 
     /// 股票池过滤（板块、ST、价格、成交额、上市天数）。强势板块在巡检中单独处理
@@ -393,15 +638,17 @@ pub struct Template {
 }
 
 fn sig(signal: SignalId, params: &[(&str, f64)], within_days: u32) -> Condition {
-    Condition::Signal { signal, params: params.iter().map(|(k, v)| (k.to_string(), *v)).collect(), within_days }
+    Condition::Signal { signal, params: params.iter().map(|(k, v)| (k.to_string(), *v)).collect(), within_days, streak_days: 1 }
 }
 
-fn cmp(id: IndicatorId, n: Option<u32>, op: Op, value: f64) -> Condition {
-    Condition::Compare { left: IndicatorRef::new(id, n), op, right: Operand::Value { value } }
+/// 指标与一个数比较，当天
+pub fn cmp(id: IndicatorId, n: Option<u32>, op: Op, value: f64) -> Condition {
+    Condition::Compare { left: IndicatorRef::new(id, n), op, right: Operand::Value { value }, within_days: 1, streak_days: 1 }
 }
 
-fn cmp_ind(id: IndicatorId, n: Option<u32>, op: Op, rid: IndicatorId, rn: Option<u32>) -> Condition {
-    Condition::Compare { left: IndicatorRef::new(id, n), op, right: Operand::Indicator(IndicatorRef::new(rid, rn)) }
+/// 指标与另一个指标比较，当天
+pub fn cmp_ind(id: IndicatorId, n: Option<u32>, op: Op, rid: IndicatorId, rn: Option<u32>) -> Condition {
+    Condition::Compare { left: IndicatorRef::new(id, n), op, right: Operand::Indicator(IndicatorRef::new(rid, rn)), within_days: 1, streak_days: 1 }
 }
 
 /// 模板默认的卖出规则：跌破 20 日均线，或亏损 8%，或持有满 20 个交易日
@@ -410,7 +657,7 @@ fn default_exit() -> ExitRule {
 }
 
 fn def(all: Vec<Condition>, sort: Sort) -> Definition {
-    Definition { universe: Universe::default(), all, any: vec![], exit: default_exit(), sort, limit: 50 }
+    Definition { universe: Universe::default(), all, any: vec![], exit: default_exit(), sort, limit: 50, lib: SignalLib::default() }
 }
 
 fn by(id: IndicatorId, n: Option<u32>, desc: bool) -> Sort {
@@ -549,8 +796,8 @@ mod tests {
     #[test]
     fn describe_compare_values_with_units() {
         let c = cmp(IndicatorId::Amount, None, Op::Ge, 5e7);
-        assert_eq!(c.describe(), "成交额不低于 5000 万元");
+        assert_eq!(c.describe(&SignalLib::default()), "成交额不低于 5000 万元");
         let c = cmp(IndicatorId::Rsi, Some(14), Op::Lt, 70.0);
-        assert_eq!(c.describe(), "RSI（14）低于 70");
+        assert_eq!(c.describe(&SignalLib::default()), "RSI（14）低于 70");
     }
 }

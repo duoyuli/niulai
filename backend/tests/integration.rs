@@ -637,16 +637,11 @@ async fn api_key_setup_flow() {
     db.drop().await;
 }
 
-#[tokio::test]
-async fn strategies_screening_diagnosis_and_backtests() {
-    let Some(db) = TestDb::create().await else {
-        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
-        return;
-    };
-    // 一只合成股票：120 个交易日，先跌后涨，最后一天放量站上 20 日均线
-    let run_id: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind) VALUES ('backfill') RETURNING run_id").fetch_one(&db.pool).await.unwrap();
+/// 一只合成股票：120 个交易日，先跌后涨，最后一天（2026-06-19）放量站上 20 日均线
+async fn synthetic_stock(pool: &PgPool) {
+    let run_id: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind) VALUES ('backfill') RETURNING run_id").fetch_one(pool).await.unwrap();
     sqlx::query("INSERT INTO ref.security (thscode, ticker, name, exchange, board, list_date, first_seen, last_seen) VALUES ('600000.SH', '600000', '测试银行', 'SH', 'main', '2020-01-02', current_date, current_date)")
-        .execute(&db.pool)
+        .execute(pool)
         .await
         .unwrap();
     sqlx::query(
@@ -658,9 +653,19 @@ async fn strategies_screening_diagnosis_and_backtests() {
                          CASE WHEN i = 120 THEN 9000000 ELSE 1000000 END AS v) x",
     )
     .bind(run_id)
-    .execute(&db.pool)
+    .execute(pool)
     .await
     .unwrap();
+
+}
+
+#[tokio::test]
+async fn strategies_screening_diagnosis_and_backtests() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    synthetic_stock(&db.pool).await;
 
     let settings = bare_settings("http://127.0.0.1:1", Some("test"));
     let engine = Engine::new(settings, db.pool.clone()).await.unwrap();
@@ -732,6 +737,113 @@ async fn strategies_screening_diagnosis_and_backtests() {
     assert_eq!(st, StatusCode::NOT_FOUND);
 
     let (st, _) = call(&app, "DELETE", &format!("/api/v1/strategies/{id}"), None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn signals_indicators_and_strategy_points() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    synthetic_stock(&db.pool).await;
+    let settings = bare_settings("http://127.0.0.1:1", Some("test"));
+    let engine = Engine::new(settings, db.pool.clone()).await.unwrap();
+    let app = logged_in(niulai::api::router(engine)).await;
+
+    // 内置信号：能写成条件的给出定义和白话，特殊信号给出规则
+    let (st, list) = call(&app, "GET", "/api/v1/signals", None).await;
+    assert_eq!(st, StatusCode::OK, "{list}");
+    assert_eq!(list.as_array().unwrap().len(), 25);
+    let (_, cross) = call(&app, "GET", "/api/v1/signals/ma_cross_up", None).await;
+    assert_eq!(cross["special"], false);
+    assert!(cross["explained"][0].as_str().unwrap().contains("上穿"), "{cross}");
+    assert!(cross["indicators"].as_array().unwrap().len() >= 2);
+    let (_, gap) = call(&app, "GET", "/api/v1/signals/gap_up", None).await;
+    assert_eq!(gap["special"], true);
+    assert!(gap["definition"].is_null());
+    let (st, _) = call(&app, "GET", "/api/v1/signals/nope", None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // 自定义信号：放量并站上 20 日均线
+    let def = json!({"match_all": true, "conditions": [
+        {"kind": "signal", "signal": "volume_surge", "params": {"ratio": 3}},
+        {"kind": "compare", "left": {"id": "close"}, "op": ">", "right": {"id": "ma", "n": 20}}
+    ]});
+    let (st, _) = call(&app, "POST", "/api/v1/signals", Some(json!({"name": " ", "definition": def}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "名称不能为空");
+    let nested = json!({"conditions": [{"kind": "my_signal", "signal_id": 1}]});
+    let (st, _) = call(&app, "POST", "/api/v1/signals", Some(json!({"name": "套娃", "definition": nested}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "自定义信号不能引用自定义信号");
+    let (st, sig) = call(&app, "POST", "/api/v1/signals", Some(json!({"name": "放量站上", "definition": def, "based_on": "volume_surge"}))).await;
+    assert_eq!(st, StatusCode::CREATED, "{sig}");
+    let sid = sig["signal_id"].as_i64().unwrap();
+    assert_eq!(sig["key"], format!("my-{sid}"));
+    assert_eq!(sig["group"], "我的信号");
+    assert_eq!(sig["explained"].as_array().unwrap().len(), 2);
+
+    let mine = json!({"condition": {"kind": "my_signal", "signal_id": sid}});
+    let (st, today) = call(&app, "POST", "/api/v1/signals/today", Some(json!({"target": mine}))).await;
+    assert_eq!(st, StatusCode::OK, "{today}");
+    assert_eq!(today["matched"], 1);
+    assert_eq!(today["hits"][0]["thscode"], "600000.SH");
+    let (st, days) = call(&app, "POST", "/api/v1/securities/600000.SH/signal-days", Some(json!({"target": mine}))).await;
+    assert_eq!(st, StatusCode::OK, "{days}");
+    assert_eq!(days["dates"], json!(["2026-06-19"]));
+    // 草稿不用保存也能看
+    let (st, stats) = call(&app, "POST", "/api/v1/signals/stats", Some(json!({"target": {"draft": def}, "years": 1}))).await;
+    assert_eq!(st, StatusCode::OK, "{stats}");
+    assert_eq!(stats["occurrences"], 1);
+    assert_eq!(stats["horizons"].as_array().unwrap().len(), 3);
+    assert_eq!(stats["horizons"][0]["samples"], 0, "最后一天出现，没有后续数据");
+    assert_eq!(stats["recent"][0]["trade_date"], "2026-06-19");
+
+    // 策略用了它就不能删
+    let sdef = json!({"all": [{"kind": "my_signal", "signal_id": sid}], "exit": {"max_hold_days": 5}});
+    let (st, strat) = call(&app, "POST", "/api/v1/strategies", Some(json!({"name": "用我的信号", "definition": sdef}))).await;
+    assert_eq!(st, StatusCode::CREATED, "{strat}");
+    let id = strat["strategy_id"].as_i64().unwrap();
+    let (_, sig) = call(&app, "GET", &format!("/api/v1/signals/my-{sid}"), None).await;
+    assert_eq!(sig["used_by"][0]["strategy_id"], id);
+    let (st, _) = call(&app, "DELETE", &format!("/api/v1/signals/my/{sid}"), None).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+
+    // 巡检：今日买点；股票页上的买卖点
+    let (st, run) = call(&app, "POST", &format!("/api/v1/screening/run?strategy_id={id}"), None).await;
+    assert_eq!(st, StatusCode::OK, "{run}");
+    let (_, res) = call(&app, "GET", &format!("/api/v1/strategies/{id}/results"), None).await;
+    assert_eq!(res["hits"].as_array().unwrap().len(), 1, "{res}");
+    assert_eq!(res["sells"].as_array().unwrap().len(), 0);
+    assert_eq!(res["holdings"].as_array().unwrap().len(), 0);
+    let (st, pts) = call(&app, "GET", &format!("/api/v1/securities/600000.SH/strategy-points?strategy_id={id}"), None).await;
+    assert_eq!(st, StatusCode::OK, "{pts}");
+    assert_eq!(pts["today"], "buy");
+    assert_eq!(pts["trades"].as_array().unwrap().len(), 0, "买点在最后一天，还没有成交");
+
+    // 改定义：收盘价低于 20 日均线，今天就不满足了
+    let strict = json!({"conditions": [{"kind": "compare", "left": {"id": "close"}, "op": "<", "right": {"id": "ma", "n": 20}}]});
+    let (st, _) = call(&app, "PUT", &format!("/api/v1/signals/my/{sid}"), Some(json!({"name": "放量站上", "definition": strict}))).await;
+    assert_eq!(st, StatusCode::OK);
+    let (_, today) = call(&app, "POST", "/api/v1/signals/today", Some(json!({"target": mine}))).await;
+    assert_eq!(today["matched"], 0);
+
+    // 指标：说明、公式、常用写法、画图用的数值
+    let (st, inds) = call(&app, "GET", "/api/v1/indicators", None).await;
+    assert_eq!(st, StatusCode::OK);
+    let rsi = inds.as_array().unwrap().iter().find(|i| i["id"] == "rsi").unwrap();
+    assert!(!rsi["formula"].as_str().unwrap().is_empty());
+    assert!(!rsi["examples"].as_array().unwrap().is_empty());
+    let ma = inds.as_array().unwrap().iter().find(|i| i["id"] == "ma").unwrap();
+    assert!(ma["signals"].as_array().unwrap().iter().any(|s| s["key"] == "ma_cross_up"));
+    let (st, series) = call(&app, "GET", "/api/v1/securities/600000.SH/indicator?id=ma&n=20", None).await;
+    assert_eq!(st, StatusCode::OK, "{series}");
+    assert_eq!(series["points"].as_array().unwrap().len(), 101);
+    let (st, _) = call(&app, "GET", "/api/v1/securities/600000.SH/indicator?id=ma&n=0", None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    call(&app, "DELETE", &format!("/api/v1/strategies/{id}"), None).await;
+    let (st, _) = call(&app, "DELETE", &format!("/api/v1/signals/my/{sid}"), None).await;
     assert_eq!(st, StatusCode::NO_CONTENT);
     db.drop().await;
 }
