@@ -2,8 +2,7 @@ import { keepPreviousData } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useParams } from "react-router";
 import { useMaCrossBacktest, useStrategyBacktest } from "../api/generated/backtest/backtest";
-import { useGetSecurity, useSecurityBars, useSecurityMa } from "../api/generated/market/market";
-import type { MaPoint } from "../api/generated/model";
+import { useGetSecurity, useSecurityBars } from "../api/generated/market/market";
 import { useListSignals } from "../api/generated/signal/signal";
 import { useCatalog, useListStrategies } from "../api/generated/strategy/strategy";
 import { COST_DEFAULTS, CostFields, costParams, Loaded, Result, RulesNote } from "../components/backtest";
@@ -12,22 +11,14 @@ import { MaControls } from "../components/MaControls";
 import { OverlayPicker, parseOverlays, useOverlays } from "../components/overlays";
 import { PriceChart } from "../components/PriceChart";
 import { RangePicker, rangeQuery } from "../components/RangePicker";
-import {
-  Badge,
-  Card,
-  Empty,
-  ErrorState,
-  Field,
-  inputClass,
-  Segmented,
-  SignalBadge,
-  Spinner,
-  Table,
-} from "../components/ui";
+import { Badge, Card, Empty, ErrorState, Field, inputClass, Segmented, Spinner } from "../components/ui";
 import { WatchButton } from "../components/WatchButton";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtInt, fmtPercent, fmtPrice, RANGES, rangeStart, toNumber, upDownClass } from "../lib/format";
 import { ADJUSTS, type Adjust, BOARDS } from "../lib/labels";
+
+/** K 线默认叠加的指标：20 日和 60 日均线，和其他叠加项一样可以去掉 */
+const DEFAULT_OVERLAYS = "ind:ma:20,ind:ma:60";
 
 const TABS = [
   { value: "chart", label: "走势与诊断" },
@@ -105,26 +96,20 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
     range: "3",
     from: "",
     to: "",
-    fast: "15",
-    slow: "30",
-    overlay: "",
+    // 默认画 20 日和 60 日均线；全部去掉时记为 -，否则会回到默认值
+    overlay: DEFAULT_OVERLAYS,
   });
   const catalog = useCatalog({ query: { staleTime: Number.POSITIVE_INFINITY } });
   const signals = useListSignals({ query: { staleTime: 60_000 } });
   const strategies = useListStrategies();
   const adjust = s.adjust as Adjust;
-  const fast = Number(s.fast) || 15;
-  const slow = Number(s.slow) || 30;
   const { start, end } = rangeQuery(s);
   const bars = useSecurityBars(
     thscode,
     { adjust, start, end, limit: 10000 },
     { query: { placeholderData: keepPreviousData } },
   );
-  // 均线和交叉信号固定按等比前复权计算，与 K 线口径无关
-  const ma = useSecurityMa(thscode, { fast, slow, start, end }, { query: { placeholderData: keepPreviousData } });
-  const maOverlay = adjust === "qfq" && ma.data ? { points: ma.data.points, fast, slow } : undefined;
-  const overlays = parseOverlays(s.overlay);
+  const overlays = parseOverlays(s.overlay === "-" ? "" : s.overlay);
   const ov = useOverlays({
     thscode,
     overlays,
@@ -144,27 +129,18 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
     <Card title="K 线">
       {/* 操作都放在图的上方：时间区间、均线周期、叠加的指标信号和策略买卖点，改完马上能在图上看到 */}
       <div className="mb-3 flex flex-col gap-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <RangePicker value={s} earliest={earliest} loading={bars.isPlaceholderData} onChange={set} />
-          <MaControls fast={fast} slow={slow} onChange={(f, sl) => set({ fast: String(f), slow: String(sl) })} />
-        </div>
+        <RangePicker value={s} earliest={earliest} loading={bars.isPlaceholderData} onChange={set} />
         <OverlayPicker
           overlays={overlays}
-          onChange={(o) => set({ overlay: o.join(",") })}
+          onChange={(o) => set({ overlay: o.join(",") || "-" })}
           infos={ov.infos}
           catalog={catalog.data}
           signals={signals.data}
           strategies={strategies.data}
         />
-        <p className="text-xs text-zinc-500">
-          {adjust === "qfq" ? (
-            <>
-              橙线是 {fast} 日均线，紫线是 {slow} 日均线；▲ 金叉表示短期均线上穿长期均线，▼ 死叉相反。
-            </>
-          ) : (
-            <>均线按前复权价计算，切换回「等比前复权」后显示在图上。</>
-          )}
-        </p>
+        {adjust !== "qfq" && (
+          <p className="text-xs text-zinc-500">指标和信号按等比前复权价计算，切换回「等比前复权」后画在 K 线上。</p>
+        )}
       </div>
       {bars.error ? (
         <ErrorState error={bars.error} onRetry={() => bars.refetch()} />
@@ -173,16 +149,13 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
       ) : bars.data.bars.length === 0 ? (
         <Empty>本地还没有这只股票的日线，可能仍在回补中</Empty>
       ) : (
-        <PriceChart bars={bars.data.bars} ma={maOverlay} lines={lines} markers={ov.markers} />
+        <PriceChart bars={bars.data.bars} lines={lines} markers={ov.markers} />
       )}
       <details className="mt-3 text-sm">
-        <summary className="cursor-pointer text-zinc-500 select-none">价格口径和均线交叉记录</summary>
-        <div className="mt-3 flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            <Segmented value={adjust} options={ADJUSTS} onChange={(adjust) => set({ adjust })} />
-            <span>{ADJUSTS.find((a) => a.value === adjust)?.hint}</span>
-          </div>
-          {ma.data && <SignalTable points={ma.data.points} />}
+        <summary className="cursor-pointer text-zinc-500 select-none">价格口径</summary>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+          <Segmented value={adjust} options={ADJUSTS} onChange={(adjust) => set({ adjust })} />
+          <span>{ADJUSTS.find((a) => a.value === adjust)?.hint}</span>
         </div>
       </details>
     </Card>
@@ -272,36 +245,5 @@ function StockBacktest({ thscode }: { thscode: string }) {
         ]}
       />
     </>
-  );
-}
-
-function SignalTable({ points }: { points: MaPoint[] }) {
-  const rows = useMemo(() => points.filter((p) => p.signal).reverse(), [points]);
-  if (rows.length === 0) return <Empty>所选区间内没有发生交叉</Empty>;
-  return (
-    <div className="max-h-96 overflow-y-auto">
-      <Table>
-        <thead>
-          <tr>
-            <th>日期</th>
-            <th>信号</th>
-            <th className="text-right!">收盘（前复权）</th>
-            <th className="text-right!">快线</th>
-            <th className="text-right!">慢线</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((p) => (
-            <tr key={p.trade_date}>
-              <td className="num">{p.trade_date}</td>
-              <td>{p.signal && <SignalBadge signal={p.signal} />}</td>
-              <td className="num text-right">{fmtPrice(p.close)}</td>
-              <td className="num text-right">{fmtPrice(p.ma_fast)}</td>
-              <td className="num text-right">{fmtPrice(p.ma_slow)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </Table>
-    </div>
   );
 }

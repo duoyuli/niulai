@@ -49,7 +49,7 @@
 | `/signals/new`、`/signals/:key/edit` | 信号编辑器：名称、偏多偏空、全部或任一满足、条件，合起来的白话；「试一试」不保存就看今天出现的股票和过去表现。`?from=<key>` 复制一个信号，`?cond=<条件 JSON>` 从指标页的常用写法开始 | `GET /strategies/catalog`、`GET /signals/{key}`、`POST /signals`、`PUT /signals/my/{id}`、`POST /signals/today`、`POST /signals/stats` |
 | `/indicators`、`/indicators/:id` | 指标：按分组列出；详情是是什么、怎么算、画在 K 线上、常用写法（点一下新建信号）、被哪些信号和策略用 | `GET /indicators`、`GET /securities/{thscode}/indicator` |
 | `/watchlist` | 自选：收藏的股票、涨跌、趋势和最近信号，可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
-| `/securities/:thscode` | 个股：页头是最新价和收藏；「走势与诊断」标签页是诊断卡片和 K 线，K 线上可以叠加任意指标、信号和策略买卖点（`overlay` 参数，复权口径与均线交叉记录折叠在下面）；「回测」标签页用均线交叉或任意已保存的策略回测这只股票 | `GET /securities/{thscode}`、`/bars`、`/ma`、`/diagnosis`、`/indicator`、`/signal-days`、`/strategy-points`、`GET /signals`、`GET /backtest/ma-cross`、`/backtest/strategy`、`GET /strategies` |
+| `/securities/:thscode` | 个股：页头是最新价和收藏；「走势与诊断」标签页是诊断卡片和 K 线，K 线上可以叠加任意指标、信号和策略买卖点（`overlay` 参数，默认是 20 日和 60 日均线，全部去掉时记为 `-`；复权口径折叠在下面）；「回测」标签页用均线交叉或任意已保存的策略回测这只股票 | `GET /securities/{thscode}`、`/bars`、`/diagnosis`、`/indicator`、`/signal-days`、`/strategy-points`、`GET /signals`、`GET /backtest/ma-cross`、`/backtest/strategy`、`GET /strategies` |
 | `/guide` | 说明：指标、条件、信号、策略四个概念和买卖点的规则。旧链接 `#sig-<信号>`、`#ind-<指标>` 跳到信号页和指标页 | — |
 | `/indices` | 指数与板块列表，按分类筛选；从「数据」页和今日页的板块进入 | `GET /indices` |
 | `/indices/:thscode` | 指数详情：K 线、当前成分股 | `GET /indices`、`/indices/{thscode}/bars`、`/members` |

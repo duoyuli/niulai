@@ -53,19 +53,6 @@ export function Badge({ tone = "muted", children }: { tone?: Tone; children: Rea
   );
 }
 
-/** 金叉 / 死叉标签：金叉用红色（看涨），死叉用绿色（看跌），与 A 股红涨绿跌一致 */
-export function SignalBadge({ signal }: { signal: "golden" | "death" }) {
-  return signal === "golden" ? (
-    <span className="inline-flex items-center gap-1 rounded-md bg-up/10 px-1.5 py-0.5 text-xs font-medium text-up">
-      ▲ 金叉
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1 rounded-md bg-down/10 px-1.5 py-0.5 text-xs font-medium text-down">
-      ▼ 死叉
-    </span>
-  );
-}
-
 export function Spinner({ label = "加载中" }: { label?: string }) {
   return (
     <div className="flex items-center justify-center gap-2 py-10 text-sm text-zinc-500">
