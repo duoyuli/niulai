@@ -1,47 +1,42 @@
 # 项目概览
 
-本文说明 niulai 的目标、核心术语、仓库结构和进程，是阅读其他文档的公共前提。同步框架的工作方式见 [同步流水线](architecture/sync_pipeline.md)，数据库表的职责见 [数据库分层](architecture/data_model.md)。
+本文说明 niulai 的目标、核心术语、仓库结构和进程，是阅读其他文档的公共前提。同步框架见 [同步流水线](architecture/sync_pipeline.md)，表的职责见 [数据库分层](architecture/data_model.md)。
 
 ## 目标
 
-niulai 是面向 A 股的个股诊断工作台。数据来自同花顺金融数据服务，同步到本地 PostgreSQL：首次拉取全部历史，之后每个交易日收盘后（T+1）增量同步。在此基础上提供复权行情、技术指标和信号（例如 15 日均线是否上穿 30 日均线、MACD 金叉、放量）、全市场扫描、个股和自选股诊断、选股策略与每日巡检，以及单只股票和全市场组合的策略回测，通过 REST API 和网页使用。
-
-数据源和技术栈的选择理由分别见 [采用同花顺金融数据服务](decisions/hithink_data_source.md) 和 [技术栈决策](decisions/technology_stack.md)。
+niulai 是面向 A 股的个股诊断工作台。数据来自同花顺金融数据服务，同步到本地 PostgreSQL：首次拉取全部历史，之后按同步计划增量。在此基础上提供复权行情、技术指标和信号、选股策略与每日巡检、个股和自选股诊断、单只股票和全市场组合回测，通过网页和 REST API 使用。数据源和技术栈的选择理由见 [ADR：采用同花顺金融数据服务](decisions/hithink_data_source.md) 和 [ADR：技术栈](decisions/technology_stack.md)。
 
 <a id="glossary"></a>
 ## 核心术语
 
 | 术语 | 含义 |
 | --- | --- |
-| thscode | 同花顺证券代码，带交易所后缀，例如 `600519.SH`、`000001.SZ`、`920022.BJ`、`881101.TI`（同花顺板块指数）。本项目所有表和接口都用 thscode 标识证券 |
-| 数据集（dataset） | `backend/config/datasets.yaml` 中的一个条目，对应供应商的一个接口和一套同步规则，ID 形如 `a_share.bar_1d` |
-| 优先级 P0–P3 | P0：当前功能必需；P1：A 股相关、建议从现在开始积累；P2：其他资产；P3：低价值或按需。未显式配置时，P0 和 P1 默认开启，P2 和 P3 默认关闭 |
-| 运行（run） | 一次同步批次，记录在 `ops.run`。一次请求的多个数据集按依赖关系拆成几个波次，每个波次是一个运行 |
-| 任务（task） | 一个请求单元，例如某只股票的某个 10 年窗口、某个交易日，记录在 `ops.task` |
+| thscode | 同花顺证券代码，带交易所后缀，例如 `600519.SH`、`920022.BJ`、`881101.TI`（同花顺板块指数）。所有表和接口都用它标识证券 |
+| 数据集（dataset） | `backend/config/datasets.yaml` 中的一个条目：供应商的一个接口和一套同步规则，ID 形如 `a_share.bar_1d` |
+| 优先级 P0–P3 | P0 当前功能必需；P1 A 股相关、建议积累；P2 其他资产；P3 低价值或按需。未显式配置时 P0、P1 开启，P2、P3 关闭 |
+| 同步计划 | 数据集多久同步一次：每日收盘后、每周、每月、财报季、不自动同步，见 [定时调度](architecture/sync_pipeline.md#scheduling) |
+| 运行（run）/ 任务（task） | 运行是一次同步批次（`ops.run`），有依赖的数据集分几批（波次）执行，每批一个运行；任务是一个请求单元（`ops.task`），例如某只股票的一个 10 年窗口 |
 | 通用记录库 | `raw.record`：所有数据集的记录都以供应商原始字段（JSONB）保存在这里 |
-| 类型化表 / sink | `ref`、`mkt`、`fin` 下有明确列类型的表，例如日线、公司行动。数据集通过配置中的 `sink` 投影到这些表 |
-| 公司行动 / 除权除息 | 分红、送转股、配股等事件。事件发生日（除权除息日）股价会按规则下调，详见 [复权](domains/price_adjustment.md) |
-| 复权 | 消除除权除息造成的价格断崖，使价格序列连续。本项目的标准口径是等比复权 |
-| 快照 | 全市场当前行情的一次性截取（`a_share.snapshot`）。收盘后取快照，可以最快得到当天日线 |
-| T+1 | 交易日收盘后同步当天数据 |
-| 指标 / 信号 / 策略 | 指标是每天一个数（例如 20 日均线）；信号是某天发生的事或所处的状态（例如金叉）；策略是股票池加一组条件，用来选股和回测，见 [选股策略与诊断](domains/strategies.md) |
-| 巡检 | 用开启巡检的策略在一个交易日上把全市场过一遍，保存入选的股票；每次同步运行结束后自动执行 |
+| 类型化表 / sink | `ref`、`mkt`、`fin` 下有明确列类型的表，例如日线、公司行动；数据集通过 `sink` 投影到这些表 |
+| 公司行动 / 复权 | 分红、送转股、配股会让除权除息日的价格断崖；复权消除断崖，本项目的标准口径是等比复权，见 [复权](domains/price_adjustment.md) |
+| 快照 | 全市场当前行情的一次截取（`a_share.snapshot`），收盘后取快照最快得到当天日线 |
+| 指标 / 条件 / 信号 / 策略 | 指标是每天一个数（20 日均线）；条件是一句是或否的判断；信号是起了名字的条件（金叉）；策略是股票池、买入条件和卖出规则，见 [选股策略与诊断](domains/strategies.md) |
+| 巡检 | 用开启巡检的策略在一个交易日上过一遍全市场，保存今日买点、卖点和持有中；同步运行结束后自动执行 |
 
 <a id="repository_layout"></a>
 ## 仓库结构
 
 | 路径 | 内容 |
 | --- | --- |
-| `backend/` | Rust 后端。`src/` 源码，`migrations/` 数据库迁移（表结构的唯一来源），`config/datasets.yaml` 数据集注册表，`tests/` 集成测试，`.env` 本地配置（不提交） |
-| `frontend/` | 前端：React 单页应用，`src/` 源码，`openapi.json` 是生成接口客户端用的后端规范，见 [前端](architecture/frontend.md) |
-| `docs/` | 本文档库；`docs/research/` 是早期调研笔记，不属于文档库 |
-| `deploy/` | CD：`Dockerfile`（同时构建后端和前端）、`compose.yml`（Docker 部署，内置 PostgreSQL 和 niulai）、`.env.example`；源码部署不用 Docker，直接编译运行，见 [部署](operations/runbook.md#deployment) |
-| `.github/workflows/ci.yml` | CI：检查代码；推送 `v*` 标签时构建多架构镜像并推送到 GitHub 镜像仓库 |
-| `.agents/skills/project-doc/` | 维护本文档库所用的 skill；`.claude/skills/project-doc` 是指向它的符号链接 |
-| `AGENTS.md` | 仓库说明与工作约定；`CLAUDE.md` 是指向它的符号链接 |
-| `README.md` | 项目介绍和快速开始 |
+| `backend/` | Rust 后端：`src/` 源码，`migrations/` 数据库迁移（表结构的唯一来源），`config/datasets.yaml` 数据集注册表，`tests/` 集成测试 |
+| `frontend/` | React 单页应用，见 [前端](architecture/frontend.md) |
+| `deploy/` | `Dockerfile`（同时构建前端和后端）、`compose.yml` 和 `.env.example`（Docker 部署），见 [部署](operations/runbook.md#deployment) |
+| `docs/` | 本文档库；`docs/research/` 是调研笔记，不属于文档库 |
+| `.github/workflows/ci.yml` | CI：检查代码；推送 `v*` 标签时构建多架构镜像 |
+| `.agents/skills/project-doc/` | 维护本文档库的 skill（`.claude/skills/project-doc` 是指向它的符号链接） |
+| `AGENTS.md` | 仓库说明与工作约定（`CLAUDE.md` 是指向它的符号链接） |
 
-后端代码按职责分为几个模块：`sync`（同步框架）、`vendor`（供应商客户端与限速）、`analysis`（指标、信号、策略、巡检、诊断、扫描、回测的计算）、`api`（REST API 和前端页面），以及 `config`、`db`、`time` 等基础模块。
+后端模块：`sync`（同步框架）、`vendor`（供应商客户端与限速）、`analysis`（指标、信号、策略、巡检、诊断、回测）、`api`（REST API 和页面）、`upgrader`（一键升级助手），以及 `config`、`db`、`time`、`version` 等基础模块。
 
 <a id="processes"></a>
 ## 进程
@@ -50,7 +45,8 @@ niulai 是面向 A 股的个股诊断工作台。数据来自同花顺金融数�
 
 | 子命令 | 职责 |
 | --- | --- |
-| `niulai serve` | 常驻服务。一个进程同时运行 REST API、同步任务执行和定时调度，启动时执行数据库迁移；配置了 `NIULAI_WEB_DIR` 时还提供前端页面 |
-| 其他子命令 | 运维命令，执行完就退出：迁移、规划运行、在前台执行任务、查看状态、重算复权、导出 OpenAPI |
+| `niulai serve` | 常驻服务：一个进程同时运行 REST API、页面、同步任务执行和定时调度，启动时执行数据库迁移 |
+| `niulai upgrader` | 一键升级助手，在 Docker 部署的 upgrader 容器中运行，不连数据库，见 [一键升级](operations/runbook.md#one_click_upgrade) |
+| 其他子命令 | 运维命令，执行完就退出：迁移、规划运行、在前台执行任务、数据核检、查看状态、重算复权、导出 OpenAPI（`niulai --help`） |
 
-数据、任务队列和进度都在 PostgreSQL 中，不依赖其他服务；同一时刻只有一个进程执行同步任务，限速在进程内。为什么合并为一个进程见 [ADR：单进程服务](decisions/single_process_service.md)，命令用法见 [运维手册](operations/runbook.md)。
+数据、任务队列和进度都在 PostgreSQL 中，不依赖其他服务。同一时刻只有一个进程执行同步任务，限速在进程内，见 [ADR：单进程服务](decisions/single_process_service.md)。

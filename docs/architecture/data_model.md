@@ -1,6 +1,6 @@
 # 数据库分层
 
-本文说明 PostgreSQL 中各 schema 和表的职责、通用记录库的语义，以及哪些数据集写入哪些类型化表。写入流程见 [同步流水线](sync_pipeline.md#record_writes)，复权相关的表和视图见 [复权](../domains/price_adjustment.md)。表结构的唯一来源是 `backend/migrations/`，除 `niulai openapi` 外，每个子命令启动时都会先执行迁移。
+本文说明 PostgreSQL 中各 schema 和表的职责、通用记录库的语义，以及哪些数据集写入哪些类型化表。写入流程见 [同步流水线](sync_pipeline.md#record_writes)，复权相关的表和视图见 [复权](../domains/price_adjustment.md)。表结构的唯一来源是 `backend/migrations/`，连数据库的子命令（除 `niulai openapi`、`niulai upgrader` 外）启动时都会先执行迁移。
 
 <a id="schemas"></a>
 ## Schema 一览
@@ -12,7 +12,7 @@
 | `ref` | 参考数据 | `security`、`security_name_hist`、`trading_day`、`index_info`、`index_member` |
 | `mkt` | 行情与公司行动 | `stock_bar_1d`、`index_bar_1d`、`corp_action`、`adj_segment`（复权分段），复权视图和重算存储过程 |
 | `fin` | 估值等基本面 | `valuation_1d` |
-| `app` | 用户在网页上维护的数据和由它产生的结果，不由同步写入 | `watchlist`（自选股，删除证券时一并删除）、`setting`（网页上配置的设置：API Key、登录 Cookie 的签名密钥 `session_secret`，以及内置策略是否已复制的标记 `strategies_seeded`）、`strategy`（选股策略，`definition` 是 JSON 定义，`screening` 是否巡检，`show_on_today` 是否在今日页展示）、`screen_run`（每个策略每个交易日一次巡检，`scanned` 是当天有日线的股票数）、`screen_hit`（巡检结果，`kind` 是 `buy` 今日买点、`sell` 今日卖点或 `holding` 持有中）、`signal`（自定义信号，`definition` 是条件的 JSON，策略用 `my_signal` 条件按编号引用）；删除策略时一并删除它的巡检记录。规则见 [选股策略与诊断](../domains/strategies.md#screening) |
+| `app` | 用户在网页上维护的数据和由它产生的结果，不由同步写入 | `watchlist`（自选股，删除证券时一并删除）、`setting`（网页上的设置：API Key、登录 Cookie 的签名密钥 `session_secret`、同步时间 `sync_schedule`、内置策略是否已复制 `strategies_seeded`）、`strategy`（选股策略，`definition` 是 JSON 定义，`screening` 是否巡检，`show_on_today` 是否在今日页展示）、`screen_run`（每个策略每个交易日一次巡检，`scanned` 是当天有日线的股票数）、`screen_hit`（巡检结果，`kind` 是 `buy` 今日买点、`sell` 今日卖点或 `holding` 持有中）、`signal`（自定义信号，`definition` 是条件的 JSON，策略用 `my_signal` 条件按编号引用）；删除策略时一并删除它的巡检记录。规则见 [选股策略与诊断](../domains/strategies.md#screening) |
 
 日期约定：业务日期（交易日、报告期、除权日）一律存为 `DATE`，按 Asia/Shanghai 解释；采集和系统事件时间存为 `TIMESTAMPTZ`。供应商毫秒时间戳的换算规则见 [时间戳](../domains/market_data_rules.md#timestamps)。
 
@@ -69,7 +69,7 @@
 ## 运行状态表
 
 - `ops.dataset`：`datasets.yaml` 的数据库副本。`spec` 保存完整配置，`spec_hash` 用于判断配置是否变化。
-- `ops.run`：运行。`kind` 是 `backfill`（历史回补）、`incremental`（定时同步和手动增量）或 `repair`（兜底补偿，见 [完整性核对与兜底补偿](sync_pipeline.md#audit)）。`params` 中有 `datasets`、`pending_waves`、`root_run`、`only_thscodes`。
+- `ops.run`：运行。`kind` 是 `backfill`（历史回补）、`incremental`（定时同步和手动增量）或 `repair`（兜底补偿，见 [完整性核对与兜底补偿](sync_pipeline.md#audit)）。`params` 中有 `datasets`、`pending_waves`、`root_run`、`only_thscodes`、`trigger`（谁发起的，见 [定时调度](sync_pipeline.md#scheduling)）。
 - `ops.task`：任务队列，状态机见 [任务生命周期](sync_pipeline.md#task_lifecycle)。`params` 包含 `vars`（分区变量）和 `query`（已展开的请求参数）。部分唯一索引 `task_open_uniq` 保证同一分区同时只有一个未完成任务；部分索引 `task_run_open_idx` 只含未完成任务，用于判断运行是否结束。
 - `ops.cursor`：每个数据集、每个分区的进度，`state` 是 JSON，例如 `{"synced_to": "2026-10-15"}`。`part_key = '_plan'` 的行是 `from_dataset` 增量规划的时间水位。
 - `ops.api_call`：每次 HTTP 尝试一行，含状态码、供应商 `code`、`request_id`、延迟。表声明为按 `called_at` 的范围分区，但只有默认分区；没有自动清理旧数据。

@@ -9,7 +9,7 @@
 | --- | --- |
 | Base URL | `https://fuyao.aicubes.cn`，可用 `NIULAI_VENDOR_BASE_URL` 覆盖 |
 | 方法 | 公开数据接口都是 `GET` |
-| 认证 | 请求头 `X-api-key: <API_KEY>`。Key 在 <https://fuyao.aicubes.cn/admin> 管理，本项目从 `HITHINK_FINANCE_API_KEY` 读取 |
+| 认证 | 请求头 `X-api-key: <API_KEY>`。Key 在 <https://fuyao.aicubes.cn/admin> 管理；本项目在网页的首次登录引导中配置，或从 `HITHINK_FINANCE_API_KEY` 读取 |
 | 响应信封 | `{code, message, request_id, data}`；成功时 `data` 承载数据，业务错误时 `data` 为 null |
 | 成功判断 | HTTP 200 且 `code == 0`。HTTP 200 不代表成功 |
 | 证券代码 | 完整 thscode，例如 `600519.SH`；不要猜交易所后缀 |

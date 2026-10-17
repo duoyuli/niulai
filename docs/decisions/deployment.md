@@ -1,6 +1,6 @@
 # ADR：部署方案（已被取代）
 
-- 状态：已被取代（superseded），2026-10-16。由 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md) 取代：去掉了 Caddy、基本认证登录和运维脚本，公网入口交给使用者自己的反向代理。此前决策第 4、5 条的一部分已被 [ADR：API Key 在首次登录引导中配置](api_key_setup.md) 取代。
+- 状态：已被取代（superseded），2026-10-16。由 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md) 取代：去掉了 Caddy、基本认证登录和运维脚本，项目只交付服务本身。此前决策第 4、5 条的一部分已被 [ADR：API Key 在首次登录引导中配置](api_key_setup.md) 取代。
 - 相关文档：[部署](../operations/runbook.md#deployment)、[部署配置](../interfaces/configuration.md#deploy_env)、[ADR：单进程服务](single_process_service.md)、[ADR：限速在进程内](in_process_rate_limit.md)。
 
 ## 背景

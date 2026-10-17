@@ -44,7 +44,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 | 层 | 模块 | 职责 |
 | --- | --- | --- |
-| 入口 | `scheduler.rs`、`executor.rs` | 同步计划与定时触发；执行循环，以及单个任务各步骤的编排、运行结束后的衔接 |
+| 入口 | `scheduler.rs`、`executor.rs`、`audit.rs`、`check.rs` | 同步计划与定时触发；执行循环、单个任务的编排和运行结束后的衔接；完整性核对与兜底补偿；数据核检 |
 | 规划 | `planner.rs` | 把分区展开为任务，按波次创建运行 |
 | 执行步骤 | `fetch.rs`、`records.rs`、`sinks.rs`、`postprocess.rs` | HTTP 取数与调用日志；记录主键与 `raw.record`；类型化表投影；运行结束后的计算 |
 | 状态 | `queue.rs`、`run.rs`、`cursor.rs`、`calendar.rs` | `ops.task` 的状态变更；`ops.run` 的创建与结束；`ops.cursor`；`ref.trading_day` 与交易日校验 |
@@ -86,22 +86,22 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 | `running` | 已被某个执行者认领，`locked_by` 记录执行者 |
 | `done` | 成功，并写入了记录 |
 | `empty` | 成功，但接口返回 0 条记录（例如停牌期间的窗口、非交易日），或返回了数据集 `empty_codes` 中声明的错误码（原因写在 `last_error`） |
-| `skipped` | 主动跳过，原因写在 `last_error`：交易日校验判定这一天不是交易日、在未来或已经错过（见 [交易日校验](../domains/market_data_rules.md#trade_date_guard)），或人工标记 |
+| `skipped` | 主动跳过，原因写在 `last_error`：交易日校验判定不是交易日或在未来（见 [交易日校验](../domains/market_data_rules.md#trade_date_guard)）、日期已经不能用（见 [过期的日期](#stale_dates)），或人工标记 |
 | `failed` | 可重试的失败，`not_before` 之后会被重新认领 |
 | `dead` | 不再重试：不可重试的错误，或尝试次数达到 `max_attempts`（默认 4） |
 
-交易日校验判定数据尚未就绪时，任务回到 `pending`，`not_before` 推迟 10 分钟，`attempts` 不增加，所以可以一直等到当天数据就绪。判定「已经错过」时，任务直接记为 `dead`（错误信息以「已错过」开头），在同步页和完整性核对中显示，而不是记为 `skipped`。
+交易日校验判定数据尚未就绪时，任务回到 `pending`，`not_before` 推迟 10 分钟，`attempts` 不增加，一直等到数据就绪。判定「已经错过」时记为 `dead`（错误信息以「已错过」开头），在同步页和完整性核对中显示。
 
 执行者用一个短事务认领任务（实现在 `queue.rs`）：按 `priority, task_id` 取第一条 `pending` 或 `failed` 且 `not_before` 已到的任务，用 `FOR UPDATE SKIP LOCKED` 锁定，同时把 `attempts` 加 1。HTTP 调用在认领事务提交之后执行。完成、失败的更新都带 `locked_by = 当前执行者` 条件，超时被回收的旧执行者无法覆盖新结果。任务的 `priority` 按急迫程度分层，同一层再加上数据集的 P0 10、P1 20、P2 30、P3 40：
 
 | 层 | 任务 |
 | --- | --- |
 | 0 | 定时同步中每个交易日执行的数据集（`schedule` 是 `after_close` 或 `daily`），包括只有当天值的估值、异动原因等 |
-| 50 | 兜底补偿（`repair` 运行），以及补偿时重新排队的失败任务 |
+| 50 | 兜底补偿和数据核检的重取（`repair` 运行），以及补偿时重新排队的失败任务 |
 | 100 | 定时同步中的其他数据集（每周、每月、财报季） |
 | 200 | 历史回补 |
 
-所以每周增量的几万个任务、积压的历史回补都不会挡住每天的数据。以前只按 P0–P3 排，估值和每周的财务报表同是 P1，2026-10-16 估值因此晚了 5.5 小时才取到。
+所以每周增量的几万个任务、积压的历史回补都不会挡住每天的数据。
 
 失败处理分两层：
 1. **单次请求内**：可重试的错误按 `defaults.retry.backoff_s`（默认 2、8、30 秒）退避后重试，每次尝试都写一行 `ops.api_call`。哪些错误可重试见 [错误处理](../interfaces/hithink_api.md#error_handling)。
@@ -135,9 +135,9 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 运行结束时，如果日线（`a_share.bar_1d`、`a_share.snapshot`）或公司行动（`a_share.corp_action`、`a_share.corp_action_dump`）有变化（成功任务的 `changed` 合计大于 0），依次执行：
 1. 把行情中出现过的日期补进 `ref.trading_day`（来源记为 `derived`）。供应商日历只有最近一年。
 2. `CALL mkt.rebuild_adj_segment(run_id)`：全量重算复权分段，包括等比复权因子和同花顺减法复权的系数，约 2 秒。
-3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的缓存（全市场扫描）失效。
+3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的进程内缓存（全市场扫描、市场概况、信号的过去表现）失效。
 
-重算完成后，用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，约 1 到 2 秒；巡检失败只写日志，不影响运行的状态。之后规划下一个波次（如果有）。复权的计算规则见 [复权](../domains/price_adjustment.md)。
+重算完成后，用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)；巡检失败只写日志，不影响运行的状态。之后规划下一个波次（如果有）。复权的计算规则见 [复权](../domains/price_adjustment.md)。
 
 新的一天的日线不用重算就有复权价（落在最后一个分段里）。但一个回补运行可能要执行一两天，期间补回来的历史日线和公司行动会改变分段，只在运行结束时重算的话，这段时间的复权价是旧的。所以执行循环的维护（每分钟一次）还会检查：自上次重算以来有价格类任务写入了变化，并且距上次重算超过 5 分钟，就重算一次。上次重算的时刻记在 `ops.scheduler` 的 `adj_rebuild` 作业上，用条件 UPDATE 抢占；运行结束时的重算也会刷新这个时刻。重算不阻塞查询，见 [等比复权因子](../domains/price_adjustment.md#equal_ratio_factor)。
 

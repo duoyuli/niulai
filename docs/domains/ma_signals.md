@@ -1,6 +1,6 @@
 # 均线与交叉信号
 
-本文说明均线的计算口径、金叉和死叉的判定规则，以及全市场扫描和自选股诊断的范围。价格口径的背景见 [复权](price_adjustment.md)，接口参数见 [REST API](../interfaces/rest_api.md#endpoints)。计算在 `backend/src/analysis/`（`ma.rs` 是均线和交叉，`scan.rs` 是全市场扫描），接口在 `backend/src/api/`；单只股票、全市场扫描、自选股诊断和 [回测](backtest.md) 共用同一套计算。为什么不在 SQL 中计算，见 [ADR：指标在 Rust 中计算](../decisions/indicator_compute.md)。
+本文说明均线的计算口径、金叉和死叉的判定规则，以及全市场扫描和自选股诊断的范围。价格口径的背景见 [复权](price_adjustment.md)，接口参数见 [REST API](../interfaces/rest_api.md#endpoints)。计算在 `backend/src/analysis/`（`ma.rs` 是均线和交叉，`scan.rs` 是全市场扫描）。[交叉判定](#cross_rule) 是全项目通用的：条件里所有「上穿」「下穿」都用它。均线接口 `GET /securities/{thscode}/ma` 和全市场扫描没有页面使用（K 线上的均线是叠加的指标），自选股诊断和均线交叉 [回测](backtest.md) 用同一套计算。为什么不在 SQL 中计算，见 [ADR：指标在 Rust 中计算](../decisions/indicator_compute.md)。
 
 <a id="ma_definition"></a>
 ## 均线口径

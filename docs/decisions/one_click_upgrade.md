@@ -1,6 +1,6 @@
 # ADR：Docker 部署的一键升级
 
-- 状态：已采纳（accepted），2026-10-16。部分取代 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md) 决策第 5 条「不提供运维脚本」中与升级有关的部分。
+- 状态：已采纳（accepted），2026-10-16。部分取代 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md) 决策第 5 条「不提供运维脚本」中与升级有关的部分。升级的顺序（先换掉 upgrader 再迁移、启动新版本）、部署迁移和进度显示已被 [ADR：部署迁移与升级进度](deploy_migrations.md) 取代；版本号格式已被 [ADR：版本号按发布日期定](calendar_versioning.md) 取代。
 - 相关文档：[一键升级](../operations/runbook.md#one_click_upgrade)、[ADR：只在发布版本标签时构建镜像](image_on_tag.md)。
 
 ## 背景

@@ -1,6 +1,6 @@
 # niulai 仓库说明
 
-A 股数据工作台：从同花顺金融数据服务同步行情、财务和特色数据到 PostgreSQL，提供复权、均线信号等查询 API 和网页界面。工程知识见 `docs/index.md`。
+A 股个股诊断工作台：从同花顺金融数据服务同步行情、财务和特色数据到 PostgreSQL，提供复权 K 线、指标与信号、选股策略与巡检、诊断和回测，通过网页和 REST API 使用。工程知识见 `docs/index.md`。
 
 ## 目录
 
@@ -11,7 +11,7 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 - `.github/workflows/ci.yml`：CI。PR 和推送到 `main` 只检查代码；推送 `v*` 标签时才构建 amd64、arm64 镜像并推送到 GHCR。
 - `.agents/skills/project-doc/`：本仓库使用的 project-doc skill；`.claude/skills/project-doc` 是指向它的符号链接。
 - `CLAUDE.md`：指向本文件的符号链接，供只读取 CLAUDE.md 的工具使用。
-- `README.md`：给第一次进入仓库的人看的项目介绍和快速开始。
+- `README.md`：项目介绍和部署方法；其余技术文档都在 `docs/`。
 
 ## 常用命令
 
