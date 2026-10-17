@@ -501,7 +501,7 @@ async fn one_click_upgrade_hands_request_to_upgrader() {
     // upgrader 在运行：提交请求，写入版本号
     std::fs::write(dir.join("heartbeat"), chrono::Utc::now().timestamp().to_string()).unwrap();
     let (st, _) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "1.2.0; rm -rf /"}))).await;
-    assert_eq!(st, StatusCode::BAD_REQUEST, "只接受 X.Y.Z");
+    assert_eq!(st, StatusCode::BAD_REQUEST, "只接受正式版本号");
     let (st, body) = call(&app, "POST", "/api/v1/system/upgrade", Some(json!({"version": "v1.2.0"}))).await;
     assert_eq!(st, StatusCode::ACCEPTED, "{body}");
     assert_eq!(body["state"], "requested");

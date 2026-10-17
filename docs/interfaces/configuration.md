@@ -62,7 +62,7 @@ Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.examp
 | 变量 | 默认值 | 含义 |
 | --- | --- | --- |
 | `COMPOSE_PROFILES` | `upgrader` | 启用一键升级助手 upgrader 容器；删掉这一行即关闭，见 [一键升级](../operations/runbook.md#one_click_upgrade) |
-| `NIULAI_IMAGE` | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；建议固定版本号，例如 `ghcr.io/duoyuli/niulai:1.2.0`。一键升级会改写这一行 |
+| `NIULAI_IMAGE` | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；建议固定版本号，例如 `ghcr.io/duoyuli/niulai:2026.10.18`。一键升级会改写这一行 |
 | `NIULAI_LISTEN_ADDR`、`NIULAI_PORT` | `127.0.0.1`、`8080` | niulai 在宿主机上监听的地址和端口；端口被占用时改 `NIULAI_PORT`，要从其他机器访问时把地址改成 `0.0.0.0` |
 | `POSTGRES_PASSWORD` | `niulai` | 内置数据库的密码，要与 `DATABASE_URL` 中的一致；只在第一次启动（创建数据卷）之前修改才生效 |
 

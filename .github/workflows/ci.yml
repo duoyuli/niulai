@@ -3,8 +3,8 @@
 # - check：后端 clippy（不允许警告）、单元测试和集成测试（用临时 PostgreSQL）；前端类型检查、代码检查、测试
 # - build：检查通过后，amd64 和 arm64 分别在对应架构的机器上原生构建（模拟另一种架构编译 Rust 要慢很多倍）
 # - merge：合并成一个多架构镜像 ghcr.io/<仓库所有者，小写>/niulai，并打标签：
-#     推送 v0.1.0 标签 → 0.1.0、0.1、latest、sha-<提交>（git tag v0.1.0 && git push origin v0.1.0）
-#   latest 始终指向最近一次发布的版本；预发布标签（例如 v0.2.0-rc.1）不更新 latest
+#     推送 v2026.10.18 标签 → 2026.10.18、latest、sha-<提交>；同一天的补丁 v2026.10.18.1 → 2026.10.18.1、latest、sha-<提交>
+#   版本号按发布日期定，用 deploy/release.sh 发布（自动算出下一个版本号）；latest 始终指向最近一次发布的版本
 # 部署（CD）见 deploy/ 和 docs/operations/runbook.md#deployment。
 name: ci
 
@@ -78,6 +78,8 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: 版本号格式（vYYYY.MM.DD 或 vYYYY.MM.DD.N，见 deploy/release.sh）
+        run: '[[ "$GITHUB_REF_NAME" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}(\.[0-9]+)?$ ]] || { echo "标签格式不对：$GITHUB_REF_NAME"; exit 1; }'
       - name: 镜像名（GHCR 要求小写）
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/niulai" >> "$GITHUB_ENV"
       - uses: actions/checkout@v5
@@ -137,11 +139,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
-          # 预发布版本（带 - 的标签）只打完整版本号和 sha
-          flavor: latest=auto
+          # 版本号是日期，不是 semver：去掉标签前面的 v 作为镜像标签；只有发布才会走到这里，所以每次都更新 latest
+          flavor: latest=true
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=match,pattern=^v(\d{4}\.\d{2}\.\d{2}(\.\d+)?)$,group=1
             type=sha
       - name: 合并多架构镜像并打标签
         working-directory: /tmp/digests

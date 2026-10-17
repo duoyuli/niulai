@@ -1,6 +1,6 @@
 # ADR：只在发布版本标签时构建镜像
 
-- 状态：已采纳（accepted），2026-10-16。部分取代 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md) 的决策第 1 条和后果「合并到 `main` 得到 `latest`」。
+- 状态：已采纳（accepted），2026-10-16。决策第 2、3 条（`0.1.0`、`0.1` 标签和预发布）已被 [ADR：版本号按发布日期定](calendar_versioning.md) 取代。部分取代 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md) 的决策第 1 条和后果「合并到 `main` 得到 `latest`」。
 - 相关文档：[CI：构建镜像](../operations/runbook.md#release_image)、[部署](../operations/runbook.md#deployment)。
 
 ## 背景

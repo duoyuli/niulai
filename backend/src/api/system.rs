@@ -15,6 +15,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
+use crate::version::parse;
 use crate::error::{ApiError, ApiResult};
 
 /// 构建时写入的版本号（CI 用 git 标签，例如 v1.2.0）；本机编译的是 dev
@@ -184,7 +185,7 @@ struct Tag {
     name: String,
 }
 
-/// 可以升级到的最新正式版本（vX.Y.Z，不含预发布）：GitHub 上的标签，并且镜像已经构建好、能从 GHCR 拉取。
+/// 可以升级到的最新正式版本（vYYYY.MM.DD[.N]，以前是 vX.Y.Z，见 [`crate::version`]）：GitHub 上的标签，并且镜像已经构建好、能从 GHCR 拉取。
 /// 推送标签后 CI 要几分钟才把镜像推上去，这期间不提示新版本，避免一键升级拉取镜像失败
 async fn fetch_latest(repo: &str) -> anyhow::Result<Option<String>> {
     let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).user_agent(concat!("niulai/", env!("CARGO_PKG_VERSION"))).build()?;
@@ -236,12 +237,6 @@ fn versions_desc<'a>(tags: impl Iterator<Item = &'a str>) -> Vec<String> {
     v.into_iter().map(|(_, v)| v).collect()
 }
 
-/// 正式版本号 X.Y.Z；预发布（带 -）和其他写法返回 None
-fn parse(v: &str) -> Option<(u64, u64, u64)> {
-    let mut it = v.split('.');
-    let p = (it.next()?.parse().ok()?, it.next()?.parse().ok()?, it.next()?.parse().ok()?);
-    it.next().is_none().then_some(p)
-}
 
 #[derive(Deserialize)]
 struct StatusFile {
@@ -291,10 +286,8 @@ mod tests {
 
     #[test]
     fn picks_newest_stable_tag() {
-        let tags = ["v1.1.0", "v1.10.0", "v1.9.3", "v2.0.0-rc.1", "latest", "v1.2"];
-        assert_eq!(versions_desc(tags.into_iter()), vec!["1.10.0".to_string(), "1.9.3".into(), "1.1.0".into()]);
-        assert_eq!(parse("1.2.3"), Some((1, 2, 3)));
-        assert_eq!(parse("1.2.3-rc.1"), None);
+        let tags = ["v1.1.0", "v1.10.0", "v2026.10.18", "v2026.10.18.1", "v2026.10.9", "v2.0.0-rc.1", "latest", "v1.2"];
+        assert_eq!(versions_desc(tags.into_iter()), vec!["2026.10.18.1".to_string(), "2026.10.18".into(), "2026.10.9".into(), "1.10.0".into(), "1.1.0".into()]);
         assert_eq!(parse("dev"), None);
     }
 

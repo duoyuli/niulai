@@ -77,9 +77,9 @@ fn name(c: &Value) -> String {
     c["Name"].as_str().unwrap_or_default().trim_start_matches('/').to_string()
 }
 
+/// 只接受正式版本号（`YYYY.MM.DD`、`YYYY.MM.DD.N`，以及以前的 `X.Y.Z`），版本号会拼进镜像标签
 pub fn valid_version(v: &str) -> bool {
-    let parts: Vec<&str> = v.split('.').collect();
-    parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    crate::version::parse(v).is_some()
 }
 
 /// 自己升级后留下的旧 upgrader 容器（名字以 -old 结尾）
@@ -366,8 +366,8 @@ mod tests {
 
     #[test]
     fn accepts_only_release_versions_and_images() {
-        assert!(valid_version("1.2.0"));
-        for bad in ["1.2", "1.2.0-rc.1", "1.0;id", "", "a.b.c"] {
+        assert!(valid_version("1.2.0") && valid_version("2026.10.18") && valid_version("2026.10.18.1"));
+        for bad in ["1.2", "1.2.0-rc.1", "1.0;id", "", "a.b.c", "2026.10.18.1.1", "2026.10.18 x"] {
             assert!(!valid_version(bad), "{bad}");
         }
         assert_eq!(release_repo("ghcr.io/duoyuli/niulai:1.1.0"), Some("ghcr.io/duoyuli/niulai"));

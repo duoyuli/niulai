@@ -20,3 +20,4 @@ pub mod telemetry;
 pub mod time;
 pub mod upgrader;
 pub mod vendor;
+pub mod version;

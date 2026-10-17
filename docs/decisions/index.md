@@ -14,7 +14,8 @@
 - [CI 构建镜像，部署只交付服务本身](ci_cd.md)：CI 检查代码并构建多架构镜像推送到 GHCR（构建时机、「不包含登录」和「不提供运维脚本」已被部分取代）；CD 分 Docker 部署和源码部署（直接编译运行）；只交付服务本身，对外一个 HTTP 端口。状态：已采纳。阅读时机：修改 `deploy/` 或 `.github/workflows/`，或考虑在项目中加入登录。
 - [Docker 部署的一键升级](one_click_upgrade.md)：版本号编译进镜像，页面检测 GitHub 上的新标签；upgrader 容器运行 `niulai upgrader`，直接调用 Docker Engine API 执行下载、备份、重建和失败换回；提供网页的 niulai 只能通过共享卷提交版本号。状态：已采纳。阅读时机：修改 `backend/src/upgrader/`、`backend/src/api/system.rs`、`compose.yml` 的 upgrader，或考虑其他部署方式的自动升级之前。
 - [网页登录](web_login.md)：一个管理员账户（环境变量，默认 niulai / niulai），后端统一拦截接口，登录状态是保存 30 天的签名 Cookie。状态：已采纳。阅读时机：修改 `backend/src/api/auth.rs`、登录页，或考虑多用户、HTTPS、单点登录之前。
-- [只在发布版本标签时构建镜像](image_on_tag.md)：`main` 和 PR 只做检查，推送 `v*` 标签才构建多架构镜像；`latest` 指向最近一次正式发布。状态：已采纳。阅读时机：修改 `.github/workflows/ci.yml` 的触发条件或镜像标签，或发布新版本时。
+- [只在发布版本标签时构建镜像](image_on_tag.md)：`main` 和 PR 只做检查，推送 `v*` 标签才构建多架构镜像；`latest` 指向最近一次正式发布。状态：已采纳，镜像标签和预发布（第 2、3 条）已被取代。阅读时机：修改 `.github/workflows/ci.yml` 的触发条件或镜像标签，或发布新版本时。
+- [版本号按发布日期定](calendar_versioning.md)：版本号是上海日期 `YYYY.MM.DD`，同一天再发布加补丁号 `.1`、`.2`；用 `deploy/release.sh` 发布；以前的 `X.Y.Z` 都小于日期版本，1.5.0 能直接升级。状态：已采纳。阅读时机：发布新版本，修改版本号的解析、比较、镜像标签，或 `deploy/release.sh` 时。
 - [部署方案](deployment.md)：第一版部署方案：Caddy 做 HTTPS 和基本认证、安装升级备份恢复脚本。状态：已被取代。阅读时机：想了解为什么项目里不包含 HTTPS、登录和运维脚本。
 - [单进程服务](single_process_service.md)：三个程序合并为一个，`niulai serve` 同时运行 API、任务执行和调度。状态：已采纳，「扩容」一条已被取代。阅读时机：考虑拆分进程、调整部署方式或扩容。
 - [限速在进程内](in_process_rate_limit.md)：去掉 Redis，同一时刻只有一个进程执行同步任务（数据库咨询锁），限速在进程内。状态：已采纳。阅读时机：考虑多进程执行、更换 API Key 额度，或调整限速。

@@ -171,9 +171,9 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 
 工作流是 `.github/workflows/ci.yml`：
 - 每次 PR 和推送到 `main`：只做检查，包括后端 clippy（不允许警告）、单元测试和集成测试，前端类型检查、代码检查和测试。不构建镜像。
-- 发布版本：`git tag v0.1.0 && git push origin v0.1.0`。检查通过后构建 amd64 和 arm64 镜像，推送为 `0.1.0`、`0.1` 和 `latest`。预发布标签（例如 `v0.2.0-rc.1`）只推送完整版本号，不更新 `latest`。服务器上建议固定版本号。为什么只在发标签时构建，见 [ADR：只在发布版本标签时构建镜像](../decisions/image_on_tag.md)。
+- 发布版本：在 `main` 上、改动都已推送后运行 `deploy/release.sh "这个版本的一句话说明"`。它按今天的上海日期打标签 `vYYYY.MM.DD` 并推送；同一天再发布时自动加补丁号 `vYYYY.MM.DD.1`、`.2`……检查通过后构建 amd64 和 arm64 镜像，推送为去掉 `v` 的版本号（例如 `2026.10.18`）、`latest` 和 `sha-<提交>`。格式不对的 `v*` 标签不构建镜像。服务器上建议固定版本号。版本号的规则见 [ADR：版本号按发布日期定](../decisions/calendar_versioning.md)。为什么只在发标签时构建，见 [ADR：只在发布版本标签时构建镜像](../decisions/image_on_tag.md)。
 
-预期结果：GitHub Actions 中标签触发的 `ci` 工作流成功；`docker buildx imagetools inspect ghcr.io/duoyuli/niulai:0.1.0` 列出 `linux/amd64` 和 `linux/arm64`。镜像包是公开的，拉取不需要 `docker login`。
+预期结果：GitHub Actions 中标签触发的 `ci` 工作流成功；`docker buildx imagetools inspect ghcr.io/duoyuli/niulai:2026.10.18` 列出 `linux/amd64` 和 `linux/arm64`。镜像包是公开的，拉取不需要 `docker login`。
 
 <a id="server_install"></a>
 ### CD：Docker 部署
@@ -218,10 +218,10 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 <a id="one_click_upgrade"></a>
 ### 一键升级（Docker 部署）
 
-页面左上角 logo 后面是当前版本号。niulai 每 6 小时查一次 GitHub 上最新的 `vX.Y.Z` 标签（`NIULAI_UPDATE_REPO`，默认 `duoyuli/niulai`），并确认这个版本的镜像已经能从 GHCR 拉取（推送标签后 CI 要几分钟构建镜像，这期间不提示），有新版本时亮红点；点开后点「一键升级」。
+页面左上角 logo 后面是当前版本号。niulai 每 6 小时查一次 GitHub 上最新的版本标签：`vYYYY.MM.DD` 或同一天的补丁 `vYYYY.MM.DD.N`，以前的 `vX.Y.Z` 都比它们旧（仓库是 `NIULAI_UPDATE_REPO`，默认 `duoyuli/niulai`），并确认这个版本的镜像已经能从 GHCR 拉取（推送标签后 CI 要几分钟构建镜像，这期间不提示），有新版本时亮红点；点开后点「一键升级」。
 
 执行升级的是 `compose.yml` 中的 `upgrader` 容器：它用与 niulai 相同的镜像，运行 `niulai upgrader`，通过 `/var/run/docker.sock` 直接调用 Docker Engine API，由 `.env` 中的 `COMPOSE_PROFILES=upgrader` 启用。niulai 和 upgrader 通过卷 `upgrade`（niulai 中是 `NIULAI_UPGRADE_DIR=/upgrade`）交换文件：
-- niulai 写 `request`，内容只是版本号，例如 `1.2.0`；upgrader 只接受 `X.Y.Z` 格式。
+- niulai 写 `request`，内容只是版本号，例如 `2026.10.18`；upgrader 只接受正式版本号（三段或四段数字）。1.5.0 及更早的版本只认三段，同一天的补丁版本要等升级到日期版本后才能识别。
 - upgrader 每 3 秒写一次 `heartbeat`；30 秒内没有更新时，页面显示「没有启用一键升级」和手动升级的命令。
 - upgrader 把进度写在 `status`，输出写在 `log`，页面每 2 秒刷新一次，失败时显示日志的最后几行。
 
