@@ -3,11 +3,14 @@
 //! 只能在共享目录中写一个版本号。双方交换的文件见 `api::system`，规则见 docs/operations/runbook.md#one_click_upgrade。
 
 pub mod docker;
+mod migrate;
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use docker::Docker;
@@ -46,15 +49,26 @@ pub async fn run(opts: Options) -> anyhow::Result<()> {
     tracing::info!(project = %project, "一键升级助手已启动");
 
     let files = Files { dir: opts.upgrade_dir.clone() };
+    let up = Upgrade { docker: &docker, files: &files, deploy: &opts.deploy_dir, project: &project, me: &me };
+    // 上一个升级助手把升级交给了我（它先把自己换成了新版本）：接着做剩下的步骤
+    if let Some(h) = files.take_handoff() {
+        let p = Progress::resume(&files, &h.target, h.steps);
+        p.done("self", "已换成新版本");
+        up.finish(&p, &h.target).await;
+    } else if up.migrations_pending() {
+        // 不是升级（例如升级助手刚被手动更新）也检查一遍部署迁移
+        let p = Progress::new(&files, "", &[("migrate", "部署迁移")]);
+        match up.run_deploy_migrations(&p, false).await {
+            Ok(()) => p.finish_ok("部署迁移已完成"),
+            Err(e) => p.finish_err(&format!("{e:#}")),
+        }
+    }
     loop {
         if let Some(v) = files.take_request() {
             if valid_version(&v) {
-                let up = Upgrade { docker: &docker, files: &files, deploy: &opts.deploy_dir, project: &project, me: &me };
-                if up.run(&v).await {
-                    up.replace_self(&v).await;
-                }
+                up.begin(&v).await;
             } else {
-                files.status("failed", "", "版本号不合法");
+                Progress::new(&files, "", &[]).finish_err("版本号不合法");
             }
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -96,6 +110,25 @@ async fn cleanup_previous(docker: &Docker, me: &Value, project: &str) {
     }
 }
 
+// @project-doc docs/operations/runbook.md#one_click_upgrade
+/// 升级的一个步骤：写在状态文件里，页面据此显示进度条和步骤列表
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Step {
+    pub key: String,
+    pub label: String,
+    /// pending / running / done / failed / skipped
+    pub state: String,
+    #[serde(default)]
+    pub detail: String,
+}
+
+/// 上一个升级助手交给新版本升级助手的进度
+#[derive(Serialize, Deserialize)]
+struct Handoff {
+    target: String,
+    steps: Vec<Step>,
+}
+
 struct Files {
     dir: PathBuf,
 }
@@ -108,8 +141,20 @@ impl Files {
         Some(v.trim().to_string())
     }
 
-    fn status(&self, state: &str, target: &str, message: &str) {
-        let body = json!({ "state": state, "target": target, "message": message, "at": chrono::Utc::now().timestamp() });
+    fn take_handoff(&self) -> Option<Handoff> {
+        let path = self.dir.join("handoff");
+        let v = std::fs::read_to_string(&path).ok()?;
+        let _ = std::fs::remove_file(&path);
+        serde_json::from_str(&v).ok()
+    }
+
+    fn write_handoff(&self, h: &Handoff) -> anyhow::Result<()> {
+        Ok(std::fs::write(self.dir.join("handoff"), serde_json::to_string(h)?)?)
+    }
+
+    /// 状态文件：页面读它显示进度。message 是当前步骤的一句话，给只认 message 的旧页面
+    fn status(&self, state: &str, target: &str, message: &str, steps: &[Step]) {
+        let body = json!({ "state": state, "target": target, "message": message, "at": chrono::Utc::now().timestamp(), "steps": steps });
         let tmp = self.dir.join("status.tmp");
         let _ = std::fs::write(&tmp, body.to_string()).and_then(|_| std::fs::rename(&tmp, self.dir.join("status")));
         tracing::info!(state, target, message, "升级状态");
@@ -127,6 +172,72 @@ impl Files {
     }
 }
 
+/// 一次升级（或部署迁移）的进度：每个步骤的状态和说明，每次变化都写进状态文件
+struct Progress<'a> {
+    files: &'a Files,
+    target: String,
+    steps: RefCell<Vec<Step>>,
+}
+
+impl<'a> Progress<'a> {
+    fn new(files: &'a Files, target: &str, plan: &[(&str, &str)]) -> Self {
+        let steps = plan.iter().map(|(k, l)| Step { key: k.to_string(), label: l.to_string(), state: "pending".into(), detail: String::new() }).collect();
+        Progress { files, target: target.into(), steps: RefCell::new(steps) }
+    }
+
+    fn resume(files: &'a Files, target: &str, steps: Vec<Step>) -> Self {
+        Progress { files, target: target.into(), steps: RefCell::new(steps) }
+    }
+
+    fn set(&self, key: &str, state: &str, detail: &str) {
+        let mut steps = self.steps.borrow_mut();
+        if let Some(s) = steps.iter_mut().find(|s| s.key == key) {
+            s.state = state.into();
+            s.detail = detail.into();
+        }
+        let label = steps.iter().find(|s| s.key == key).map_or(key.to_string(), |s| s.label.clone());
+        let message = if detail.is_empty() { label } else { format!("{label}：{detail}") };
+        self.files.status("running", &self.target, &message, &steps);
+    }
+
+    fn running(&self, key: &str, detail: &str) {
+        self.set(key, "running", detail);
+    }
+
+    fn done(&self, key: &str, detail: &str) {
+        self.set(key, "done", detail);
+        self.files.log(&format!("{key} 完成 {detail}"));
+    }
+
+    fn skip(&self, key: &str, detail: &str) {
+        self.set(key, "skipped", detail);
+        self.files.log(&format!("{key} 跳过：{detail}"));
+    }
+
+    fn snapshot(&self) -> Vec<Step> {
+        self.steps.borrow().clone()
+    }
+
+    fn finish_ok(&self, message: &str) {
+        self.files.log(message);
+        self.files.status("done", &self.target, message, &self.steps.borrow());
+    }
+
+    /// 失败：正在进行的步骤记为失败，后面的保持未开始
+    fn finish_err(&self, message: &str) {
+        let mut steps = self.steps.borrow_mut();
+        for s in steps.iter_mut().filter(|s| s.state == "running") {
+            s.state = "failed".into();
+        }
+        self.files.log(message);
+        self.files.status("failed", &self.target, message, &steps);
+    }
+}
+
+/// 升级的步骤。先把升级助手换成新版本，由新版本的升级助手做部署迁移和后面的步骤：
+/// 新版本需要的迁移只有新版本的升级助手知道，迁移要在新版本的 niulai 启动之前做完
+const PLAN: [(&str, &str); 5] = [("pull", "下载新版本"), ("self", "更新升级助手"), ("backup", "备份数据库"), ("migrate", "部署迁移"), ("restart", "启动新版本")];
+
 struct Upgrade<'a> {
     docker: &'a Docker,
     files: &'a Files,
@@ -136,34 +247,41 @@ struct Upgrade<'a> {
 }
 
 impl Upgrade<'_> {
-    /// 升级 niulai 到 v，返回是否成功。失败时恢复原来的镜像和 .env，并写好失败原因
-    async fn run(&self, v: &str) -> bool {
+    /// 收到升级请求：下载新版本，把升级助手自己换成新版本，交给它做剩下的步骤
+    async fn begin(&self, v: &str) {
         self.files.reset_log();
-        match self.try_run(v).await {
-            Ok(()) => {
-                self.files.log("完成");
-                self.files.status("done", v, &format!("已升级到 {v}"));
-                true
-            }
-            Err(e) => {
-                let msg = format!("{e:#}");
-                self.files.log(&msg);
-                self.files.status("failed", v, &msg);
-                false
-            }
+        let p = Progress::new(self.files, v, &PLAN);
+        match self.download(&p, v).await {
+            Ok(()) => {}
+            Err(e) => return p.finish_err(&format!("{e:#}")),
         }
+        p.running("self", "");
+        match self.handoff(&p, v).await {
+            // 新的升级助手已经启动，由它继续；这个旧容器会被它删掉
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(e) => p.skip("self", &format!("没有换成：{e:#}，由当前的升级助手继续")),
+        }
+        self.finish(&p, v).await;
     }
 
-    async fn try_run(&self, v: &str) -> anyhow::Result<()> {
+    async fn download(&self, p: &Progress<'_>, v: &str) -> anyhow::Result<()> {
         let niulai = self.find("niulai").await?;
         let current = niulai["Config"]["Image"].as_str().unwrap_or_default().to_string();
         let repo = release_repo(&current).with_context(|| format!("niulai 用的镜像是 {current}，不是发布的镜像，不能一键升级"))?;
         let target = format!("{repo}:{v}");
         self.files.log(&format!("从 {current} 升级到 {target}"));
-
-        self.files.status("running", v, "下载新版本");
+        p.running("pull", "开始下载");
+        let mut last = std::time::Instant::now();
+        let mut on_progress = |done: u64, total: u64| {
+            // 每秒最多写一次状态文件
+            if total > 0 && last.elapsed() >= Duration::from_secs(1) {
+                last = std::time::Instant::now();
+                p.running("pull", &format!("{}%（{} / {} MB）", done * 100 / total, done >> 20, total >> 20));
+            }
+        };
         let mut pulled = String::new();
-        if let Err(e) = self.docker.pull(repo, v, &mut pulled).await {
+        if let Err(e) = self.docker.pull(repo, v, &mut pulled, &mut on_progress).await {
             // 本机已经有这个镜像时（例如离线环境预先导入）照常升级
             if !self.docker.image_exists(&target).await {
                 return Err(e.context("下载新版本失败，没有做任何改动"));
@@ -173,24 +291,69 @@ impl Upgrade<'_> {
         if !pulled.trim().is_empty() {
             self.files.log(pulled.trim_end());
         }
+        p.done("pull", "");
+        Ok(())
+    }
 
-        if env_var(&niulai, "DATABASE_URL").is_some_and(|u| u.contains("@postgres:")) {
-            self.files.status("running", v, "备份数据库");
-            self.backup(v).await.context("备份数据库失败，没有升级")?;
+    /// 把升级助手换成新版本。返回 true 表示新的升级助手已经接手
+    async fn handoff(&self, p: &Progress<'_>, v: &str) -> anyhow::Result<bool> {
+        let Some(repo) = self.me["Config"]["Image"].as_str().and_then(release_repo) else {
+            p.skip("self", "升级助手用的不是发布的镜像");
+            return Ok(false);
+        };
+        let image = format!("{repo}:{v}");
+        if self.me["Config"]["Image"].as_str() == Some(image.as_str()) {
+            p.skip("self", "已经是新版本");
+            return Ok(false);
         }
+        p.running("self", "换成新版本，由它接着升级");
+        self.files.write_handoff(&Handoff { target: v.into(), steps: p.snapshot() })?;
+        if let Err(e) = self.recreate(self.me, &image, false).await {
+            let _ = self.files.take_handoff();
+            return Err(e);
+        }
+        Ok(true)
+    }
 
-        self.files.status("running", v, "重启服务");
+    /// 升级的后半段：备份、部署迁移、用新版本重建 niulai
+    async fn finish(&self, p: &Progress<'_>, v: &str) {
+        match self.finish_steps(p, v).await {
+            Ok(()) => p.finish_ok(&format!("已升级到 {v}")),
+            Err(e) => p.finish_err(&format!("{e:#}")),
+        }
+    }
+
+    async fn finish_steps(&self, p: &Progress<'_>, v: &str) -> anyhow::Result<()> {
+        let niulai = self.find("niulai").await?;
+        let current = niulai["Config"]["Image"].as_str().unwrap_or_default().to_string();
+        let repo = release_repo(&current).with_context(|| format!("niulai 用的镜像是 {current}，不是发布的镜像，不能一键升级"))?;
+        let target = format!("{repo}:{v}");
+        let backed_up = if builtin_db(&niulai) {
+            p.running("backup", "pg_dump");
+            let file = self.backup(v).await.context("备份数据库失败，没有升级")?;
+            p.done("backup", &file);
+            true
+        } else {
+            p.skip("backup", "用的不是内置数据库");
+            false
+        };
+        self.run_deploy_migrations(p, backed_up).await.context("部署迁移失败，没有升级；迁移前的状态已经恢复")?;
+
+        p.running("restart", "停止旧版本（最多等 2 分钟，让正在执行的同步任务结束）");
         let env_path = self.deploy.join(".env");
         let env_before = std::fs::read_to_string(&env_path).ok();
         if let Some(text) = &env_before {
             write_in_place(&env_path, &set_env_line(text, "NIULAI_IMAGE", &target))?;
         }
-        if let Err(e) = self.recreate(&niulai, &target, true).await {
+        let niulai = self.find("niulai").await?;
+        let tick = |secs: u64| p.running("restart", &format!("等新版本启动，已等 {secs} 秒（含数据库迁移，最多 {} 分钟）", HEALTHY_TIMEOUT.as_secs() / 60));
+        if let Err(e) = self.recreate_with(&niulai, create_body_for(self.docker, &niulai, &target).await?, true, &tick).await {
             if let Some(text) = &env_before {
                 let _ = write_in_place(&env_path, text);
             }
             return Err(e.context("新版本没有正常启动，已换回原来的版本；数据库迁移可能已经执行，必要时用 backups/ 中的备份恢复"));
         }
+        p.done("restart", "");
         Ok(())
     }
 
@@ -200,25 +363,31 @@ impl Upgrade<'_> {
         self.docker.inspect_container(first["Id"].as_str().unwrap_or_default()).await
     }
 
-    async fn backup(&self, v: &str) -> anyhow::Result<()> {
+    /// 备份内置数据库到部署目录的 backups/，返回文件名
+    async fn backup(&self, label: &str) -> anyhow::Result<String> {
         let pg = self.find("postgres").await?;
         let dir = self.deploy.join("backups");
         std::fs::create_dir_all(&dir)?;
-        let file = dir.join(format!("niulai-before-{v}-{}.dump", crate::time::now_cn().format("%Y%m%d-%H%M%S")));
+        let file = dir.join(format!("niulai-before-{label}-{}.dump", crate::time::now_cn().format("%Y%m%d-%H%M%S")));
         let (code, stderr) = self.docker.exec_to_file(pg["Id"].as_str().unwrap_or_default(), &["pg_dump", "-U", "niulai", "-Fc", "niulai"], &file).await?;
         if code != 0 {
             let _ = std::fs::remove_file(&file);
             bail!("pg_dump 退出码 {code}：{}", stderr.trim());
         }
-        self.files.log(&format!("已备份到 backups/{}", file.file_name().unwrap_or_default().to_string_lossy()));
-        Ok(())
+        let name = format!("backups/{}", file.file_name().unwrap_or_default().to_string_lossy());
+        self.files.log(&format!("已备份到 {name}"));
+        Ok(name)
     }
 
-    /// 用新镜像重建容器，保留原来的配置、卷和网络。wait 时等新容器 healthy，失败则换回旧容器
+    /// 用新镜像重建容器，保留原来的配置、卷和网络
     async fn recreate(&self, old: &Value, image: &str, wait: bool) -> anyhow::Result<()> {
+        let body = create_body_for(self.docker, old, image).await?;
+        self.recreate_with(old, body, wait, &|_| {}).await
+    }
+
+    /// 按给定的参数重建容器。wait 时先停旧容器、等新容器 healthy（每 3 秒调用一次 tick），失败则换回旧容器
+    async fn recreate_with(&self, old: &Value, body: Value, wait: bool, tick: &dyn Fn(u64)) -> anyhow::Result<()> {
         let old_id = old["Id"].as_str().unwrap_or_default().to_string();
-        let old_image = self.docker.inspect_image(old["Image"].as_str().unwrap_or_default()).await?;
-        let body = create_body(old, &old_image, image);
         let name = name(old);
         let parked = format!("{name}-old");
         if wait {
@@ -239,7 +408,7 @@ impl Upgrade<'_> {
         if !wait {
             return Ok(());
         }
-        if let Err(e) = self.wait_healthy(&new_id).await {
+        if let Err(e) = self.wait_healthy(&new_id, tick).await {
             self.restore(&old_id, &name, Some(&new_id)).await;
             return Err(e);
         }
@@ -256,9 +425,10 @@ impl Upgrade<'_> {
         self.files.log(&format!("已换回原来的容器 {name}"));
     }
 
-    async fn wait_healthy(&self, id: &str) -> anyhow::Result<()> {
+    async fn wait_healthy(&self, id: &str, tick: &dyn Fn(u64)) -> anyhow::Result<()> {
         let started = std::time::Instant::now();
         loop {
+            tick(started.elapsed().as_secs());
             let c = self.docker.inspect_container(id).await?;
             let state = &c["State"];
             match state["Health"]["Status"].as_str() {
@@ -280,15 +450,16 @@ impl Upgrade<'_> {
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
     }
+}
 
-    /// niulai 升级成功后，upgrader 自己也换成新镜像：新容器启动时删掉这个旧容器
-    async fn replace_self(&self, v: &str) {
-        let Some(repo) = self.me["Config"]["Image"].as_str().and_then(release_repo) else { return };
-        let image = format!("{repo}:{v}");
-        if let Err(e) = self.recreate(self.me, &image, false).await {
-            tracing::warn!(error = %format!("{e:#}"), "upgrader 换成新版本失败，下次 docker compose up 时会更新");
-        }
-    }
+/// niulai 连的是不是同一个 compose 中的内置数据库
+fn builtin_db(niulai: &Value) -> bool {
+    env_var(niulai, "DATABASE_URL").is_some_and(|u| u.contains("@postgres:"))
+}
+
+async fn create_body_for(docker: &Docker, old: &Value, image: &str) -> anyhow::Result<Value> {
+    let old_image = docker.inspect_image(old["Image"].as_str().unwrap_or_default()).await?;
+    Ok(create_body(old, &old_image, image))
 }
 
 /// 发布的镜像（ghcr.io/<所有者>/niulai:<标签>）的仓库部分；其他镜像返回 None

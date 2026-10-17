@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useEffect, useRef, useState } from "react";
-import type { VersionInfo } from "../api/generated/model";
+import type { UpgradeStatus, UpgradeStep, VersionInfo } from "../api/generated/model";
 import { getVersionQueryKey, useUpgrade, useVersion, version } from "../api/generated/system/system";
 import { buttonClass, errorText } from "./ui";
 
@@ -11,6 +11,8 @@ export function VersionBadge() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [waiting, setWaiting] = useState<string | null>(null);
+  // 升级进行中（包括升级助手启动后做部署迁移）：服务会重启，请求失败也继续轮询
+  const busyRef = useRef(false);
   const q = useVersion(undefined, {
     query: {
       staleTime: 60_000,
@@ -19,7 +21,7 @@ export function VersionBadge() {
         return waiting || s === "requested" || s === "running" ? 2000 : 30 * 60_000;
       },
       // 服务重启时请求会失败，继续轮询
-      retry: waiting ? true : 1,
+      retry: (count: number) => !!waiting || busyRef.current || count < 1,
     },
   });
   const upgrade = useUpgrade({
@@ -31,14 +33,15 @@ export function VersionBadge() {
     },
   });
   const v = q.data;
+  busyRef.current = isBusy(v?.upgrade);
 
-  // 新版本已经在运行：刷新页面，加载新的前端
+  // 新版本已经在运行、升级的每一步都做完了：刷新页面，加载新的前端
   useEffect(() => {
-    if (waiting && v?.current === waiting) {
+    if (waiting && v?.current === waiting && !isBusy(v.upgrade)) {
       const t = setTimeout(() => window.location.reload(), 1500);
       return () => clearTimeout(t);
     }
-  }, [waiting, v?.current]);
+  }, [waiting, v?.current, v?.upgrade]);
   // 升级失败时停止等待
   useEffect(() => {
     if (waiting && v?.upgrade.state === "failed" && v.upgrade.target === waiting) setWaiting(null);
@@ -53,7 +56,7 @@ export function VersionBadge() {
   }, [open]);
 
   if (!v) return null;
-  const busy = !!waiting || v.upgrade.state === "requested" || v.upgrade.state === "running";
+  const busy = !!waiting || isBusy(v.upgrade);
   return (
     <div ref={ref} className="relative">
       <button
@@ -106,18 +109,14 @@ function Panel({
 }) {
   const u = v.upgrade;
   if (busy) {
-    const done = waiting !== null && v.current === waiting;
-    return (
-      <div className="flex flex-col gap-2">
-        <p className="flex items-center gap-2 font-medium">
-          <span className="size-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-accent" />
-          {done ? `已升级到 v${waiting}，正在刷新页面` : `正在升级到 v${u.target ?? waiting}`}
-        </p>
-        {!done && <p className="text-zinc-500">{u.message ?? "等待升级助手接手"}</p>}
-        <p className="text-xs text-zinc-400">
-          升级时服务会重启一次，约一到两分钟，期间页面可能暂时打不开。完成后自动刷新。
-        </p>
-      </div>
+    const done = waiting !== null && v.current === waiting && !isBusy(u);
+    return done ? (
+      <p className="flex items-center gap-2 font-medium">
+        <span className="size-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-accent" />
+        已升级到 v{waiting}，正在刷新页面
+      </p>
+    ) : (
+      <UpgradeProgress u={u} target={u.target ?? waiting} />
     );
   }
   return (
@@ -181,6 +180,107 @@ function Panel({
           {!!upgradeError && <p className="text-xs text-red-600">{errorText(upgradeError)}</p>}
         </>
       )}
+    </div>
+  );
+}
+
+/** 升级是否还在进行：已提交或正在执行 */
+export function isBusy(u?: UpgradeStatus): boolean {
+  return u?.state === "requested" || u?.state === "running";
+}
+
+/** 整体进度（0 到 1）：做完和跳过的步骤算满，进行中的按说明里的百分比（例如下载 45%）算一部分 */
+export function progressOf(steps: UpgradeStep[]): number {
+  if (steps.length === 0) return 0;
+  const part = steps.reduce((n, s) => {
+    if (s.state === "done" || s.state === "skipped") return n + 1;
+    if (s.state === "running") {
+      const m = (s.detail ?? "").match(/^(\d+)%/);
+      return n + (m ? Number(m[1]) / 100 : 0.3);
+    }
+    return n;
+  }, 0);
+  return Math.min(1, part / steps.length);
+}
+
+const STEP_ICON: Record<string, { icon: string; className: string }> = {
+  pending: { icon: "○", className: "text-zinc-400" },
+  running: { icon: "", className: "font-medium" },
+  done: { icon: "✓", className: "text-emerald-600 dark:text-emerald-400" },
+  skipped: { icon: "–", className: "text-zinc-400" },
+  failed: { icon: "✕", className: "text-red-600 dark:text-red-400" },
+};
+
+/** 升级进度：进度条和每一步的状态。旧版本的升级助手不写步骤，只显示一句当前在做什么 */
+export function UpgradeProgress({
+  u,
+  target,
+  compact = false,
+}: {
+  u: UpgradeStatus;
+  target?: string | null;
+  compact?: boolean;
+}) {
+  const steps = u.steps;
+  const pct = progressOf(steps);
+  // 状态文件 10 分钟没有更新：升级助手可能卡住了
+  const stale = !!u.updated_at && Date.now() - new Date(u.updated_at).getTime() > 10 * 60_000;
+  const title = target ? `正在升级到 v${target}` : "正在做部署迁移";
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="flex items-center gap-2 font-medium">
+        <span className="size-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-accent" />
+        {title}
+        {steps.length > 0 && <span className="num text-xs text-zinc-500">{Math.round(pct * 100)}%</span>}
+      </p>
+      {steps.length > 0 ? (
+        <>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+            <div className="h-full bg-accent transition-all duration-500" style={{ width: `${pct * 100}%` }} />
+          </div>
+          <ol className={compact ? "flex flex-wrap gap-x-4 gap-y-1 text-xs" : "flex flex-col gap-1 text-xs"}>
+            {steps.map((s) => {
+              const st = STEP_ICON[s.state] ?? STEP_ICON.pending;
+              return (
+                <li key={s.key} className={clsx("flex items-baseline gap-1.5", st?.className)}>
+                  {s.state === "running" ? (
+                    <span className="inline-block size-2.5 shrink-0 animate-spin rounded-full border-2 border-zinc-300 border-t-accent" />
+                  ) : (
+                    <span className="w-2.5 shrink-0 text-center">{st?.icon}</span>
+                  )}
+                  <span className="shrink-0 whitespace-nowrap">{s.label}</span>
+                  {s.detail && (!compact || s.state === "running") && (
+                    <span className="min-w-0 break-words font-normal text-zinc-500">{s.detail}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      ) : (
+        <p className="text-zinc-500">{u.message ?? "等待升级助手接手"}</p>
+      )}
+      {stale ? (
+        <p className="text-xs text-amber-600">
+          超过 10 分钟没有新进展。可以在部署目录执行 docker compose logs upgrader 看看升级助手在做什么。
+        </p>
+      ) : (
+        <p className="text-xs text-zinc-400">
+          升级时服务会重启，期间页面可能暂时打不开，进度会在重新连上后接着显示。完成后自动刷新。
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** 页面顶部的升级进度：升级进行中时在每个页面都显示，不用点开版本号 */
+export function UpgradeBanner() {
+  const q = useVersion(undefined, { query: { staleTime: 60_000 } });
+  const u = q.data?.upgrade;
+  if (!u || !isBusy(u)) return null;
+  return (
+    <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-sm">
+      <UpgradeProgress u={u} target={u.target} compact />
     </div>
   );
 }

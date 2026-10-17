@@ -68,8 +68,9 @@ impl Docker {
         Ok(Self::check(resp, "列出容器").await?.json().await?)
     }
 
-    /// 拉取镜像。进度是一行一个 JSON，出错时其中带 error
-    pub async fn pull(&self, repo: &str, tag: &str, log: &mut String) -> anyhow::Result<()> {
+    /// 拉取镜像。进度是一行一个 JSON，出错时其中带 error。
+    /// 边下载边按各层的已下载和总字节数调用 on_progress(已下载, 总数)
+    pub async fn pull(&self, repo: &str, tag: &str, log: &mut String, on_progress: &mut dyn FnMut(u64, u64)) -> anyhow::Result<()> {
         let resp = self
             .http
             .post(Self::url("/images/create"))
@@ -77,15 +78,25 @@ impl Docker {
             .send()
             .await
             .context("拉取镜像：连不上 Docker")?;
-        let text = Self::check(resp, "拉取镜像").await?.text().await?;
-        for line in text.lines() {
-            let v: Value = serde_json::from_str(line).unwrap_or(Value::Null);
-            if let Some(e) = v["error"].as_str() {
-                bail!("拉取镜像失败：{e}");
-            }
-            if let Some(s) = v["status"].as_str().filter(|s| s.starts_with("Digest") || s.starts_with("Status")) {
-                log.push_str(s);
-                log.push('\n');
+        let mut resp = Self::check(resp, "拉取镜像").await?;
+        let mut layers = PullProgress::default();
+        let mut buf = Vec::new();
+        while let Some(chunk) = resp.chunk().await? {
+            buf.extend_from_slice(&chunk);
+            while let Some(pos) = buf.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = buf.drain(..=pos).collect();
+                let v: Value = serde_json::from_slice(&line).unwrap_or(Value::Null);
+                if let Some(e) = v["error"].as_str() {
+                    bail!("拉取镜像失败：{e}");
+                }
+                if let Some(s) = v["status"].as_str().filter(|s| s.starts_with("Digest") || s.starts_with("Status")) {
+                    log.push_str(s);
+                    log.push('\n');
+                }
+                if layers.update(&v) {
+                    let (done, total) = layers.sum();
+                    on_progress(done, total);
+                }
             }
         }
         Ok(())
@@ -124,6 +135,23 @@ impl Docker {
         Self::check(resp, "删除容器").await.map(|_| ())
     }
 
+    /// 等容器结束，返回退出码
+    pub async fn wait(&self, id: &str) -> anyhow::Result<i64> {
+        let v: Value = self.post(&format!("/containers/{id}/wait"), None, "等待容器结束").await?.json().await?;
+        Ok(v["StatusCode"].as_i64().unwrap_or(-1))
+    }
+
+    /// 容器的标准输出和标准错误
+    pub async fn logs(&self, id: &str) -> anyhow::Result<(String, String)> {
+        let resp = self.http.get(Self::url(&format!("/containers/{id}/logs"))).query(&[("stdout", "true"), ("stderr", "true")]).send().await?;
+        let bytes = Self::check(resp, "读取容器日志").await?.bytes().await?;
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        for (stream, data) in Frames::default().push(&bytes) {
+            if stream == 1 { out.extend(data) } else { err.extend(data) }
+        }
+        Ok((String::from_utf8_lossy(&out).into_owned(), String::from_utf8_lossy(&err).into_owned()))
+    }
+
     /// 在容器中执行命令，标准输出写入文件；返回退出码和标准错误
     pub async fn exec_to_file(&self, container: &str, cmd: &[&str], out: &Path) -> anyhow::Result<(i64, String)> {
         let created: Value = self
@@ -156,6 +184,42 @@ impl Docker {
     }
 }
 
+/// 下载进度：每一层的已下载和总字节数
+#[derive(Default)]
+pub struct PullProgress {
+    layers: std::collections::BTreeMap<String, (u64, u64)>,
+}
+
+impl PullProgress {
+    /// 读一行进度，返回进度有没有变化
+    pub fn update(&mut self, v: &Value) -> bool {
+        let (Some(id), Some(status)) = (v["id"].as_str(), v["status"].as_str()) else { return false };
+        match status {
+            "Downloading" => {
+                let (cur, total) = (v["progressDetail"]["current"].as_u64(), v["progressDetail"]["total"].as_u64());
+                if let (Some(c), Some(t)) = (cur, total) {
+                    self.layers.insert(id.into(), (c, t));
+                    return true;
+                }
+                false
+            }
+            // 下载完的层算满；本机已有的层没有大小，不计入
+            "Download complete" | "Verifying Checksum" | "Pull complete" => match self.layers.get_mut(id) {
+                Some((c, t)) if c != t => {
+                    *c = *t;
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn sum(&self) -> (u64, u64) {
+        self.layers.values().fold((0, 0), |(a, b), (c, t)| (a + c, b + t))
+    }
+}
+
 /// 拆分 Docker 的多路输出：每帧 8 字节头（第 1 字节是流编号，后 4 字节是长度，大端）加数据
 #[derive(Default)]
 pub struct Frames {
@@ -182,6 +246,17 @@ impl Frames {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pull_progress_sums_layers() {
+        let mut p = PullProgress::default();
+        assert!(p.update(&json!({"id": "a", "status": "Downloading", "progressDetail": {"current": 10, "total": 100}})));
+        assert!(p.update(&json!({"id": "b", "status": "Downloading", "progressDetail": {"current": 50, "total": 50}})));
+        assert!(!p.update(&json!({"id": "c", "status": "Already exists"})));
+        assert_eq!(p.sum(), (60, 150));
+        assert!(p.update(&json!({"id": "a", "status": "Pull complete"})));
+        assert_eq!(p.sum(), (150, 150));
+    }
 
     #[test]
     fn splits_multiplexed_stream_across_chunks() {

@@ -7,7 +7,7 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 - `backend/`：Rust 后端（Axum、SQLx、Tokio），只有一个程序 `niulai`：`niulai serve` 是常驻服务，其余子命令是运维命令。迁移在 `backend/migrations/`，数据集配置在 `backend/config/datasets.yaml`，本地配置在 `backend/.env`（不提交）。
 - `frontend/`：前端（React 19、TypeScript 6、Vite、TanStack Query、React Router、Tailwind CSS、Lightweight Charts），包管理用 pnpm。接口类型和 hooks 由 orval 从 `frontend/openapi.json` 生成在 `src/api/generated/`，不手工修改。
 - `docs/`：Project Doc 文档库；`docs/research/` 是调研笔记，不属于文档库。
-- `deploy/`：CD。`release.sh`（发布新版本：按日期打标签并推送）、`Dockerfile`（构建上下文是仓库根目录，同时构建前端和后端）、`compose.yml`（Docker 部署）（含一键升级助手 upgrader 容器，运行 `niulai upgrader`）；部署配置在 `deploy/.env`（不提交）。源码部署不用 Docker，直接编译运行，见运维手册。
+- `deploy/`：CD。`Dockerfile`（构建上下文是仓库根目录，同时构建前端和后端）、`compose.yml`（Docker 部署）（含一键升级助手 upgrader 容器，运行 `niulai upgrader`）；部署配置在 `deploy/.env`（不提交）。源码部署不用 Docker，直接编译运行，见运维手册。
 - `.github/workflows/ci.yml`：CI。PR 和推送到 `main` 只检查代码；推送 `v*` 标签时才构建 amd64、arm64 镜像并推送到 GHCR。
 - `.agents/skills/project-doc/`：本仓库使用的 project-doc skill；`.claude/skills/project-doc` 是指向它的符号链接。
 - `CLAUDE.md`：指向本文件的符号链接，供只读取 CLAUDE.md 的工具使用。
@@ -32,7 +32,7 @@ A 股数据工作台：从同花顺金融数据服务同步行情、财务和特
 在仓库根目录执行：
 
 - 构建镜像：`docker build -f deploy/Dockerfile -t niulai:local .`
-- 发布新版本：`deploy/release.sh "一句话说明"`（在 `main` 上、改动都已推送后；版本号按上海日期 `vYYYY.MM.DD`，同一天再发布自动加 `.1`、`.2`）
+- 发布新版本：在 `main` 上、改动都已推送且 CI 通过后，按上海日期打带说明的标签并推送，例如 `git tag -a v2026.10.18 -m "niulai 2026.10.18: 一句话说明" && git push origin v2026.10.18`；当天已经有标签时加补丁号 `.1`、`.2`（先 `git tag -l 'v2026.10.18*'` 看一下）。规则见 `docs/decisions/calendar_versioning.md`
 - 本机 Docker 部署：`docker compose -f deploy/compose.yml up -d --no-deps niulai`（`deploy/.env` 中 `NIULAI_IMAGE=niulai:local`，`DATABASE_URL` 指向宿主机上的 dev-postgresql，所以不启动内置数据库）
 - Docker 部署、源码部署（直接编译运行）、升级、备份恢复：见 `docs/operations/runbook.md` 的「部署」
 

@@ -147,6 +147,7 @@ export * from './universe';
 export * from './upgradeInput';
 export * from './upgradeState';
 export * from './upgradeStatus';
+export * from './upgradeStep';
 export * from './usedBy';
 export * from './verdict';
 export * from './versionInfo';

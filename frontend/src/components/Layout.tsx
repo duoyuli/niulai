@@ -3,7 +3,7 @@ import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-route
 import { useLogout, useMe } from "../api/generated/auth/auth";
 import { useGetSetup } from "../api/generated/setup/setup";
 import { SecuritySearch } from "./SecuritySearch";
-import { VersionBadge } from "./VersionBadge";
+import { UpgradeBanner, VersionBadge } from "./VersionBadge";
 
 /** 主导航只放三件事：今天看什么、我的选股方法、我关注的股票。个股从页头搜索进入 */
 const NAV = [
@@ -89,6 +89,7 @@ export function Layout() {
         </div>
       </header>
       <main className="mx-auto flex w-full min-w-0 max-w-7xl flex-1 flex-col gap-4 px-4 py-6">
+        {me.isSuccess && <UpgradeBanner />}
         {me.data?.default_credentials && (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
             正在使用默认账号密码 niulai / niulai。请在部署配置中设置 <code>NIULAI_ADMIN_USER</code> 和{" "}

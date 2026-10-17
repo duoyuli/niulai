@@ -87,6 +87,21 @@ pub struct UpgradeStatus {
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     /// 失败时 upgrader 日志的最后几行
     pub log_tail: Option<String>,
+    /// 每一步的进度（下载、更新升级助手、备份、部署迁移、启动新版本）；旧版本的升级助手不写，为空
+    pub steps: Vec<UpgradeStep>,
+}
+
+/// 升级的一步
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
+pub struct UpgradeStep {
+    pub key: String,
+    /// 例如「下载新版本」
+    pub label: String,
+    /// pending / running / done / failed / skipped
+    pub state: String,
+    /// 例如「45%（120 / 260 MB）」「已等 35 秒」
+    #[serde(default)]
+    pub detail: String,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -247,10 +262,12 @@ struct StatusFile {
     message: String,
     #[serde(default)]
     at: i64,
+    #[serde(default)]
+    steps: Vec<UpgradeStep>,
 }
 
 fn upgrade_status(dir: Option<&Path>) -> UpgradeStatus {
-    let none = UpgradeStatus { available: false, state: UpgradeState::Idle, target: None, message: None, updated_at: None, log_tail: None };
+    let none = UpgradeStatus { available: false, state: UpgradeState::Idle, target: None, message: None, updated_at: None, log_tail: None, steps: vec![] };
     let Some(dir) = dir else { return none };
     let now = chrono::Utc::now().timestamp();
     let heartbeat = std::fs::read_to_string(dir.join("heartbeat")).ok().and_then(|s| s.trim().parse::<i64>().ok());
@@ -269,6 +286,7 @@ fn upgrade_status(dir: Option<&Path>) -> UpgradeStatus {
     st.target = Some(f.target).filter(|t| !t.is_empty());
     st.message = Some(f.message).filter(|m| !m.is_empty());
     st.updated_at = chrono::DateTime::from_timestamp(f.at, 0);
+    st.steps = f.steps;
     if f.state == UpgradeState::Failed {
         st.log_tail = std::fs::read_to_string(dir.join("log")).ok().map(|l| tail(&l, 20));
     }
@@ -304,6 +322,16 @@ mod tests {
         let st = upgrade_status(Some(&dir));
         assert_eq!((st.state, st.target.as_deref()), (UpgradeState::Failed, Some("1.2.0")));
         assert!(st.log_tail.unwrap().starts_with("line 11"));
+        assert!(st.steps.is_empty(), "旧版本的升级助手不写步骤");
+        // 新版本的升级助手写出每一步的进度
+        std::fs::write(
+            dir.join("status"),
+            r#"{"state":"running","target":"2026.10.18","message":"下载新版本：45%","at":1,"steps":[{"key":"pull","label":"下载新版本","state":"running","detail":"45%"},{"key":"self","label":"更新升级助手","state":"pending"}]}"#,
+        )
+        .unwrap();
+        let st = upgrade_status(Some(&dir));
+        assert_eq!(st.steps.len(), 2);
+        assert_eq!((st.steps[0].state.as_str(), st.steps[0].detail.as_str(), st.steps[1].detail.as_str()), ("running", "45%", ""));
         std::fs::write(dir.join("request"), "1.3.0").unwrap();
         assert_eq!(upgrade_status(Some(&dir)).state, UpgradeState::Requested);
         std::fs::write(dir.join("heartbeat"), "1").unwrap();

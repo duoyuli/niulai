@@ -171,14 +171,22 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 
 工作流是 `.github/workflows/ci.yml`：
 - 每次 PR 和推送到 `main`：只做检查，包括后端 clippy（不允许警告）、单元测试和集成测试，前端类型检查、代码检查和测试。不构建镜像。
-- 发布版本：在 `main` 上、改动都已推送后运行 `deploy/release.sh "这个版本的一句话说明"`。它按今天的上海日期打标签 `vYYYY.MM.DD` 并推送；同一天再发布时自动加补丁号 `vYYYY.MM.DD.1`、`.2`……检查通过后构建 amd64 和 arm64 镜像，推送为去掉 `v` 的版本号（例如 `2026.10.18`）、`latest` 和 `sha-<提交>`。格式不对的 `v*` 标签不构建镜像。服务器上建议固定版本号。版本号的规则见 [ADR：版本号按发布日期定](../decisions/calendar_versioning.md)。为什么只在发标签时构建，见 [ADR：只在发布版本标签时构建镜像](../decisions/image_on_tag.md)。
+- 发布版本：在 `main` 上、改动都已推送且 CI 通过后，按今天的上海日期打带说明的标签并推送：
+
+  ```bash
+  git tag -l "v$(TZ=Asia/Shanghai date +%Y.%m.%d)*"   # 今天已经发过的版本
+  git tag -a v2026.10.18 -m "niulai 2026.10.18: 一句话说明"   # 今天还没有发过；发过时用下一个补丁号，例如 v2026.10.18.1
+  git push origin v2026.10.18
+  ```
+
+  检查通过后构建 amd64 和 arm64 镜像，推送为去掉 `v` 的版本号（例如 `2026.10.18`）、`latest` 和 `sha-<提交>`。格式不对的 `v*` 标签不构建镜像。服务器上建议固定版本号。版本号的规则见 [ADR：版本号按发布日期定](../decisions/calendar_versioning.md)。为什么只在发标签时构建，见 [ADR：只在发布版本标签时构建镜像](../decisions/image_on_tag.md)。
 
 预期结果：GitHub Actions 中标签触发的 `ci` 工作流成功；`docker buildx imagetools inspect ghcr.io/duoyuli/niulai:2026.10.18` 列出 `linux/amd64` 和 `linux/arm64`。镜像包是公开的，拉取不需要 `docker login`。
 
 <a id="server_install"></a>
 ### CD：Docker 部署
 
-前提条件：Docker Engine 和 Compose 插件 2.20 或以上；内存 2 GB 以上；磁盘 20 GB 以上（全量数据约 4 GB，之后持续增长）。
+前提条件：Docker Engine 和 Compose 插件 2.20 或以上；内存 2 GB 以上；部署目录所在的磁盘 20 GB 以上（数据库数据在部署目录的 `data/postgres`，全量数据约 4 GB，之后持续增长）。
 
 步骤：
 1. 把 `deploy/compose.yml` 和 `deploy/.env.example` 放到服务器的一个目录中，例如 `/opt/niulai/`。
@@ -190,7 +198,7 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 常用命令（在 `compose.yml` 所在目录执行）：
 - 状态和日志：`docker compose ps`、`docker compose logs -f niulai`。
 - 运维命令：`docker compose exec niulai niulai status`，其他子命令同理。
-- 停机：`docker compose down`。niulai 有 2 分钟的停机等待，等正在执行的任务结束，未完成的任务留在队列中，下次启动继续执行。
+- 停机：`docker compose down`。数据库数据在部署目录的 `data/postgres`，加不加 `-v` 都不影响，见 [数据目录](#data_dir)。niulai 有 2 分钟的停机等待，等正在执行的任务结束，未完成的任务留在队列中，下次启动继续执行。
 
 使用本机构建的镜像：在仓库根目录执行 `docker build -f deploy/Dockerfile -t niulai:local .`，把 `.env` 中的 `NIULAI_IMAGE` 改成 `niulai:local`，再执行 `docker compose up -d`。
 
@@ -225,20 +233,61 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 - upgrader 每 3 秒写一次 `heartbeat`；30 秒内没有更新时，页面显示「没有启用一键升级」和手动升级的命令。
 - upgrader 把进度写在 `status`，输出写在 `log`，页面每 2 秒刷新一次，失败时显示日志的最后几行。
 
-upgrader 收到请求后依次执行：
-1. 下载新镜像 `ghcr.io/<所有者>/niulai:<版本>`。下载失败、本机也没有这个镜像时，什么都不改。
-2. niulai 的 `DATABASE_URL` 指向内置数据库时，在 postgres 容器中执行 `pg_dump`，备份到部署目录的 `backups/niulai-before-<版本>-<时间>.dump`。备份失败时不升级。
-3. 把 `.env` 中的 `NIULAI_IMAGE` 改成新版本；停止旧的 niulai 容器（最多等 2 分钟），按它的配置（命令、环境变量、卷、端口、网络、Compose 标签）用新镜像创建并启动新容器，最多等 5 分钟让它恢复 `healthy`，成功后删掉旧容器。
-4. 新容器启动后退出、被反复重启，或 5 分钟内没有恢复 `healthy` 时，删掉新容器，启动旧容器，并把 `.env` 改回去。新版本可能已经执行了数据库迁移，旧版本起不来时用第 2 步的备份恢复，见下一节的回滚。
-5. niulai 升级成功后，upgrader 用新镜像重建自己。
+upgrader 收到请求后依次执行下面五步。每一步的状态（等待中、进行中、完成、跳过、失败）和说明写在 `status` 的 `steps` 中，页面顶部和版本号的弹窗里显示进度条和步骤列表：
+1. **下载新版本** `ghcr.io/<所有者>/niulai:<版本>`，边下载边显示百分比和 MB。下载失败、本机也没有这个镜像时，什么都不改。
+2. **更新升级助手**：用新镜像重建 upgrader 自己，把进度写在 `handoff` 里交给新的 upgrader，由它做后面的步骤。新版本需要的部署迁移只有新版本的 upgrader 知道，所以先换掉自己。换不成时由当前的 upgrader 继续。
+3. **备份数据库**：niulai 的 `DATABASE_URL` 指向内置数据库时，在 postgres 容器中执行 `pg_dump`，备份到部署目录的 `backups/niulai-before-<版本>-<时间>.dump`。备份失败时不升级。
+4. **部署迁移**：做完新版本带来的、还没做过的 [部署迁移](#deploy_migrations)。迁移失败时恢复原样，不升级。
+5. **启动新版本**：把 `.env` 中的 `NIULAI_IMAGE` 改成新版本；停止旧的 niulai 容器（最多等 2 分钟），按它的配置（命令、环境变量、卷、端口、网络、Compose 标签）用新镜像创建并启动新容器，最多等 5 分钟让它恢复 `healthy`（页面显示已等了多久），成功后删掉旧容器。新容器启动后退出、被反复重启，或 5 分钟内没有恢复 `healthy` 时，删掉新容器，启动旧容器，并把 `.env` 改回去。新版本可能已经执行了数据库迁移，旧版本起不来时用第 3 步的备份恢复，见下一节的回滚。
 
-页面发现运行的版本变成目标版本后自动刷新。整个过程中 niulai 有一次停机，最长 2 分钟的停机等待加上启动时间。
+页面发现运行的版本变成目标版本、并且所有步骤都结束后自动刷新。niulai 停机期间页面打不开，重新连上后接着显示进度。`status` 10 分钟没有更新时，页面提示用 `docker compose logs upgrader` 查看。2026-10-17 之前的 upgrader 不写步骤，从那些版本升级时页面只显示一句当前在做什么；新的 upgrader 启动后会把还没做过的部署迁移补做一遍。
 
 要求和限制：
 - `NIULAI_IMAGE` 要是发布的镜像（`ghcr.io/<所有者>/niulai:...`）；本机构建的 `niulai:local` 不能一键升级，开发版也不检查更新。
 - upgrader 挂载了 `/var/run/docker.sock`，能管理这台机器上的所有容器。niulai 没有这个权限，网页上能做的只是提交一个版本号。不需要一键升级时，删掉 `.env` 中的 `COMPOSE_PROFILES=upgrader`，再执行 `docker compose up -d --remove-orphans`。
-- 一键升级只更换镜像，不更新 `compose.yml` 和 `.env.example`。新版本需要改这些文件时，发布说明中会写明，按下一节手动更新。重建的容器之后执行 `docker compose up -d` 时还会再重建一次，结果相同。
+- 一键升级本身只更换镜像。新版本需要改 `compose.yml`、`.env` 或容器的挂载时，写成部署迁移，由新的 upgrader 自动做；不能自动做的（例如 `compose.yml` 被手改过）跳过并说明原因，按 [部署迁移](#deploy_migrations) 手动处理。重建的容器之后执行 `docker compose up -d` 时还会再重建一次，结果相同。
 - 为什么这样设计，见 [ADR：Docker 部署的一键升级](../decisions/one_click_upgrade.md)。
+
+<a id="deploy_migrations"></a>
+### 部署迁移
+
+新版本对部署方式（`compose.yml`、`.env`、容器的挂载）有不兼容的改动时，写成部署迁移（`backend/src/upgrader/migrate.rs`），由新版本的 upgrader 在启动新版本的 niulai 之前做完：一键升级时是第 4 步；upgrader 启动时（例如从旧版本升级后它刚换成新版本）也会检查一遍还没做过的。
+
+- 每个迁移只做一次，结果记在部署目录的 `.niulai-migrations`，一行一个：编号、结果（`done` 或 `skipped`）、时间、说明。失败的不记，下次再试。
+- 迁移先检查前提，不满足就跳过并写明原因，不冒险；做到一半失败时恢复原样（原来的容器、`compose.yml`、`.env`）。
+- 没有启用 upgrader 的部署，按每个迁移下面写的步骤手动做。
+
+现有的迁移：
+
+| 编号 | 内容 |
+| --- | --- |
+| `2026-10-17-postgres-data-dir` | 数据库数据从 Docker 卷 `pgdata` 移到部署目录的 `data/postgres`，见 [数据目录](#data_dir) |
+
+<a id="data_dir"></a>
+### 数据目录
+
+内置数据库的数据放在部署目录下的 `data/postgres`（`.env` 的 `POSTGRES_DATA`，默认 `./data/postgres`）。它是宿主机上的普通目录：删除容器、`docker compose down -v`、`docker volume prune` 都不影响，备份和搬到别的机器时直接看得到。不要删除这个目录；一键升级的备份在旁边的 `backups/`。
+
+2026-10-17 之前的部署，数据在 Docker 卷 `<项目名>_pgdata` 中（通常是 `niulai_pgdata`），`docker compose down -v` 这类清理命令会把它删掉。升级到这之后的版本时，一键升级的部署迁移 `2026-10-17-postgres-data-dir` 自动把它移到 `data/postgres`：
+1. 检查：用的是内置数据库，数据库挂载的是卷，`compose.yml` 中还是原来的 `volumes: [pgdata:/var/lib/postgresql]`，`data/postgres` 是空的。不满足就跳过。
+2. 备份数据库，停止 niulai 和数据库。
+3. 用数据库镜像起一个临时容器，先确认部署目录所在的磁盘放得下一整份数据再多 1 GB（不够时什么都不改，提示需要多少），再把卷里的文件原样（含属主和权限）复制到 `data/postgres`，核对文件数和总大小一致。
+4. 把 `compose.yml` 那一行改成 `volumes: ["${POSTGRES_DATA:-./data/postgres}:/var/lib/postgresql"]`，`.env` 中写 `POSTGRES_DATA=./data/postgres`。
+5. 用新的挂载重建数据库容器，等它 `healthy`，再启动 niulai。数据库起不来时换回原来的容器和配置，复制出来的目录改名为 `data/postgres.failed-<时间>` 留着排查。
+
+原来的卷保留不删，确认数据没问题后可以 `docker volume rm niulai_pgdata`。预期结果：`.niulai-migrations` 中有 `2026-10-17-postgres-data-dir done`，`data/postgres/18` 存在，页面上的数据都在。
+
+没有启用一键升级时手动迁移（在 `compose.yml` 所在目录执行，先备份，见 [备份与恢复](#backup_restore)）：
+
+```bash
+docker compose stop niulai postgres
+mkdir -p data/postgres
+docker run --rm -v niulai_pgdata:/from:ro -v "$PWD/data/postgres":/to postgres:18.6 sh -c 'cp -a /from/. /to/'
+# 把 compose.yml 换成新版本，或把数据库的 volumes 一行改成上面第 4 步的写法；.env 中加 POSTGRES_DATA=./data/postgres
+docker compose up -d
+```
+
+暂时不迁移、继续用卷：在 `.env` 中写 `POSTGRES_DATA=pgdata`。不要在没迁移的情况下直接换成新的 `compose.yml`：数据库会从空的开始（原来的数据还在卷里，没有丢，按上面的步骤迁移即可）。
 
 <a id="upgrade"></a>
 ### 手动升级与回滚

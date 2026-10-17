@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { UpgradeState } from './upgradeState';
+import type { UpgradeStep } from './upgradeStep';
 
 export interface UpgradeStatus {
   /** upgrader 容器在运行，可以一键升级 */
@@ -21,6 +22,8 @@ export interface UpgradeStatus {
      */
   message?: string | null;
   state: UpgradeState;
+  /** 每一步的进度（下载、更新升级助手、备份、部署迁移、启动新版本）；旧版本的升级助手不写，为空 */
+  steps: UpgradeStep[];
   /**
      * 正在升级或最近一次升级的目标版本
      * @nullable

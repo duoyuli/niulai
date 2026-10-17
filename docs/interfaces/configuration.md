@@ -64,7 +64,8 @@ Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.examp
 | `COMPOSE_PROFILES` | `upgrader` | 启用一键升级助手 upgrader 容器；删掉这一行即关闭，见 [一键升级](../operations/runbook.md#one_click_upgrade) |
 | `NIULAI_IMAGE` | `ghcr.io/duoyuli/niulai:latest` | 镜像地址；建议固定版本号，例如 `ghcr.io/duoyuli/niulai:2026.10.18`。一键升级会改写这一行 |
 | `NIULAI_LISTEN_ADDR`、`NIULAI_PORT` | `127.0.0.1`、`8080` | niulai 在宿主机上监听的地址和端口；端口被占用时改 `NIULAI_PORT`，要从其他机器访问时把地址改成 `0.0.0.0` |
-| `POSTGRES_PASSWORD` | `niulai` | 内置数据库的密码，要与 `DATABASE_URL` 中的一致；只在第一次启动（创建数据卷）之前修改才生效 |
+| `POSTGRES_PASSWORD` | `niulai` | 内置数据库的密码，要与 `DATABASE_URL` 中的一致；只在第一次启动（创建数据目录）之前修改才生效 |
+| `POSTGRES_DATA` | `./data/postgres` | 内置数据库的数据放在哪：默认是部署目录下的普通目录；写 `pgdata` 表示 2026-10-17 之前的 Docker 卷，见 [数据目录](../operations/runbook.md#data_dir) |
 
 `DATABASE_URL` 默认是 `postgres://niulai:niulai@postgres:5432/niulai`，指向同一个 Compose 中的内置数据库。容器内的监听地址、前端目录和数据集配置路径由镜像固定（`NIULAI_API_BIND=0.0.0.0:8080`、`NIULAI_WEB_DIR`、`NIULAI_DATASETS_PATH`），不要在 `.env` 中修改。
 

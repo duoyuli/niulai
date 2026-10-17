@@ -7151,7 +7151,8 @@
         "type": "object",
         "required": [
           "available",
-          "state"
+          "state",
+          "steps"
         ],
         "properties": {
           "available": {
@@ -7175,6 +7176,13 @@
           "state": {
             "$ref": "#/components/schemas/UpgradeState"
           },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpgradeStep"
+            },
+            "description": "每一步的进度（下载、更新升级助手、备份、部署迁移、启动新版本）；旧版本的升级助手不写，为空"
+          },
           "target": {
             "type": [
               "string",
@@ -7188,6 +7196,32 @@
               "null"
             ],
             "format": "date-time"
+          }
+        }
+      },
+      "UpgradeStep": {
+        "type": "object",
+        "description": "升级的一步",
+        "required": [
+          "key",
+          "label",
+          "state"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "例如「45%（120 / 260 MB）」「已等 35 秒」"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "description": "例如「下载新版本」"
+          },
+          "state": {
+            "type": "string",
+            "description": "pending / running / done / failed / skipped"
           }
         }
       },
