@@ -23,4 +23,4 @@ done
 
 git tag -a "$tag" -m "niulai ${tag#v}: $msg"
 git push -q origin "$tag"
-echo "已发布 $tag。镜像构建进度见 GitHub Actions，完成后 ghcr.io/duoyuli/niulai:${tag#v} 可以拉取"
+echo "已发布 ${tag}。镜像构建进度见 GitHub Actions，完成后 ghcr.io/duoyuli/niulai:${tag#v} 可以拉取"
