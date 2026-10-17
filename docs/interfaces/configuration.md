@@ -18,7 +18,7 @@
 
 程序里的时间一律按上海时间（`Asia/Shanghai`，A 股交易所的时间）理解，与服务器、容器、数据库所在的时区无关，部署在哪里都一样：
 
-- **代码：** 「今天」「现在」用 `time::today_cn`、`time::now_cn`（UTC 加 8 小时），定时同步的 18:00、收盘时间 15:30 都按它判断。
+- **代码：** 「今天」「现在」用 `time::today_cn`、`time::now_cn`（UTC 加 8 小时），定时同步的时间、收盘时间 15:30 都按它判断。
 - **数据库：** 连接池的每个连接建立后执行 `SET TIME ZONE 'Asia/Shanghai'`（`db::pool`），SQL 中的 `current_date`、`now()::date`、`date_trunc` 都按上海的日期计算。sqlx 连接时会自己发送 `TimeZone=UTC`，写在连接串里的时区参数会被覆盖，所以不能靠 `DATABASE_URL` 设置。`timestamptz` 列存的是时间点，不受影响。
 - **日志：** 时间带 `+08:00`。
 - **镜像：** 设置了 `TZ=Asia/Shanghai`，容器里其他用到本地时间的地方（例如升级前备份的文件名）也一致。
@@ -44,7 +44,7 @@
 | `NIULAI_RATE_LIMIT_RPS` | 否 | `2` | 每秒请求供应商的次数，必须大于 0。同一时刻只有一个进程执行同步任务，所以这就是全局上限，见 [限速与单一执行进程](../architecture/sync_pipeline.md#rate_limit) |
 | `NIULAI_HTTP_TIMEOUT_S` | 否 | `60` | 请求供应商的超时秒数；下载导出文件固定为 600 秒 |
 | `NIULAI_VENDOR_BASE_URL` | 否 | `https://fuyao.aicubes.cn` | 供应商地址 |
-| `NIULAI_SCHEDULE_AFTER_CLOSE` | 否 | `18:00` | 每日增量的触发时间，Asia/Shanghai，`HH:MM` 格式 |
+| `NIULAI_SCHEDULE_AFTER_CLOSE` | 否 | `18:00` | 每日同步的默认时间，Asia/Shanghai，`HH:MM` 格式。在同步页上改过时间后以网页上的为准，见 [定时调度](../architecture/sync_pipeline.md#scheduling) |
 | `NIULAI_WEB_DIR` | 否 | 无；Docker 镜像中是 `/app/web` | 前端构建产物目录（`frontend/dist`）。配置后 `niulai serve` 同时提供前端页面，见 [由 niulai serve 提供](../architecture/frontend.md#serving) |
 | `NIULAI_SCHEDULER_ENABLED` | 否 | `true` | 是否在 `niulai serve` 中运行定时调度；`--no-scheduler` 效果相同 |
 | `RUST_LOG` | 否 | `info,sqlx=warn,tower_http=info` | 日志级别 |

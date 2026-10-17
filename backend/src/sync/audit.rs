@@ -100,7 +100,7 @@ pub struct SyncHealth {
 /// 应该已经有数据的交易日（新的在后）：从开始每日同步的那天起，到最近一个已收盘并到了同步时间的交易日
 async fn due_days(engine: &Engine) -> anyhow::Result<Vec<NaiveDate>> {
     let now = now_cn();
-    let at = engine.settings.after_close_time()?;
+    let at = super::scheduler::load_times(engine).await?.daily_at()?;
     let last = if now.time() >= at { now.date() } else { now.date().pred_opt().unwrap_or(now.date()) };
     let first: Option<NaiveDate> = sqlx::query_scalar("SELECT min(trade_date) FROM ops.run WHERE kind = 'incremental'").fetch_one(&engine.pool).await?;
     let Some(first) = first else { return Ok(vec![]) };
@@ -393,7 +393,7 @@ pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
         } else {
             vec![]
         };
-        let (run_id, _) = engine.planner().plan_run(RunKind::Repair, &[spec], PlanOptions { trade_date: Some(latest), only_thscodes }).await?;
+        let (run_id, _) = engine.planner().plan_run(RunKind::Repair, &[spec], PlanOptions { trade_date: Some(latest), only_thscodes, trigger: Some("repair".into()) }).await?;
         summary.runs.push(run_id);
     }
 

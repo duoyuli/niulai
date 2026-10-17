@@ -22,6 +22,8 @@ export interface DatasetStatus {
   /** 只有当天的值，错过当天就补不回来 */
   only_current: boolean;
   open_tasks: number;
+  /** 所属同步计划：daily / weekly / monthly / report_season / manual */
+  plan: string;
   /** P0–P3 */
   priority: string;
   /** 更新频率：after_close / daily / weekly / monthly / report_season / after_open */

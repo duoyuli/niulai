@@ -3,7 +3,7 @@ import type { DatasetProgress, RunDetail, TaskFailure } from "../api/generated/m
 import { useGetRun } from "../api/generated/sync/sync";
 import { Badge, Card, Empty, PageHeader, ProgressBar, QueryView, Stat, Table } from "../components/ui";
 import { fmtDateTime, fmtDuration, fmtInt } from "../lib/format";
-import { RUN_KINDS, RUN_STATUS, TASK_STATUS } from "../lib/labels";
+import { RUN_STATUS, runSource, TASK_STATUS } from "../lib/labels";
 
 export function RunDetailPage() {
   const { runId = "" } = useParams();
@@ -35,8 +35,8 @@ function RunBody({ run }: { run: RunDetail }) {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <Stat label="状态" value={<Badge tone={st.tone}>{st.label}</Badge>} />
           <Stat
-            label="类型"
-            value={RUN_KINDS[run.kind] ?? run.kind}
+            label="来源"
+            value={runSource(run.kind, run.params)}
             sub={run.trade_date ? `交易日 ${run.trade_date}` : undefined}
           />
           <Stat

@@ -35,7 +35,9 @@ import type {
   RepairSummary,
   RunDetail,
   RunSummary,
-  SyncHealth
+  ScheduleTimes,
+  SyncHealth,
+  SyncSchedule
 } from '../model';
 
 import { apiFetch } from '../../fetcher';
@@ -742,3 +744,190 @@ export function useGetRun<TData = Awaited<ReturnType<typeof getRun>>, TError = E
 
 
 
+export const getGetScheduleUrl = () => {
+
+
+
+
+  return `/api/v1/sync/schedule`
+}
+
+/**
+ * @summary 同步计划：每日、每周、每月、财报季各在什么时候同步、包括哪些数据、下次和上次同步。时间都是上海时间
+ */
+export const getSchedule = async ( options?: Parameters<typeof apiFetch>[1]): Promise<SyncSchedule> => {
+
+  return apiFetch<SyncSchedule>(getGetScheduleUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetScheduleQueryKey = () => {
+    return [
+    `/api/v1/sync/schedule`
+    ] as const;
+    }
+
+
+export const getGetScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getSchedule>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchedule>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScheduleQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSchedule>>> = ({ signal }) => getSchedule({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSchedule>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetScheduleQueryResult = NonNullable<Awaited<ReturnType<typeof getSchedule>>>
+export type GetScheduleQueryError = unknown
+
+
+export function useGetSchedule<TData = Awaited<ReturnType<typeof getSchedule>>, TError = unknown>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchedule>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSchedule>>,
+          TError,
+          Awaited<ReturnType<typeof getSchedule>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSchedule<TData = Awaited<ReturnType<typeof getSchedule>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchedule>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getSchedule>>,
+          TError,
+          Awaited<ReturnType<typeof getSchedule>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetSchedule<TData = Awaited<ReturnType<typeof getSchedule>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchedule>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 同步计划：每日、每周、每月、财报季各在什么时候同步、包括哪些数据、下次和上次同步。时间都是上海时间
+ */
+
+export function useGetSchedule<TData = Awaited<ReturnType<typeof getSchedule>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchedule>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetScheduleQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getUpdateScheduleUrl = () => {
+
+
+
+
+  return `/api/v1/sync/schedule`
+}
+
+/**
+ * @summary 修改同步时间（上海时间），下一次检查（30 秒内）起生效
+ */
+export const updateSchedule = async (scheduleTimes: ScheduleTimes, options?: Parameters<typeof apiFetch>[1]): Promise<SyncSchedule> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return apiFetch<SyncSchedule>(getUpdateScheduleUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(scheduleTimes)
+  }
+);}
+
+
+
+
+
+export const getUpdateScheduleMutationKey = () => ['updateSchedule'] as const;
+
+export const getUpdateScheduleMutationOptions = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSchedule>>, TError,UpdateScheduleMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateSchedule>>, TError,UpdateScheduleMutationVariables, TContext> => {
+
+const mutationKey = getUpdateScheduleMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSchedule>>, UpdateScheduleMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateSchedule(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateScheduleMutationResult = NonNullable<Awaited<ReturnType<typeof updateSchedule>>>
+    export type UpdateScheduleMutationBody = ScheduleTimes
+    export type UpdateScheduleMutationError = ErrorBody
+    export type UpdateScheduleMutationVariables = {data: ScheduleTimes}
+
+    /**
+ * @summary 修改同步时间（上海时间），下一次检查（30 秒内）起生效
+ */
+export const useUpdateSchedule = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSchedule>>, TError,UpdateScheduleMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateSchedule>>,
+        TError,
+        UpdateScheduleMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateScheduleMutationOptions(options), queryClient);
+    }

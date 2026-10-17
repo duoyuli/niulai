@@ -65,12 +65,14 @@
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
 | `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线 |
 | `GET /indices/{thscode}/members` | 指数成分 | `date` 默认今天；历史成分从开始采集那天起才有 |
-| `GET /datasets` | 数据集列表：中文名、分类、一句话说明、更新频率、是否只有当天值、开关、最近完成时间、未完成任务数、没有解决的失败任务数、历史回补的进度 | — |
+| `GET /datasets` | 数据集列表：中文名、分类、一句话说明、更新频率和所属同步计划（`plan`）、是否只有当天值、开关、最近完成时间、未完成任务数、没有解决的失败任务数、历史回补的进度 | — |
 | `GET /sync/health` | 同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口（能否补回）、没有解决的失败（白话原因）、历史回补的进度和剩余时间 | 规则见 [完整性核对与兜底补偿](../architecture/sync_pipeline.md#audit) |
 | `POST /sync/repair` | 立即兜底补偿：能补的缺口规划补偿运行，供应商暂时不可用导致的失败重新排队；返回 202 | 每天每日同步结束后也会自动执行一次 |
+| `GET /sync/schedule` | 同步计划：时间设置，每日、每周、每月、财报季、不自动同步各自的规则、包含的已开启数据集、下次同步时刻、上次同步的运行和状态 | 规则见 [定时调度](../architecture/sync_pipeline.md#scheduling) |
+| `PUT /sync/schedule` | 修改同步时间（上海时间），返回新的同步计划 | 请求体 `{daily_time, weekly_weekday, weekly_time}`；时间是 `HH:MM`，星期 1（周一）到 7（周日），不合法时返回 400 |
 | `GET /datasets/{dataset_id}/records` | 通用记录查询，返回供应商原始字段 | `thscode`、`start`、`end`（按 `obs_date`）；`limit` 默认 100、最大 1,000；按 `obs_date` 倒序 |
 | `GET /sync/runs` | 最近的运行 | `limit` 默认 20、最大 200 |
-| `POST /sync/runs` | 发起运行，只规划任务，由执行循环执行；返回 202 | 请求体 `{kind, datasets, priorities, thscodes}`；`kind` 是 `backfill` 或 `incremental`；`datasets` 为空时按 `priorities` 选择已开启的数据集 |
+| `POST /sync/runs` | 发起运行，只规划任务，由执行循环执行；返回 202 | 请求体 `{kind, datasets, priorities, thscodes}`；`kind` 是 `backfill` 或 `incremental`；`datasets` 为空时按 `priorities` 选择已开启的数据集，两者都为空时是全部已开启的数据集；运行的 `params.trigger` 记为 `manual` |
 | `GET /sync/runs/{run_id}` | 运行详情：各数据集进度，最多 50 条失败任务 | — |
 
 `POST /sync/runs` 返回的 `run_id` 是第一个波次。后续波次是新的运行，`params.root_run` 指向它，见 [波次规划](../architecture/sync_pipeline.md#waves)。

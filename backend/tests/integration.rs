@@ -309,7 +309,7 @@ async fn run_completes_only_after_its_last_task() {
     niulai::sync::registry::sync_to_db(&db.pool, &registry()).await.unwrap();
     let datasets = vec!["a_share.calendar".to_string()];
     let mut tx = db.pool.begin().await.unwrap();
-    let new_run = NewRun { kind: RunKind::Backfill, trade_date: "2026-10-15".parse().unwrap(), datasets: &datasets, pending_waves: &[], root_run: None, only_thscodes: &[] };
+    let new_run = NewRun { kind: RunKind::Backfill, trade_date: "2026-10-15".parse().unwrap(), datasets: &datasets, pending_waves: &[], root_run: None, only_thscodes: &[], trigger: None };
     let run_id = run::create(&mut tx, &new_run).await.unwrap();
     for part in ["a", "b", "c"] {
         sqlx::query("INSERT INTO ops.task (run_id, dataset_id, part_key, params) VALUES ($1, 'a_share.calendar', $2, '{}')")
@@ -462,7 +462,9 @@ async fn login_is_required_and_lasts_30_days() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // 篡改过的 Cookie 无效
-    let forged = format!("{}0", &cookie[..cookie.len() - 1]);
+    // 换掉签名的最后一个字符（换成和原来不同的字符，否则偶尔等于原签名）
+    let last = if cookie.ends_with('0') { '1' } else { '0' };
+    let forged = format!("{}{last}", &cookie[..cookie.len() - 1]);
     let resp = app.clone().oneshot(with("/api/v1/strategies", &forged)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
@@ -514,6 +516,45 @@ async fn one_click_upgrade_hands_request_to_upgrader() {
     assert_eq!(v["upgrade"]["state"], "running");
     assert_eq!(v["upgrade"]["message"], "拉取镜像");
     std::fs::remove_dir_all(&dir).unwrap();
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn sync_schedule_can_be_viewed_and_changed() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let app = logged_in(niulai::api::router(Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), db.pool.clone()).await.unwrap())).await;
+
+    // 默认：每个交易日 18:00、每周六 08:00
+    let (st, v) = call(&app, "GET", "/api/v1/sync/schedule", None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["times"], json!({"daily_time": "18:00", "weekly_weekday": 6, "weekly_time": "08:00"}));
+    let plan = |v: &Value, key: &str| v["plans"].as_array().unwrap().iter().find(|p| p["key"] == key).cloned().unwrap();
+    let has = |p: &Value, id: &str| p["datasets"].as_array().unwrap().iter().any(|d| d == id);
+    assert!(has(&plan(&v, "daily"), "a_share.snapshot"));
+    assert!(has(&plan(&v, "weekly"), "meta.tickers") && has(&plan(&v, "weekly"), "a_share.calendar"));
+    assert!(!has(&plan(&v, "daily"), "fund.nav"), "只列已开启的数据集（P2、P3 默认关闭）");
+    assert!(plan(&v, "manual")["next_at"].is_null());
+    assert!(plan(&v, "weekly")["next_at"].is_string());
+
+    let (st, _) = call(&app, "PUT", "/api/v1/sync/schedule", Some(json!({"daily_time": "25:00", "weekly_weekday": 6, "weekly_time": "08:00"}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = call(&app, "PUT", "/api/v1/sync/schedule", Some(json!({"daily_time": "18:00", "weekly_weekday": 0, "weekly_time": "08:00"}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, v) = call(&app, "PUT", "/api/v1/sync/schedule", Some(json!({"daily_time": "19:30", "weekly_weekday": 7, "weekly_time": "9:05"}))).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["times"], json!({"daily_time": "19:30", "weekly_weekday": 7, "weekly_time": "09:05"}));
+    assert_eq!(plan(&v, "weekly")["rule"], "每周日 09:05");
+    let (_, v) = call(&app, "GET", "/api/v1/sync/schedule", None).await;
+    assert_eq!(v["times"]["daily_time"], "19:30", "保存在数据库里");
+
+    // 手动发起的运行记下来源
+    let (st, body) = call(&app, "POST", "/api/v1/sync/runs", Some(json!({"kind": "incremental", "datasets": ["a_share.calendar"]}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{body}");
+    let (_, runs) = call(&app, "GET", "/api/v1/sync/runs", None).await;
+    assert_eq!(runs[0]["params"]["trigger"], "manual");
     db.drop().await;
 }
 

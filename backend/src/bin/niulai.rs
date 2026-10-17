@@ -124,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Plan { kind, datasets, priorities, thscodes } => {
             let specs = engine.select(&datasets, &priorities)?;
-            let opts = planner::PlanOptions { only_thscodes: thscodes, ..Default::default() };
+            let opts = planner::PlanOptions { only_thscodes: thscodes, trigger: Some("cli".into()), ..Default::default() };
             let (run_id, summary) = engine.planner().plan_run(kind.parse()?, &specs, opts).await?;
             for (id, n) in &summary {
                 println!("{n:>8}  {id}");
@@ -138,9 +138,9 @@ async fn main() -> anyhow::Result<()> {
                 .registry
                 .datasets
                 .iter()
-                .filter(|d| d.enabled && scheduler::is_due(d.schedule, today, false, false))
+                .filter(|d| d.enabled && scheduler::due_daily(d.schedule, today))
                 .collect();
-            let (run_id, summary) = engine.planner().plan_run(RunKind::Incremental, &specs, planner::PlanOptions { trade_date: Some(today), ..Default::default() }).await?;
+            let (run_id, summary) = engine.planner().plan_run(RunKind::Incremental, &specs, planner::PlanOptions { trade_date: Some(today), trigger: Some("cli".into()), ..Default::default() }).await?;
             println!("run_id = {run_id}，{} 个数据集，{} 个任务", summary.len(), summary.iter().map(|(_, n)| n).sum::<usize>());
         }
         Cmd::Recompute => {

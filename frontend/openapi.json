@@ -2544,6 +2544,66 @@
         }
       }
     },
+    "/sync/schedule": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "同步计划：每日、每周、每月、财报季各在什么时候同步、包括哪些数据、下次和上次同步。时间都是上海时间",
+        "operationId": "get_schedule",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncSchedule"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "修改同步时间（上海时间），下一次检查（30 秒内）起生效",
+        "operationId": "update_schedule",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleTimes"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncSchedule"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "时间格式不对",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/system/upgrade": {
       "post": {
         "tags": [
@@ -3238,6 +3298,7 @@
           "priority",
           "enabled",
           "schedule",
+          "plan",
           "only_current",
           "open_tasks",
           "dead_tasks",
@@ -3288,6 +3349,10 @@
           "open_tasks": {
             "type": "integer",
             "format": "int64"
+          },
+          "plan": {
+            "type": "string",
+            "description": "所属同步计划：daily / weekly / monthly / report_season / manual"
           },
           "priority": {
             "type": "string",
@@ -5163,6 +5228,31 @@
           }
         }
       },
+      "ScheduleTimes": {
+        "type": "object",
+        "description": "网页上可调的同步时间（上海时间）",
+        "required": [
+          "daily_time",
+          "weekly_weekday",
+          "weekly_time"
+        ],
+        "properties": {
+          "daily_time": {
+            "type": "string",
+            "description": "每日收盘后：交易日的几点，HH:MM，例：18:00"
+          },
+          "weekly_time": {
+            "type": "string",
+            "description": "每周：几点，HH:MM，例：08:00"
+          },
+          "weekly_weekday": {
+            "type": "integer",
+            "format": "int32",
+            "description": "每周：星期几，1 = 周一 … 7 = 周日",
+            "minimum": 0
+          }
+        }
+      },
       "ScreenResults": {
         "type": "object",
         "required": [
@@ -6380,6 +6470,84 @@
           "message": {
             "type": "string",
             "description": "一句话说明当前状态"
+          }
+        }
+      },
+      "SyncPlan": {
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "rule",
+          "datasets"
+        ],
+        "properties": {
+          "datasets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "包含的已开启数据集"
+          },
+          "key": {
+            "type": "string",
+            "description": "daily / weekly / monthly / report_season / manual"
+          },
+          "last_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "上次自动同步发起的时刻和运行"
+          },
+          "last_run_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "last_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "上次同步（含后续波次）的状态：running / succeeded / partial"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "下次自动同步的时刻；不自动同步时为空"
+          },
+          "rule": {
+            "type": "string",
+            "description": "什么时候同步，白话"
+          }
+        }
+      },
+      "SyncSchedule": {
+        "type": "object",
+        "description": "同步计划总览：时间、规则、包含的数据集、下次和上次同步",
+        "required": [
+          "times",
+          "plans"
+        ],
+        "properties": {
+          "plans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SyncPlan"
+            }
+          },
+          "times": {
+            "$ref": "#/components/schemas/ScheduleTimes"
           }
         }
       },

@@ -24,6 +24,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(get_run))
         .routes(routes!(sync_health))
         .routes(routes!(sync_repair))
+        .routes(routes!(get_schedule, update_schedule))
 }
 
 /// 同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口、没有解决的失败、历史回补进度
@@ -36,6 +37,21 @@ async fn sync_health(State(s): State<AppState>) -> ApiResult<Json<crate::sync::a
 #[utoipa::path(post, path = "/sync/repair", tag = "sync", responses((status = 202, description = "已规划补偿", body = crate::sync::audit::RepairSummary)))]
 async fn sync_repair(State(s): State<AppState>) -> ApiResult<(StatusCode, Json<crate::sync::audit::RepairSummary>)> {
     Ok((StatusCode::ACCEPTED, Json(crate::sync::audit::repair(&s.engine).await?)))
+}
+
+/// 同步计划：每日、每周、每月、财报季各在什么时候同步、包括哪些数据、下次和上次同步。时间都是上海时间
+#[utoipa::path(get, path = "/sync/schedule", tag = "sync", responses((status = 200, description = "成功", body = crate::sync::scheduler::SyncSchedule)))]
+async fn get_schedule(State(s): State<AppState>) -> ApiResult<Json<crate::sync::scheduler::SyncSchedule>> {
+    Ok(Json(crate::sync::scheduler::overview(&s.engine).await?))
+}
+
+/// 修改同步时间（上海时间），下一次检查（30 秒内）起生效
+#[utoipa::path(put, path = "/sync/schedule", tag = "sync", request_body = crate::sync::scheduler::ScheduleTimes,
+    responses((status = 200, description = "已保存", body = crate::sync::scheduler::SyncSchedule), (status = 400, description = "时间格式不对", body = crate::error::ErrorBody)))]
+async fn update_schedule(State(s): State<AppState>, Json(body): Json<crate::sync::scheduler::ScheduleTimes>) -> ApiResult<Json<crate::sync::scheduler::SyncSchedule>> {
+    body.validate().map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+    crate::sync::scheduler::save_times(&s.pool, &body).await?;
+    Ok(Json(crate::sync::scheduler::overview(&s.engine).await?))
 }
 
 #[derive(Serialize, ToSchema)]
@@ -52,6 +68,8 @@ pub struct DatasetStatus {
     pub enabled: bool,
     /// 更新频率：after_close / daily / weekly / monthly / report_season / after_open
     pub schedule: String,
+    /// 所属同步计划：daily / weekly / monthly / report_season / manual
+    pub plan: String,
     /// 只有当天的值，错过当天就补不回来
     pub only_current: bool,
     pub last_done_at: Option<DateTime<Utc>>,
@@ -97,6 +115,7 @@ async fn list_datasets(State(s): State<AppState>) -> ApiResult<Json<Vec<DatasetS
                 category: spec.map_or_else(|| "其他".into(), |s| s.category.clone()),
                 summary: spec.map(|s| s.summary.clone()).unwrap_or_default(),
                 schedule: spec.map_or("after_close", |s| s.schedule.as_str()).into(),
+                plan: spec.map_or("daily", |s| crate::sync::scheduler::Plan::of(s.schedule).key()).into(),
                 only_current: spec.is_some_and(|s| s.trade_date_guard && s.recover_with.is_none()),
                 dataset_id,
                 domain,
@@ -228,7 +247,7 @@ async fn create_run(State(s): State<AppState>, Json(body): Json<CreateRun>) -> A
     if specs.is_empty() {
         return Err(ApiError::BadRequest("没有选中任何数据集".into()));
     }
-    let (run_id, summary) = s.engine.planner().plan_run(kind, &specs, planner::PlanOptions { only_thscodes: body.thscodes, ..Default::default() }).await?;
+    let (run_id, summary) = s.engine.planner().plan_run(kind, &specs, planner::PlanOptions { only_thscodes: body.thscodes, trigger: Some("manual".into()), ..Default::default() }).await?;
     let planned = summary.into_iter().map(|(dataset_id, tasks)| PlannedDataset { dataset_id, tasks }).collect();
     Ok((StatusCode::ACCEPTED, Json(CreatedRun { run_id, planned })))
 }

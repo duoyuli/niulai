@@ -63,9 +63,9 @@ ON CONFLICT (job) DO UPDATE SET last_fired = EXCLUDED.last_fired, fired_at = now
 <a id="daily_sync"></a>
 ## 每日增量
 
-`niulai serve` 在每个交易日 18:00（`NIULAI_SCHEDULE_AFTER_CLOSE`）之后自动规划一次增量，不需要人工操作。触发条件见 [定时调度](../architecture/sync_pipeline.md#scheduling)。
+`niulai serve` 按同步计划自动规划增量，不需要人工操作：每个交易日 18:00 同步每日的数据，每周六 08:00 同步每周的数据。时间在同步页的「同步计划」里修改，触发条件见 [定时调度](../architecture/sync_pipeline.md#scheduling)。
 
-手动触发：`niulai daily`。它会立即规划一次增量，选择的数据集与调度器相同，但不包括每周和每月的数据集。在当天 15:30 之前或供应商尚未出当天数据时触发，快照类任务会自动推迟到数据就绪，不会写入错误日期的数据。
+手动触发：同步页的「立即同步全部」「手动同步」或某个计划的「现在同步一次」；命令行用 `niulai daily`，它只规划每日同步的数据集。在当天 15:30 之前或供应商尚未出当天数据时触发，快照类任务会自动推迟到数据就绪，不会写入错误日期的数据。
 
 确认当天已同步：
 

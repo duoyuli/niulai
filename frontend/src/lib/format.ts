@@ -48,6 +48,27 @@ export function fmtDateTime(iso: string | null | undefined): string {
   });
 }
 
+/** 时刻按上海时间展示成「10-19 周一 18:00」，用于下次同步这类近期的时间 */
+export function fmtSlot(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "Asia/Shanghai",
+      hour12: false,
+      month: "2-digit",
+      day: "2-digit",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+      .formatToParts(d)
+      .map((x) => [x.type, x.value]),
+  );
+  return `${p.month}-${p.day} ${p.weekday} ${p.hour}:${p.minute}`;
+}
+
 /** 相对现在过了多久，例如「3 分钟前」 */
 export function fmtAgo(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return "—";

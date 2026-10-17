@@ -48,6 +48,8 @@ pub struct NewRun<'a> {
     /// 第一个波次的 run_id；本身就是第一个波次时为空
     pub root_run: Option<i64>,
     pub only_thscodes: &'a [String],
+    /// 谁发起的：daily、catch_up、weekly、weekly+monthly、manual、setup、cli、repair
+    pub trigger: Option<&'a str>,
 }
 
 pub async fn create(conn: &mut PgConnection, run: &NewRun<'_>) -> anyhow::Result<i64> {
@@ -56,7 +58,7 @@ pub async fn create(conn: &mut PgConnection, run: &NewRun<'_>) -> anyhow::Result
         .bind(run.kind.as_str())
         .bind(single)
         .bind(run.trade_date)
-        .bind(json!({"datasets": run.datasets, "pending_waves": run.pending_waves, "root_run": run.root_run, "only_thscodes": run.only_thscodes}))
+        .bind(json!({"datasets": run.datasets, "pending_waves": run.pending_waves, "root_run": run.root_run, "only_thscodes": run.only_thscodes, "trigger": run.trigger}))
         .fetch_one(conn)
         .await?)
 }

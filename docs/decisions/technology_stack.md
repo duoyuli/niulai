@@ -237,7 +237,7 @@ API 使用十进制字符串并不能恢复供应商已丢失的精度。采集�
 
 1. **SQL 写法**：没有使用 SQLx 的编译期检查宏（`query!`），因此暂时没有 `.sqlx` 离线元数据。大多数 SQL 需要按配置动态拼接，例如证券范围、复权视图名、均线窗口。拼接处都用 SQLx 0.9 的 `AssertSqlSafe` 标记，并在注释里说明安全理由；静态 SQL 由集成测试覆盖。如果以后静态查询增多，再引入宏和离线元数据。
 2. **没有用 dotenvy**：它最近一次发布是 2023 年，改用约 20 行代码读取 `.env`，再交给 config-rs 处理。
-3. **没有用 croner**：调度只有「交易日收盘后」一个时间点，每周和每月的周期用 PostgreSQL 的 `date_trunc` 判断，没有用到 cron 表达式。
+3. **没有用 croner**：调度只有两个时间点（每个交易日收盘后、每周一次，2026-10-17 起每周的时间单独设置），每月跟着每周走，用几行日期计算和 PostgreSQL 的 `date_trunc` 就能判断，没有用到 cron 表达式。
 4. **启用了 Redis**：多个进程（扩容的 `niulai serve`、前台的 `niulai work`）共用一个供应商 API Key，需要全局限速，满足 §8 中「跨实例限流」的引入条件。Redis 不可用时自动退回进程内限速。（已被 [ADR：限速在进程内](in_process_rate_limit.md) 取代，Redis 已去掉。）
 5. **前端**（2026-10-16 补充）：已用 orval 从 `niulai openapi` 生成类型和 TanStack Query hooks，完成第 3 步的前端部分，见 [前端](../architecture/frontend.md)。
 

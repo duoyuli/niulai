@@ -19,7 +19,8 @@
 **执行频率**：
 
 - 每个交易日收盘后：日线（`a_share.snapshot`、`index.snapshot`）、公司行动（`a_share.corp_action_dump`，每天 1 次请求，影响复权）、只有当天值的 `a_share.valuation`、`a_share.auction_final`、`special.anomaly_reason`。
-- 每周一次：其余已开启的数据集。按交易日或时间窗口同步的数据集每周从游标往后补，不会漏掉中间的日子。
+- 每周一次（默认周六 08:00）：其余已开启的数据集。按交易日或时间窗口同步的数据集每周从游标往后补，不会漏掉中间的日子。
+- 时间可以在同步页上修改，各计划的规则见 [定时调度](../architecture/sync_pipeline.md#scheduling)。
 - 指数成分改为每周快照，成分变化的记录精度是周。
 
 <a id="a_share"></a>

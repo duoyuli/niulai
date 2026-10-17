@@ -106,7 +106,7 @@ pub async fn configure_api_key(engine: &Engine, key: &str) -> Result<Option<i64>
     }
     let priorities: Vec<String> = INITIAL_PRIORITIES.iter().map(|p| p.to_string()).collect();
     let specs = engine.select(&[], &priorities)?;
-    let (run_id, _) = engine.planner().plan_run(RunKind::Backfill, &specs, PlanOptions::default()).await?;
+    let (run_id, _) = engine.planner().plan_run(RunKind::Backfill, &specs, PlanOptions { trigger: Some("setup".into()), ..Default::default() }).await?;
     tracing::info!(run_id, "已规划首次全量回补");
     Ok(Some(run_id))
 }

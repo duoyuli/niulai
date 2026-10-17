@@ -2,14 +2,25 @@ import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import type { DatasetStatus, Gap, RunSummary, SyncHealth } from "../api/generated/model";
+import type {
+  DatasetStatus,
+  Gap,
+  RunSummary,
+  ScheduleTimes,
+  SyncHealth,
+  SyncPlan,
+  SyncSchedule,
+} from "../api/generated/model";
 import {
+  getGetScheduleQueryKey,
   getListRunsQueryKey,
   useCreateRun,
+  useGetSchedule,
   useListDatasets,
   useListRuns,
   useSyncHealth,
   useSyncRepair,
+  useUpdateSchedule,
 } from "../api/generated/sync/sync";
 import {
   Badge,
@@ -26,27 +37,33 @@ import {
   Spinner,
   Table,
 } from "../components/ui";
-import { fmtAgo, fmtDateTime, fmtDuration, fmtInt } from "../lib/format";
-import { DATASET_CATEGORIES, PRIORITIES, RUN_KINDS, RUN_STATUS, SCHEDULES } from "../lib/labels";
+import { fmtAgo, fmtDateTime, fmtDuration, fmtInt, fmtSlot } from "../lib/format";
+import { DATASET_CATEGORIES, PLANS, RUN_STATUS, runSource, WEEKDAYS } from "../lib/labels";
 
 // @project-doc docs/architecture/frontend.md#pages
-/** 数据同步：最上面是状态、同步记录和手动同步（最常用），然后是要处理的问题，最后按分类看每类数据 */
+/** 数据同步：状态、同步计划（什么时候自动同步什么）、同步记录和手动同步，然后是要处理的问题，最后按分类看每类数据 */
 export function SyncPage() {
   const health = useSyncHealth({ query: { refetchInterval: 15_000, staleTime: 0 } });
   const datasets = useListDatasets({ query: { refetchInterval: 30_000, staleTime: 0 } });
   const runs = useListRuns({ limit: 60 }, { query: { refetchInterval: 10_000, staleTime: 0 } });
-  const [creating, setCreating] = useState(false);
+  const schedule = useGetSchedule({ query: { refetchInterval: 30_000, staleTime: 0 } });
+  const [manual, setManual] = useState(false);
+  const titles = useMemo(() => new Map((datasets.data ?? []).map((d) => [d.dataset_id, d.title])), [datasets.data]);
 
   return (
     <>
       <PageHeader
         title="数据同步"
-        desc="每个交易日 18:00（上海时间）自动同步当天的数据；之后自动核对最近 20 个交易日的数据是否齐全，能补的自动补。"
+        desc="按下面的同步计划自动同步，时间都是上海时间。每天同步后自动核对最近 20 个交易日的数据是否齐全，能补的自动补。"
         extra={
           <div className="flex flex-wrap items-center gap-2">
-            <QuickSync />
-            <button type="button" className={buttonClass("ghost")} onClick={() => setCreating((v) => !v)}>
-              {creating ? "收起" : "自定义同步…"}
+            <SyncNow
+              label="立即同步全部"
+              datasets={[]}
+              hint="把所有已开启的数据都增量同步一次：从上次同步到的位置往后取；已经在队列里的不会重复"
+            />
+            <button type="button" className={buttonClass("ghost")} onClick={() => setManual((v) => !v)}>
+              {manual ? "收起" : "手动同步…"}
             </button>
             <Link to="/indices" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
               指数与板块 →
@@ -54,15 +71,16 @@ export function SyncPage() {
           </div>
         }
       />
-      {creating && datasets.data && <CreateRunForm datasets={datasets.data} onDone={() => setCreating(false)} />}
+      {manual && datasets.data && <ManualSync datasets={datasets.data} onDone={() => setManual(false)} />}
       {health.isPending ? <Spinner /> : health.data && <Status h={health.data} />}
+      <QueryView query={schedule}>{(s) => <Plans s={s} titles={titles} />}</QueryView>
       <Card title="同步记录" extra={<span className="text-xs text-zinc-400">每 10 秒刷新，点一行看详情</span>}>
         <QueryView query={runs}>{(rows) => <History rows={rows} />}</QueryView>
       </Card>
       {health.data && (health.data.gaps.length > 0 || health.data.failures.length > 0) && <Problems h={health.data} />}
       <Card
         title="数据"
-        extra={<span className="text-xs text-zinc-400">按分类，每类数据是什么、多久更新一次、现在怎么样</span>}
+        extra={<span className="text-xs text-zinc-400">按分类，每类数据是什么、属于哪个同步计划、现在怎么样</span>}
       >
         <QueryView query={datasets}>{(rows) => <Datasets rows={rows} />}</QueryView>
       </Card>
@@ -70,8 +88,20 @@ export function SyncPage() {
   );
 }
 
-/** 一键增量同步每天都要的数据（P0、P1）：不用等到 18:00，例如刚部署或刚补好 API Key 时 */
-function QuickSync() {
+/** 增量同步一批数据集，规划好后跳到这次同步的详情。datasets 为空时同步全部已开启的数据集 */
+function SyncNow({
+  label,
+  datasets,
+  hint,
+  ghost,
+  disabled,
+}: {
+  label: string;
+  datasets: string[];
+  hint: string;
+  ghost?: boolean;
+  disabled?: boolean;
+}) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const create = useCreateRun({
@@ -86,17 +116,182 @@ function QuickSync() {
     <>
       <button
         type="button"
-        className={buttonClass()}
-        disabled={create.isPending}
-        title="增量同步核心和常用数据（P0、P1），从上次同步到的位置往后补；已经在队列里的不会重复"
-        onClick={() =>
-          create.mutate({ data: { kind: "incremental", datasets: [], priorities: ["P0", "P1"], thscodes: [] } })
-        }
+        className={buttonClass(ghost ? "ghost" : undefined)}
+        disabled={disabled || create.isPending}
+        title={hint}
+        onClick={() => create.mutate({ data: { kind: "incremental", datasets, priorities: [], thscodes: [] } })}
       >
-        {create.isPending ? "规划中…" : "立即同步"}
+        {create.isPending ? "规划中…" : label}
       </button>
       {!!create.error && <span className="text-sm text-red-600">{errorText(create.error)}</span>}
     </>
+  );
+}
+
+const PLAN_HINTS: Record<string, string> = {
+  daily: "收盘后当天就有的数据：日 K 线（收盘快照）、指数行情、估值、异动原因、公司行动等",
+  weekly: "变化不频繁的基础数据：交易日历、股票列表、指数成分、财务报表，以及按股票重新核对一遍日 K 线",
+  monthly: "更新很慢的数据，跟每月第一次每周同步一起",
+  report_season: "财报密集的月份每天取，其余月份每周取",
+};
+
+/** 同步计划：每个计划什么时候同步、包括什么、下次和上次 */
+function Plans({ s, titles }: { s: SyncSchedule; titles: Map<string, string> }) {
+  const [editing, setEditing] = useState(false);
+  const auto = s.plans.filter((p) => p.key !== "manual");
+  const manual = s.plans.find((p) => p.key === "manual");
+  return (
+    <Card
+      title="同步计划"
+      extra={
+        <button type="button" className={buttonClass("ghost")} onClick={() => setEditing((v) => !v)}>
+          {editing ? "收起" : "修改时间"}
+        </button>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {editing && <EditTimes times={s.times} onDone={() => setEditing(false)} />}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {auto.map((p) => (
+            <PlanTile key={p.key} p={p} titles={titles} />
+          ))}
+        </div>
+        {manual && manual.datasets.length > 0 && (
+          <p className="text-xs text-zinc-500">
+            不自动同步：{manual.datasets.map((id) => titles.get(id) ?? id).join("、")}，需要时用「手动同步」。
+          </p>
+        )}
+        <p className="text-xs text-zinc-400">
+          只列已开启的数据。基金、期货、期权等默认没有开启，在「手动同步」里可以单独同步。
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+function PlanTile({ p, titles }: { p: SyncPlan; titles: Map<string, string> }) {
+  const [open, setOpen] = useState(false);
+  const st = p.last_status ? (RUN_STATUS[p.last_status] ?? { label: p.last_status, tone: "muted" as const }) : null;
+  const names = p.datasets.map((id) => titles.get(id) ?? id);
+  return (
+    <section className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+      <div>
+        <h3 className="font-medium">{p.name}</h3>
+        <p className="text-accent">{p.rule}</p>
+        <p className="mt-1 text-xs text-zinc-500">{PLAN_HINTS[p.key]}</p>
+      </div>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+        <dt className="text-zinc-400">下次</dt>
+        <dd className="num">{p.datasets.length > 0 ? fmtSlot(p.next_at) : "—"}</dd>
+        <dt className="text-zinc-400">上次</dt>
+        <dd className="flex flex-wrap items-center gap-1">
+          {p.last_at && p.datasets.length > 0 ? (
+            <>
+              <span className="num">{fmtSlot(p.last_at)}</span>
+              {st && p.last_run_id && (
+                <Link to={`/sync/runs/${p.last_run_id}`}>
+                  <Badge tone={st.tone}>{st.label}</Badge>
+                </Link>
+              )}
+            </>
+          ) : (
+            <span className="text-zinc-400">{p.key === "report_season" ? "随每日、每周同步" : "还没有"}</span>
+          )}
+        </dd>
+      </dl>
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+          onClick={() => setOpen((v) => !v)}
+          disabled={names.length === 0}
+        >
+          {names.length === 0 ? "没有开启的数据" : `${open ? "▾" : "▸"} ${names.length} 类数据`}
+        </button>
+        {names.length > 0 && (
+          <SyncNow
+            label="现在同步一次"
+            datasets={p.datasets}
+            ghost
+            hint={`不等到点，现在就把「${p.name}」的数据增量同步一次`}
+          />
+        )}
+      </div>
+      {open && <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">{names.join("、")}</p>}
+    </section>
+  );
+}
+
+/** 修改每日和每周的时间（上海时间）；每月、财报季跟着它们走 */
+function EditTimes({ times, onDone }: { times: ScheduleTimes; onDone: () => void }) {
+  const [t, setT] = useState(times);
+  const qc = useQueryClient();
+  const save = useUpdateSchedule({
+    mutation: {
+      onSuccess: (r) => {
+        qc.setQueryData(getGetScheduleQueryKey(), r);
+        onDone();
+      },
+    },
+  });
+  return (
+    <form
+      className="flex flex-col gap-3 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save.mutate({ data: t });
+      }}
+    >
+      <div className="flex flex-wrap items-end gap-6">
+        <Field
+          label="每日收盘后：每个交易日的"
+          hint="A 股 15:00 收盘，供应商的当天数据一般在收盘后一两个小时内出齐；到点后还没出的会自动等"
+        >
+          <input
+            type="time"
+            className={`${inputClass} w-32`}
+            value={t.daily_time}
+            onChange={(e) => setT({ ...t, daily_time: e.target.value })}
+            required
+          />
+        </Field>
+        <Field label="每周：每周的哪天、几点" hint="建议放在周末，不和每日同步抢请求额度">
+          <div className="flex gap-2">
+            <select
+              className={inputClass}
+              value={t.weekly_weekday}
+              onChange={(e) => setT({ ...t, weekly_weekday: Number(e.target.value) })}
+            >
+              {WEEKDAYS.map((w, i) => (
+                <option key={w} value={i + 1}>
+                  {w}
+                </option>
+              ))}
+            </select>
+            <input
+              type="time"
+              className={`${inputClass} w-32`}
+              value={t.weekly_time}
+              onChange={(e) => setT({ ...t, weekly_time: e.target.value })}
+              required
+            />
+          </div>
+        </Field>
+      </div>
+      <p className="text-xs text-zinc-500">
+        时间是上海时间，与服务器在哪里无关。保存后 30
+        秒内生效；每月的数据跟每月第一次每周同步一起，财报季的数据跟每日或每周同步一起。
+      </p>
+      {!!save.error && <p className="text-sm text-red-600">{errorText(save.error)}</p>}
+      <div className="flex gap-2">
+        <button type="submit" className={buttonClass()} disabled={save.isPending}>
+          {save.isPending ? "保存中…" : "保存"}
+        </button>
+        <button type="button" className={buttonClass("ghost")} onClick={onDone}>
+          取消
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -313,7 +508,7 @@ function Category({ name, rows }: { name: string; rows: DatasetStatus[] }) {
                 <p className="text-xs text-zinc-500">{d.summary}</p>
               </div>
               <div className="flex shrink-0 items-center gap-3 text-xs text-zinc-500">
-                <span className="w-24">{SCHEDULES[d.schedule] ?? d.schedule}</span>
+                <span className="w-24">{PLANS[d.plan] ?? d.plan}</span>
                 <span className="w-20" title={fmtDateTime(d.last_done_at)}>
                   {d.last_done_at ? fmtAgo(d.last_done_at) : "—"}
                 </span>
@@ -344,7 +539,7 @@ function History({ rows }: { rows: RunSummary[] }) {
     <Table>
       <thead>
         <tr>
-          <th>类型</th>
+          <th>来源</th>
           <th>交易日</th>
           <th>状态</th>
           <th className="w-56">进度</th>
@@ -371,7 +566,7 @@ function History({ rows }: { rows: RunSummary[] }) {
             <tr key={root} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
               <td>
                 <Link to={`/sync/runs/${root}`} className="hover:underline">
-                  {RUN_KINDS[first.kind] ?? first.kind}
+                  {runSource(first.kind, first.params)}
                 </Link>
                 {list.length > 1 && <span className="ml-1 text-xs text-zinc-400">{list.length} 批</span>}
               </td>
@@ -399,14 +594,14 @@ function History({ rows }: { rows: RunSummary[] }) {
     </Table>
   );
 }
+const MANUAL_GROUPS = ["daily", "weekly", "monthly", "report_season", "manual"];
 
-function CreateRunForm({ datasets, onDone }: { datasets: DatasetStatus[]; onDone: () => void }) {
+/** 手动同步：按同步计划勾选（可以全选），每组能展开到单个数据集；没有开启的数据单独一组 */
+function ManualSync({ datasets, onDone }: { datasets: DatasetStatus[]; onDone: () => void }) {
   const [kind, setKind] = useState<"incremental" | "backfill">("incremental");
-  const [mode, setMode] = useState<"priority" | "datasets">("priority");
-  const [priorities, setPriorities] = useState<string[]>(["P0"]);
-  const [picked, setPicked] = useState<string[]>([]);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const [codes, setCodes] = useState("");
-  const [q, setQ] = useState("");
   const navigate = useNavigate();
   const qc = useQueryClient();
   const create = useCreateRun({
@@ -422,87 +617,110 @@ function CreateRunForm({ datasets, onDone }: { datasets: DatasetStatus[]; onDone
     .split(/[\s,，、]+/)
     .map((c) => c.trim().toUpperCase())
     .filter(Boolean);
-  const enabled = datasets.filter((d) => d.enabled);
-  const selectable = enabled.filter((d) => !q || d.title.includes(q) || d.dataset_id.includes(q));
-  const valid = mode === "priority" ? priorities.length > 0 : picked.length > 0;
-  const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  const groups = useMemo(() => {
+    const on = datasets.filter((d) => d.enabled);
+    const out: { key: string; name: string; rows: DatasetStatus[] }[] = MANUAL_GROUPS.map((k) => ({
+      key: k,
+      name: PLANS[k] ?? k,
+      rows: on.filter((d) => d.plan === k),
+    })).filter((g) => g.rows.length > 0);
+    const off = datasets.filter((d) => !d.enabled);
+    if (off.length > 0) out.push({ key: "off", name: "没有开启的数据（基金、期货、期权等）", rows: off });
+    return out;
+  }, [datasets]);
+  const enabledIds = datasets.filter((d) => d.enabled).map((d) => d.dataset_id);
+  const allOn = enabledIds.length > 0 && enabledIds.every((id) => picked.has(id));
+  const setMany = (ids: string[], on: boolean) => {
+    const next = new Set(picked);
+    for (const id of ids) on ? next.add(id) : next.delete(id);
+    setPicked(next);
+  };
+  const toggleOpen = (k: string) => {
+    const next = new Set(open);
+    next.has(k) ? next.delete(k) : next.add(k);
+    setOpen(next);
+  };
 
   return (
-    <Card title="自定义同步：选择类型和数据">
+    <Card title="手动同步">
       <form
         className="flex flex-col gap-4"
         onSubmit={(e) => {
           e.preventDefault();
-          create.mutate({
-            data: {
-              kind,
-              datasets: mode === "datasets" ? picked : [],
-              priorities: mode === "priority" ? priorities : [],
-              thscodes,
-            },
-          });
+          create.mutate({ data: { kind, datasets: [...picked], priorities: [], thscodes } });
         }}
       >
-        <div className="flex flex-wrap gap-6">
-          <Field label="类型">
+        <Field label="怎么同步">
+          <div className="self-start">
             <Segmented
               value={kind}
               onChange={setKind}
               options={[
-                { value: "incremental", label: "增量", hint: "从上次同步到的位置往后补" },
-                { value: "backfill", label: "历史回补", hint: "从数据集配置的起点全部重取，任务量很大" },
+                { value: "incremental", label: "增量", hint: "从上次同步到的位置往后取，平时用这个" },
+                { value: "backfill", label: "全部重取", hint: "从数据集配置的起点全部重取，任务量很大" },
               ]}
             />
-          </Field>
-          <Field label="选择数据集">
-            <Segmented
-              value={mode}
-              onChange={setMode}
-              options={[
-                { value: "priority", label: "按优先级" },
-                { value: "datasets", label: "指定数据集" },
-              ]}
-            />
-          </Field>
+          </div>
+        </Field>
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <label className="flex items-center gap-1.5 font-medium">
+              <input type="checkbox" checked={allOn} onChange={() => setMany(enabledIds, !allOn)} />
+              全选已开启的数据（{enabledIds.length} 类）
+            </label>
+            {picked.size > 0 && (
+              <button
+                type="button"
+                className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+                onClick={() => setPicked(new Set())}
+              >
+                清空
+              </button>
+            )}
+          </div>
+          <div className="flex flex-col divide-y divide-zinc-100 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-700">
+            {groups.map((g) => {
+              const ids = g.rows.map((d) => d.dataset_id);
+              const n = ids.filter((id) => picked.has(id)).length;
+              return (
+                <div key={g.key} className="px-3 py-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      aria-label={g.name}
+                      checked={n === ids.length}
+                      ref={(el) => {
+                        if (el) el.indeterminate = n > 0 && n < ids.length;
+                      }}
+                      onChange={() => setMany(ids, n < ids.length)}
+                    />
+                    <button type="button" className="flex-1 text-left" onClick={() => toggleOpen(g.key)}>
+                      {open.has(g.key) ? "▾" : "▸"} {g.name}
+                      <span className="ml-1 text-xs text-zinc-400">
+                        {n > 0 ? `已选 ${n} / ${ids.length}` : `${ids.length} 类`}
+                      </span>
+                    </button>
+                  </div>
+                  {open.has(g.key) && (
+                    <div className="mt-2 grid gap-1 pl-6 sm:grid-cols-2 lg:grid-cols-3">
+                      {g.rows.map((d) => (
+                        <label key={d.dataset_id} className="flex items-center gap-1.5 text-xs" title={d.summary}>
+                          <input
+                            type="checkbox"
+                            checked={picked.has(d.dataset_id)}
+                            onChange={() => setMany([d.dataset_id], !picked.has(d.dataset_id))}
+                          />
+                          {d.title}
+                          <span className="text-zinc-400">{d.category}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
-        {mode === "priority" ? (
-          <div className="flex flex-wrap gap-3">
-            {Object.entries(PRIORITIES).map(([p, label]) => (
-              <label key={p} className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="checkbox"
-                  checked={priorities.includes(p)}
-                  onChange={() => setPriorities(toggle(priorities, p))}
-                />
-                {label}
-                <span className="text-xs text-zinc-400">（{enabled.filter((d) => d.priority === p).length} 个）</span>
-              </label>
-            ))}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            <input
-              className={`${inputClass} w-64`}
-              placeholder="筛选数据集"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-            <div className="grid max-h-56 grid-cols-1 gap-1 overflow-y-auto rounded-lg border border-zinc-200 p-2 sm:grid-cols-2 lg:grid-cols-3 dark:border-zinc-700">
-              {selectable.map((d) => (
-                <label key={d.dataset_id} className="flex items-center gap-1.5 text-xs" title={d.dataset_id}>
-                  <input
-                    type="checkbox"
-                    checked={picked.includes(d.dataset_id)}
-                    onChange={() => setPicked(toggle(picked, d.dataset_id))}
-                  />
-                  {d.title}
-                  <span className="text-zinc-400">{d.category}</span>
-                </label>
-              ))}
-            </div>
-            <span className="text-xs text-zinc-500">已选 {picked.length} 个</span>
-          </div>
-        )}
         <Field
           label="只同步这些股票（可选）"
           hint="作用于按股票展开的数据集，例如重新拉取个别股票；多个代码用空格或逗号分隔"
@@ -514,15 +732,15 @@ function CreateRunForm({ datasets, onDone }: { datasets: DatasetStatus[]; onDone
             onChange={(e) => setCodes(e.target.value)}
           />
         </Field>
-        {kind === "backfill" && thscodes.length === 0 && (
+        {kind === "backfill" && thscodes.length === 0 && picked.size > 0 && (
           <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-            全市场历史回补可能产生数万到数十万个任务，要执行一两天。已在队列中的同一分区不会重复创建。
+            全市场全部重取可能产生数万到数十万个任务，要执行一两天，排在每日数据后面。已在队列中的同一分区不会重复创建。
           </p>
         )}
-        {create.error && <p className="text-sm text-red-600 dark:text-red-400">{errorText(create.error)}</p>}
-        <div className="flex gap-2">
-          <button type="submit" className={buttonClass()} disabled={!valid || create.isPending}>
-            {create.isPending ? "规划中…" : "规划并开始"}
+        {!!create.error && <p className="text-sm text-red-600 dark:text-red-400">{errorText(create.error)}</p>}
+        <div className="flex items-center gap-2">
+          <button type="submit" className={buttonClass()} disabled={picked.size === 0 || create.isPending}>
+            {create.isPending ? "规划中…" : `开始同步（${picked.size} 类）`}
           </button>
           <button type="button" className={buttonClass("ghost")} onClick={onDone}>
             取消

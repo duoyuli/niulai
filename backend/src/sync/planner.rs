@@ -44,6 +44,8 @@ pub struct PlanOptions {
     pub trade_date: Option<NaiveDate>,
     /// 只同步指定证券，例如重拉单只股票
     pub only_thscodes: Vec<String>,
+    /// 谁发起的（写进运行的 params.trigger，同步记录据此显示来源）
+    pub trigger: Option<String>,
 }
 
 /// 依赖层级（波次）：
@@ -76,6 +78,7 @@ struct Wave<'a> {
     pending: Vec<Vec<String>>,
     root_run: Option<i64>,
     only: &'a [String],
+    trigger: Option<&'a str>,
 }
 
 /// 一个数据集规划出的任务种子
@@ -112,7 +115,7 @@ impl<'a> Planner<'a> {
         }
         let datasets = waves.remove(0);
         let trade_date = opts.trade_date.unwrap_or_else(today_cn);
-        self.plan_wave(Wave { kind, trade_date, datasets, pending: waves, root_run: None, only: &opts.only_thscodes }).await
+        self.plan_wave(Wave { kind, trade_date, datasets, pending: waves, root_run: None, only: &opts.only_thscodes, trigger: opts.trigger.as_deref() }).await
     }
 
     /// 某个波次结束后，规划下一个波次（如果有）。返回新的 run_id。
@@ -130,7 +133,8 @@ impl<'a> Planner<'a> {
         let datasets = pending.remove(0);
         let root = params.get("root_run").and_then(Value::as_i64).unwrap_or(finished_run);
         let only: Vec<String> = serde_json::from_value(list("only_thscodes")).unwrap_or_default();
-        let (run_id, _) = self.plan_wave(Wave { kind: kind.parse()?, trade_date, datasets, pending, root_run: Some(root), only: &only }).await?;
+        let trigger = params.get("trigger").and_then(Value::as_str);
+        let (run_id, _) = self.plan_wave(Wave { kind: kind.parse()?, trade_date, datasets, pending, root_run: Some(root), only: &only, trigger }).await?;
         Ok(Some(run_id))
     }
 
@@ -159,6 +163,7 @@ impl<'a> Planner<'a> {
             pending_waves: &wave.pending,
             root_run: wave.root_run,
             only_thscodes: wave.only,
+            trigger: wave.trigger,
         };
         let run_id = run::create(&mut tx, &new_run).await?;
         let mut summary = vec![];

@@ -73,7 +73,7 @@
 - `ops.task`：任务队列，状态机见 [任务生命周期](sync_pipeline.md#task_lifecycle)。`params` 包含 `vars`（分区变量）和 `query`（已展开的请求参数）。部分唯一索引 `task_open_uniq` 保证同一分区同时只有一个未完成任务；部分索引 `task_run_open_idx` 只含未完成任务，用于判断运行是否结束。
 - `ops.cursor`：每个数据集、每个分区的进度，`state` 是 JSON，例如 `{"synced_to": "2026-10-15"}`。`part_key = '_plan'` 的行是 `from_dataset` 增量规划的时间水位。
 - `ops.api_call`：每次 HTTP 尝试一行，含状态码、供应商 `code`、`request_id`、延迟。表声明为按 `called_at` 的范围分区，但只有默认分区；没有自动清理旧数据。
-- `ops.scheduler`：定时作业最近一次触发的日期：`after_close`（每日同步，也用于判断要不要补发）、`weekly`、`monthly`、`repair`（每个交易日一次的兜底补偿），见 [定时调度](sync_pipeline.md#scheduling)。
+- `ops.scheduler`：定时作业最近一次触发的日期和时刻：`after_close`（每日同步，也用于判断要不要补发）、`weekly`（按触发时刻 `fired_at` 判断每周时刻有没有触发过）、`monthly`、`repair`（每个交易日一次的兜底补偿），见 [定时调度](sync_pipeline.md#scheduling)。
 - `ops.derived_version`：派生数据最近一次重算完成的时刻。目前只有 `adj_factor` 一行，复权因子重算完成后更新，进程内的扫描缓存以它为版本，见 [ADR：指标在 Rust 中计算](../decisions/indicator_compute.md)。
 - `ops.v_progress`：按运行和数据集汇总任务状态，API 的运行详情使用它。
 

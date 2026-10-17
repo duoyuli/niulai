@@ -4,7 +4,7 @@
 //! "当地零点"按固定 +8 小时换算会落在前一天 23:00；先加 1 小时再取日期，两种情况都能得到正确的日期。
 //! 1992 年以后没有夏令时，生成请求窗口时直接按 +8 小时计算。
 
-use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
 const CN_OFFSET_MS: i64 = 8 * 3_600_000;
 const DST_GUARD_MS: i64 = 3_600_000;
@@ -32,6 +32,11 @@ pub fn now_cn() -> chrono::NaiveDateTime {
 
 pub fn today_cn() -> NaiveDate {
     now_cn().date()
+}
+
+/// 上海时间（不带时区信息）→ UTC 时刻
+pub fn cn_to_utc(t: NaiveDateTime) -> DateTime<Utc> {
+    (t - Duration::milliseconds(CN_OFFSET_MS)).and_utc()
 }
 
 #[cfg(test)]

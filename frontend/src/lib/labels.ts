@@ -74,14 +74,41 @@ export const DATASET_CATEGORIES = [
 ];
 
 /** 更新频率 */
-export const SCHEDULES: Record<string, string> = {
-  after_close: "每个交易日",
-  daily: "每个交易日",
+/** 同步计划，与后端 scheduler::Plan 一致 */
+export const PLANS: Record<string, string> = {
+  daily: "每日收盘后",
   weekly: "每周",
   monthly: "每月",
-  report_season: "财报季每天",
-  after_open: "暂不自动更新",
+  report_season: "财报季",
+  manual: "不自动同步",
 };
+
+export const WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+/** 一次同步是谁发起的：看运行的 params.trigger；以前的运行没有记，按类型显示 */
+export function runSource(kind: string, params: unknown): string {
+  const trigger = (params as { trigger?: string | null } | null)?.trigger;
+  switch (trigger) {
+    case "daily":
+      return "每日收盘后";
+    case "catch_up":
+      return "补发每日同步";
+    case "weekly":
+      return "每周";
+    case "weekly+monthly":
+      return "每周 + 每月";
+    case "manual":
+      return kind === "backfill" ? "手动回补" : "手动同步";
+    case "setup":
+      return "首次补历史";
+    case "cli":
+      return "命令行";
+    case "repair":
+      return "补齐缺口";
+    default:
+      return RUN_KINDS[kind] ?? kind;
+  }
+}
 
 export const PRIORITIES: Record<string, string> = {
   P0: "P0 核心",
