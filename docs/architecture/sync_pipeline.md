@@ -32,7 +32,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
                   运行结束 ─► 复权重算 ─► 规划下一个波次
 ```
 
-`niulai serve` 和运维子命令启动时都会创建同步引擎（`sync::Engine`）：读取并校验 `datasets.yaml`，把配置同步到 `ops.dataset`（配置中删掉的数据集标记为关闭），创建供应商客户端和限速器。配置在进程启动时读取一次，修改配置后需要重启进程。
+`niulai serve` 和运维子命令启动时都会创建同步引擎（`sync::Engine`）：读取并校验 `datasets.yaml`，把配置同步到 `ops.dataset`（配置中删掉的数据集标记为关闭，留作历史，数据集列表不再展示），创建供应商客户端和限速器。配置在进程启动时读取一次，修改配置后需要重启进程。
 
 还没有配置 API Key 时，执行循环不认领任务、定时调度不发起增量，直到在网页上配置，见 [首次登录引导](../interfaces/rest_api.md#setup)。
 

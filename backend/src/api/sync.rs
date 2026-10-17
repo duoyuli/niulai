@@ -122,8 +122,11 @@ async fn list_datasets(State(s): State<AppState>) -> ApiResult<Json<Vec<DatasetS
            SELECT count(*) total, count(*) FILTER (WHERE y.status NOT IN ('pending', 'running', 'failed')) done
            FROM ops.task y JOIN ops.run r USING (run_id)
            WHERE y.dataset_id = d.dataset_id AND r.kind = 'backfill' AND r.status = 'running') b ON true
+         WHERE d.dataset_id = ANY($1)
          ORDER BY d.priority, d.dataset_id",
     )
+    // 只列配置中现有的数据集：从配置删掉的数据集在 ops.dataset 中留作历史（已关闭），不再展示
+    .bind(s.engine.registry.datasets.iter().map(|d| d.id.as_str()).collect::<Vec<_>>())
     .fetch_all(&s.pool)
     .await?;
     let reg = &s.engine.registry;

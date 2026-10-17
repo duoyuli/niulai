@@ -529,6 +529,16 @@ async fn sync_schedule_can_be_viewed_and_changed() {
     assert!(plan(&v, "manual")["next_at"].is_null());
     assert!(plan(&v, "weekly")["next_at"].is_string());
 
+    // 从配置删掉的数据集留在 ops.dataset 中（已关闭），数据集列表不再展示
+    sqlx::query("INSERT INTO ops.dataset (dataset_id, domain, endpoint, priority, enabled, spec, spec_hash) VALUES ('a_share.removed', 'a_share', '/x', 'P1', false, '{}', '')")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (st, v) = call(&app, "GET", "/api/v1/datasets", None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let ids: Vec<&str> = v.as_array().unwrap().iter().map(|d| d["dataset_id"].as_str().unwrap()).collect();
+    assert!(ids.contains(&"a_share.snapshot") && !ids.contains(&"a_share.removed"));
+
     let (st, _) = call(&app, "PUT", "/api/v1/sync/schedule", Some(json!({"daily_time": "25:00", "weekly_weekday": 6, "weekly_time": "08:00"}))).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
     let (st, _) = call(&app, "PUT", "/api/v1/sync/schedule", Some(json!({"daily_time": "18:00", "weekly_weekday": 0, "weekly_time": "08:00"}))).await;

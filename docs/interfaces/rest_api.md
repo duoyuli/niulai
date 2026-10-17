@@ -63,7 +63,7 @@
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
 | `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线 |
 | `GET /indices/{thscode}/members` | 指数成分 | `date` 默认今天；历史成分从开始采集那天起才有 |
-| `GET /datasets` | 数据集列表：中文名、分类、一句话说明、更新频率和所属同步计划（`schedule`：`daily`、`weekly`、`monthly`、`report_season`、`manual`）、是否只有当天值、开关、最近完成时间、未完成任务数、没有解决的失败任务数、历史回补的进度 | — |
+| `GET /datasets` | 数据集列表（只含配置中现有的数据集）：中文名、分类、一句话说明、更新频率和所属同步计划（`schedule`：`daily`、`weekly`、`monthly`、`report_season`、`manual`）、是否只有当天值、开关、最近完成时间、未完成任务数、没有解决的失败任务数、历史回补的进度 | — |
 | `GET /sync/health` | 同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口（能否补回）、没有解决的失败（白话原因）、历史回补的进度和剩余时间 | 规则见 [完整性核对与兜底补偿](../architecture/sync_pipeline.md#audit) |
 | `POST /sync/repair` | 立即兜底补偿：能补的缺口规划补偿运行，供应商暂时不可用导致的失败重新排队；返回 202 | 每天每日同步结束后也会自动执行一次 |
 | `GET /sync/check` | 数据核检：是否正在核检、最近一次核检（来源、查到哪个交易日、每个数据集查了多少、新发现、已补回、确认停牌、仍缺、重取的运行）、还缺数据的证券（缺的天数多的在前，最多 50 只，每只列最早 10 天） | 规则见 [数据核检](../architecture/sync_pipeline.md#data_check) |
