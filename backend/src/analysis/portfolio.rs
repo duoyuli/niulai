@@ -330,7 +330,7 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
 }
 
 /// 基准：沪深 300，没有时用上证指数。返回名称和「每天收盘 ÷ 区间第一天收盘」
-async fn benchmark(pool: &PgPool, start: NaiveDate, end: NaiveDate) -> sqlx::Result<Option<(String, HashMap<NaiveDate, f64>)>> {
+pub(crate) async fn benchmark(pool: &PgPool, start: NaiveDate, end: NaiveDate) -> sqlx::Result<Option<(String, HashMap<NaiveDate, f64>)>> {
     for (code, name) in [("000300.SH", "沪深 300"), ("000001.SH", "上证指数")] {
         let rows: Vec<(NaiveDate, f64)> = sqlx::query_as(
             "SELECT trade_date, close::float8 FROM mkt.index_bar_1d WHERE thscode = $1 AND trade_date >= $2 AND trade_date <= $3 ORDER BY trade_date",

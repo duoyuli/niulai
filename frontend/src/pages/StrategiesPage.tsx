@@ -80,6 +80,7 @@ function StrategyCard({ s }: { s: StrategyItem }) {
       <div className="flex items-start justify-between gap-2">
         <span className="font-medium">{s.name}</span>
         <span className="flex shrink-0 gap-1">
+          {s.builtin && <Badge tone="ok">内置</Badge>}
           {!s.show_on_today && <Badge>不在今日</Badge>}
           {s.screening ? <Badge tone="info">每日巡检</Badge> : <Badge>已暂停</Badge>}
         </span>

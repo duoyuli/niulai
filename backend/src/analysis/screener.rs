@@ -301,25 +301,64 @@ pub async fn load_strategy(pool: &PgPool, id: i64) -> anyhow::Result<Option<Defi
     })
 }
 
-/// 第一次启动时，把内置模板复制为普通策略并开启巡检，让「选股」页不是空的。只做一次：删掉的不会再出现
-pub async fn seed_templates(pool: &PgPool) -> anyhow::Result<()> {
-    let seeded: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.setting WHERE name = 'strategies_seeded')").fetch_one(pool).await?;
-    if seeded {
-        return Ok(());
-    }
+/// 内置策略：每个模板一行（`builtin_key` 是模板的 key），启动时按模板内容同步，只读、总是参加巡检。
+/// 账户的风格按 key 引用它们，所以不能被改坏。还没有内置行时，先接管内容和模板完全一样的普通策略
+/// （以前第一次启动时由模板复制出来、没有改过的），避免同一个策略出现两份；改过的保持为普通策略。
+/// 模板删掉后，对应的行变回普通策略，巡检记录保留
+pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {
+    let list = super::strategy::templates();
+    let keys: Vec<&str> = list.iter().map(|t| t.key).collect();
     let mut tx = pool.begin().await?;
-    for t in super::strategy::templates() {
-        sqlx::query("INSERT INTO app.strategy (name, description, definition, template) VALUES ($1, $2, $3, $4)")
-            .bind(t.name)
-            .bind(t.description)
-            .bind(serde_json::to_value(&t.definition)?)
-            .bind(t.key)
-            .execute(&mut *tx)
-            .await?;
+    for t in &list {
+        let def = serde_json::to_value(&t.definition)?;
+        let updated = sqlx::query(
+            "UPDATE app.strategy SET name = $2, description = $3, definition = $4, template = $1, screening = true, updated_at = now()
+             WHERE builtin_key = $1 AND (name, description, definition, screening) IS DISTINCT FROM ($2, $3, $4, true)",
+        )
+        .bind(t.key)
+        .bind(t.name)
+        .bind(t.description)
+        .bind(&def)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE builtin_key = $1)").bind(t.key).fetch_one(&mut *tx).await?;
+        if exists {
+            if updated > 0 {
+                tracing::info!(key = t.key, "内置策略已按模板更新");
+            }
+            continue;
+        }
+        let adopted = sqlx::query(
+            "UPDATE app.strategy SET builtin_key = $1, name = $2, description = $3, screening = true, updated_at = now()
+             WHERE strategy_id = (SELECT min(strategy_id) FROM app.strategy WHERE builtin_key IS NULL AND template = $1 AND definition = $4)",
+        )
+        .bind(t.key)
+        .bind(t.name)
+        .bind(t.description)
+        .bind(&def)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if adopted == 0 {
+            sqlx::query("INSERT INTO app.strategy (name, description, definition, template, builtin_key) VALUES ($1, $2, $3, $4, $4)")
+                .bind(t.name)
+                .bind(t.description)
+                .bind(&def)
+                .bind(t.key)
+                .execute(&mut *tx)
+                .await?;
+        }
     }
-    sqlx::query("INSERT INTO app.setting (name, value) VALUES ('strategies_seeded', 'v1') ON CONFLICT DO NOTHING").execute(&mut *tx).await?;
+    sqlx::query("UPDATE app.strategy SET builtin_key = NULL WHERE builtin_key IS NOT NULL AND NOT (builtin_key = ANY($1))").bind(&keys).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// 内置策略的编号，按模板 key
+pub async fn builtin_ids(pool: &PgPool) -> sqlx::Result<HashMap<String, i64>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as("SELECT builtin_key, strategy_id FROM app.strategy WHERE builtin_key IS NOT NULL").fetch_all(pool).await?;
+    Ok(rows.into_iter().collect())
 }
 
 /// 已保存的巡检结果中，每只股票最近入选了哪些策略（个股诊断用）

@@ -138,7 +138,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 2. `CALL mkt.rebuild_adj_segment(run_id)`：全量重算复权分段，包括等比复权因子和同花顺减法复权的系数，约 2 秒。
 3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的进程内缓存（市场概况、信号的过去表现）失效。
 
-重算完成后，用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)；巡检失败只写日志，不影响运行的状态。之后规划下一个波次（如果有）。复权的计算规则见 [复权](../domains/price_adjustment.md)。
+重算完成后，用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，再为每个账户生成 [调仓建议](../domains/accounts.md#generation)；失败只写日志，不影响运行的状态。执行循环每分钟的维护里也补齐缺的建议，并在后台每周重算策略过去表现和风格回测（`advice::maintain`）。之后规划下一个波次（如果有）。复权的计算规则见 [复权](../domains/price_adjustment.md)。
 
 新的一天的日线不用重算就有复权价（落在最后一个分段里）。但一个回补运行可能要执行一两天，期间补回来的历史日线和公司行动会改变分段，只在运行结束时重算的话，这段时间的复权价是旧的。所以执行循环的维护（每分钟一次）还会检查：自上次重算以来有价格类任务写入了变化，并且距上次重算超过 5 分钟，就重算一次。上次重算的时刻记在 `ops.scheduler` 的 `adj_rebuild` 作业上，用条件 UPDATE 抢占；运行结束时的重算也会刷新这个时刻。重算不阻塞查询，见 [等比复权因子](../domains/price_adjustment.md#equal_ratio_factor)。
 

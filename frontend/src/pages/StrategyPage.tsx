@@ -84,11 +84,28 @@ export function StrategyPage() {
           <h1 className="mt-1 flex flex-wrap items-center gap-2 text-xl font-semibold">
             {st.name}
             {st.screening ? <Badge tone="info">每日巡检</Badge> : <Badge>已暂停巡检</Badge>}
+            {st.builtin && <Badge tone="ok">内置</Badge>}
             {!st.show_on_today && <Badge>不在今日展示</Badge>}
           </h1>
           <Conditions e={st.explained} />
         </div>
-        {admin && (
+        {admin && st.builtin && (
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-xs text-zinc-500">内置策略由模板生成、账户的风格引用它，不能修改或删除</span>
+            <Link to={`/strategies/new?from=${st.template ?? ""}`} className={buttonClass("ghost")}>
+              复制一份改
+            </Link>
+            <button
+              type="button"
+              className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+              disabled={update.isPending}
+              onClick={() => save({ show_on_today: !st.show_on_today })}
+            >
+              {st.show_on_today ? "不在今日展示" : "在今日展示"}
+            </button>
+          </div>
+        )}
+        {admin && !st.builtin && (
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <Link to={`/strategies/${id}/edit`} className={buttonClass("ghost")}>
               修改条件

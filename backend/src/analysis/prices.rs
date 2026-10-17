@@ -54,6 +54,14 @@ pub async fn recent_bars(pool: &PgPool, code: &str, n: i64) -> sqlx::Result<Vec<
     Ok(rows.into_iter().map(bar).collect())
 }
 
+/// 一只股票截至 end（含）的最近 n 根日线，按日期升序
+pub async fn recent_bars_until(pool: &PgPool, code: &str, end: NaiveDate, n: i64) -> sqlx::Result<Vec<DailyBar>> {
+    // 审计：只拼接了本文件中的常量
+    let sql = format!("SELECT * FROM (SELECT {BAR_COLUMNS} FROM {BAR_JOIN} WHERE b.thscode = $1 AND b.trade_date <= $3 ORDER BY b.trade_date DESC LIMIT $2) t ORDER BY 1");
+    let rows: Vec<BarRow> = sqlx::query_as(AssertSqlSafe(sql)).bind(code).bind(n).bind(end).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(bar).collect())
+}
+
 /// 同时进行的全市场计算最多几个。每个都要读几百万行日线、算几秒到十几秒，
 /// 不限制的话几个页面同时打开就会占满数据库连接和 CPU，拖慢接口和同步任务；多出来的排队等待
 pub const MARKET_SCANS: usize = 2;

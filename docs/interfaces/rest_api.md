@@ -45,7 +45,7 @@
 | `GET /strategies/catalog` | 指标、内置信号（含白话说明）、模板目录和默认股票池，前端据此生成条件编辑器 | — |
 | `GET /strategies` | 全部策略，含白话说明（`explained`）和最近一次巡检的数量 | — |
 | `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, show_on_today, template}`，`screening`、`show_on_today` 默认 true；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |
-| `GET` / `PUT` / `DELETE /strategies/{id}` | 读取、修改（请求体同新建）、删除策略；删除返回 204 | 不存在时返回 404 |
+| `GET` / `PUT` / `DELETE /strategies/{id}` | 读取、修改（请求体同新建）、删除策略；删除返回 204 | 不存在时返回 404；内置策略（`builtin` 为 true）只能改 `show_on_today`，修改其他内容或删除返回 409 |
 | `POST /strategies/preview` | 试算：不保存，在某个交易日上看哪些股票满足买入条件 | 请求体 `{definition, date}`，`date` 默认最新交易日 |
 | `GET /strategies/{id}/results` | 某次巡检的结果：今日买点（命中条件、是否新入选）、今日卖点（原因）、持有中（买入日、买入价、买入以来涨跌），以及有结果的交易日 | `date` 默认最近一次巡检；规则见 [买卖点](../domains/strategies.md#points) |
 | `POST /screening/run` | 立即巡检 | `strategy_id` 默认全部开启巡检的策略、`date` 默认最新交易日 |
@@ -65,6 +65,21 @@
 | `GET /watchlist` | 当前用户的自选股及诊断（每个用户各自一份）：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |
+| `GET /styles` | 三种风格：规则、参考的内置策略和它们过去 3 年的表现、风格回测 | 规则见 [风格](../domains/accounts.md#styles) |
+| `GET /accounts` | 当前用户的账户：总资产、今日盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的 |
+| `POST /accounts` | 新建账户，返回 201 和详情，并生成第一份建议 | 请求体 `{name, style, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
+| `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比、盈亏、止损价、趋势均线）；修改名字、风格、高级设置 `overrides`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [风格](../domains/accounts.md#styles)，之后重新生成建议 |
+| `POST /accounts/{id}/positions/parse` | 识别粘贴的持仓文字，只返回预览 | 请求体 `{text}`，最多 20,000 字；规则见 [持仓](../domains/accounts.md#positions) |
+| `PUT /accounts/{id}/positions` | 校准：整体替换持仓和现金，差异记为校准流水，之后重新生成建议 | 请求体 `{cash, positions: [{thscode, shares, cost_price?, opened_on?}]}`；代码不存在、股数不大于 0、重复时返回 400 |
+| `GET` / `POST /accounts/{id}/trades` | 流水（新的在前，`limit` 默认 100、最多 500）；手动记一笔买入、卖出、转入、转出，之后重新生成建议 | 请求体 `{kind, thscode?, shares?, price?, amount?, fee?, trade_date?, note?}`；现金不够、卖出超过持有时返回 400 |
+| `POST /accounts/{id}/checked` | 确认持仓和券商一致（只记时间），返回 204 | — |
+| `GET /accounts/{id}/advice` | 最新一份建议（`date` 指定交易日）和每条的处理状态；没有时 `waiting` 说明原因 | 结构和规则见 [生成建议](../domains/accounts.md#generation) |
+| `POST /accounts/{id}/advice/refresh` | 按现在的持仓和最新巡检重新生成 | — |
+| `GET /accounts/{id}/advice/history` | 每个交易日的最终一份建议的摘要 | `limit` 默认 60、最多 250 |
+| `POST /accounts/{id}/advice/{advice_id}/items/{key}/execute` | 已执行：按实际成交记一笔，持仓和现金更新，这份建议不重新生成 | 请求体 `{shares?, price?, fee?, trade_date?}`，默认按建议；同一条执行两次、这条不需要操作时返回 400 |
+| `POST` / `DELETE /accounts/{id}/advice/{advice_id}/items/{key}/skip` | 不做这一条 / 撤销「不做」 | 已执行的不能撤销 |
+| `GET /accounts/{id}/review` | 最近 180 天的建议之后 5、10、20 个交易日的涨跌和汇总 | 口径见 [建议回看](../domains/accounts.md#review) |
+| `POST /accounts/{id}/backtest` | 用这个账户实际生效的参数做一次过去 3 年的风格回测 | 全市场计算，十几秒；口径见 [风格回测](../domains/accounts.md#style_backtest) |
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
 | `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线 |
 | `GET /indices/{thscode}/members` | 指数成分 | `date` 默认今天；历史成分从开始采集那天起才有 |
@@ -88,8 +103,8 @@
 用户保存在 `app.user`，**不开放注册**：管理员在「用户」页（`POST /users`）添加用户、设置或生成初始密码。第一个管理员由迁移创建，启动时如果它还没有密码，用 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD`（默认都是 `niulai`）设置，之后这两个变量不再起作用。用户、密码、会话签名在 `backend/src/auth.rs`，接口和中间件在 `backend/src/api/auth.rs`、`users.rs`。
 
 - **哪些接口要登录：** 除 `/health`、`/ready`、`/auth/login`、`/auth/logout`、`/openapi.json` 外的全部 `/api/v1/*` 接口。前端页面本身（`/` 和静态文件）不需要登录，页面在收到 401 时转到登录页。
-- **角色：** 管理员（`admin`）什么都能做。普通用户（`member`）：`/sync`、`/datasets`、`/setup`、`/users`、`/system/upgrade`、`/screening` 开头的接口连查看都不行；其余接口可以查看；写操作只有改自己的密码、收藏和取消收藏，以及只计算不保存的四个（`POST /signals/stats`、`/signals/today`、`/strategies/preview`、`/securities/{thscode}/signal-days`）。名单在 `api/auth.rs` 的 `ADMIN_PREFIXES`、`MEMBER_WRITES`，新增的写接口默认只有管理员能用。不允许时返回 403。
-- **我的数据：** 自选股等按当前用户保存，接口从 `CurrentUser` 取用户编号过滤；管理员也看不到别人的。
+- **角色：** 管理员（`admin`）什么都能做。普通用户（`member`）：`/sync`、`/datasets`、`/setup`、`/users`、`/system/upgrade`、`/screening` 开头的接口连查看都不行；其余接口可以查看；写操作只有改自己的密码、收藏和取消收藏、管理自己的账户（`/accounts` 下的新建、修改、删除、校准、记账、建议的执行和不做、回测），以及只计算不保存的四个（`POST /signals/stats`、`/signals/today`、`/strategies/preview`、`/securities/{thscode}/signal-days`）。名单在 `api/auth.rs` 的 `ADMIN_PREFIXES`、`MEMBER_WRITES`，新增的写接口默认只有管理员能用。不允许时返回 403。
+- **我的数据：** 自选股、账户（含持仓、流水、建议）按当前用户保存，接口从 `CurrentUser` 取用户编号过滤；管理员也看不到别人的，别人的账户返回 404。
 - **密码：** Argon2id 哈希，至少 8 个字符。管理员添加、重置的密码和默认密码都标记 `must_change_password`，本人登录后页面顶部提醒，本人改过后清除。
 - **登录状态：** 登录成功后设置 Cookie `niulai_session`，`HttpOnly`、`SameSite=Lax`、`Path=/`，保存 30 天（`Max-Age=2592000`），期间使用不会延长。内容是 `用户编号.到期时间.签名`，HMAC-SHA256 签名覆盖用户编号、到期时间和密码哈希；签名密钥第一次用到时随机生成，保存在 `app.setting` 的 `session_secret`，重启后仍然有效。改密码、被重置密码后这个用户之前的登录全部失效；停用的用户每次请求都被拒绝。服务端不保存会话列表，退出登录只是清除这台浏览器的 Cookie。
 - **防止锁在外面：** 不能修改自己的角色、停用自己、用重置接口改自己的密码；至少保留一个可以登录的管理员。都忘了密码时用命令行重置，见 [用户与密码](../operations/runbook.md#users)。

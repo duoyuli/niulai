@@ -622,7 +622,7 @@ export const getUpdateStrategyUrl = (strategyId: number,) => {
 }
 
 /**
- * @summary 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义
+ * @summary 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在今日展示」
  */
 export const updateStrategy = async (strategyId: number,
     strategyInput: StrategyInput, options?: Parameters<typeof apiFetch>[1]): Promise<StrategyItem> => {
@@ -689,7 +689,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type UpdateStrategyMutationVariables = {strategyId: number;data: StrategyInput}
 
     /**
- * @summary 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义
+ * @summary 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在今日展示」
  */
 export const useUpdateStrategy = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStrategy>>, TError,UpdateStrategyMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
@@ -710,7 +710,7 @@ export const useUpdateStrategy = <TError = ErrorBody,
 }
 
 /**
- * @summary 删除策略和它的巡检结果
+ * @summary 删除策略和它的巡检结果。内置策略不能删除
  */
 export const deleteStrategy = async (strategyId: number, options?: Parameters<typeof apiFetch>[1]): Promise<void> => {
 
@@ -729,7 +729,7 @@ export const deleteStrategy = async (strategyId: number, options?: Parameters<ty
 
 export const getDeleteStrategyMutationKey = () => ['deleteStrategy'] as const;
 
-export const getDeleteStrategyMutationOptions = <TError = unknown,
+export const getDeleteStrategyMutationOptions = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteStrategy>>, TError,DeleteStrategyMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteStrategy>>, TError,DeleteStrategyMutationVariables, TContext> => {
 
@@ -758,13 +758,13 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteStrategyMutationResult = NonNullable<Awaited<ReturnType<typeof deleteStrategy>>>
 
-    export type DeleteStrategyMutationError = unknown
+    export type DeleteStrategyMutationError = ErrorBody
     export type DeleteStrategyMutationVariables = {strategyId: number}
 
     /**
- * @summary 删除策略和它的巡检结果
+ * @summary 删除策略和它的巡检结果。内置策略不能删除
  */
-export const useDeleteStrategy = <TError = unknown,
+export const useDeleteStrategy = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteStrategy>>, TError,DeleteStrategyMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: QueryClient): UseMutationResult<
         Awaited<ReturnType<typeof deleteStrategy>>,

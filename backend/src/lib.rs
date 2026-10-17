@@ -8,6 +8,8 @@
 //! - `setup`：首次登录引导，在网页上配置 API Key。
 //! - `upgrader`：Docker 部署的一键升级助手（`niulai upgrader`）。
 
+pub mod account;
+pub mod advice;
 pub mod analysis;
 pub mod api;
 pub mod auth;

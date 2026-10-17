@@ -1,5 +1,6 @@
 //! REST API：`/api/v1/*`。接口规范由 utoipa 从代码生成，地址 `/api/v1/openapi.json`。
 
+pub mod accounts;
 pub mod auth;
 pub mod market;
 pub mod setup;
@@ -57,6 +58,7 @@ pub struct AppState {
         (name = "setup", description = "首次登录引导：配置 API Key"),
         (name = "market", description = "证券、日线、指数与均线信号"),
         (name = "watchlist", description = "自选股与快速诊断"),
+        (name = "accounts", description = "我的账户、持仓与每日调仓建议"),
         (name = "strategy", description = "选股策略与每日巡检"),
         (name = "signal", description = "指标、信号与买卖点"),
         (name = "backtest", description = "回测"),
@@ -115,6 +117,7 @@ fn routes() -> OpenApiRouter<AppState> {
         .merge(strategy::routes())
         .merge(signal::routes())
         .merge(watchlist::routes())
+        .merge(accounts::routes())
         .merge(backtest::routes())
         .merge(sync::routes())
 }

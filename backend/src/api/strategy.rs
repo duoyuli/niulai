@@ -97,6 +97,8 @@ pub struct StrategyItem {
     /// 是否在「今日」页展示选出的股票
     pub show_on_today: bool,
     pub template: Option<String>,
+    /// 内置策略：由模板生成，只读、不能删除、总是参加巡检，账户的风格引用它；想改就复制一份
+    pub builtin: bool,
     pub definition: Definition,
     pub explained: Explained,
     /// 最近一次巡检；还没有巡检过时为空
@@ -104,12 +106,12 @@ pub struct StrategyItem {
     pub updated_at: DateTime<Utc>,
 }
 
-type StrategyRow = (i64, String, String, bool, bool, Option<String>, serde_json::Value, DateTime<Utc>);
+type StrategyRow = (i64, String, String, bool, bool, Option<String>, bool, serde_json::Value, DateTime<Utc>);
 
 async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem>> {
     let rows: Vec<StrategyRow> = sqlx::query_as(
-        "SELECT strategy_id, name, description, screening, show_on_today, template, definition, updated_at FROM app.strategy
-         WHERE ($1::bigint IS NULL OR strategy_id = $1) ORDER BY strategy_id",
+        "SELECT strategy_id, name, description, screening, show_on_today, template, builtin_key IS NOT NULL, definition, updated_at FROM app.strategy
+         WHERE ($1::bigint IS NULL OR strategy_id = $1) ORDER BY builtin_key IS NULL, strategy_id",
     )
     .bind(id)
     .fetch_all(&s.pool)
@@ -127,13 +129,13 @@ async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem
     .await?;
     let lib = signal_lib::load(&s.pool).await?;
     let mut out = vec![];
-    for (strategy_id, name, description, screening, show_on_today, template, v, updated_at) in rows {
+    for (strategy_id, name, description, screening, show_on_today, template, builtin, v, updated_at) in rows {
         let definition: Definition = serde_json::from_value::<Definition>(v).map_err(|e| ApiError::Internal(e.into()))?.with_lib(lib.clone());
         let latest = latest
             .iter()
             .find(|l| l.0 == strategy_id)
             .map(|&(_, trade_date, matched, hits, new_hits, sells, holdings)| LatestRun { trade_date, matched, hits, new_hits, sells, holdings });
-        out.push(StrategyItem { strategy_id, name, description, screening, show_on_today, template, explained: explain(&definition), definition, latest, updated_at });
+        out.push(StrategyItem { strategy_id, name, description, screening, show_on_today, template, builtin, explained: explain(&definition), definition, latest, updated_at });
     }
     Ok(out)
 }
@@ -202,13 +204,24 @@ async fn get_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResu
     load_items(&s, Some(id)).await?.pop().map(Json).ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))
 }
 
-/// 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义
+/// 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在今日展示」
 #[utoipa::path(put, path = "/strategies/{strategy_id}", tag = "strategy", params(("strategy_id" = i64, Path)), request_body = StrategyInput,
     responses((status = 200, description = "已保存", body = StrategyItem),
               (status = 400, description = "定义不合法", body = crate::error::ErrorBody),
-              (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
+              (status = 404, description = "不存在", body = crate::error::ErrorBody),
+              (status = 409, description = "内置策略只能改是否在今日展示", body = crate::error::ErrorBody)))]
 async fn update_strategy(State(s): State<AppState>, Path(id): Path<i64>, Json(input): Json<StrategyInput>) -> ApiResult<Json<StrategyItem>> {
     check(&s, &input).await?;
+    let current = load_items(&s, Some(id)).await?.pop().ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))?;
+    if current.builtin {
+        let same = input.name.trim() == current.name
+            && input.description.trim() == current.description
+            && input.screening
+            && serde_json::to_value(&input.definition).ok() == serde_json::to_value(&current.definition).ok();
+        if !same {
+            return Err(ApiError::Conflict("内置策略不能修改（账户的风格引用它），可以复制一份再改".into()));
+        }
+    }
     let n = sqlx::query("UPDATE app.strategy SET name = $2, description = $3, definition = $4, screening = $5, show_on_today = $6, updated_at = now() WHERE strategy_id = $1")
         .bind(id)
         .bind(input.name.trim())
@@ -225,11 +238,17 @@ async fn update_strategy(State(s): State<AppState>, Path(id): Path<i64>, Json(in
     get_strategy(State(s), Path(id)).await
 }
 
-/// 删除策略和它的巡检结果
+/// 删除策略和它的巡检结果。内置策略不能删除
 #[utoipa::path(delete, path = "/strategies/{strategy_id}", tag = "strategy", params(("strategy_id" = i64, Path)),
-    responses((status = 204, description = "已删除")))]
+    responses((status = 204, description = "已删除"), (status = 409, description = "内置策略不能删除", body = crate::error::ErrorBody)))]
 async fn delete_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<StatusCode> {
-    sqlx::query("DELETE FROM app.strategy WHERE strategy_id = $1").bind(id).execute(&s.pool).await?;
+    let n = sqlx::query("DELETE FROM app.strategy WHERE strategy_id = $1 AND builtin_key IS NULL").bind(id).execute(&s.pool).await?.rows_affected();
+    if n == 0 {
+        let builtin: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)").bind(id).fetch_one(&s.pool).await?;
+        if builtin {
+            return Err(ApiError::Conflict("内置策略不能删除（账户的风格引用它）".into()));
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -10,12 +10,14 @@ import { Card, Empty, ErrorState, QueryView, Spinner } from "../components/ui";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { fmtInt, fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
 import { holdingsText } from "../lib/strategy";
+import { TodayAccounts } from "./AccountsPage";
 
-/** 每天打开看的一页：大盘怎么样 → 策略今天选出了什么 → 我关注的股票有什么变化 */
+/** 每天打开看的一页：我的账户明天要做什么 → 大盘怎么样 → 策略今天选出了什么 → 我关注的股票有什么变化 */
 export function TodayPage() {
   const overview = useMarketOverview();
   return (
     <>
+      <TodayAccounts />
       <div>
         <h1 className="text-xl font-semibold">
           今日

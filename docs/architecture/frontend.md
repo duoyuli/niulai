@@ -42,8 +42,11 @@
 
 | 路径 | 页面 | 接口 |
 | --- | --- | --- |
-| `/` | 今日：大盘概况、近 5 日最强行业、「在今日展示」的策略今天的买点（新入选在前）和卖点、自选股的最近信号 | `GET /market/overview`、`/market/sectors`、`/strategies`、`/strategies/{id}/results`、`/watchlist` |
-| `/strategies` | 我的策略：每个策略最近一次的买点、卖点、持有中数量；立即巡检、新建 | `GET /strategies`、`POST /screening/run` |
+| `/` | 今日：我的账户（每个账户一行：总资产、今日盈亏、明天要做什么）、大盘概况、近 5 日最强行业、「在今日展示」的策略今天的买点（新入选在前）和卖点、自选股的最近信号 | `GET /accounts`、`/market/overview`、`/market/sectors`、`/strategies`、`/strategies/{id}/results`、`/watchlist` |
+| `/accounts` | 我的账户：每个账户一张卡片（总资产、今日盈亏、现金、持仓只数、明天要做什么、核对提醒） | `GET /accounts` |
+| `/accounts/new` | 新建账户，三步：名字；风格（`StyleCards`：规则白话、参考的策略和过去表现、风格回测）；现金和持仓（`PositionsEditor`，可粘贴，可跳过） | `GET /styles`、`POST /accounts`、`POST /accounts/{id}/positions/parse`、`PUT /accounts/{id}/positions` |
+| `/accounts/:id` | 一个账户，四个标签：今日建议（`AdviceView`：结论、要操作的各条，展开看为什么、需要注意、怎么做，「已执行」可改实际成交，「不做」可撤销；其余持仓；照着做完之后；没选上的候选）；持仓（现价、市值占比、盈亏、止损价和趋势均线，记一笔、校准）；记录（建议准不准、每天的建议、流水）；设置（名字、风格、高级参数、费率、用自己的参数回测、删除要输入账户名） | `GET /accounts/{id}` 及其下的 `advice`、`trades`、`review` 等 |
+| `/strategies` | 策略：每个策略最近一次的买点、卖点、持有中数量，内置策略标「内置」；立即巡检、新建（管理员） | `GET /strategies`、`POST /screening/run` |
 | `/strategies/:id` | 策略详情：规则的白话；「今日买卖点」按交易日看买点、卖点（原因）、持有中；「过去表现如何」点「开始回测」做全市场组合回测 | `GET` / `PUT` / `DELETE /strategies/{id}`、`/results`、`POST /screening/run`、`GET /backtest/portfolio` |
 | `/strategies/new`、`/:id/edit` | 策略编辑器：从模板或空白开始，股票池、买入条件、排序、卖出规则，可预览；`?signal=<key>` 先放好一个信号 | `GET /strategies/catalog`、`/signals`、`POST /strategies/preview`、`POST` / `PUT /strategies` |
 | `/signals`、`/signals/:key` | 信号列表（我的信号和按分组的内置信号）；详情：怎么判断、怎么看、画在 K 线上、过去表现、今天出现的股票、被哪些策略用 | `GET /signals`、`/signals/{key}`、`POST /signals/today`、`/signals/stats`、`/securities/{thscode}/signal-days`、`GET /securities/{thscode}/indicator` |

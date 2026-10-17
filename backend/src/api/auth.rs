@@ -26,12 +26,24 @@ const MAX_AGE_SECS: i64 = 30 * 24 * 3600;
 const PUBLIC_PATHS: &[&str] = &["/health", "/ready", "/auth/login", "/auth/logout", "/openapi.json"];
 /// 只有管理员能访问（包括查看）的接口前缀：数据同步、数据源设置、用户管理、升级、手动巡检
 const ADMIN_PREFIXES: &[&str] = &["/sync", "/datasets", "/setup", "/users", "/system/upgrade", "/screening"];
-/// 普通用户可以调用的写操作：只动自己的数据，或者只计算、不保存。`*` 匹配一段路径。
+/// 普通用户可以调用的写操作：只动自己的数据（自选股、账户都按当前用户过滤），或者只计算、不保存。`*` 匹配一段路径。
 /// 其余写操作（策略、信号的增改删等）只有管理员能做：新增接口默认不对普通用户开放
 const MEMBER_WRITES: &[(Method, &str)] = &[
     (Method::PUT, "/auth/password"),
     (Method::PUT, "/watchlist/*"),
     (Method::DELETE, "/watchlist/*"),
+    (Method::POST, "/accounts"),
+    (Method::PUT, "/accounts/*"),
+    (Method::DELETE, "/accounts/*"),
+    (Method::POST, "/accounts/*/checked"),
+    (Method::POST, "/accounts/*/positions/parse"),
+    (Method::PUT, "/accounts/*/positions"),
+    (Method::POST, "/accounts/*/trades"),
+    (Method::POST, "/accounts/*/advice/refresh"),
+    (Method::POST, "/accounts/*/advice/*/items/*/execute"),
+    (Method::POST, "/accounts/*/advice/*/items/*/skip"),
+    (Method::DELETE, "/accounts/*/advice/*/items/*/skip"),
+    (Method::POST, "/accounts/*/backtest"),
     (Method::POST, "/signals/stats"),
     (Method::POST, "/signals/today"),
     (Method::POST, "/strategies/preview"),
@@ -236,6 +248,7 @@ mod tests {
         assert!(allowed(m, &Method::GET, "/strategies/3") && allowed(m, &Method::GET, "/system/version"));
         assert!(allowed(m, &Method::PUT, "/watchlist/600519.SH") && allowed(m, &Method::PUT, "/auth/password"));
         assert!(allowed(m, &Method::POST, "/securities/600519.SH/signal-days") && allowed(m, &Method::POST, "/signals/stats"));
+        assert!(allowed(m, &Method::POST, "/accounts") && allowed(m, &Method::POST, "/accounts/3/advice/9/items/buy-600519.SH/execute"));
         for (method, path) in [
             (Method::POST, "/strategies"),
             (Method::PUT, "/strategies/3"),

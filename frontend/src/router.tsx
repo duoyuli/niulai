@@ -1,6 +1,9 @@
 import { createBrowserRouter } from "react-router";
 import { AdminOnly } from "./components/AdminOnly";
 import { Layout } from "./components/Layout";
+import { AccountNewPage } from "./pages/AccountNewPage";
+import { AccountPage } from "./pages/AccountPage";
+import { AccountsPage } from "./pages/AccountsPage";
 import { GuidePage } from "./pages/GuidePage";
 import { IndexDetailPage } from "./pages/IndexDetailPage";
 import { IndicatorDetailPage, IndicatorsPage } from "./pages/IndicatorsPage";
@@ -27,6 +30,9 @@ export const router = createBrowserRouter([
     element: <Layout />,
     children: [
       { path: "/", element: <TodayPage /> },
+      { path: "/accounts", element: <AccountsPage /> },
+      { path: "/accounts/new", element: <AccountNewPage /> },
+      { path: "/accounts/:id", element: <AccountPage /> },
       { path: "/strategies", element: <StrategiesPage /> },
       {
         path: "/strategies/new",

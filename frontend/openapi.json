@@ -9,6 +9,939 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/accounts": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "我的账户",
+        "operationId": "list_accounts",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccountSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "新建账户：名字、风格、现在的现金。持仓之后在持仓页添加或粘贴",
+        "operationId": "create_account",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewAccount"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "已创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "名字不合法、现金为负或账户太多",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "已经有同名账户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "账户详情：持仓带现价、市值、占比、盈亏、止损价和趋势均线",
+        "operationId": "get_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "修改名字、风格、高级设置、费率、备注；之后重新生成今天的建议",
+        "operationId": "update_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "已经有同名账户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "删除账户，连同持仓、流水和历史建议",
+        "operationId": "delete_account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已删除"
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/advice": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "当前的建议（某个交易日的最终一份），以及每条的处理状态",
+        "operationId": "current_advice",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "description": "交易日；默认最新一份",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/advice/history": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "历史建议：每个交易日一行，新的在前",
+        "operationId": "advice_history",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "默认 60，最多 250",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdviceDay"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/advice/refresh": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "按现在的持仓和最新的巡检结果重新生成今天的建议",
+        "operationId": "refresh_advice",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已重新生成",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/advice/{advice_id}/items/{key}/execute": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "已执行：按实际成交记一笔买入或卖出，持仓和现金跟着更新。这份建议不重新生成，其余条目照常",
+        "operationId": "execute_item",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "advice_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "description": "例：buy-601012.SH",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecuteInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已记下",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "这条不能执行、已经执行过，或现金、股数不够",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户、建议或条目不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/advice/{advice_id}/items/{key}/skip": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "不做这一条（之后可以撤销）",
+        "operationId": "skip_item",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "advice_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已记下",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "撤销「不做」。已执行的不能撤销：记错了在持仓页校准",
+        "operationId": "clear_item",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "advice_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已撤销",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdviceResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/backtest": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "用这个账户实际生效的参数做一次风格回测（过去 3 年）。全市场计算，要十几秒",
+        "operationId": "account_backtest",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StyleBacktest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "本地还没有日线",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/checked": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "确认持仓和券商一致（只记时间，用于核对提醒）",
+        "operationId": "mark_checked",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已记下"
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/positions": {
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "校准：把持仓和现金整体换成填的（照着券商 App 抄一遍）；和原来不同的地方各记一条流水，之后重新生成建议",
+        "operationId": "calibrate",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalibrateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "代码不存在、股数不对或重复",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/positions/parse": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "识别粘贴的持仓文字，只返回预览，不保存",
+        "operationId": "parse_positions",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasteInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "识别结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ParsedRow"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/review": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "过去的建议之后 5、10、20 个交易日的实际涨跌",
+        "operationId": "account_review",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Review"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/trades": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "流水：每一次持仓和现金的变动，新的在前",
+        "operationId": "list_trades",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "默认 100，最多 500",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccountTrade"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "手动记一笔：买入、卖出（按成交价和股数，费用不填时按账户费率估算）、转入或转出现金；之后重新生成建议",
+        "operationId": "add_trade",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已记下",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "现金不够、股数不对等",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/login": {
       "post": {
         "tags": [
@@ -2114,7 +3047,7 @@
         "tags": [
           "strategy"
         ],
-        "summary": "修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义",
+        "summary": "修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在今日展示」",
         "operationId": "update_strategy",
         "parameters": [
           {
@@ -2167,6 +3100,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "内置策略只能改是否在今日展示",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         }
       },
@@ -2174,7 +3117,7 @@
         "tags": [
           "strategy"
         ],
-        "summary": "删除策略和它的巡检结果",
+        "summary": "删除策略和它的巡检结果。内置策略不能删除",
         "operationId": "delete_strategy",
         "parameters": [
           {
@@ -2190,6 +3133,16 @@
         "responses": {
           "204": {
             "description": "已删除"
+          },
+          "409": {
+            "description": "内置策略不能删除",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         }
       }
@@ -2242,6 +3195,30 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/styles": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "三种风格：规则、参考的策略和它们的过去表现、风格回测",
+        "operationId": "styles",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StyleInfo"
+                  }
                 }
               }
             }
@@ -2915,6 +3892,677 @@
   },
   "components": {
     "schemas": {
+      "Account": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "name",
+          "style",
+          "overrides",
+          "cash",
+          "fees",
+          "note",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cash": {
+            "type": "number",
+            "format": "double",
+            "description": "现金（元）"
+          },
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "最近一次确认「和券商一致」的时刻"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fees": {
+            "$ref": "#/components/schemas/Fees"
+          },
+          "name": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "overrides": {
+            "$ref": "#/components/schemas/StyleOverrides",
+            "description": "高级设置中改过的参数；为空对象表示全部跟着风格"
+          },
+          "style": {
+            "$ref": "#/components/schemas/Style"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountDetail": {
+        "type": "object",
+        "required": [
+          "summary",
+          "params",
+          "positions"
+        ],
+        "properties": {
+          "params": {
+            "$ref": "#/components/schemas/StyleParams",
+            "description": "实际生效的风格参数（含高级设置）"
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PositionView"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/AccountSummary"
+          }
+        }
+      },
+      "AccountPosition": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "shares",
+          "since"
+        ],
+        "properties": {
+          "cost_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "每股成本（未复权；分红送转后自动摊薄）；没填时为空"
+          },
+          "opened_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "买入日；没填时为空"
+          },
+          "shares": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "since": {
+            "type": "string",
+            "format": "date",
+            "description": "股数最近一次变动的日期：之后的除权除息才自动记账"
+          },
+          "strategy_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "按哪个策略的买入建议买的；手动录入的为空"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountSummary": {
+        "type": "object",
+        "required": [
+          "account",
+          "style_name",
+          "custom",
+          "positions",
+          "market_value",
+          "total_assets",
+          "day_pnl"
+        ],
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/Account"
+          },
+          "advice": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdviceBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "check_hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "持仓很久没变动、又有没执行的建议时，提醒核对"
+          },
+          "custom": {
+            "type": "boolean",
+            "description": "改过高级设置"
+          },
+          "day_pnl": {
+            "type": "number",
+            "format": "double",
+            "description": "按最近一个交易日的涨跌估算的今日盈亏"
+          },
+          "market_value": {
+            "type": "number",
+            "format": "double"
+          },
+          "positions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "style_name": {
+            "type": "string"
+          },
+          "total_assets": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "AccountTrade": {
+        "type": "object",
+        "required": [
+          "trade_id",
+          "kind",
+          "trade_date",
+          "amount",
+          "fee",
+          "source",
+          "note",
+          "created_at"
+        ],
+        "properties": {
+          "amount": {
+            "type": "number",
+            "format": "double",
+            "description": "现金的变化（含费用）：买入为负，卖出、分红为正"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fee": {
+            "type": "number",
+            "format": "double"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TradeKind"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "shares": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "持仓股数的变化：买入、送转为正，卖出为负"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TradeSource"
+          },
+          "thscode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "trade_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AccountUpdate": {
+        "type": "object",
+        "required": [
+          "name",
+          "style",
+          "fees"
+        ],
+        "properties": {
+          "fees": {
+            "$ref": "#/components/schemas/Fees"
+          },
+          "name": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "overrides": {
+            "$ref": "#/components/schemas/StyleOverrides"
+          },
+          "style": {
+            "$ref": "#/components/schemas/Style"
+          }
+        }
+      },
+      "Advice": {
+        "type": "object",
+        "required": [
+          "trade_date",
+          "next_date",
+          "style",
+          "headline",
+          "total_assets",
+          "cash",
+          "market_value",
+          "items",
+          "skipped",
+          "after",
+          "notes"
+        ],
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/AdviceAfter"
+          },
+          "cash": {
+            "type": "number",
+            "format": "double"
+          },
+          "headline": {
+            "type": "string",
+            "description": "一句话结论：「今天不用操作」或「卖出 1 只、买入 2 只」"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdviceItem"
+            },
+            "description": "卖出、减仓、买入、继续拿、不动，按这个顺序"
+          },
+          "market": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "市场环境的一句话"
+          },
+          "market_value": {
+            "type": "number",
+            "format": "double"
+          },
+          "next_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "需要用户知道的事，例如有持仓没填成本价"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedCandidate"
+            },
+            "description": "今天有买点、但没进建议的候选和原因"
+          },
+          "style": {
+            "$ref": "#/components/schemas/Style"
+          },
+          "total_assets": {
+            "type": "number",
+            "format": "double"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "why_nothing": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "不用操作时的原因"
+          }
+        }
+      },
+      "AdviceAction": {
+        "type": "string",
+        "enum": [
+          "sell",
+          "reduce",
+          "buy",
+          "hold",
+          "wait"
+        ]
+      },
+      "AdviceAfter": {
+        "type": "object",
+        "description": "照着建议做完之后的预计",
+        "required": [
+          "cash",
+          "cash_pct",
+          "positions",
+          "weights"
+        ],
+        "properties": {
+          "cash": {
+            "type": "number",
+            "format": "double"
+          },
+          "cash_pct": {
+            "type": "number",
+            "format": "double"
+          },
+          "positions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "weights": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdviceWeight"
+            }
+          }
+        }
+      },
+      "AdviceBrief": {
+        "type": "object",
+        "description": "一份建议的摘要（账户列表和今日页用）",
+        "required": [
+          "trade_date",
+          "next_date",
+          "headline",
+          "sells",
+          "reduces",
+          "buys",
+          "pending"
+        ],
+        "properties": {
+          "buys": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "headline": {
+            "type": "string"
+          },
+          "next_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "pending": {
+            "type": "integer",
+            "description": "卖出、减仓、买入中还没处理（执行或不做）的条数",
+            "minimum": 0
+          },
+          "reduces": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sells": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "AdviceDay": {
+        "type": "object",
+        "required": [
+          "advice_id",
+          "trade_date",
+          "headline",
+          "sells",
+          "reduces",
+          "buys",
+          "executed",
+          "skipped"
+        ],
+        "properties": {
+          "advice_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "buys": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "executed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "用户点了「已执行」的条数"
+          },
+          "headline": {
+            "type": "string"
+          },
+          "reduces": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sells": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "AdviceItem": {
+        "type": "object",
+        "required": [
+          "key",
+          "action",
+          "thscode",
+          "name",
+          "shares",
+          "ref_price",
+          "amount",
+          "fee",
+          "headline",
+          "rule",
+          "evidence",
+          "cautions",
+          "plan",
+          "streak",
+          "weight_pct"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/AdviceAction"
+          },
+          "amount": {
+            "type": "number",
+            "format": "double",
+            "description": "参考金额 = 股数 × 参考价"
+          },
+          "cautions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdviceNote"
+            },
+            "description": "反面的信息：有就必须显示"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdviceNote"
+            },
+            "description": "支持这个结论的数字"
+          },
+          "fee": {
+            "type": "number",
+            "format": "double",
+            "description": "估算的费用（佣金、印花税）"
+          },
+          "headline": {
+            "type": "string",
+            "description": "一句话结论"
+          },
+          "key": {
+            "type": "string",
+            "description": "例：sell-000858.SZ；执行、不做都按它记"
+          },
+          "name": {
+            "type": "string"
+          },
+          "plan": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "怎么做、什么时候结论会变"
+          },
+          "ref_price": {
+            "type": "number",
+            "format": "double",
+            "description": "参考价：建议交易日的收盘价"
+          },
+          "rule": {
+            "type": "string",
+            "description": "产生这个动作的规则原文"
+          },
+          "shares": {
+            "type": "integer",
+            "format": "int64",
+            "description": "卖出、减仓、买入的股数；继续拿和不动时是持有的股数"
+          },
+          "stop_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "strategy_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "买入时：选中它的策略（排第一的）；执行后记在持仓上，以后按它的卖出条件判断"
+          },
+          "streak": {
+            "type": "integer",
+            "format": "int32",
+            "description": "连续第几天给出这条卖出或减仓",
+            "minimum": 0
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "weight_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "现在占总资产的百分比（买入时是买入后的占比）"
+          }
+        }
+      },
+      "AdviceNote": {
+        "type": "object",
+        "description": "一条理由或提醒",
+        "required": [
+          "kind",
+          "text"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "price / position / diagnosis / strategy / stat / market / risk"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "AdviceResponse": {
+        "type": "object",
+        "properties": {
+          "advice": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StoredAdvice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_bar": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "最新日线的日期：比建议的交易日新时，说明今天的建议还在等巡检"
+          },
+          "waiting": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "没有建议时的原因，例如还没有巡检结果"
+          }
+        }
+      },
+      "AdviceWeight": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "name",
+          "weight_pct"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "weight_pct": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "ApiKeyInput": {
         "type": "object",
         "required": [
@@ -3144,6 +4792,27 @@
           },
           "thscode": {
             "type": "string"
+          }
+        }
+      },
+      "CalibrateInput": {
+        "type": "object",
+        "required": [
+          "cash",
+          "positions"
+        ],
+        "properties": {
+          "cash": {
+            "type": "number",
+            "format": "double",
+            "description": "现在的现金"
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PositionInput"
+            },
+            "description": "现在的全部持仓：没列出的视为已经卖掉"
           }
         }
       },
@@ -3848,6 +5517,43 @@
           }
         }
       },
+      "ExecuteInput": {
+        "type": "object",
+        "properties": {
+          "fee": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "实际费用；默认按账户费率估算"
+          },
+          "price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "实际成交价；默认按参考价"
+          },
+          "shares": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "实际成交的股数；默认按建议"
+          },
+          "trade_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "成交日；默认今天"
+          }
+        }
+      },
       "ExitReason": {
         "type": "string",
         "description": "卖出的原因",
@@ -3967,6 +5673,26 @@
           },
           "title": {
             "type": "string"
+          }
+        }
+      },
+      "Fees": {
+        "type": "object",
+        "description": "账户的费率",
+        "required": [
+          "commission_rate",
+          "min_commission"
+        ],
+        "properties": {
+          "commission_rate": {
+            "type": "number",
+            "format": "double",
+            "description": "佣金率，例如 0.00025 表示万分之 2.5"
+          },
+          "min_commission": {
+            "type": "number",
+            "format": "double",
+            "description": "每笔最低佣金（元）"
           }
         }
       },
@@ -4598,6 +6324,29 @@
           }
         }
       },
+      "NewAccount": {
+        "type": "object",
+        "required": [
+          "name",
+          "style"
+        ],
+        "properties": {
+          "cash": {
+            "type": "number",
+            "format": "double",
+            "description": "现在的现金（元）"
+          },
+          "name": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "style": {
+            "$ref": "#/components/schemas/Style"
+          }
+        }
+      },
       "NewUser": {
         "type": "object",
         "required": [
@@ -4876,6 +6625,52 @@
           }
         }
       },
+      "ParsedRow": {
+        "type": "object",
+        "description": "认出的一行",
+        "required": [
+          "line"
+        ],
+        "properties": {
+          "cost_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "line": {
+            "type": "string",
+            "description": "原文"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "认不全时的说明，例如「没有找到股数」；为空表示可以直接保存"
+          },
+          "shares": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "thscode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "PasswordInput": {
         "type": "object",
         "required": [
@@ -4900,6 +6695,18 @@
               "null"
             ],
             "description": "新密码，至少 8 个字符；为空时系统生成一个"
+          }
+        }
+      },
+      "PasteInput": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "从券商 App 复制的持仓文字"
           }
         }
       },
@@ -5270,6 +7077,137 @@
           }
         }
       },
+      "PositionInput": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "shares"
+        ],
+        "properties": {
+          "cost_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "opened_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "shares": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "PositionView": {
+        "type": "object",
+        "required": [
+          "position",
+          "name",
+          "board",
+          "market_value",
+          "weight_pct",
+          "delisted"
+        ],
+        "properties": {
+          "board": {
+            "type": "string"
+          },
+          "change_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最近一个交易日的涨跌（%）"
+          },
+          "close": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最近一根日线的收盘价（未复权）和日期；没有日线时为空"
+          },
+          "delisted": {
+            "type": "boolean"
+          },
+          "last_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "market_value": {
+            "type": "number",
+            "format": "double"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pnl": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "浮动盈亏（元、%）；没填成本价时为空"
+          },
+          "pnl_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "position": {
+            "$ref": "#/components/schemas/AccountPosition"
+          },
+          "stop_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "按本账户止损线算的止损价"
+          },
+          "strategy_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "买入依据的策略"
+          },
+          "trend_gap_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "trend_ma": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "本账户趋势均线的值，以及收盘价相对它的位置（%）"
+          },
+          "weight_pct": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "PreviewInput": {
         "type": "object",
         "required": [
@@ -5401,6 +7339,116 @@
               "null"
             ],
             "description": "系统生成的密码，只在这一次返回；自己填了密码时为空"
+          }
+        }
+      },
+      "Review": {
+        "type": "object",
+        "required": [
+          "items",
+          "buys",
+          "sells"
+        ],
+        "properties": {
+          "buys": {
+            "$ref": "#/components/schemas/ReviewGroup",
+            "description": "全部买入建议"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewItem"
+            }
+          },
+          "sells": {
+            "$ref": "#/components/schemas/ReviewGroup",
+            "description": "全部卖出、减仓建议（之后跌了说明卖对了）"
+          }
+        }
+      },
+      "ReviewGroup": {
+        "type": "object",
+        "required": [
+          "samples"
+        ],
+        "properties": {
+          "avg_20d_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "之后 20 个交易日的平均涨跌（%）"
+          },
+          "samples": {
+            "type": "integer",
+            "description": "有 20 个交易日后续数据的条数",
+            "minimum": 0
+          },
+          "up_ratio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "其中上涨的比例"
+          }
+        }
+      },
+      "ReviewItem": {
+        "type": "object",
+        "required": [
+          "trade_date",
+          "action",
+          "thscode",
+          "name",
+          "headline"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/AdviceAction"
+          },
+          "after_10d_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "after_20d_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "after_5d_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "之后 5、10、20 个交易日的涨跌（%）；还不到那么多天时为空"
+          },
+          "headline": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "executed / skipped；没处理时为空"
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
           }
         }
       },
@@ -6281,6 +8329,25 @@
           }
         }
       },
+      "SkippedCandidate": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "name",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
       "Sort": {
         "type": "object",
         "required": [
@@ -6312,6 +8379,49 @@
             "format": "int32",
             "description": "统计最近几年，默认 3，范围 1 到 5",
             "minimum": 0
+          }
+        }
+      },
+      "StoredAdvice": {
+        "type": "object",
+        "description": "一份保存下来的建议，以及用户对每条的处理",
+        "required": [
+          "advice_id",
+          "trade_date",
+          "created_at",
+          "rules_version",
+          "advice",
+          "states"
+        ],
+        "properties": {
+          "advice": {
+            "$ref": "#/components/schemas/Advice"
+          },
+          "advice_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rules_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "states": {
+            "type": "object",
+            "description": "item key → executed / skipped",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
           }
         }
       },
@@ -6491,11 +8601,16 @@
           "description",
           "screening",
           "show_on_today",
+          "builtin",
           "definition",
           "explained",
           "updated_at"
         ],
         "properties": {
+          "builtin": {
+            "type": "boolean",
+            "description": "内置策略：由模板生成，只读、不能删除、总是参加巡检，账户的风格引用它；想改就复制一份"
+          },
           "definition": {
             "$ref": "#/components/schemas/Definition"
           },
@@ -6609,6 +8724,452 @@
               "$ref": "#/components/schemas/PointTrade"
             },
             "description": "历次买卖，按买入时间排序"
+          }
+        }
+      },
+      "StrategyStat": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "signals",
+          "closed"
+        ],
+        "properties": {
+          "after20_avg_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "买点之后 20 个交易日的平均涨跌（%）"
+          },
+          "after20_up_ratio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "买点之后 20 个交易日上涨的比例"
+          },
+          "avg_bars_held": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "avg_return_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "卖出的交易的平均收益（%，前复权，不扣费用）"
+          },
+          "base20_avg_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "同期默认股票池里任意一天之后 20 个交易日的平均涨跌（%）"
+          },
+          "closed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "其中已经按卖出规则卖出的",
+            "minimum": 0
+          },
+          "end": {
+            "type": "string",
+            "format": "date"
+          },
+          "signals": {
+            "type": "integer",
+            "format": "int64",
+            "description": "买点次数",
+            "minimum": 0
+          },
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "win_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "卖出的交易中赚钱的比例（0.55 表示 55%）"
+          }
+        }
+      },
+      "Style": {
+        "type": "string",
+        "enum": [
+          "conservative",
+          "balanced",
+          "aggressive"
+        ]
+      },
+      "StyleBacktest": {
+        "type": "object",
+        "required": [
+          "summary",
+          "equity"
+        ],
+        "properties": {
+          "equity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StyleEquityPoint"
+            },
+            "description": "每周一个点"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/StyleBacktestSummary"
+          }
+        }
+      },
+      "StyleBacktestSummary": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "total_return",
+          "max_drawdown",
+          "trades",
+          "avg_positions",
+          "avg_cash_ratio"
+        ],
+        "properties": {
+          "annual_return": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "avg_cash_ratio": {
+            "type": "number",
+            "format": "double",
+            "description": "平均现金占比"
+          },
+          "avg_positions": {
+            "type": "number",
+            "format": "double",
+            "description": "平均每天持有几只"
+          },
+          "benchmark_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "benchmark_return": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "end": {
+            "type": "string",
+            "format": "date"
+          },
+          "max_drawdown": {
+            "type": "number",
+            "format": "double",
+            "description": "最大回撤（0.2 表示从最高点跌了 20%）"
+          },
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "total_return": {
+            "type": "number",
+            "format": "double",
+            "description": "区间涨跌（0.1 表示 10%）"
+          },
+          "trades": {
+            "type": "integer",
+            "description": "已卖出的交易笔数",
+            "minimum": 0
+          },
+          "win_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "StyleEquityPoint": {
+        "type": "object",
+        "required": [
+          "date",
+          "value"
+        ],
+        "properties": {
+          "benchmark": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "基准指数相对第一天的倍数"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "账户总值相对本金的倍数（1.1 表示赚了 10%）"
+          }
+        }
+      },
+      "StyleInfo": {
+        "type": "object",
+        "required": [
+          "style",
+          "name",
+          "tagline",
+          "params",
+          "strategies"
+        ],
+        "properties": {
+          "backtest": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StyleBacktest",
+                "description": "过去 3 年按这个风格操作的回测；还没算时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/components/schemas/StyleParams"
+          },
+          "strategies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StyleStrategy"
+            }
+          },
+          "style": {
+            "$ref": "#/components/schemas/Style"
+          },
+          "tagline": {
+            "type": "string"
+          }
+        }
+      },
+      "StyleOverrides": {
+        "type": "object",
+        "description": "高级设置中改过的参数；没改的为空，跟着风格走",
+        "properties": {
+          "chase_limit_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "max_positions": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "max_weight_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "min_cash_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "require_edge": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "sell_st": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "stop_loss_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "strategies": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "trend_ma": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "weak_market": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WeakMarket"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "weak_threshold_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "StyleParams": {
+        "type": "object",
+        "description": "一个风格的全部规则",
+        "required": [
+          "strategies",
+          "max_positions",
+          "max_weight_pct",
+          "min_cash_pct",
+          "stop_loss_pct",
+          "trend_ma",
+          "weak_market",
+          "weak_threshold_pct",
+          "chase_limit_pct",
+          "require_edge",
+          "sell_st"
+        ],
+        "properties": {
+          "chase_limit_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "第二天开盘比参考价高多少（%）就不买"
+          },
+          "max_positions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "最多同时持有几只",
+            "minimum": 0
+          },
+          "max_weight_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "单只最多占总资产的百分比"
+          },
+          "min_cash_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "至少留多少现金（占总资产的百分比）"
+          },
+          "require_edge": {
+            "type": "boolean",
+            "description": "只采纳过去 3 年 20 日平均涨跌好于「随便买」的策略"
+          },
+          "sell_st": {
+            "type": "boolean",
+            "description": "持有的股票被 ST 时卖出"
+          },
+          "stop_loss_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "止损线：比成本价亏多少（%）就卖"
+          },
+          "strategies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "参考的内置策略（模板 key）"
+          },
+          "trend_ma": {
+            "type": "integer",
+            "format": "int32",
+            "description": "收盘跌破几日均线就卖",
+            "minimum": 0
+          },
+          "weak_market": {
+            "$ref": "#/components/schemas/WeakMarket"
+          },
+          "weak_threshold_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "全市场站上 20 日均线的股票比例低于多少（%）算弱市"
+          }
+        }
+      },
+      "StyleStrategy": {
+        "type": "object",
+        "description": "风格引用的一个内置策略",
+        "required": [
+          "key",
+          "name",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stat": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StrategyStat",
+                "description": "过去 3 年的表现；还没统计时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },
@@ -7068,6 +9629,87 @@
           }
         }
       },
+      "TradeInput": {
+        "type": "object",
+        "description": "手动记一笔：买入、卖出、转入或转出现金",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "amount": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "转入、转出的金额"
+          },
+          "fee": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "实际费用；为空时按账户费率估算"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TradeKind"
+          },
+          "note": {
+            "type": "string"
+          },
+          "price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "成交价"
+          },
+          "shares": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "买入、卖出的股数"
+          },
+          "thscode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trade_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "成交日，默认今天"
+          }
+        }
+      },
+      "TradeKind": {
+        "type": "string",
+        "enum": [
+          "buy",
+          "sell",
+          "dividend",
+          "bonus",
+          "cash_in",
+          "cash_out",
+          "adjust"
+        ]
+      },
+      "TradeSource": {
+        "type": "string",
+        "enum": [
+          "user",
+          "advice",
+          "corp_action"
+        ]
+      },
       "Universe": {
         "type": "object",
         "description": "股票池：先排除不想要的股票，再判断条件",
@@ -7482,6 +10124,15 @@
             "format": "int32"
           }
         }
+      },
+      "WeakMarket": {
+        "type": "string",
+        "description": "弱市（全市场站上 20 日均线的股票比例低于阈值）时怎么买新股票",
+        "enum": [
+          "pause",
+          "half",
+          "normal"
+        ]
       }
     }
   },
@@ -7509,6 +10160,10 @@
     {
       "name": "watchlist",
       "description": "自选股与快速诊断"
+    },
+    {
+      "name": "accounts",
+      "description": "我的账户、持仓与每日调仓建议"
     },
     {
       "name": "strategy",
