@@ -25,6 +25,7 @@ export * from './dailyState';
 export * from './datasetProgress';
 export * from './datasetRecordsParams';
 export * from './datasetStatus';
+export * from './datasetWithoutTasks';
 export * from './daysInput';
 export * from './definition';
 export * from './diagnosis';

@@ -6,11 +6,18 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { DatasetProgress } from './datasetProgress';
+import type { DatasetWithoutTasks } from './datasetWithoutTasks';
 import type { RunSummary } from './runSummary';
 import type { TaskFailure } from './taskFailure';
 
 export type RunDetail = RunSummary & {
-  /** 最多 50 条失败任务 */
+  /** 各批合计最多 50 条失败任务（不再重试的和等待重试的） */
   failures: TaskFailure[];
+  /** 各批合计的各数据集进度 */
   progress: DatasetProgress[];
+  /** 还没开始的批次的数据集：等前一批结束后才规划 */
+  waiting: string[][];
+  /** 这次同步已经开始的各批（第一批在前） */
+  waves: RunSummary[];
+  without_tasks: DatasetWithoutTasks[];
 };

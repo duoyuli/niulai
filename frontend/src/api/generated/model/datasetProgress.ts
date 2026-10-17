@@ -10,8 +10,11 @@ export interface DatasetProgress {
   /** @nullable */
   changed?: number | null;
   dataset_id: string;
+  /** 已结束：成功、没有数据或跳过 */
   done: number;
+  /** 不再重试的失败 */
   failed: number;
+  /** 等待执行，包括失败后等待重试的 */
   pending: number;
   /** @nullable */
   records?: number | null;

@@ -73,7 +73,7 @@
 | `GET /datasets/{dataset_id}/records` | 通用记录查询，返回供应商原始字段 | `thscode`、`start`、`end`（按 `obs_date`）；`limit` 默认 100、最大 1,000；按 `obs_date` 倒序 |
 | `GET /sync/runs` | 最近的运行 | `limit` 默认 20、最大 200 |
 | `POST /sync/runs` | 发起运行，只规划任务，由执行循环执行；返回 202 | 请求体 `{kind, datasets, priorities, thscodes}`；`kind` 是 `backfill` 或 `incremental`；`datasets` 为空时按 `priorities` 选择已开启的数据集，两者都为空时是全部已开启的数据集；运行的 `params.trigger` 记为 `manual` |
-| `GET /sync/runs/{run_id}` | 运行详情：各数据集进度，最多 50 条失败任务 | — |
+| `GET /sync/runs/{run_id}` | 一次同步的详情，传任何一批的编号都返回整次同步：第一批的字段、已经开始的各批（`waves`）、还没开始的批次的数据集（`waiting`）、各批合计的各数据集进度、这次没有新建任务的数据集及原因（`without_tasks`，`queued_in` 是同样内容正在排队的那次同步）、最多 50 条失败任务 | 进度中 `done` 包括成功、没有数据和跳过，`pending` 包括等待重试的，`failed` 只算不再重试的，与运行的 `tasks_done`、`tasks_failed` 口径一致 |
 
 `POST /sync/runs` 返回的 `run_id` 是第一个波次。后续波次是新的运行，`params.root_run` 指向它，见 [波次规划](../architecture/sync_pipeline.md#waves)。
 

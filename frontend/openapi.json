@@ -2507,7 +2507,7 @@
         "tags": [
           "sync"
         ],
-        "summary": "运行详情：各数据集进度与失败任务",
+        "summary": "一次同步的详情：有依赖的数据集分几批执行（每批是一个运行），这里合在一起：各批、各数据集进度、没有新建任务的原因、失败任务。\n传入任何一批的编号都返回整次同步",
         "operationId": "get_run",
         "parameters": [
           {
@@ -3259,15 +3259,18 @@
           },
           "done": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "已结束：成功、没有数据或跳过"
           },
           "failed": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "不再重试的失败"
           },
           "pending": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "等待执行，包括失败后等待重试的"
           },
           "records": {
             "type": [
@@ -3368,6 +3371,26 @@
           "title": {
             "type": "string",
             "description": "中文名、分类、一句话说明"
+          }
+        }
+      },
+      "DatasetWithoutTasks": {
+        "type": "object",
+        "description": "选中了、但这次同步没有为它新建任务的数据集",
+        "required": [
+          "dataset_id"
+        ],
+        "properties": {
+          "dataset_id": {
+            "type": "string"
+          },
+          "queued_in": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "同一部分已经在另一次同步的队列里（不重复创建），那次同步的编号；为空表示没有需要同步的部分"
           }
         }
       },
@@ -5073,12 +5096,16 @@
       "RunDetail": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/RunSummary"
+            "$ref": "#/components/schemas/RunSummary",
+            "description": "这次同步的第一批"
           },
           {
             "type": "object",
             "required": [
+              "waves",
+              "waiting",
               "progress",
+              "without_tasks",
               "failures"
             ],
             "properties": {
@@ -5087,12 +5114,36 @@
                 "items": {
                   "$ref": "#/components/schemas/TaskFailure"
                 },
-                "description": "最多 50 条失败任务"
+                "description": "各批合计最多 50 条失败任务（不再重试的和等待重试的）"
               },
               "progress": {
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/DatasetProgress"
+                },
+                "description": "各批合计的各数据集进度"
+              },
+              "waiting": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "description": "还没开始的批次的数据集：等前一批结束后才规划"
+              },
+              "waves": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RunSummary"
+                },
+                "description": "这次同步已经开始的各批（第一批在前）"
+              },
+              "without_tasks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DatasetWithoutTasks"
                 }
               }
             }

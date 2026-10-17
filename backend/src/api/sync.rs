@@ -176,7 +176,7 @@ async fn dataset_records(State(s): State<AppState>, Path(id): Path<String>, Quer
     Ok(Json(rows))
 }
 
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
+#[derive(Clone, Serialize, ToSchema, sqlx::FromRow)]
 pub struct RunSummary {
     pub run_id: i64,
     /// backfill / incremental
@@ -256,9 +256,12 @@ async fn create_run(State(s): State<AppState>, Json(body): Json<CreateRun>) -> A
 pub struct DatasetProgress {
     pub dataset_id: String,
     pub tasks: i64,
+    /// 已结束：成功、没有数据或跳过
     pub done: i64,
+    /// 等待执行，包括失败后等待重试的
     pub pending: i64,
     pub running: i64,
+    /// 不再重试的失败
     pub failed: i64,
     pub records: Option<i64>,
     pub changed: Option<i64>,
@@ -275,36 +278,87 @@ pub struct TaskFailure {
     pub last_error: Option<String>,
 }
 
+/// 选中了、但这次同步没有为它新建任务的数据集
+#[derive(Serialize, ToSchema)]
+pub struct DatasetWithoutTasks {
+    pub dataset_id: String,
+    /// 同一部分已经在另一次同步的队列里（不重复创建），那次同步的编号；为空表示没有需要同步的部分
+    pub queued_in: Option<i64>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct RunDetail {
+    /// 这次同步的第一批
     #[serde(flatten)]
     pub run: RunSummary,
+    /// 这次同步已经开始的各批（第一批在前）
+    pub waves: Vec<RunSummary>,
+    /// 还没开始的批次的数据集：等前一批结束后才规划
+    pub waiting: Vec<Vec<String>>,
+    /// 各批合计的各数据集进度
     pub progress: Vec<DatasetProgress>,
-    /// 最多 50 条失败任务
+    pub without_tasks: Vec<DatasetWithoutTasks>,
+    /// 各批合计最多 50 条失败任务（不再重试的和等待重试的）
     pub failures: Vec<TaskFailure>,
 }
 
-/// 运行详情：各数据集进度与失败任务
+/// 一次同步的详情：有依赖的数据集分几批执行（每批是一个运行），这里合在一起：各批、各数据集进度、没有新建任务的原因、失败任务。
+/// 传入任何一批的编号都返回整次同步
 #[utoipa::path(get, path = "/sync/runs/{run_id}", tag = "sync", params(("run_id" = i64, Path)),
     responses((status = 200, description = "成功", body = RunDetail), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
 async fn get_run(State(s): State<AppState>, Path(run_id): Path<i64>) -> ApiResult<Json<RunDetail>> {
-    let run: RunSummary = sqlx::query_as(AssertSqlSafe(format!("SELECT {RUN_COLUMNS} FROM ops.run WHERE run_id = $1")))
+    let root: i64 = sqlx::query_scalar("SELECT coalesce((params->>'root_run')::bigint, run_id) FROM ops.run WHERE run_id = $1")
         .bind(run_id)
         .fetch_optional(&s.pool)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("运行不存在：{run_id}")))?;
-    let progress = sqlx::query_as(
-        "SELECT dataset_id, tasks, done, pending, running, failed, records, changed FROM ops.v_progress WHERE run_id = $1 ORDER BY dataset_id",
+    let waves: Vec<RunSummary> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT {RUN_COLUMNS} FROM ops.run WHERE run_id = $1 OR (params->>'root_run')::bigint = $1 ORDER BY run_id"
+    )))
+    .bind(root)
+    .fetch_all(&s.pool)
+    .await?;
+    let ids: Vec<i64> = waves.iter().map(|w| w.run_id).collect();
+    let progress: Vec<DatasetProgress> = sqlx::query_as(
+        "SELECT dataset_id, count(*) tasks,
+                count(*) FILTER (WHERE status IN ('done', 'empty', 'skipped')) done,
+                count(*) FILTER (WHERE status IN ('pending', 'failed')) pending,
+                count(*) FILTER (WHERE status = 'running') running,
+                count(*) FILTER (WHERE status = 'dead') failed,
+                sum(records)::bigint records, sum(changed)::bigint changed
+         FROM ops.task WHERE run_id = ANY($1) GROUP BY dataset_id ORDER BY dataset_id",
     )
-    .bind(run_id)
+    .bind(&ids)
     .fetch_all(&s.pool)
     .await?;
     let failures = sqlx::query_as(
         "SELECT task_id, dataset_id, part_key, status, attempts, last_api_code, last_error FROM ops.task
-         WHERE run_id = $1 AND status IN ('failed', 'dead') ORDER BY task_id LIMIT 50",
+         WHERE run_id = ANY($1) AND status IN ('failed', 'dead') ORDER BY task_id LIMIT 50",
     )
-    .bind(run_id)
+    .bind(&ids)
     .fetch_all(&s.pool)
     .await?;
-    Ok(Json(RunDetail { run, progress, failures }))
+
+    let list = |v: &Value, k: &str| -> Vec<Value> { v.get(k).and_then(Value::as_array).cloned().unwrap_or_default() };
+    let names = |v: Vec<Value>| -> Vec<String> { v.into_iter().filter_map(|x| x.as_str().map(String::from)).collect() };
+    let planned: Vec<String> = waves.iter().flat_map(|w| names(list(&w.params, "datasets"))).collect();
+    let waiting: Vec<Vec<String>> = waves.last().map(|w| list(&w.params, "pending_waves").into_iter().map(|x| names(x.as_array().cloned().unwrap_or_default())).collect()).unwrap_or_default();
+    let missing: Vec<String> = planned.into_iter().filter(|d| !progress.iter().any(|p| &p.dataset_id == d)).collect();
+    // 这些数据集同一部分已经在别的同步里排队：找出那次同步（第一批的编号）
+    let queued: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT t.dataset_id, min(coalesce((r.params->>'root_run')::bigint, r.run_id))
+         FROM ops.task t JOIN ops.run r USING (run_id)
+         WHERE t.dataset_id = ANY($1) AND t.status IN ('pending', 'running', 'failed') AND NOT (t.run_id = ANY($2))
+         GROUP BY t.dataset_id",
+    )
+    .bind(&missing)
+    .bind(&ids)
+    .fetch_all(&s.pool)
+    .await?;
+    let without_tasks = missing
+        .into_iter()
+        .map(|d| DatasetWithoutTasks { queued_in: queued.iter().find(|(q, _)| *q == d).map(|(_, r)| *r), dataset_id: d })
+        .collect();
+    let run = waves.first().cloned().ok_or_else(|| ApiError::NotFound(format!("运行不存在：{run_id}")))?;
+    Ok(Json(RunDetail { run, waves, waiting, progress, without_tasks, failures }))
 }

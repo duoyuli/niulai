@@ -39,6 +39,8 @@ import {
 } from "../components/ui";
 import { fmtAgo, fmtDateTime, fmtDuration, fmtInt, fmtSlot } from "../lib/format";
 import { DATASET_CATEGORIES, PLANS, RUN_STATUS, runSource, WEEKDAYS } from "../lib/labels";
+import { groupChains } from "../lib/runs";
+import { ChainProgress } from "./RunDetailPage";
 
 // @project-doc docs/architecture/frontend.md#pages
 /** 数据同步：状态、同步计划（什么时候自动同步什么）、同步记录和手动同步，然后是要处理的问题，最后按分类看每类数据 */
@@ -526,15 +528,9 @@ function Category({ name, rows }: { name: string; rows: DatasetStatus[] }) {
 
 /** 同步记录：一次同步可能分几个波次（有依赖的数据集要等前一批完成），这里合并成一行 */
 function History({ rows }: { rows: RunSummary[] }) {
-  const groups = useMemo(() => {
-    const m = new Map<number, RunSummary[]>();
-    for (const r of rows) {
-      const root = (r.params as { root_run?: number | null }).root_run ?? r.run_id;
-      m.set(root, [...(m.get(root) ?? []), r]);
-    }
-    return [...m].sort((a, b) => b[0] - a[0]).slice(0, 15);
-  }, [rows]);
-  if (groups.length === 0) return <Empty>还没有同步过</Empty>;
+  const navigate = useNavigate();
+  const chains = useMemo(() => groupChains(rows).slice(0, 15), [rows]);
+  if (chains.length === 0) return <Empty>还没有同步过</Empty>;
   return (
     <Table>
       <thead>
@@ -548,44 +544,30 @@ function History({ rows }: { rows: RunSummary[] }) {
         </tr>
       </thead>
       <tbody>
-        {groups.map(([root, list]) => {
-          const total = list.reduce((n, r) => n + r.tasks_total, 0);
-          const done = list.reduce((n, r) => n + r.tasks_done, 0);
-          const failed = list.reduce((n, r) => n + r.tasks_failed, 0);
-          const running = list.some((r) => r.status === "running");
-          const status = running
-            ? "running"
-            : list.some((r) => r.status === "partial")
-              ? "partial"
-              : (list[0]?.status ?? "succeeded");
-          const st = RUN_STATUS[status] ?? { label: status, tone: "muted" as const };
-          const first = list[list.length - 1] ?? list[0];
-          const last = list[0];
-          if (!first || !last) return null;
+        {chains.map((c) => {
+          const st = RUN_STATUS[c.status] ?? { label: c.status, tone: "muted" as const };
           return (
-            <tr key={root} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+            <tr
+              key={c.root}
+              className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+              onClick={() => navigate(`/sync/runs/${c.root}`)}
+            >
               <td>
-                <Link to={`/sync/runs/${root}`} className="hover:underline">
-                  {runSource(first.kind, first.params)}
+                <Link to={`/sync/runs/${c.root}`} className="hover:underline">
+                  {runSource(c.first.kind, c.first.params)}
                 </Link>
-                {list.length > 1 && <span className="ml-1 text-xs text-zinc-400">{list.length} 批</span>}
+                {c.waves > 1 && <span className="ml-1 text-xs text-zinc-400">{c.waves} 批</span>}
               </td>
-              <td className="num">{first.trade_date ?? "—"}</td>
+              <td className="num">{c.first.trade_date ?? "—"}</td>
               <td>
                 <Badge tone={st.tone}>{st.label}</Badge>
               </td>
               <td>
-                <div className="flex flex-col gap-1">
-                  <ProgressBar done={done} failed={failed} total={total} />
-                  <span className="num text-xs text-zinc-500">
-                    {fmtInt(done + failed)} / {fmtInt(total)}
-                    {failed > 0 && <span className="text-red-500">（失败 {fmtInt(failed)}）</span>}
-                  </span>
-                </div>
+                <ChainProgress c={c} />
               </td>
-              <td className="num text-xs text-zinc-500">{fmtDateTime(first.started_at)}</td>
+              <td className="num text-xs text-zinc-500">{fmtDateTime(c.first.started_at)}</td>
               <td className="num text-xs text-zinc-500">
-                {running ? "进行中" : fmtDuration(first.started_at, last.finished_at)}
+                {c.status === "running" ? "进行中" : fmtDuration(c.first.started_at, c.finishedAt)}
               </td>
             </tr>
           );
@@ -594,6 +576,7 @@ function History({ rows }: { rows: RunSummary[] }) {
     </Table>
   );
 }
+
 const MANUAL_GROUPS = ["daily", "weekly", "monthly", "report_season", "manual"];
 
 /** 手动同步：按同步计划勾选（可以全选），每组能展开到单个数据集；没有开启的数据单独一组 */

@@ -555,6 +555,18 @@ async fn sync_schedule_can_be_viewed_and_changed() {
     assert_eq!(st, StatusCode::ACCEPTED, "{body}");
     let (_, runs) = call(&app, "GET", "/api/v1/sync/runs", None).await;
     assert_eq!(runs[0]["params"]["trigger"], "manual");
+
+    // 详情是整次同步；同一部分已经在排队的，再发起时不新建任务，并说明在哪次同步里
+    let first = body["run_id"].as_i64().unwrap();
+    let (st, d) = call(&app, "GET", &format!("/api/v1/sync/runs/{first}"), None).await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert_eq!(d["waves"].as_array().unwrap().len(), 1);
+    assert_eq!(d["progress"][0]["dataset_id"], "a_share.calendar");
+    assert_eq!(d["progress"][0]["pending"], 1);
+    let (_, again) = call(&app, "POST", "/api/v1/sync/runs", Some(json!({"kind": "incremental", "datasets": ["a_share.calendar"]}))).await;
+    let (_, d) = call(&app, "GET", &format!("/api/v1/sync/runs/{}", again["run_id"]), None).await;
+    assert_eq!(d["progress"].as_array().unwrap().len(), 0);
+    assert_eq!(d["without_tasks"], json!([{"dataset_id": "a_share.calendar", "queued_in": first}]));
     db.drop().await;
 }
 

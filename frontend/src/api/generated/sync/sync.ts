@@ -653,7 +653,8 @@ export const useCreateRun = <TError = ErrorBody,
 }
 
 /**
- * @summary 运行详情：各数据集进度与失败任务
+ * @summary 一次同步的详情：有依赖的数据集分几批执行（每批是一个运行），这里合在一起：各批、各数据集进度、没有新建任务的原因、失败任务。
+传入任何一批的编号都返回整次同步
  */
 export const getRun = async (runId: number, options?: Parameters<typeof apiFetch>[1]): Promise<RunDetail> => {
 
@@ -724,7 +725,8 @@ export function useGetRun<TData = Awaited<ReturnType<typeof getRun>>, TError = E
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary 运行详情：各数据集进度与失败任务
+ * @summary 一次同步的详情：有依赖的数据集分几批执行（每批是一个运行），这里合在一起：各批、各数据集进度、没有新建任务的原因、失败任务。
+传入任何一批的编号都返回整次同步
  */
 
 export function useGetRun<TData = Awaited<ReturnType<typeof getRun>>, TError = ErrorBody>(
