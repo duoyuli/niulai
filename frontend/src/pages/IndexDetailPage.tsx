@@ -40,11 +40,11 @@ export function IndexDetailPage() {
           </Link>
         }
       />
-      <Card
-        title="日 K 线"
-        extra={<RangePicker value={s} earliest={INDEX_EARLIEST} loading={bars.isPlaceholderData} onChange={set} />}
-      >
-        <p className="mb-3 text-xs text-zinc-500">指数没有除权，不需要复权。供应商的指数日线从 2022-01-04 开始。</p>
+      <Card title="日 K 线">
+        <div className="mb-3 flex flex-col gap-2">
+          <RangePicker value={s} earliest={INDEX_EARLIEST} loading={bars.isPlaceholderData} onChange={set} />
+          <p className="text-xs text-zinc-500">指数没有除权，不需要复权。供应商的指数日线从 2022-01-04 开始。</p>
+        </div>
         {bars.error ? (
           <ErrorState error={bars.error} onRetry={() => bars.refetch()} />
         ) : !bars.data ? (

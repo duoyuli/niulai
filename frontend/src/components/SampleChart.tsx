@@ -73,16 +73,7 @@ export function SampleChart({
             </button>
           ))}
       </div>
-      {bars.error ? (
-        <ErrorState error={bars.error} onRetry={() => bars.refetch()} />
-      ) : !bars.data ? (
-        <Spinner />
-      ) : bars.data.bars.length === 0 ? (
-        <Empty>本地还没有这只股票的日线</Empty>
-      ) : (
-        <PriceChart bars={bars.data.bars} lines={ov.lines} markers={ov.markers} height={380} />
-      )}
-      <div className="mt-3">
+      <div className="mb-3">
         <OverlayPicker
           overlays={all}
           onChange={(o) => set({ more: o.filter((x) => !overlays.includes(x)).join(",") })}
@@ -92,6 +83,15 @@ export function SampleChart({
           strategies={strategies.data}
         />
       </div>
+      {bars.error ? (
+        <ErrorState error={bars.error} onRetry={() => bars.refetch()} />
+      ) : !bars.data ? (
+        <Spinner />
+      ) : bars.data.bars.length === 0 ? (
+        <Empty>本地还没有这只股票的日线</Empty>
+      ) : (
+        <PriceChart bars={bars.data.bars} lines={ov.lines} markers={ov.markers} height={380} />
+      )}
       <p className="mt-2 text-xs text-zinc-400">K 线是等比前复权价，指标和信号都按它计算。</p>
     </Card>
   );

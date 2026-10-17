@@ -141,15 +141,31 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
     [adjust, ov.lines],
   );
   return (
-    <Card
-      title="K 线"
-      extra={
-        <div className="flex flex-wrap items-end gap-3">
+    <Card title="K 线">
+      {/* 操作都放在图的上方：时间区间、均线周期、叠加的指标信号和策略买卖点，改完马上能在图上看到 */}
+      <div className="mb-3 flex flex-col gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <RangePicker value={s} earliest={earliest} loading={bars.isPlaceholderData} onChange={set} />
           <MaControls fast={fast} slow={slow} onChange={(f, sl) => set({ fast: String(f), slow: String(sl) })} />
         </div>
-      }
-    >
+        <OverlayPicker
+          overlays={overlays}
+          onChange={(o) => set({ overlay: o.join(",") })}
+          infos={ov.infos}
+          catalog={catalog.data}
+          signals={signals.data}
+          strategies={strategies.data}
+        />
+        <p className="text-xs text-zinc-500">
+          {adjust === "qfq" ? (
+            <>
+              橙线是 {fast} 日均线，紫线是 {slow} 日均线；▲ 金叉表示短期均线上穿长期均线，▼ 死叉相反。
+            </>
+          ) : (
+            <>均线按前复权价计算，切换回「等比前复权」后显示在图上。</>
+          )}
+        </p>
+      </div>
       {bars.error ? (
         <ErrorState error={bars.error} onRetry={() => bars.refetch()} />
       ) : !bars.data ? (
@@ -159,25 +175,6 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
       ) : (
         <PriceChart bars={bars.data.bars} ma={maOverlay} lines={lines} markers={ov.markers} />
       )}
-      <div className="mt-3">
-        <OverlayPicker
-          overlays={overlays}
-          onChange={(o) => set({ overlay: o.join(",") })}
-          infos={ov.infos}
-          catalog={catalog.data}
-          signals={signals.data}
-          strategies={strategies.data}
-        />
-      </div>
-      <p className="mt-2 text-xs text-zinc-500">
-        {adjust === "qfq" ? (
-          <>
-            橙线是 {fast} 日均线，紫线是 {slow} 日均线；▲ 金叉表示短期均线上穿长期均线，▼ 死叉相反。
-          </>
-        ) : (
-          <>均线按前复权价计算，切换回「等比前复权」后显示在图上。</>
-        )}
-      </p>
       <details className="mt-3 text-sm">
         <summary className="cursor-pointer text-zinc-500 select-none">价格口径和均线交叉记录</summary>
         <div className="mt-3 flex flex-col gap-3">
