@@ -32,7 +32,9 @@ WORKDIR /app
 COPY --from=build /src/target/release/niulai /usr/local/bin/
 COPY backend/config/ /app/config/
 COPY --from=web /src/frontend/dist/ /app/web/
-ENV NIULAI_DATASETS_PATH=/app/config/datasets.yaml \
+# 时区固定为上海，与宿主机无关。程序的日期计算、数据库会话、日志时间本身就按上海时间，这里让容器里的其他时间（例如升级备份的文件名）也一致
+ENV TZ=Asia/Shanghai \
+    NIULAI_DATASETS_PATH=/app/config/datasets.yaml \
     NIULAI_WEB_DIR=/app/web \
     NIULAI_API_BIND=0.0.0.0:8080 \
     NIULAI_LOG_FORMAT=json

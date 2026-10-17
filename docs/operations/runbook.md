@@ -216,7 +216,7 @@ WHERE run_id = 5 AND dataset_id = 'special.limit_down_pool' AND status IN ('pend
 <a id="one_click_upgrade"></a>
 ### 一键升级（Docker 部署）
 
-页面左上角 logo 后面是当前版本号。niulai 每 6 小时查一次 GitHub 上最新的 `vX.Y.Z` 标签（`NIULAI_UPDATE_REPO`，默认 `duoyuli/niulai`），有新版本时亮红点；点开后点「一键升级」。
+页面左上角 logo 后面是当前版本号。niulai 每 6 小时查一次 GitHub 上最新的 `vX.Y.Z` 标签（`NIULAI_UPDATE_REPO`，默认 `duoyuli/niulai`），并确认这个版本的镜像已经能从 GHCR 拉取（推送标签后 CI 要几分钟构建镜像，这期间不提示），有新版本时亮红点；点开后点「一键升级」。
 
 执行升级的是 `compose.yml` 中的 `upgrader` 容器：它用与 niulai 相同的镜像，运行 `niulai upgrader`，通过 `/var/run/docker.sock` 直接调用 Docker Engine API，由 `.env` 中的 `COMPOSE_PROFILES=upgrader` 启用。niulai 和 upgrader 通过卷 `upgrade`（niulai 中是 `NIULAI_UPGRADE_DIR=/upgrade`）交换文件：
 - niulai 写 `request`，内容只是版本号，例如 `1.2.0`；upgrader 只接受 `X.Y.Z` 格式。

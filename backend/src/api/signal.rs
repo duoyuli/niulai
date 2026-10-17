@@ -592,7 +592,7 @@ async fn strategy_points(State(s): State<AppState>, Path(code): Path<String>, Qu
     let d = serde_json::from_value::<Definition>(v).map_err(anyhow::Error::from)?.with_lib(signal_lib::load(&s.pool).await?);
     let (bars, meta) = stock(&s, &code).await?;
     let f = Frame::new(&bars, Some(&meta));
-    let start = q.start.unwrap_or_else(|| bars.last().map_or(chrono::Utc::now().date_naive(), |b| b.date) - chrono::Duration::days(365 * 3));
+    let start = q.start.unwrap_or_else(|| bars.last().map_or(crate::time::today_cn(), |b| b.date) - chrono::Duration::days(365 * 3));
     let from = bars.iter().position(|b| b.date >= start).unwrap_or(bars.len());
     let p = points::run(&bars, &f, &meta, &d, from);
     let (today, today_reason, today_exit) = match p.today {

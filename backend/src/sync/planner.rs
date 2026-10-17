@@ -47,12 +47,16 @@ pub struct PlanOptions {
 }
 
 /// 依赖层级（波次）：
-/// - 0：不依赖本地数据的数据集（once、enum、trading_day）
+/// - 0：不依赖本地数据的数据集（once、enum，以及按自然日或接口日期列表展开的 trading_day）
+/// - 1：按本地交易日历展开的 trading_day（排在交易日历之后）
 /// - 1：按证券范围展开的数据集（依赖代码表等）
 /// - n+1：from_dataset，取决于来源数据集所在的层级
 pub fn wave_of(spec: &DatasetSpec, registry: &Registry) -> usize {
     fn depth(spec: &DatasetSpec, registry: &Registry, guard: usize) -> usize {
         match &spec.partition {
+            // 按本地日历展开的交易日分区排在交易日历（once）之后：第一次同步时日历还是空的，
+            // 那时规划会把节假日当成交易日
+            Partition::TradingDay { natural_calendar: false, dates_from: None, .. } => 1,
             Partition::Once | Partition::Enum(_) | Partition::TradingDay { .. } | Partition::Unsupported(_) => 0,
             Partition::Security { .. } | Partition::SecurityBatch { .. } | Partition::SecurityWindow { .. } | Partition::ReportPeriod { .. } => 1,
             Partition::FromDataset { dataset, .. } => match registry.get(dataset) {
@@ -530,6 +534,17 @@ mod tests {
         assert!(p("a_share.valuation", RunKind::Incremental) < p("a_share.bar_1d", RunKind::Incremental));
         assert!(p("a_share.bar_1d", RunKind::Repair) < p("a_share.income_q", RunKind::Incremental));
         assert!(p("a_share.income_q", RunKind::Incremental) < p("a_share.snapshot", RunKind::Backfill));
+    }
+
+    #[test]
+    fn calendar_dates_are_planned_after_the_calendar() {
+        let reg = Registry::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/datasets.yaml")).unwrap();
+        let w = |id: &str| wave_of(reg.get(id).unwrap(), &reg);
+        // 第一次同步时日历是空的：按本地日历展开的数据集要等日历取完再规划，否则节假日也会被当成交易日
+        assert!(w("special.dragon_tiger") > w("a_share.calendar"));
+        assert!(w("special.limit_up_stats") > w("a_share.calendar"));
+        // 按自然日查询的不依赖日历
+        assert_eq!(w("special.hot_stock_daily"), w("a_share.calendar"));
     }
 
     #[test]

@@ -4974,9 +4974,16 @@
         "required": [
           "runs",
           "retried",
-          "unrecoverable"
+          "unrecoverable",
+          "cleared"
         ],
         "properties": {
+          "cleared": {
+            "type": "integer",
+            "format": "int64",
+            "description": "日期不是交易日或已超出历史范围、改为跳过的失败任务数",
+            "minimum": 0
+          },
           "retried": {
             "type": "integer",
             "format": "int64",

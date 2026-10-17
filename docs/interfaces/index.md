@@ -12,4 +12,4 @@
 - [数据目录](dataset_catalog.md)：86 个数据集的内容、历史深度、同步方式和请求量。阅读时机：想知道某类数据能不能取到、取多深，或评估回补和每日同步的请求量。
 - [数据集注册表格式](dataset_registry.md)：`datasets.yaml` 的字段、分区类型、主键模板、写入目标和新增数据集的步骤。阅读时机：新增或修改数据集配置、修改 `backend/src/sync/spec.rs`、`planner.rs`、`template.rs`。
 - [REST API](rest_api.md)：API 的通用约定、接口清单、复权参数、错误格式和 OpenAPI。阅读时机：调用或修改 `/api/v1` 接口、生成前端类型。
-- [配置](configuration.md)：配置来源与优先级、全部环境变量、部署用的 `deploy/.env`、配置文件。阅读时机：部署、修改 `backend/src/config.rs`、`backend/.env.example`、`deploy/.env.example`，或排查启动时的配置错误。
+- [配置](configuration.md)：配置来源与优先级、时区（一律按上海时间）、全部环境变量、部署用的 `deploy/.env`、配置文件。阅读时机：部署、修改 `backend/src/config.rs`、`backend/.env.example`、`deploy/.env.example`，或排查启动时的配置错误。

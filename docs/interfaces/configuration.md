@@ -13,6 +13,19 @@
 
 `.env` 每行是 `KEY=VALUE`；忽略空行和 `#` 开头的注释，去掉值两侧的引号。模板是 `backend/.env.example`。`.env` 含密码和 API Key，不提交到版本库；生产环境用部署平台的环境变量或密钥管理注入。
 
+<a id="time_zone"></a>
+## 时区
+
+程序里的时间一律按上海时间（`Asia/Shanghai`，A 股交易所的时间）理解，与服务器、容器、数据库所在的时区无关，部署在哪里都一样：
+
+- **代码：** 「今天」「现在」用 `time::today_cn`、`time::now_cn`（UTC 加 8 小时），定时同步的 18:00、收盘时间 15:30 都按它判断。
+- **数据库：** 连接池的每个连接建立后执行 `SET TIME ZONE 'Asia/Shanghai'`（`db::pool`），SQL 中的 `current_date`、`now()::date`、`date_trunc` 都按上海的日期计算。sqlx 连接时会自己发送 `TimeZone=UTC`，写在连接串里的时区参数会被覆盖，所以不能靠 `DATABASE_URL` 设置。`timestamptz` 列存的是时间点，不受影响。
+- **日志：** 时间带 `+08:00`。
+- **镜像：** 设置了 `TZ=Asia/Shanghai`，容器里其他用到本地时间的地方（例如升级前备份的文件名）也一致。
+- **页面：** 前端显示时间和计算「今天」时指定 `Asia/Shanghai`，与浏览器所在的时区无关。
+
+不需要、也没有配置项可以改时区。
+
 <a id="settings"></a>
 ## 环境变量
 

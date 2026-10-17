@@ -137,7 +137,9 @@ pub async fn gaps(engine: &Engine) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, 
                   bool_or(t.status = 'dead') AS dead,
                   max(t.last_error) FILTER (WHERE t.status IN ('dead', 'skipped')) AS err
            FROM ops.task t JOIN ops.run r USING (run_id)
-           WHERE r.kind IN ('incremental', 'repair') AND r.trade_date = ANY($1) AND t.dataset_id = ANY($2)
+           WHERE r.trade_date = ANY($1) AND t.dataset_id = ANY($2)
+             -- 回补运行里按天积累的快照（分区键带 |day=）也算：首次部署时回补和每日同步同时规划，任务按分区去重只有一个
+             AND (r.kind IN ('incremental', 'repair') OR t.part_key LIKE '%|day=' || r.trade_date)
            GROUP BY 1, 2, 3)
          SELECT dataset_id, trade_date,
                 count(*) FILTER (WHERE ok), count(*) FILTER (WHERE NOT ok AND open),
@@ -151,10 +153,19 @@ pub async fn gaps(engine: &Engine) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, 
     .await?;
     let found: BTreeMap<(String, NaiveDate), DayRow> = rows.into_iter().map(|r| ((r.0.clone(), r.1), r)).collect();
 
+    // 只有当天值的数据，在供应商还停在这个交易日时（例如周末、下一个交易日开盘前）仍然取得到
+    // 查询和同步任务共用限速，同步繁忙时可能要排队：最多等 2 秒，没等到就当作不知道（后台查完会进缓存）
+    let client = engine.client.clone();
+    let lookup = tokio::spawn(async move { super::calendar::latest_vendor_day(&client).await });
+    let vendor_day = match tokio::time::timeout(std::time::Duration::from_secs(2), lookup).await {
+        Ok(Ok(Ok(d))) => Some(d),
+        _ => None,
+    };
+    let current = days.last().copied().filter(|d| vendor_day == Some(*d));
     let mut out = vec![];
     for &d in &days {
         for s in &specs {
-            let recoverable = !s.trade_date_guard || s.recover_with.is_some();
+            let recoverable = !s.trade_date_guard || s.recover_with.is_some() || current == Some(d);
             let gap = |kind, message: String| Gap { trade_date: d, dataset_id: s.id.clone(), title: s.title.clone(), kind, message, recoverable };
             match found.get(&(s.id.clone(), d)) {
                 None => out.push(gap(GapKind::NotRun, "这一天没有同步".into())),
@@ -210,6 +221,10 @@ pub async fn gaps(engine: &Engine) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, 
 fn explain(err: &str) -> String {
     if err.starts_with("已错过") {
         "错过了当天的数据，这类数据只有当天的值，无法补回".into()
+    } else if err.contains("trading day") {
+        "请求的日期不是交易日（第一次同步时交易日历还没取到），这一天本来就没有数据".into()
+    } else if err.contains("within one year") {
+        "日期超出了接口的历史范围（只能查最近一年），这部分数据已经取不到".into()
     } else if err.contains("Unknown thscode") || err.contains("1002") {
         "接口不支持这个代码（例如可转债），这部分数据本来就没有".into()
     } else if err.starts_with("写入") {
@@ -303,6 +318,32 @@ pub struct RepairSummary {
     pub retried: u64,
     /// 补不回来的缺口数
     pub unrecoverable: usize,
+    /// 日期不是交易日或已超出历史范围、改为跳过的失败任务数
+    pub cleared: u64,
+}
+
+/// 失败的按交易日分区的任务，日期其实不是交易日或已经超出接口的历史范围（见 calendar::stale_partition_date）：
+/// 本来就没有数据，改为跳过，不再作为失败列出
+async fn clear_stale(engine: &Engine) -> anyhow::Result<u64> {
+    let rows: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT task_id, dataset_id, params->'vars'->>'date' FROM ops.task
+         WHERE status = 'dead' AND params->'vars' ? 'date'",
+    )
+    .fetch_all(&engine.pool)
+    .await?;
+    let mut cleared = 0;
+    for (id, dataset, date) in rows {
+        let (Some(spec), Ok(d)) = (engine.registry.get(&dataset), NaiveDate::parse_from_str(&date, "%Y-%m-%d")) else { continue };
+        if let Some(why) = super::calendar::stale_partition_date(&engine.pool, spec, d).await? {
+            cleared += sqlx::query("UPDATE ops.task SET status = 'skipped', last_error = $2 WHERE task_id = $1 AND status = 'dead'")
+                .bind(id)
+                .bind(why)
+                .execute(&engine.pool)
+                .await?
+                .rows_affected();
+        }
+    }
+    Ok(cleared)
 }
 
 /// 自动兜底补偿：每个交易日最多一次，在这一天的每日同步结束之后执行
@@ -355,6 +396,8 @@ pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
         let (run_id, _) = engine.planner().plan_run(RunKind::Repair, &[spec], PlanOptions { trade_date: Some(latest), only_thscodes }).await?;
         summary.runs.push(run_id);
     }
+
+    summary.cleared = clear_stale(engine).await?;
 
     // 重试用尽的临时失败（供应商暂时不可用），之后也没有成功过：再试一次
     let mut tx = engine.pool.begin().await?;

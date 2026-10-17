@@ -12,6 +12,7 @@ use chrono::{Datelike, NaiveDate, NaiveTime};
 use serde_json::Value;
 use sqlx::PgPool;
 
+use super::spec::{DatasetSpec, Partition};
 use crate::time::{cn_date_end_ms, cn_date_start_ms, now_cn, today_cn};
 use crate::vendor::HithinkClient;
 
@@ -41,6 +42,36 @@ pub async fn refresh(pool: &PgPool, client: &HithinkClient) -> anyhow::Result<Ve
 /// 本地日历中是否有这一天
 pub async fn is_known_trading_day(pool: &PgPool, d: NaiveDate) -> anyhow::Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ref.trading_day WHERE cal_date = $1)").bind(d).fetch_one(pool).await?)
+}
+
+/// 确定不是交易日：周末，或者供应商日历覆盖了这一天却没有它。日历还没覆盖到的日子不下结论
+pub async fn is_closed_day(pool: &PgPool, d: NaiveDate) -> anyhow::Result<bool> {
+    if d.weekday().number_from_monday() > 5 {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT coalesce(min(cal_date) <= $1 AND max(cal_date) >= $1, false)
+                AND NOT EXISTS (SELECT 1 FROM ref.trading_day WHERE cal_date = $1)
+         FROM ref.trading_day WHERE source = 'api'",
+    )
+    .bind(d)
+    .fetch_one(pool)
+    .await?)
+}
+
+// @project-doc docs/architecture/sync_pipeline.md#stale_dates
+/// 按交易日分区的任务，执行前（以及兜底补偿清理失败任务时）再确认一次日期。规划时日历可能还没同步，
+/// 任务排队期间日期也可能滑出接口的历史范围（例如只能查一年内）。返回跳过的原因
+pub async fn stale_partition_date(pool: &PgPool, spec: &DatasetSpec, d: NaiveDate) -> anyhow::Result<Option<String>> {
+    let Partition::TradingDay { from, natural_calendar, dates_from } = &spec.partition else { return Ok(None) };
+    let earliest = from.resolve(today_cn());
+    if d < earliest {
+        return Ok(Some(format!("{d} 已超出接口的历史范围（只提供 {earliest} 之后的数据）")));
+    }
+    if !natural_calendar && dates_from.is_none() && is_closed_day(pool, d).await? {
+        return Ok(Some(format!("{d} 不是交易日")));
+    }
+    Ok(None)
 }
 
 /// 本地供应商日历覆盖到的最后一天
@@ -74,16 +105,15 @@ pub enum Readiness {
     Defer(String),
 }
 
-/// 交易日校验。每个执行者一个实例，缓存供应商最新交易日。
+/// 交易日校验。每个执行者一个实例；供应商最新交易日在进程内缓存。
 pub struct TradeDateGuard {
     pool: PgPool,
     client: Arc<HithinkClient>,
-    latest: Mutex<Option<(Instant, NaiveDate)>>,
 }
 
 impl TradeDateGuard {
     pub fn new(pool: PgPool, client: Arc<HithinkClient>) -> Self {
-        TradeDateGuard { pool, client, latest: Mutex::new(None) }
+        TradeDateGuard { pool, client }
     }
 
     // @project-doc docs/domains/market_data_rules.md#trade_date_guard
@@ -117,31 +147,38 @@ impl TradeDateGuard {
         })
     }
 
-    /// 参照指数最新一根日线的日期，LATEST_DAY_TTL 内复用
     async fn latest_vendor_day(&self) -> anyhow::Result<NaiveDate> {
-        if let Some((at, d)) = *self.latest.lock().unwrap()
-            && at.elapsed() < LATEST_DAY_TTL
-        {
-            return Ok(d);
-        }
-        let today = today_cn();
-        let query = [
-            ("thscode".to_string(), REFERENCE_INDEX.to_string()),
-            ("interval".to_string(), "1d".to_string()),
-            ("start".to_string(), cn_date_start_ms(today - chrono::Duration::days(20)).to_string()),
-            ("end".to_string(), cn_date_end_ms(today).to_string()),
-        ];
-        let resp = self.client.get("/api/a-share-index/prices/historical", &query).await?;
-        let d = resp
-            .body
-            .pointer("/data/item")
-            .and_then(Value::as_array)
-            .and_then(|items| items.iter().filter_map(|i| i.get("date_ms").and_then(Value::as_i64)).max())
-            .and_then(crate::time::ms_to_cn_date)
-            .context("参照指数没有返回日线")?;
-        *self.latest.lock().unwrap() = Some((Instant::now(), d));
-        Ok(d)
+        latest_vendor_day(&self.client).await
     }
+}
+
+/// 供应商最新交易日的进程内缓存，执行者和完整性核对共用
+static LATEST: Mutex<Option<(Instant, NaiveDate)>> = Mutex::new(None);
+
+/// 供应商最新的交易日：参照指数最新一根日线的日期，LATEST_DAY_TTL 内复用
+pub async fn latest_vendor_day(client: &HithinkClient) -> anyhow::Result<NaiveDate> {
+    if let Some((at, d)) = *LATEST.lock().unwrap()
+        && at.elapsed() < LATEST_DAY_TTL
+    {
+        return Ok(d);
+    }
+    let today = today_cn();
+    let query = [
+        ("thscode".to_string(), REFERENCE_INDEX.to_string()),
+        ("interval".to_string(), "1d".to_string()),
+        ("start".to_string(), cn_date_start_ms(today - chrono::Duration::days(20)).to_string()),
+        ("end".to_string(), cn_date_end_ms(today).to_string()),
+    ];
+    let resp = client.get("/api/a-share-index/prices/historical", &query).await?;
+    let d = resp
+        .body
+        .pointer("/data/item")
+        .and_then(Value::as_array)
+        .and_then(|items| items.iter().filter_map(|i| i.get("date_ms").and_then(Value::as_i64)).max())
+        .and_then(crate::time::ms_to_cn_date)
+        .context("参照指数没有返回日线")?;
+    *LATEST.lock().unwrap() = Some((Instant::now(), d));
+    Ok(d)
 }
 
 /// 运行交易日与供应商最新交易日比较

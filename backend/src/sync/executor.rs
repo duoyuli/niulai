@@ -8,11 +8,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use chrono::NaiveDate;
 use serde_json::{Map, Value};
 use sqlx::PgPool;
 use tokio::sync::watch;
 
-use super::calendar::{Readiness, TradeDateGuard};
+use super::calendar::{self, Readiness, TradeDateGuard};
 use super::fetch::{Fetcher, Target};
 use super::planner::Planner;
 use super::queue::{ClaimedTask, Finished, HEARTBEAT, TaskQueue, TaskStats};
@@ -200,6 +201,11 @@ impl Executor {
 
         let empty = Map::new();
         let vars = task.params.get("vars").and_then(Value::as_object).unwrap_or(&empty);
+        if let Some(d) = vars.get("date").and_then(Value::as_str).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+            && let Some(why) = calendar::stale_partition_date(&self.pool, spec, d).await?
+        {
+            return Ok(Outcome::Skipped(why));
+        }
         let query: Vec<(String, String)> = task
             .params
             .get("query")

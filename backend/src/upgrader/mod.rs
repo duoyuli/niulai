@@ -204,7 +204,7 @@ impl Upgrade<'_> {
         let pg = self.find("postgres").await?;
         let dir = self.deploy.join("backups");
         std::fs::create_dir_all(&dir)?;
-        let file = dir.join(format!("niulai-before-{v}-{}.dump", chrono::Local::now().format("%Y%m%d-%H%M%S")));
+        let file = dir.join(format!("niulai-before-{v}-{}.dump", crate::time::now_cn().format("%Y%m%d-%H%M%S")));
         let (code, stderr) = self.docker.exec_to_file(pg["Id"].as_str().unwrap_or_default(), &["pg_dump", "-U", "niulai", "-Fc", "niulai"], &file).await?;
         if code != 0 {
             let _ = std::fs::remove_file(&file);

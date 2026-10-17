@@ -30,7 +30,7 @@ import { fmtAgo, fmtDateTime, fmtDuration, fmtInt } from "../lib/format";
 import { DATASET_CATEGORIES, PRIORITIES, RUN_KINDS, RUN_STATUS, SCHEDULES } from "../lib/labels";
 
 // @project-doc docs/architecture/frontend.md#pages
-/** 数据同步：先回答「数据齐不齐」，再按分类看每类数据是什么、多久更新一次、现在怎么样 */
+/** 数据同步：最上面是状态、同步记录和手动同步（最常用），然后是要处理的问题，最后按分类看每类数据 */
 export function SyncPage() {
   const health = useSyncHealth({ query: { refetchInterval: 15_000, staleTime: 0 } });
   const datasets = useListDatasets({ query: { refetchInterval: 30_000, staleTime: 0 } });
@@ -41,27 +41,61 @@ export function SyncPage() {
     <>
       <PageHeader
         title="数据同步"
-        desc="每个交易日 18:00 自动同步当天的数据；之后自动核对最近 20 个交易日的数据是否齐全，能补的自动补。"
+        desc="每个交易日 18:00（上海时间）自动同步当天的数据；之后自动核对最近 20 个交易日的数据是否齐全，能补的自动补。"
         extra={
-          <Link to="/indices" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
-            指数与板块 →
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <QuickSync />
+            <button type="button" className={buttonClass("ghost")} onClick={() => setCreating((v) => !v)}>
+              {creating ? "收起" : "自定义同步…"}
+            </button>
+            <Link to="/indices" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+              指数与板块 →
+            </Link>
+          </div>
         }
       />
+      {creating && datasets.data && <CreateRunForm datasets={datasets.data} onDone={() => setCreating(false)} />}
       {health.isPending ? <Spinner /> : health.data && <Status h={health.data} />}
-      {health.data && (health.data.gaps.length > 0 || health.data.failures.length > 0) && <Problems h={health.data} />}
-      <Card title="数据">
-        <QueryView query={datasets}>{(rows) => <Datasets rows={rows} />}</QueryView>
-      </Card>
-      <Card title="同步记录" extra={<span className="text-xs text-zinc-400">每 10 秒刷新</span>}>
+      <Card title="同步记录" extra={<span className="text-xs text-zinc-400">每 10 秒刷新，点一行看详情</span>}>
         <QueryView query={runs}>{(rows) => <History rows={rows} />}</QueryView>
       </Card>
-      <details className="text-sm" open={creating} onToggle={(e) => setCreating(e.currentTarget.open)}>
-        <summary className="cursor-pointer text-zinc-500 select-none">高级：手动发起同步</summary>
-        <div className="mt-3">
-          {datasets.data && <CreateRunForm datasets={datasets.data} onDone={() => setCreating(false)} />}
-        </div>
-      </details>
+      {health.data && (health.data.gaps.length > 0 || health.data.failures.length > 0) && <Problems h={health.data} />}
+      <Card
+        title="数据"
+        extra={<span className="text-xs text-zinc-400">按分类，每类数据是什么、多久更新一次、现在怎么样</span>}
+      >
+        <QueryView query={datasets}>{(rows) => <Datasets rows={rows} />}</QueryView>
+      </Card>
+    </>
+  );
+}
+
+/** 一键增量同步每天都要的数据（P0、P1）：不用等到 18:00，例如刚部署或刚补好 API Key 时 */
+function QuickSync() {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const create = useCreateRun({
+    mutation: {
+      onSuccess: (r) => {
+        qc.invalidateQueries({ queryKey: getListRunsQueryKey() });
+        navigate(`/sync/runs/${r.run_id}`);
+      },
+    },
+  });
+  return (
+    <>
+      <button
+        type="button"
+        className={buttonClass()}
+        disabled={create.isPending}
+        title="增量同步核心和常用数据（P0、P1），从上次同步到的位置往后补；已经在队列里的不会重复"
+        onClick={() =>
+          create.mutate({ data: { kind: "incremental", datasets: [], priorities: ["P0", "P1"], thscodes: [] } })
+        }
+      >
+        {create.isPending ? "规划中…" : "立即同步"}
+      </button>
+      {!!create.error && <span className="text-sm text-red-600">{errorText(create.error)}</span>}
     </>
   );
 }
@@ -110,23 +144,27 @@ function Problems({ h }: { h: SyncHealth }) {
   const repair = useSyncRepair({ mutation: { onSuccess: () => qc.invalidateQueries() } });
   const recoverable = h.gaps.filter((g) => g.recoverable);
   const lost = h.gaps.filter((g) => !g.recoverable);
-  const retryable = h.failures.filter((f) => f.reason.includes("再试"));
   return (
     <Card
       title="需要注意"
       extra={
-        (recoverable.length > 0 || retryable.length > 0) && (
-          <button type="button" className={buttonClass()} disabled={repair.isPending} onClick={() => repair.mutate()}>
-            {repair.isPending ? "规划中…" : "立即补齐"}
-          </button>
-        )
+        <button
+          type="button"
+          className={buttonClass()}
+          disabled={repair.isPending}
+          title="能补的缺口安排补偿同步，供应商暂时不可用的失败再试一次；日期本来就没有数据的失败（节假日、超出一年）改为跳过"
+          onClick={() => repair.mutate()}
+        >
+          {repair.isPending ? "处理中…" : "立即补齐"}
+        </button>
       }
     >
       <div className="flex flex-col gap-4 text-sm">
         {repair.data && (
           <p className="text-emerald-700 dark:text-emerald-400">
             已安排 {repair.data.runs.length} 个补偿同步，重新排队 {repair.data.retried}{" "}
-            个失败的任务，会排在每日数据之后执行。
+            个失败的任务，会排在每日数据之后执行
+            {repair.data.cleared > 0 && `；${repair.data.cleared} 个日期本来就没有数据的失败任务已改为跳过`}。
           </p>
         )}
         {!!repair.error && <p className="text-red-600">{errorText(repair.error)}</p>}
@@ -390,7 +428,7 @@ function CreateRunForm({ datasets, onDone }: { datasets: DatasetStatus[]; onDone
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
   return (
-    <Card title="手动发起同步">
+    <Card title="自定义同步：选择类型和数据">
       <form
         className="flex flex-col gap-4"
         onSubmit={(e) => {

@@ -8,6 +8,11 @@
 
 export interface RepairSummary {
   /**
+     * 日期不是交易日或已超出历史范围、改为跳过的失败任务数
+     * @minimum 0
+     */
+  cleared: number;
+  /**
      * 重新排队的失败任务数
      * @minimum 0
      */

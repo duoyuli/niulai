@@ -18,7 +18,7 @@
 
 - 供应商交易日历（`a_share.calendar`）固定返回最近一年，写入 `ref.trading_day` 时 `source = api`。
 - 更早的交易日在运行结束后从 `mkt.stock_bar_1d` 中出现过的日期推导，`source = derived`。
-- 规划 `trading_day` 分区时，使用 `ref.trading_day` 中的日期；早于已知最早日期的区间，退回到周一到周五。
+- 规划 `trading_day` 分区时，使用 `ref.trading_day` 中的日期；早于已知最早日期的区间，退回到周一到周五。所以这类数据集排在交易日历之后的波次规划，见 [波次规划](../architecture/sync_pipeline.md#waves)；执行前还会再确认一次日期，见 [过期的日期](../architecture/sync_pipeline.md#stale_dates)。
 - 交易日校验遇到本地日历里没有的日期时，会先刷新供应商日历，见 [交易日校验](#trade_date_guard)。
 - 定时调度在触发时现取一次日历，用来判断今天是否为交易日，见 [定时调度](../architecture/sync_pipeline.md#scheduling)。
 

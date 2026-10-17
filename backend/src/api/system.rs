@@ -184,7 +184,8 @@ struct Tag {
     name: String,
 }
 
-/// GitHub 上最大的正式版本标签（vX.Y.Z，不含预发布）
+/// 可以升级到的最新正式版本（vX.Y.Z，不含预发布）：GitHub 上的标签，并且镜像已经构建好、能从 GHCR 拉取。
+/// 推送标签后 CI 要几分钟才把镜像推上去，这期间不提示新版本，避免一键升级拉取镜像失败
 async fn fetch_latest(repo: &str) -> anyhow::Result<Option<String>> {
     let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).user_agent(concat!("niulai/", env!("CARGO_PKG_VERSION"))).build()?;
     let tags: Vec<Tag> = http
@@ -195,11 +196,44 @@ async fn fetch_latest(repo: &str) -> anyhow::Result<Option<String>> {
         .error_for_status()?
         .json()
         .await?;
-    Ok(newest(tags.iter().map(|t| t.name.as_str())))
+    // 从新到旧最多看 3 个：最新的还在构建时，退回上一个
+    for v in versions_desc(tags.iter().map(|t| t.name.as_str())).into_iter().take(3) {
+        if image_published(&http, repo, &v).await? {
+            return Ok(Some(v));
+        }
+    }
+    Ok(None)
 }
 
-fn newest<'a>(tags: impl Iterator<Item = &'a str>) -> Option<String> {
-    tags.filter_map(|t| t.strip_prefix('v')).filter_map(|v| parse(v).map(|p| (p, v))).max_by_key(|(p, _)| *p).map(|(_, v)| v.to_string())
+/// GHCR 上有没有这个版本的镜像（匿名拉取令牌 + 查询清单）
+async fn image_published(http: &reqwest::Client, repo: &str, version: &str) -> anyhow::Result<bool> {
+    let repo = repo.to_lowercase();
+    #[derive(Deserialize)]
+    struct Token {
+        token: String,
+    }
+    let token: Token = http.get(format!("https://ghcr.io/token?scope=repository:{repo}:pull")).send().await?.error_for_status()?.json().await?;
+    let resp = http
+        .head(format!("https://ghcr.io/v2/{repo}/manifests/{version}"))
+        .bearer_auth(token.token)
+        .header(
+            "accept",
+            "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json",
+        )
+        .send()
+        .await?;
+    match resp.status() {
+        s if s.is_success() => Ok(true),
+        reqwest::StatusCode::NOT_FOUND => Ok(false),
+        s => anyhow::bail!("查询镜像失败：HTTP {s}"),
+    }
+}
+
+/// 正式版本号，从新到旧
+fn versions_desc<'a>(tags: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut v: Vec<_> = tags.filter_map(|t| t.strip_prefix('v')).filter_map(|v| parse(v).map(|p| (p, v.to_string()))).collect();
+    v.sort_by_key(|x| std::cmp::Reverse(x.0));
+    v.into_iter().map(|(_, v)| v).collect()
 }
 
 /// 正式版本号 X.Y.Z；预发布（带 -）和其他写法返回 None
@@ -258,7 +292,7 @@ mod tests {
     #[test]
     fn picks_newest_stable_tag() {
         let tags = ["v1.1.0", "v1.10.0", "v1.9.3", "v2.0.0-rc.1", "latest", "v1.2"];
-        assert_eq!(newest(tags.into_iter()), Some("1.10.0".into()));
+        assert_eq!(versions_desc(tags.into_iter()), vec!["1.10.0".to_string(), "1.9.3".into(), "1.1.0".into()]);
         assert_eq!(parse("1.2.3"), Some((1, 2, 3)));
         assert_eq!(parse("1.2.3-rc.1"), None);
         assert_eq!(parse("dev"), None);

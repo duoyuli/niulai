@@ -34,7 +34,10 @@ impl TestDb {
         let mut admin = PgConnection::connect(&admin_url).await.expect("连接测试库");
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}"))).execute(&mut admin).await.unwrap();
         let url = replace_db(&admin_url, &name);
-        let pool = PgPool::connect(&url).await.unwrap();
+        // 和程序一样，会话时区固定为上海
+        let pool = niulai::db::pool(&url, 5).await.unwrap();
+        let tz: String = sqlx::query_scalar("SHOW timezone").fetch_one(&pool).await.unwrap();
+        assert_eq!(tz, niulai::db::TIME_ZONE);
         niulai::db::migrate(&pool).await.expect("迁移应在空库上成功");
         Some(TestDb { admin_url, name, pool })
     }
@@ -552,7 +555,28 @@ async fn audit_finds_gaps_and_plans_repairs() {
             .unwrap();
     }
 
+    // 首次部署时日历还没取到、被当成交易日的节假日，以及排队期间滑出一年范围的日期：接口返回 1002、1003
+    sqlx::query("INSERT INTO ref.trading_day (cal_date, source) VALUES ($1, 'api')").bind(d1 - chrono::Duration::days(10)).execute(pool).await.unwrap();
+    let holiday = (1..10).map(|n| d1 - chrono::Duration::days(n)).find(|d| chrono::Datelike::weekday(d).number_from_monday() <= 5).unwrap();
+    let expired = d1 - chrono::Duration::days(400);
+    let backfill: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind, trade_date, status) VALUES ('backfill', $1, 'running') RETURNING run_id").bind(d1).fetch_one(pool).await.unwrap();
+    for (date, err) in [
+        (holiday, "不可重试错误（code=Some(1002)，http=Some(200)）：date must be an A-share trading day"),
+        (expired, "不可重试错误（code=Some(1003)，http=Some(200)）：date must be within one year"),
+    ] {
+        sqlx::query("INSERT INTO ops.task (run_id, dataset_id, part_key, params, status, last_error, finished_at) VALUES ($1, 'special.dragon_tiger', $2, $3, 'dead', $4, now())")
+            .bind(backfill)
+            .bind(format!("date={date}"))
+            .bind(json!({"vars": {"date": date.to_string()}}))
+            .bind(err)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
     let h = niulai::sync::audit::health(&engine).await.unwrap();
+    let dragon: Vec<&str> = h.failures.iter().filter(|f| f.dataset_id == "special.dragon_tiger").map(|f| f.reason.as_str()).collect();
+    assert!(dragon.iter().any(|r| r.contains("不是交易日")) && dragon.iter().any(|r| r.contains("最近一年")), "{dragon:?}");
     let kinds: Vec<(chrono::NaiveDate, &str, niulai::sync::audit::GapKind, bool)> =
         h.gaps.iter().map(|g| (g.trade_date, g.dataset_id.as_str(), g.kind, g.recoverable)).collect();
     use niulai::sync::audit::GapKind::*;
@@ -569,6 +593,9 @@ async fn audit_finds_gaps_and_plans_repairs() {
     let s = niulai::sync::audit::repair(&engine).await.unwrap();
     assert!(!s.runs.is_empty());
     assert_eq!(s.retried, 1);
+    assert_eq!(s.cleared, 2, "节假日和超出一年的任务本来就没有数据，改为跳过");
+    let h = niulai::sync::audit::health(&engine).await.unwrap();
+    assert!(!h.failures.iter().any(|f| f.dataset_id == "special.dragon_tiger"), "{:?}", h.failures);
     assert!(s.unrecoverable >= 2);
     let repair_runs: Vec<String> = sqlx::query_scalar("SELECT dataset_id FROM ops.run WHERE kind = 'repair' AND dataset_id IS NOT NULL ORDER BY 1").fetch_all(pool).await.unwrap();
     assert!(repair_runs.contains(&"a_share.bar_1d".to_string()), "{repair_runs:?}");
