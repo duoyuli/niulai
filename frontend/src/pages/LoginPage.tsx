@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router";
 import { useLogin } from "../api/generated/auth/auth";
 import { buttonClass, errorText, inputClass } from "../components/ui";
 
-/** 登录页：输入管理员账号密码，登录状态在浏览器保存 30 天 */
+/** 登录页：用管理员添加的账号登录（不开放注册），登录状态在浏览器保存 30 天 */
 export function LoginPage() {
   const [params] = useSearchParams();
   const [username, setUsername] = useState("");
@@ -54,7 +54,7 @@ export function LoginPage() {
         <button type="submit" className={buttonClass()} disabled={login.isPending || !username || !password}>
           {login.isPending ? "登录中…" : "登录"}
         </button>
-        <p className="text-xs text-zinc-400">登录后这台浏览器 30 天内不用再登录。账号密码在部署配置中设置。</p>
+        <p className="text-xs text-zinc-400">登录后这台浏览器 30 天内不用再登录。没有账号或忘记密码，请找管理员。</p>
       </form>
     </div>
   );

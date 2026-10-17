@@ -4,12 +4,14 @@ import type { StrategyItem } from "../api/generated/model";
 import { useListStrategies, useRunScreening } from "../api/generated/strategy/strategy";
 import { StrategyNav } from "../components/StrategyNav";
 import { Badge, buttonClass, Card, Empty, errorText, PageHeader, QueryView } from "../components/ui";
+import { useIsAdmin } from "../hooks/useIsAdmin";
 import { fmtInt } from "../lib/format";
 import { holdingsText } from "../lib/strategy";
 
 export function StrategiesPage() {
   const qc = useQueryClient();
   const list = useListStrategies();
+  const admin = useIsAdmin();
   const run = useRunScreening({
     // 巡检结果出现在策略列表、策略详情和个股诊断里，全部刷新
     mutation: { onSuccess: () => qc.invalidateQueries() },
@@ -19,23 +21,25 @@ export function StrategiesPage() {
     <>
       <StrategyNav />
       <PageHeader
-        title="我的策略"
+        title="策略"
         desc="策略 = 买入条件 + 卖出规则，例如「5 日均线上穿 20 日均线时买，跌破 20 日均线或亏损 8% 时卖」。每天收盘数据同步完后在全市场算一遍，给出今日买点、今日卖点和持有中的股票；也可以看它过去几年的表现。条件由信号和指标组成，在上面的「信号」「指标」里能看到每一个是什么。"
         extra={
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className={buttonClass("ghost")}
-              disabled={run.isPending}
-              title="现在就用开启巡检的策略在最新交易日选一次股，结果会覆盖当天已有的结果"
-              onClick={() => run.mutate({})}
-            >
-              {run.isPending ? "巡检中…" : "立即巡检"}
-            </button>
-            <Link to="/strategies/new" className={buttonClass()}>
-              新建策略
-            </Link>
-          </div>
+          admin && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={buttonClass("ghost")}
+                disabled={run.isPending}
+                title="现在就用开启巡检的策略在最新交易日选一次股，结果会覆盖当天已有的结果"
+                onClick={() => run.mutate({})}
+              >
+                {run.isPending ? "巡检中…" : "立即巡检"}
+              </button>
+              <Link to="/strategies/new" className={buttonClass()}>
+                新建策略
+              </Link>
+            </div>
+          )
         }
       />
       {run.data && (
@@ -51,7 +55,7 @@ export function StrategiesPage() {
         <QueryView query={list}>
           {(items) =>
             items.length === 0 ? (
-              <Empty>还没有策略。点「新建策略」，从模板开始改最简单。</Empty>
+              <Empty>{admin ? "还没有策略。点「新建策略」，从模板开始改最简单。" : "还没有策略，请管理员添加。"}</Empty>
             ) : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {items.map((s) => (

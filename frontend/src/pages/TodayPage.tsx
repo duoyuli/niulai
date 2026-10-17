@@ -7,10 +7,11 @@ import { getResultsQueryOptions, useListStrategies } from "../api/generated/stra
 import { useListWatchlist } from "../api/generated/watchlist/watchlist";
 import { SignalChip } from "../components/SignalChip";
 import { Card, Empty, ErrorState, QueryView, Spinner } from "../components/ui";
+import { useIsAdmin } from "../hooks/useIsAdmin";
 import { fmtInt, fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
 import { holdingsText } from "../lib/strategy";
 
-/** 每天打开看的一页：大盘怎么样 → 我的策略今天选出了什么 → 我关注的股票有什么变化 */
+/** 每天打开看的一页：大盘怎么样 → 策略今天选出了什么 → 我关注的股票有什么变化 */
 export function TodayPage() {
   const overview = useMarketOverview();
   return (
@@ -114,6 +115,7 @@ function Sectors() {
 
 /** 每个开启巡检的策略今天的买点和卖点，新出现的买点排在前面 */
 function Picks() {
+  const admin = useIsAdmin();
   const list = useListStrategies();
   // 只为测试建的策略可以关掉「在今日展示」
   const active = (list.data ?? []).filter((s) => s.screening && s.show_on_today && s.latest);
@@ -132,9 +134,11 @@ function Picks() {
       ) : active.length === 0 ? (
         <Empty>
           没有要在这里展示的策略（需要开启每日巡检和「在今日展示」）。
-          <Link to="/strategies/new" className="text-accent hover:underline">
-            新建一个
-          </Link>
+          {admin && (
+            <Link to="/strategies/new" className="text-accent hover:underline">
+              新建一个
+            </Link>
+          )}
         </Empty>
       ) : (
         <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">

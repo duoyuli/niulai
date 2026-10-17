@@ -6,4 +6,5 @@ export * from './signal/signal';
 export * from './strategy/strategy';
 export * from './sync/sync';
 export * from './system/system';
+export * from './users/users';
 export * from './watchlist/watchlist';

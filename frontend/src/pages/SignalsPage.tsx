@@ -8,22 +8,26 @@ import { SampleChart } from "../components/SampleChart";
 import { SignalStatsCard, SignalTodayCard, useSignalToday } from "../components/SignalStats";
 import { StrategyNav } from "../components/StrategyNav";
 import { Badge, buttonClass, Card, ErrorState, errorText, PageHeader, QueryView, Spinner } from "../components/ui";
+import { useIsAdmin } from "../hooks/useIsAdmin";
 import { groupBy } from "../lib/strategy";
 import { toneOf } from "../lib/tone";
 
 /** 信号：起了名字的条件。内置的按分组列出，自己定义的放在最前面 */
 export function SignalsPage() {
   const list = useListSignals();
+  const admin = useIsAdmin();
   return (
     <>
       <StrategyNav />
       <PageHeader
         title="信号"
-        desc="信号就是起了名字的条件，例如「5 日均线上穿 20 日均线」叫「均线金叉」。点进去能看到它到底怎么判断、画在 K 线上是什么样、过去出现后涨跌如何、被哪些策略用到。内置信号不满意，可以复制一份改。"
+        desc="信号就是起了名字的条件，例如「5 日均线上穿 20 日均线」叫「均线金叉」。点进去能看到它到底怎么判断、画在 K 线上是什么样、过去出现后涨跌如何、被哪些策略用到。内置信号不满意，管理员可以复制一份改。"
         extra={
-          <Link to="/signals/new" className={buttonClass()}>
-            新建信号
-          </Link>
+          admin && (
+            <Link to="/signals/new" className={buttonClass()}>
+              新建信号
+            </Link>
+          )
         }
       />
       <div className="grid gap-3 text-sm sm:grid-cols-2">
@@ -41,14 +45,20 @@ export function SignalsPage() {
           const mine = items.filter((x) => !x.builtin);
           return (
             <div className="flex flex-col gap-4">
-              <Card title="我的信号">
+              <Card title="自定义信号">
                 {mine.length === 0 ? (
                   <p className="text-sm text-zinc-500">
-                    还没有自己定义的信号。打开任意一个内置信号点「复制一份改」，或
-                    <Link to="/signals/new" className="mx-1 text-accent hover:underline">
-                      从空白新建
-                    </Link>
-                    。
+                    {admin ? (
+                      <>
+                        还没有自定义信号。打开任意一个内置信号点「复制一份改」，或
+                        <Link to="/signals/new" className="mx-1 text-accent hover:underline">
+                          从空白新建
+                        </Link>
+                        。
+                      </>
+                    ) : (
+                      "还没有自定义信号。"
+                    )}
                   </p>
                 ) : (
                   <SignalGrid items={mine} />
@@ -101,6 +111,7 @@ export function SignalDetailPage() {
 }
 
 function SignalDetail({ s }: { s: SignalEntry }) {
+  const admin = useIsAdmin();
   const nav = useNavigate();
   const qc = useQueryClient();
   const remove = useDeleteSignal({
@@ -128,41 +139,43 @@ function SignalDetail({ s }: { s: SignalEntry }) {
           <div className="mt-1 flex flex-wrap gap-1">
             <Badge tone={s.tone === "bullish" ? "bad" : s.tone === "bearish" ? "ok" : "warn"}>{t.explain}</Badge>
             <Badge>{s.kind === "state" ? "状态：持续成立" : "事件：某一天发生"}</Badge>
-            <Badge>{s.builtin ? `内置 · ${s.group}` : "我的信号"}</Badge>
+            <Badge>{s.builtin ? `内置 · ${s.group}` : "自定义信号"}</Badge>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Link to={`/strategies/new?from=blank&signal=${s.key}`} className={buttonClass()}>
-            用它新建策略
-          </Link>
-          {!s.special && (
-            <Link
-              to={`/signals/new?from=${s.key}`}
-              className={buttonClass("ghost")}
-              title="复制它的定义，改成自己的信号"
-            >
-              复制一份改
+        {admin && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <Link to={`/strategies/new?from=blank&signal=${s.key}`} className={buttonClass()}>
+              用它新建策略
             </Link>
-          )}
-          {!s.builtin && (
-            <>
-              <Link to={`/signals/${s.key}/edit`} className={buttonClass("ghost")}>
-                编辑
-              </Link>
-              <button
-                type="button"
-                className="text-zinc-500 hover:text-red-600"
-                disabled={remove.isPending}
-                onClick={() => {
-                  if (s.signal_id && window.confirm(`删除信号「${s.name}」？`))
-                    remove.mutate({ signalId: s.signal_id });
-                }}
+            {!s.special && (
+              <Link
+                to={`/signals/new?from=${s.key}`}
+                className={buttonClass("ghost")}
+                title="复制它的定义，改成自己的信号"
               >
-                删除
-              </button>
-            </>
-          )}
-        </div>
+                复制一份改
+              </Link>
+            )}
+            {!s.builtin && (
+              <>
+                <Link to={`/signals/${s.key}/edit`} className={buttonClass("ghost")}>
+                  编辑
+                </Link>
+                <button
+                  type="button"
+                  className="text-zinc-500 hover:text-red-600"
+                  disabled={remove.isPending}
+                  onClick={() => {
+                    if (s.signal_id && window.confirm(`删除信号「${s.name}」？`))
+                      remove.mutate({ signalId: s.signal_id });
+                  }}
+                >
+                  删除
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
       {!!remove.error && <p className="text-sm text-red-600">{errorText(remove.error)}</p>}
 
@@ -197,9 +210,11 @@ function SignalDetail({ s }: { s: SignalEntry }) {
           {s.used_by.length === 0 ? (
             <p className="text-sm text-zinc-400">
               还没有策略用它。
-              <Link to={`/strategies/new?from=blank&signal=${s.key}`} className="text-accent hover:underline">
-                用它新建一个
-              </Link>
+              {admin && (
+                <Link to={`/strategies/new?from=blank&signal=${s.key}`} className="text-accent hover:underline">
+                  用它新建一个
+                </Link>
+              )}
             </p>
           ) : (
             <ul className="flex flex-col gap-1 text-sm">

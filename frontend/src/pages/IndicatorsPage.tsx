@@ -4,6 +4,7 @@ import { useListIndicators } from "../api/generated/signal/signal";
 import { SampleChart } from "../components/SampleChart";
 import { StrategyNav } from "../components/StrategyNav";
 import { Badge, Card, Empty, PageHeader, QueryView } from "../components/ui";
+import { useIsAdmin } from "../hooks/useIsAdmin";
 import { groupBy, indicatorName } from "../lib/strategy";
 
 const UNIT_TEXT: Record<string, string> = {
@@ -71,6 +72,7 @@ export function IndicatorDetailPage() {
 }
 
 function IndicatorDetail({ i }: { i: IndicatorEntry }) {
+  const admin = useIsAdmin();
   const hasN = i.n_default !== null && i.n_default !== undefined;
   const n = String(i.n_default ?? "");
   // 开高低收本身就是 K 线，不用再画一条
@@ -101,7 +103,7 @@ function IndicatorDetail({ i }: { i: IndicatorEntry }) {
         </Card>
       </div>
       {drawable && <SampleChart title="画在 K 线上" overlays={[`ind:${i.id}${hasN ? `:${i.n_default}` : ""}`]} />}
-      <Card title="常用写法：点一下拿去新建信号">
+      <Card title={admin ? "常用写法：点一下拿去新建信号" : "常用写法"}>
         {i.examples.length === 0 ? (
           <p className="text-sm text-zinc-400">这个指标一般不单独用，常和别的指标比较，或作为排序依据。</p>
         ) : (
@@ -109,12 +111,14 @@ function IndicatorDetail({ i }: { i: IndicatorEntry }) {
             {i.examples.map((x) => (
               <li key={x.text} className="flex flex-wrap items-baseline gap-2">
                 <span>{x.text}</span>
-                <Link
-                  to={`/signals/new?cond=${encodeURIComponent(JSON.stringify(x.condition))}`}
-                  className="text-xs text-accent hover:underline"
-                >
-                  用它新建信号 →
-                </Link>
+                {admin && (
+                  <Link
+                    to={`/signals/new?cond=${encodeURIComponent(JSON.stringify(x.condition))}`}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    用它新建信号 →
+                  </Link>
+                )}
               </li>
             ))}
           </ul>

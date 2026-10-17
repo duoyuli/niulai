@@ -1,10 +1,12 @@
 import { createBrowserRouter } from "react-router";
+import { AdminOnly } from "./components/AdminOnly";
 import { Layout } from "./components/Layout";
 import { GuidePage } from "./pages/GuidePage";
 import { IndexDetailPage } from "./pages/IndexDetailPage";
 import { IndicatorDetailPage, IndicatorsPage } from "./pages/IndicatorsPage";
 import { IndicesPage } from "./pages/IndicesPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MePage } from "./pages/MePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { RunDetailPage } from "./pages/RunDetailPage";
 import { SecurityDetailPage } from "./pages/SecurityDetailPage";
@@ -16,6 +18,7 @@ import { StrategyEditorPage } from "./pages/StrategyEditorPage";
 import { StrategyPage } from "./pages/StrategyPage";
 import { SyncPage } from "./pages/SyncPage";
 import { TodayPage } from "./pages/TodayPage";
+import { UsersPage } from "./pages/UsersPage";
 import { WatchlistPage } from "./pages/WatchlistPage";
 
 export const router = createBrowserRouter([
@@ -25,13 +28,41 @@ export const router = createBrowserRouter([
     children: [
       { path: "/", element: <TodayPage /> },
       { path: "/strategies", element: <StrategiesPage /> },
-      { path: "/strategies/new", element: <StrategyEditorPage /> },
+      {
+        path: "/strategies/new",
+        element: (
+          <AdminOnly>
+            <StrategyEditorPage />
+          </AdminOnly>
+        ),
+      },
       { path: "/strategies/:id", element: <StrategyPage /> },
-      { path: "/strategies/:id/edit", element: <StrategyEditorPage /> },
+      {
+        path: "/strategies/:id/edit",
+        element: (
+          <AdminOnly>
+            <StrategyEditorPage />
+          </AdminOnly>
+        ),
+      },
       { path: "/signals", element: <SignalsPage /> },
-      { path: "/signals/new", element: <SignalEditorPage /> },
+      {
+        path: "/signals/new",
+        element: (
+          <AdminOnly>
+            <SignalEditorPage />
+          </AdminOnly>
+        ),
+      },
       { path: "/signals/:key", element: <SignalDetailPage /> },
-      { path: "/signals/:key/edit", element: <SignalEditorPage /> },
+      {
+        path: "/signals/:key/edit",
+        element: (
+          <AdminOnly>
+            <SignalEditorPage />
+          </AdminOnly>
+        ),
+      },
       { path: "/indicators", element: <IndicatorsPage /> },
       { path: "/indicators/:id", element: <IndicatorDetailPage /> },
       { path: "/watchlist", element: <WatchlistPage /> },
@@ -39,9 +70,39 @@ export const router = createBrowserRouter([
       { path: "/guide", element: <GuidePage /> },
       { path: "/indices", element: <IndicesPage /> },
       { path: "/indices/:thscode", element: <IndexDetailPage /> },
-      { path: "/setup", element: <SetupPage /> },
-      { path: "/sync", element: <SyncPage /> },
-      { path: "/sync/runs/:runId", element: <RunDetailPage /> },
+      {
+        path: "/setup",
+        element: (
+          <AdminOnly>
+            <SetupPage />
+          </AdminOnly>
+        ),
+      },
+      {
+        path: "/sync",
+        element: (
+          <AdminOnly>
+            <SyncPage />
+          </AdminOnly>
+        ),
+      },
+      {
+        path: "/sync/runs/:runId",
+        element: (
+          <AdminOnly>
+            <RunDetailPage />
+          </AdminOnly>
+        ),
+      },
+      {
+        path: "/users",
+        element: (
+          <AdminOnly>
+            <UsersPage />
+          </AdminOnly>
+        ),
+      },
+      { path: "/me", element: <MePage /> },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

@@ -1,12 +1,12 @@
 # REST API
 
-本文说明 `niulai serve` 对外提供的 REST API：通用约定、登录、接口清单、复权参数和错误格式。字段级的定义以 OpenAPI 规范为准（`GET /api/v1/openapi.json`，或运行 `niulai openapi`），本文只记录跨接口的约定和不容易从规范看出的行为。实现在 `backend/src/api/`。
+本文说明 `niulai serve` 对外提供的 REST API：通用约定、登录与权限、接口清单、复权参数和错误格式。字段级的定义以 OpenAPI 规范为准（`GET /api/v1/openapi.json`，或运行 `niulai openapi`），本文只记录跨接口的约定和不容易从规范看出的行为。实现在 `backend/src/api/`。
 
 <a id="conventions"></a>
 ## 通用约定
 
 - 所有接口都在 `/api/v1` 下，响应是 JSON。默认监听 `127.0.0.1:8080`（`NIULAI_API_BIND`）。同一端口的其他路径是前端页面（配置了 `NIULAI_WEB_DIR` 时），未匹配的 `/api/` 路径返回 JSON 404，见 [由 niulai serve 提供](../architecture/frontend.md#serving)。
-- **要先登录**：除健康检查和登录本身，所有接口都要带登录 Cookie，否则返回 401，见 [登录](#auth)。默认只监听本机端口（`127.0.0.1:8080`），见 [部署](../operations/runbook.md#deployment)。
+- **要先登录**：除健康检查和登录本身，所有接口都要带登录 Cookie，否则返回 401；普通用户调用管理员接口返回 403，见 [登录与权限](#auth)。默认只监听本机端口（`127.0.0.1:8080`），见 [部署](../operations/runbook.md#deployment)。
 - 请求标识：每个响应都带 `x-request-id` 头。请求中带了这个头时沿用，否则生成一个 UUID；日志中的 `request_id` 与它一致。
 - 超时：单个请求超过 120 秒返回 408。
 - 数值格式：
@@ -24,9 +24,14 @@
 | --- | --- | --- |
 | `GET /health` | 存活检查 | — |
 | `GET /ready` | 就绪检查，能连上数据库时返回 200 | — |
-| `POST /auth/login` | 登录，成功时设置登录 Cookie | 请求体 `{username, password}`；见 [登录](#auth) |
+| `POST /auth/login` | 登录，成功时设置登录 Cookie | 请求体 `{username, password}`，用户名不区分大小写；连续输错 5 次后返回 429；见 [登录与权限](#auth) |
 | `POST /auth/logout` | 退出登录，清除 Cookie；返回 204 | — |
-| `GET /auth/me` | 当前登录的账号，以及是否仍在使用默认账号密码 | 没有登录时返回 401 |
+| `GET /auth/me` | 当前用户：编号、用户名、角色（`admin` / `member`）、是否要提醒修改密码（`must_change_password`） | 没有登录时返回 401 |
+| `PUT /auth/password` | 改自己的密码，响应带新的登录 Cookie，其他浏览器上的登录失效 | 请求体 `{current_password, new_password}`，新密码至少 8 个字符；现在的密码不对时返回 400 |
+| `GET /users` | 全部用户（管理员），不含密码哈希 | — |
+| `POST /users` | 添加用户（管理员），返回 201 | 请求体 `{username, password?, role?}`：不填密码时生成一个，只在这次的 `generated_password` 中返回；不填角色时是 `member`；用户名已存在返回 409 |
+| `PUT /users/{user_id}` | 修改角色、停用或启用（管理员） | 请求体 `{role, disabled}`；不能修改自己，至少留一个可以登录的管理员，否则返回 400 |
+| `POST /users/{user_id}/password` | 重置别人的密码（管理员），这个用户之前的登录都失效 | 请求体 `{password?}`，不填时生成一个并在 `generated_password` 中返回；不能重置自己的 |
 | `GET /system/version` | 当前版本、可以升级到的最新版本（GitHub 上的标签，并且镜像已经能从 GHCR 拉取）、一键升级的状态（upgrader 是否在运行、进度、失败时的日志） | `refresh=true` 时不用 6 小时的缓存，立即查询；见 [一键升级](../operations/runbook.md#one_click_upgrade) |
 | `POST /system/upgrade` | 一键升级：把版本号交给 upgrader 容器，返回 202 | 请求体 `{version}`，为空时升级到最新版本；只接受正式版本号（`YYYY.MM.DD`、`YYYY.MM.DD.N`）且高于当前版本；upgrader 没有运行或正在升级时返回 409 |
 | `GET /setup` | 首次登录引导的状态：API Key 是否已配置、来源、末尾 4 位、生成 Key 的网址、是否已规划回补 | 见 [首次登录引导](#setup) |
@@ -57,7 +62,7 @@
 | `GET /securities/{thscode}/diagnosis` | 个股诊断：四个维度的结论、最近 20 个交易日的信号、关键价位、当天符合的策略 | 规则见 [个股诊断](../domains/strategies.md#diagnosis) |
 | `GET /market/overview` | 市场概况：涨跌家数、涨跌停数、涨跌幅中位数、站上 20 日均线的比例 | `date` 默认最新交易日 |
 | `GET /market/sectors` | 板块强弱排名 | `category`（`industry` 默认 / `cn_concept`）、`days` 默认 5、范围 1 到 60、`date`；规则见 [市场环境](../domains/strategies.md#market) |
-| `GET /watchlist` | 自选股及诊断：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
+| `GET /watchlist` | 当前用户的自选股及诊断（每个用户各自一份）：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
@@ -78,18 +83,20 @@
 `POST /sync/runs` 返回的 `run_id` 是第一个波次。后续波次是新的运行，`params.root_run` 指向它，见 [波次规划](../architecture/sync_pipeline.md#waves)。
 
 <a id="auth"></a>
-## 登录
+## 登录与权限
 
-网页只有一个管理员账户，账号和密码来自环境变量 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD`，没有设置时都是 `niulai`。实现在 `backend/src/api/auth.rs`。
+用户保存在 `app.user`，**不开放注册**：管理员在「用户」页（`POST /users`）添加用户、设置或生成初始密码。第一个管理员由迁移创建，启动时如果它还没有密码，用 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD`（默认都是 `niulai`）设置，之后这两个变量不再起作用。用户、密码、会话签名在 `backend/src/auth.rs`，接口和中间件在 `backend/src/api/auth.rs`、`users.rs`。
 
 - **哪些接口要登录：** 除 `/health`、`/ready`、`/auth/login`、`/auth/logout`、`/openapi.json` 外的全部 `/api/v1/*` 接口。前端页面本身（`/` 和静态文件）不需要登录，页面在收到 401 时转到登录页。
-- **登录状态：** 登录成功后设置 Cookie `niulai_session`，`HttpOnly`、`SameSite=Lax`、`Path=/`，保存 30 天（`Max-Age=2592000`）。到期后要重新登录，期间使用不会延长。
-- **Cookie 的内容：** 到期时间加上 HMAC-SHA256 签名，签名内容包括账号、密码和到期时间。签名密钥第一次用到时随机生成，保存在 `app.setting` 的 `session_secret`，所以重启后登录状态仍然有效；修改账号或密码后，之前的登录状态全部失效。服务端不保存会话列表，退出登录只是清除这台浏览器的 Cookie。
-- **账号密码不对：** 等待约 0.8 秒后返回 401，放慢猜密码的速度。
-- **默认账号密码：** 仍在使用 `niulai` / `niulai` 时，启动日志有一条警告，`GET /auth/me` 的 `default_credentials` 为 true，页面顶部提示修改。
+- **角色：** 管理员（`admin`）什么都能做。普通用户（`member`）：`/sync`、`/datasets`、`/setup`、`/users`、`/system/upgrade`、`/screening` 开头的接口连查看都不行；其余接口可以查看；写操作只有改自己的密码、收藏和取消收藏，以及只计算不保存的四个（`POST /signals/stats`、`/signals/today`、`/strategies/preview`、`/securities/{thscode}/signal-days`）。名单在 `api/auth.rs` 的 `ADMIN_PREFIXES`、`MEMBER_WRITES`，新增的写接口默认只有管理员能用。不允许时返回 403。
+- **我的数据：** 自选股等按当前用户保存，接口从 `CurrentUser` 取用户编号过滤；管理员也看不到别人的。
+- **密码：** Argon2id 哈希，至少 8 个字符。管理员添加、重置的密码和默认密码都标记 `must_change_password`，本人登录后页面顶部提醒，本人改过后清除。
+- **登录状态：** 登录成功后设置 Cookie `niulai_session`，`HttpOnly`、`SameSite=Lax`、`Path=/`，保存 30 天（`Max-Age=2592000`），期间使用不会延长。内容是 `用户编号.到期时间.签名`，HMAC-SHA256 签名覆盖用户编号、到期时间和密码哈希；签名密钥第一次用到时随机生成，保存在 `app.setting` 的 `session_secret`，重启后仍然有效。改密码、被重置密码后这个用户之前的登录全部失效；停用的用户每次请求都被拒绝。服务端不保存会话列表，退出登录只是清除这台浏览器的 Cookie。
+- **防止锁在外面：** 不能修改自己的角色、停用自己、用重置接口改自己的密码；至少保留一个可以登录的管理员。都忘了密码时用命令行重置，见 [用户与密码](../operations/runbook.md#users)。
+- **猜密码：** 同一用户名（不区分大小写）连续输错 5 次后暂停 5 分钟，返回 429；用户不存在时也做一次同样耗时的校验。计数在进程内，重启后清零。
 - Cookie 没有 `Secure` 属性，通过 HTTP 访问也能登录。直接暴露在公网时，密码会以明文在网络上传输。
 
-为什么这样设计，见 [ADR：网页登录](../decisions/web_login.md)。
+为什么这样设计，见 [ADR：多用户登录与角色](../decisions/multi_user_login.md)。
 
 <a id="setup"></a>
 ## 首次登录引导
@@ -116,9 +123,11 @@
 | HTTP 状态 | `code` | 含义 |
 | --- | --- | --- |
 | 400 | `bad_request` | 参数不合法，`message` 说明原因，例如 `adjust` 取值不对、`fast` 不小于 `slow`、回测区间内没有日线、策略定义没有通过校验 |
-| 401 | `unauthorized` | 没有登录、登录已过期，或账号密码不对 |
+| 401 | `unauthorized` | 没有登录、登录已过期、账号密码不对，或用户已停用 |
+| 403 | `forbidden` | 已登录，但角色不允许，例如普通用户修改策略、打开数据同步 |
 | 404 | `not_found` | 证券、数据集、运行或策略不存在 |
-| 409 | `conflict` | 与当前状态冲突，例如 API Key 由环境变量提供时在网页上修改、删除有策略在用的自定义信号 |
+| 409 | `conflict` | 与当前状态冲突，例如 API Key 由环境变量提供时在网页上修改、删除有策略在用的自定义信号、添加已有的用户名 |
+| 429 | `too_many_requests` | 同一用户名连续输错密码 5 次，暂停 5 分钟 |
 | 500 | `internal` | 服务器内部错误；详细原因只写日志，响应中不包含 |
 | 503 | `unavailable` | 依赖的外部服务暂时不可用，例如验证 API Key 时连不上同花顺接口 |
 

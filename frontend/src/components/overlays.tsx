@@ -345,7 +345,7 @@ function OverlayMenu({
   const match = (name: string) => !q || name.toLowerCase().includes(q.trim().toLowerCase());
   const groups: [string, { value: Overlay; label: string; color?: string }[]][] =
     tab === "strategy"
-      ? [["我的策略", (strategies ?? []).map((s) => ({ value: `strategy:${s.strategy_id}`, label: s.name }))]]
+      ? [["策略", (strategies ?? []).map((s) => ({ value: `strategy:${s.strategy_id}`, label: s.name }))]]
       : tab === "signal"
         ? groupBy(signals ?? []).map(([g, list]) => [
             g,

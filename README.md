@@ -22,7 +22,7 @@ curl -o .env https://raw.githubusercontent.com/duoyuli/niulai/main/deploy/.env.e
 docker compose up -d
 ```
 
-1. 打开 <http://127.0.0.1:8080/>，账号密码默认都是 `niulai`。部署后在 `.env` 中修改 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD`，再 `docker compose up -d`。
+1. 打开 <http://127.0.0.1:8080/>，用第一个管理员登录：账号密码来自 `.env` 的 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD`，默认都是 `niulai`，登录后在「我的」页面改密码。其他人由管理员在「用户」页添加，不开放注册。
 2. 按引导到 <https://fuyao.aicubes.cn/admin/> 生成同花顺金融数据服务的 API Key（免费即可），保存后自动开始同步。全量历史约需 51 小时，期间可以正常使用。
 
 - 数据库数据在部署目录的 `data/postgres`，一键升级前的备份在 `backups/`。不要删除这两个目录。

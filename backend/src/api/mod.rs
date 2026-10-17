@@ -9,6 +9,7 @@ pub mod backtest;
 pub mod insight;
 pub mod sync;
 pub mod system;
+pub mod users;
 pub mod watchlist;
 mod web;
 
@@ -36,6 +37,8 @@ pub struct AppState {
     pub pool: sqlx::PgPool,
     /// 登录状态的签名密钥，第一次用到时从数据库读取
     pub session_secret: Arc<tokio::sync::OnceCell<Vec<u8>>>,
+    /// 登录失败计数
+    pub login_guard: Arc<crate::auth::LoginGuard>,
     /// GitHub 上最新版本的查询结果
     pub latest: Arc<system::LatestCache>,
     /// 市场概况，有新日线后失效
@@ -49,7 +52,8 @@ pub struct AppState {
     info(title = "niulai API", version = "0.1.0", description = "A 股数据工作台：行情、复权、均线信号与数据同步"),
     tags(
         (name = "system", description = "健康检查、版本与一键升级"),
-        (name = "auth", description = "登录"),
+        (name = "auth", description = "登录与改密码"),
+        (name = "users", description = "用户管理（管理员）"),
         (name = "setup", description = "首次登录引导：配置 API Key"),
         (name = "market", description = "证券、日线、指数与均线信号"),
         (name = "watchlist", description = "自选股与快速诊断"),
@@ -63,11 +67,15 @@ pub struct ApiDoc;
 
 // @project-doc docs/interfaces/rest_api.md#conventions
 pub fn router(engine: Arc<Engine>) -> Router {
-    let state = AppState { pool: engine.pool.clone(), engine, session_secret: Arc::default(), latest: Arc::default(), overview: Arc::default(), stats: Arc::default() };
-    let st = &state.engine.settings;
-    if st.admin_user == crate::config::DEFAULT_ADMIN_USER && st.admin_password == crate::config::DEFAULT_ADMIN_PASSWORD {
-        tracing::warn!("网页登录仍在使用默认账号密码 niulai / niulai，请设置 NIULAI_ADMIN_USER 和 NIULAI_ADMIN_PASSWORD");
-    }
+    let state = AppState {
+        pool: engine.pool.clone(),
+        engine,
+        session_secret: Arc::default(),
+        login_guard: Arc::default(),
+        latest: Arc::default(),
+        overview: Arc::default(),
+        stats: Arc::default(),
+    };
     let (api, openapi) = routes().split_for_parts();
     let openapi = Arc::new(openapi);
     let request_id = HeaderName::from_static("x-request-id");
@@ -99,6 +107,7 @@ fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(health))
         .routes(routes!(ready))
         .merge(auth::routes())
+        .merge(users::routes())
         .merge(system::routes())
         .merge(setup::routes())
         .merge(market::routes())

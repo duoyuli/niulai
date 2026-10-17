@@ -5,9 +5,12 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { Role } from './role';
 
 export interface AuthStatus {
-  /** 仍在使用默认账号密码（niulai / niulai）：页面上提醒修改 */
-  default_credentials: boolean;
+  /** 密码是管理员设置的或默认的：页面提醒本人修改 */
+  must_change_password: boolean;
+  role: Role;
+  user_id: number;
   username: string;
 }

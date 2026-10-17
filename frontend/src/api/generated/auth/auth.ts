@@ -27,7 +27,8 @@ import type {
 import type {
   AuthStatus,
   ErrorBody,
-  LoginInput
+  LoginInput,
+  PasswordInput
 } from '../model';
 
 import { apiFetch } from '../../fetcher';
@@ -61,7 +62,7 @@ export const getLoginUrl = () => {
 }
 
 /**
- * @summary 登录：账号密码正确时设置 Cookie，保存 30 天
+ * @summary 登录：账号密码正确时设置 Cookie，保存 30 天。同一用户名连续输错 5 次后暂停 5 分钟
  */
 export const login = async (loginInput: LoginInput, options?: Parameters<typeof apiFetch>[1]): Promise<AuthStatus> => {
 
@@ -127,7 +128,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type LoginMutationVariables = {data: LoginInput}
 
     /**
- * @summary 登录：账号密码正确时设置 Cookie，保存 30 天
+ * @summary 登录：账号密码正确时设置 Cookie，保存 30 天。同一用户名连续输错 5 次后暂停 5 分钟
  */
 export const useLogin = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,LoginMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
@@ -221,7 +222,7 @@ export const useLogout = <TError = unknown,
 }
 
 /**
- * @summary 当前登录状态；没有登录时返回 401
+ * @summary 当前登录的用户；没有登录时返回 401
  */
 export const me = async ( options?: Parameters<typeof apiFetch>[1]): Promise<AuthStatus> => {
 
@@ -292,7 +293,7 @@ export function useMe<TData = Awaited<ReturnType<typeof me>>, TError = ErrorBody
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary 当前登录状态；没有登录时返回 401
+ * @summary 当前登录的用户；没有登录时返回 401
  */
 
 export function useMe<TData = Awaited<ReturnType<typeof me>>, TError = ErrorBody>(
@@ -312,3 +313,90 @@ export function useMe<TData = Awaited<ReturnType<typeof me>>, TError = ErrorBody
 
 
 
+export const getChangePasswordUrl = () => {
+
+
+
+
+  return `/api/v1/auth/password`
+}
+
+/**
+ * @summary 改自己的密码：要先输入现在的密码。改完后其他浏览器上的登录都失效，这次的响应带新的登录 Cookie
+ */
+export const changePassword = async (passwordInput: PasswordInput, options?: Parameters<typeof apiFetch>[1]): Promise<AuthStatus> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return apiFetch<AuthStatus>(getChangePasswordUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(passwordInput)
+  }
+);}
+
+
+
+
+
+export const getChangePasswordMutationKey = () => ['changePassword'] as const;
+
+export const getChangePasswordMutationOptions = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changePassword>>, TError,ChangePasswordMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof changePassword>>, TError,ChangePasswordMutationVariables, TContext> => {
+
+const mutationKey = getChangePasswordMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changePassword>>, ChangePasswordMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  changePassword(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChangePasswordMutationResult = NonNullable<Awaited<ReturnType<typeof changePassword>>>
+    export type ChangePasswordMutationBody = PasswordInput
+    export type ChangePasswordMutationError = ErrorBody
+    export type ChangePasswordMutationVariables = {data: PasswordInput}
+
+    /**
+ * @summary 改自己的密码：要先输入现在的密码。改完后其他浏览器上的登录都失效，这次的响应带新的登录 Cookie
+ */
+export const useChangePassword = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changePassword>>, TError,ChangePasswordMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof changePassword>>,
+        TError,
+        ChangePasswordMutationVariables,
+        TContext
+      > => {
+      return useMutation(getChangePasswordMutationOptions(options), queryClient);
+    }

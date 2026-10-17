@@ -155,6 +155,8 @@ async fn adjustment_and_api_end_to_end() {
     };
     let limiter = RateLimiter::new(1);
     let client = HithinkClient::new("http://127.0.0.1:1", Some("test"), Duration::from_secs(1), limiter).unwrap();
+    // 直接组装引擎（不经过 Engine::new），要自己设置第一个管理员
+    niulai::auth::init_first_admin(&db.pool, &settings).await.unwrap();
     let engine = Arc::new(Engine { settings, pool: db.pool.clone(), client: Arc::new(client), registry: Arc::new(reg) });
     let app = logged_in(niulai::api::router(engine.clone())).await;
 
@@ -458,13 +460,135 @@ async fn login_is_required_and_lasts_30_days() {
     let resp = app.clone().oneshot(with("/api/v1/strategies", &forged)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
-    // 重启后（新的路由，同一个数据库）登录状态仍然有效；改了密码后失效
+    // 重启后（新的路由，同一个数据库）登录状态仍然有效
     let app2 = niulai::api::router(engine.clone());
     assert_eq!(app2.oneshot(with("/api/v1/auth/me", &cookie)).await.unwrap().status(), StatusCode::OK);
+    // 配置里的账号密码只用来设置第一个管理员一次：之后改配置不影响登录，密码在网页上改
     let mut changed = bare_settings("http://127.0.0.1:1", Some("test"));
     changed.admin_password = "new-pass".into();
     let app3 = niulai::api::router(Engine::new(changed, db.pool.clone()).await.unwrap());
-    assert_eq!(app3.oneshot(with("/api/v1/auth/me", &cookie)).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(app3.clone().oneshot(with("/api/v1/auth/me", &cookie)).await.unwrap().status(), StatusCode::OK);
+    assert!(login(&app3, "admin", "secret-pass").await.is_some() && login(&app3, "admin", "new-pass").await.is_none());
+    db.drop().await;
+}
+
+/// 登录，成功时返回 Cookie（`niulai_session=...`）
+async fn login(app: &axum::Router, username: &str, password: &str) -> Option<String> {
+    let (resp, _) = call_as(app, None, "POST", "/api/v1/auth/login", Some(json!({"username": username, "password": password}))).await;
+    (resp.status() == StatusCode::OK).then(|| resp.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_string())
+}
+
+/// 用指定的 Cookie 调用接口，返回响应头和 JSON
+async fn call_as(app: &axum::Router, cookie: Option<&str>, method: &str, uri: &str, body: Option<Value>) -> (axum::http::Response<()>, Value) {
+    let mut req = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+    if let Some(c) = cookie {
+        req = req.header("cookie", c);
+    }
+    let resp = app.clone().oneshot(req.body(body.map_or(Body::empty(), |b| Body::from(b.to_string()))).unwrap()).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes();
+    (axum::http::Response::from_parts(parts, ()), serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn users_are_added_by_admins_and_members_only_touch_their_own_data() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    synthetic_stock(&db.pool).await;
+    let app = niulai::api::router(Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), db.pool.clone()).await.unwrap());
+    let admin = login(&app, "Admin", "secret-pass").await.expect("第一个管理员来自配置，用户名不区分大小写");
+    let st = |r: &axum::http::Response<()>| r.status();
+
+    // 没有注册接口；添加用户只能由管理员做，不填角色时是普通用户，不填密码时生成一个
+    let (r, v) = call_as(&app, Some(&admin), "POST", "/api/v1/users", Some(json!({"username": "mama"}))).await;
+    assert_eq!(st(&r), StatusCode::CREATED, "{v}");
+    assert_eq!(v["user"]["role"], "member");
+    assert!(v["user"].get("password_hash").is_none(), "不返回密码哈希");
+    let generated = v["generated_password"].as_str().unwrap().to_string();
+    let mama_id = v["user"]["user_id"].as_i64().unwrap();
+    let (r, _) = call_as(&app, Some(&admin), "POST", "/api/v1/users", Some(json!({"username": "MAMA", "password": "12345678"}))).await;
+    assert_eq!(st(&r), StatusCode::CONFLICT);
+    let (r, _) = call_as(&app, Some(&admin), "POST", "/api/v1/users", Some(json!({"username": "kid", "password": "short"}))).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST);
+
+    // 普通用户：能看，不能改策略、不能进管理功能；第一次登录提醒改密码
+    let mama = login(&app, "mama", &generated).await.unwrap();
+    let (_, me) = call_as(&app, Some(&mama), "GET", "/api/v1/auth/me", None).await;
+    assert_eq!((me["role"].as_str(), me["must_change_password"].as_bool()), (Some("member"), Some(true)));
+    for (method, uri, want) in [
+        ("GET", "/api/v1/strategies", StatusCode::OK),
+        ("POST", "/api/v1/strategies", StatusCode::FORBIDDEN),
+        ("GET", "/api/v1/sync/runs", StatusCode::FORBIDDEN),
+        ("GET", "/api/v1/setup", StatusCode::FORBIDDEN),
+        ("GET", "/api/v1/users", StatusCode::FORBIDDEN),
+        ("POST", "/api/v1/users", StatusCode::FORBIDDEN),
+        ("POST", "/api/v1/system/upgrade", StatusCode::FORBIDDEN),
+    ] {
+        let (r, v) = call_as(&app, Some(&mama), method, uri, Some(json!({}))).await;
+        assert_eq!(st(&r), want, "{method} {uri} {v}");
+        if want == StatusCode::FORBIDDEN {
+            assert_eq!(v["code"], "forbidden");
+        }
+    }
+
+    // 自选股各自一份
+    let (r, _) = call_as(&app, Some(&mama), "PUT", "/api/v1/watchlist/600000.SH", None).await;
+    assert_eq!(st(&r), StatusCode::NO_CONTENT);
+    let codes = |v: &Value| v["items"].as_array().unwrap().iter().map(|i| i["thscode"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let (_, v) = call_as(&app, Some(&mama), "GET", "/api/v1/watchlist", None).await;
+    assert_eq!(codes(&v), ["600000.SH"]);
+    let (_, v) = call_as(&app, Some(&admin), "GET", "/api/v1/watchlist", None).await;
+    assert!(codes(&v).is_empty(), "管理员看不到别人的自选股");
+
+    // 本人改密码：要先输对现在的密码；改完后旧的登录状态失效，响应里是新的
+    let (r, _) = call_as(&app, Some(&mama), "PUT", "/api/v1/auth/password", Some(json!({"current_password": "wrong", "new_password": "mama-new-pass"}))).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST);
+    let (r, v) = call_as(&app, Some(&mama), "PUT", "/api/v1/auth/password", Some(json!({"current_password": generated, "new_password": "mama-new-pass"}))).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    assert_eq!(v["must_change_password"], false);
+    let fresh = r.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_string();
+    let (r, _) = call_as(&app, Some(&mama), "GET", "/api/v1/auth/me", None).await;
+    assert_eq!(st(&r), StatusCode::UNAUTHORIZED);
+    let (r, _) = call_as(&app, Some(&fresh), "GET", "/api/v1/auth/me", None).await;
+    assert_eq!(st(&r), StatusCode::OK);
+
+    // 管理员重置别人的密码：旧的登录失效，本人登录后又会被提醒修改；不能用这个接口重置自己
+    let (r, v) = call_as(&app, Some(&admin), "POST", &format!("/api/v1/users/{mama_id}/password"), Some(json!({}))).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    let reset = v["generated_password"].as_str().unwrap().to_string();
+    let (r, _) = call_as(&app, Some(&fresh), "GET", "/api/v1/auth/me", None).await;
+    assert_eq!(st(&r), StatusCode::UNAUTHORIZED);
+    let mama = login(&app, "mama", &reset).await.unwrap();
+    let (_, me) = call_as(&app, Some(&admin), "GET", "/api/v1/auth/me", None).await;
+    let admin_id = me["user_id"].as_i64().unwrap();
+    let (r, _) = call_as(&app, Some(&admin), "POST", &format!("/api/v1/users/{admin_id}/password"), Some(json!({}))).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST);
+
+    // 设为管理员后可以管理用户；不能修改自己；停用后已登录的立即失效，也不能再登录
+    let (r, _) = call_as(&app, Some(&admin), "PUT", &format!("/api/v1/users/{mama_id}"), Some(json!({"role": "admin", "disabled": false}))).await;
+    assert_eq!(st(&r), StatusCode::OK);
+    let (r, _) = call_as(&app, Some(&mama), "GET", "/api/v1/users", None).await;
+    assert_eq!(st(&r), StatusCode::OK);
+    let (r, _) = call_as(&app, Some(&mama), "PUT", &format!("/api/v1/users/{mama_id}"), Some(json!({"role": "member", "disabled": false}))).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST);
+    let (r, _) = call_as(&app, Some(&admin), "PUT", &format!("/api/v1/users/{mama_id}"), Some(json!({"role": "member", "disabled": true}))).await;
+    assert_eq!(st(&r), StatusCode::OK);
+    let (r, _) = call_as(&app, Some(&mama), "GET", "/api/v1/auth/me", None).await;
+    assert_eq!(st(&r), StatusCode::UNAUTHORIZED);
+    assert!(login(&app, "mama", &reset).await.is_none());
+
+    // 至少留一个可以登录的管理员
+    let err = niulai::auth::update(&db.pool, admin_id, niulai::auth::Role::Member, false).await.unwrap_err();
+    assert!(err.to_string().contains("至少要留一个"), "{err}");
+
+    // 连续输错 5 次后暂停登录，正确的密码也要等
+    for _ in 0..5 {
+        assert!(login(&app, "admin", "wrong-pass").await.is_none());
+    }
+    let (r, v) = call_as(&app, None, "POST", "/api/v1/auth/login", Some(json!({"username": "admin", "password": "secret-pass"}))).await;
+    assert_eq!(st(&r), StatusCode::TOO_MANY_REQUESTS, "{v}");
     db.drop().await;
 }
 

@@ -47,6 +47,6 @@ niulai 是面向 A 股的个股诊断工作台。数据来自同花顺金融数�
 | --- | --- |
 | `niulai serve` | 常驻服务：一个进程同时运行 REST API、页面、同步任务执行和定时调度，启动时执行数据库迁移 |
 | `niulai upgrader` | 一键升级助手，在 Docker 部署的 upgrader 容器中运行，不连数据库，见 [一键升级](operations/runbook.md#one_click_upgrade) |
-| 其他子命令 | 运维命令，执行完就退出：迁移、规划运行、在前台执行任务、数据核检、查看状态、重算复权、导出 OpenAPI（`niulai --help`） |
+| 其他子命令 | 运维命令，执行完就退出：迁移、规划运行、在前台执行任务、数据核检、查看状态、重算复权、列出用户和重置密码、导出 OpenAPI（`niulai --help`） |
 
 数据、任务队列和进度都在 PostgreSQL 中，不依赖其他服务。同一时刻只有一个进程执行同步任务，限速在进程内，见 [ADR：单进程服务](decisions/single_process_service.md)。

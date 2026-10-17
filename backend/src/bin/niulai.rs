@@ -7,6 +7,7 @@
 //!   niulai work --until-idle                    # 在前台执行任务，队列空了就退出
 //!   niulai daily                                # 立即发起一次每日增量（不等调度时间）
 //!   niulai status
+//!   niulai user reset-password <用户名>         # 忘记密码时：生成一个新密码
 //!   niulai upgrader                             # Docker 部署的一键升级助手（upgrader 容器中）
 
 use std::sync::Arc;
@@ -76,6 +77,11 @@ enum Cmd {
         #[arg(long, default_value_t = 10)]
         limit: i64,
     },
+    /// 网页用户：列出用户，或在忘记密码时重置（不开放注册，平时在网页上由管理员添加）
+    User {
+        #[command(subcommand)]
+        cmd: UserCmd,
+    },
     /// 输出 OpenAPI 规范（JSON）
     Openapi,
     /// 一键升级助手：在 Docker 部署的 upgrader 容器中运行，不连接数据库
@@ -90,6 +96,14 @@ enum Cmd {
         #[arg(long, default_value = "/var/run/docker.sock")]
         socket: std::path::PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum UserCmd {
+    /// 列出全部用户
+    List,
+    /// 重置一个用户的密码并打印新密码；停用的用户同时恢复，登录后提醒本人修改
+    ResetPassword { username: String },
 }
 
 #[tokio::main]
@@ -155,6 +169,21 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Recompute => {
             postprocess::recompute_adjustments(&engine.pool, 0).await?;
             println!("已重算");
+        }
+        Cmd::User { cmd: UserCmd::List } => {
+            for u in niulai::auth::list(&engine.pool).await? {
+                let state = if u.disabled { "已停用" } else { "" };
+                println!("{:>4} {:<7} {:<24} {state}", u.user_id, u.role.key(), u.username);
+            }
+        }
+        Cmd::User { cmd: UserCmd::ResetPassword { username } } => {
+            let user = niulai::auth::find_by_name(&engine.pool, &username).await?.ok_or_else(|| anyhow::anyhow!("没有用户「{username}」"))?;
+            let password = niulai::auth::generate_password()?;
+            niulai::auth::set_password(&engine.pool, user.user_id, &password, false).await?;
+            if user.disabled {
+                niulai::auth::update(&engine.pool, user.user_id, user.role, false).await?;
+            }
+            println!("已重置「{}」的密码：{password}\n登录后请立即修改。", user.username);
         }
         Cmd::Status { limit } => {
             type RunRow = (i64, String, String, i32, i32, i32, chrono::DateTime<chrono::Utc>, serde_json::Value);

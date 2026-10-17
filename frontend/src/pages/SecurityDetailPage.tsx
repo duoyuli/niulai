@@ -181,7 +181,7 @@ function StockBacktest({ thscode }: { thscode: string }) {
             <select className={`${inputClass} w-56`} value={s.method} onChange={(e) => set({ method: e.target.value })}>
               <option value="ma">均线交叉：金叉买、死叉卖</option>
               {(strategies.data ?? []).length > 0 && (
-                <optgroup label="按我的策略">
+                <optgroup label="按策略">
                   {strategies.data?.map((x) => (
                     <option key={x.strategy_id} value={x.strategy_id}>
                       {x.name}

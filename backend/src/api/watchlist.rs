@@ -1,6 +1,6 @@
-//! 自选股：收藏的股票，以及对它们的快速诊断（最新价、涨跌、均线状态、最近一次交叉）。
+//! 自选股：当前用户收藏的股票（每个用户各自一份），以及对它们的快速诊断（最新价、涨跌、均线状态、最近一次交叉）。
 //!
-//! 诊断沿用均线接口的口径：等比前复权收盘价的简单移动平均，交叉规则与 `/securities/{thscode}/ma` 相同。
+//! 均线是等比前复权收盘价的简单移动平均，交叉规则与 `analysis::ma` 相同。
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -12,6 +12,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
+use super::auth::CurrentUser;
 use super::market::windows;
 use crate::analysis::ma::{CrossSignal, ma_cross, state_of};
 use crate::analysis::diagnosis::{SignalEvent, recent_signals};
@@ -102,7 +103,7 @@ pub struct LastCross {
 /// 自选股列表及诊断
 #[utoipa::path(get, path = "/watchlist", tag = "watchlist", params(WatchQuery),
     responses((status = 200, description = "成功", body = Watchlist), (status = 400, description = "参数不合法", body = crate::error::ErrorBody)))]
-async fn list_watchlist(State(s): State<AppState>, Query(q): Query<WatchQuery>) -> ApiResult<Json<Watchlist>> {
+async fn list_watchlist(State(s): State<AppState>, me: CurrentUser, Query(q): Query<WatchQuery>) -> ApiResult<Json<Watchlist>> {
     let (fast, slow) = windows(q.fast, q.slow)?;
     /// (代码, 名称, 板块, 退市日, 收藏时间, 最新日期, 最新收盘)
     type BaseRow = (String, String, String, Option<NaiveDate>, DateTime<Utc>, Option<NaiveDate>, Option<String>);
@@ -111,8 +112,10 @@ async fn list_watchlist(State(s): State<AppState>, Query(q): Query<WatchQuery>) 
          FROM app.watchlist w JOIN ref.security s USING (thscode)
          LEFT JOIN LATERAL (SELECT trade_date, close FROM mkt.stock_bar_1d b WHERE b.thscode = w.thscode
                             ORDER BY trade_date DESC LIMIT 1) l ON true
+         WHERE w.user_id = $1
          ORDER BY w.added_at DESC, w.thscode",
     )
+    .bind(me.user_id)
     .fetch_all(&s.pool)
     .await?;
 
@@ -157,20 +160,20 @@ fn diagnose(pts: &[(NaiveDate, f64)], fast: usize, slow: usize) -> Option<WatchD
 /// 收藏一只股票（重复收藏不报错）
 #[utoipa::path(put, path = "/watchlist/{thscode}", tag = "watchlist", params(("thscode" = String, Path, description = "例：600519.SH")),
     responses((status = 204, description = "已收藏"), (status = 404, description = "证券不存在", body = crate::error::ErrorBody)))]
-async fn add_watch(State(s): State<AppState>, Path(code): Path<String>) -> ApiResult<StatusCode> {
+async fn add_watch(State(s): State<AppState>, me: CurrentUser, Path(code): Path<String>) -> ApiResult<StatusCode> {
     let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ref.security WHERE thscode = $1)").bind(&code).fetch_one(&s.pool).await?;
     if !exists {
         return Err(ApiError::NotFound(format!("证券不存在：{code}")));
     }
-    sqlx::query("INSERT INTO app.watchlist (thscode) VALUES ($1) ON CONFLICT DO NOTHING").bind(&code).execute(&s.pool).await?;
+    sqlx::query("INSERT INTO app.watchlist (user_id, thscode) VALUES ($1, $2) ON CONFLICT DO NOTHING").bind(me.user_id).bind(&code).execute(&s.pool).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// 取消收藏（本来没有收藏也不报错）
 #[utoipa::path(delete, path = "/watchlist/{thscode}", tag = "watchlist", params(("thscode" = String, Path, description = "例：600519.SH")),
     responses((status = 204, description = "已取消收藏")))]
-async fn remove_watch(State(s): State<AppState>, Path(code): Path<String>) -> ApiResult<StatusCode> {
-    sqlx::query("DELETE FROM app.watchlist WHERE thscode = $1").bind(&code).execute(&s.pool).await?;
+async fn remove_watch(State(s): State<AppState>, me: CurrentUser, Path(code): Path<String>) -> ApiResult<StatusCode> {
+    sqlx::query("DELETE FROM app.watchlist WHERE user_id = $1 AND thscode = $2").bind(me.user_id).bind(&code).execute(&s.pool).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

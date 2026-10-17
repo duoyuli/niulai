@@ -14,7 +14,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "登录：账号密码正确时设置 Cookie，保存 30 天",
+        "summary": "登录：账号密码正确时设置 Cookie，保存 30 天。同一用户名连续输错 5 次后暂停 5 分钟",
         "operationId": "login",
         "requestBody": {
           "content": {
@@ -38,7 +38,17 @@
             }
           },
           "401": {
-            "description": "账号或密码不对",
+            "description": "账号或密码不对，或已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "输错次数太多，暂停登录",
             "content": {
               "application/json": {
                 "schema": {
@@ -69,7 +79,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "当前登录状态；没有登录时返回 401",
+        "summary": "当前登录的用户；没有登录时返回 401",
         "operationId": "me",
         "responses": {
           "200": {
@@ -84,6 +94,47 @@
           },
           "401": {
             "description": "没有登录或登录已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/password": {
+      "put": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "改自己的密码：要先输入现在的密码。改完后其他浏览器上的登录都失效，这次的响应带新的登录 Cookie",
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已修改，响应带新的 Set-Cookie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "现在的密码不对，或新密码太短",
             "content": {
               "application/json": {
                 "schema": {
@@ -2545,6 +2596,205 @@
         }
       }
     },
+    "/users": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "全部用户",
+        "operationId": "list_users",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/User"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "添加用户。本人第一次登录后页面提醒修改密码",
+        "operationId": "add_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewUser"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "已添加",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserWithPassword"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "用户名或密码不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "用户名已经有人用了",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{user_id}": {
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "修改角色、停用或启用。不能修改自己（避免把自己锁在外面），至少要留一个可以登录的管理员",
+        "operationId": "update_user",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "用户编号",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已修改",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "不能修改自己，或会没有可以登录的管理员",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "用户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{user_id}/password": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "重置别人的密码：这个用户已登录的浏览器都要重新登录，登录后页面提醒修改。改自己的密码用 `PUT /auth/password`",
+        "operationId": "reset_password",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "用户编号",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordReset"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已重置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResetResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "密码太短，或想重置自己的密码",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "用户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/watchlist": {
       "get": {
         "tags": [
@@ -2699,13 +2949,22 @@
       "AuthStatus": {
         "type": "object",
         "required": [
+          "user_id",
           "username",
-          "default_credentials"
+          "role",
+          "must_change_password"
         ],
         "properties": {
-          "default_credentials": {
+          "must_change_password": {
             "type": "boolean",
-            "description": "仍在使用默认账号密码（niulai / niulai）：页面上提醒修改"
+            "description": "密码是管理员设置的或默认的：页面提醒本人修改"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
           },
           "username": {
             "type": "string"
@@ -3582,7 +3841,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "稳定错误码：not_found / bad_request / unauthorized / conflict / unavailable / internal"
+            "description": "稳定错误码：not_found / bad_request / unauthorized / forbidden / too_many_requests / conflict / unavailable / internal"
           },
           "message": {
             "type": "string"
@@ -4339,6 +4598,28 @@
           }
         }
       },
+      "NewUser": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "初始密码，至少 8 个字符；为空时系统生成一个"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "不填时是普通用户：管理员权限要明确给"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "Occurrence": {
         "type": "object",
         "required": [
@@ -4592,6 +4873,33 @@
           "min": {
             "type": "number",
             "format": "double"
+          }
+        }
+      },
+      "PasswordInput": {
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "properties": {
+          "current_password": {
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string"
+          }
+        }
+      },
+      "PasswordReset": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "新密码，至少 8 个字符；为空时系统生成一个"
           }
         }
       },
@@ -5083,6 +5391,25 @@
             "minimum": 0
           }
         }
+      },
+      "ResetResult": {
+        "type": "object",
+        "properties": {
+          "generated_password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "系统生成的密码，只在这一次返回；自己填了密码时为空"
+          }
+        }
+      },
+      "Role": {
+        "type": "string",
+        "enum": [
+          "admin",
+          "member"
+        ]
       },
       "RunDetail": {
         "allOf": [
@@ -6910,6 +7237,74 @@
           }
         }
       },
+      "User": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "username",
+          "role",
+          "disabled",
+          "must_change_password",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "must_change_password": {
+            "type": "boolean",
+            "description": "密码是管理员设置的或默认的，本人登录后页面提醒修改"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "UserUpdate": {
+        "type": "object",
+        "required": [
+          "role",
+          "disabled"
+        ],
+        "properties": {
+          "disabled": {
+            "type": "boolean",
+            "description": "停用后不能登录，已登录的也立即失效；数据保留"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "UserWithPassword": {
+        "type": "object",
+        "required": [
+          "user"
+        ],
+        "properties": {
+          "generated_password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "系统生成的密码，只在这一次返回，交给本人；自己填了密码时为空"
+          },
+          "user": {
+            "$ref": "#/components/schemas/User"
+          }
+        }
+      },
       "Verdict": {
         "type": "string",
         "enum": [
@@ -7097,7 +7492,11 @@
     },
     {
       "name": "auth",
-      "description": "登录"
+      "description": "登录与改密码"
+    },
+    {
+      "name": "users",
+      "description": "用户管理（管理员）"
     },
     {
       "name": "setup",

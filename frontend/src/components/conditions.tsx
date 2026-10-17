@@ -74,7 +74,7 @@ export function NumInput({
   );
 }
 
-/** 条件列表。mine 给出时，信号下拉框里可以选「我的信号」；自定义信号的定义里不给，避免信号套信号 */
+/** 条件列表。mine 给出时，信号下拉框里可以选自定义信号；自定义信号的定义里不给，避免信号套信号 */
 export function ConditionList({
   title,
   hint,
@@ -225,7 +225,7 @@ function ConditionRow({
           }}
         >
           {custom.length > 0 && (
-            <optgroup label="我的信号">
+            <optgroup label="自定义信号">
               {custom.map((m) => (
                 <option key={m.key} value={m.key}>
                   {m.name}

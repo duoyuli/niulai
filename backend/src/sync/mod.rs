@@ -47,6 +47,7 @@ impl Engine {
         let registry = Registry::load(&settings.datasets_file()?)?;
         registry::sync_to_db(&pool, &registry).await?;
         crate::analysis::screener::seed_templates(&pool).await?;
+        crate::auth::init_first_admin(&pool, &settings).await?;
         let limiter = RateLimiter::new(settings.rate_limit_rps);
         // 环境变量优先，其次是网页上保存的；都没有时等用户在首次登录引导中配置
         let api_key = match &settings.hithink_finance_api_key {

@@ -33,8 +33,8 @@
 | --- | --- | --- | --- |
 | `DATABASE_URL` | 是 | — | PostgreSQL 连接串，例如 `postgres://user:pass@127.0.0.1:5432/niulai`。需要 PostgreSQL 16 或以上 |
 | `HITHINK_FINANCE_API_KEY` | 否 | — | 同花顺金融数据服务 API Key（在 <https://fuyao.aicubes.cn/admin/> 生成）。一般不设置，在网页的首次登录引导中配置，保存在数据库；设置后优先使用它，网页上不能修改，见 [ADR：API Key 在首次登录引导中配置](../decisions/api_key_setup.md)。空值按未设置处理 |
-| `NIULAI_ADMIN_USER` | 否 | `niulai` | 网页登录的管理员账号，见 [登录](rest_api.md#auth) |
-| `NIULAI_ADMIN_PASSWORD` | 否 | `niulai` | 网页登录的密码。修改账号或密码并重启后，之前的登录状态全部失效。仍用默认值时启动日志有警告，页面顶部提示修改 |
+| `NIULAI_ADMIN_USER` | 否 | `niulai` | 第一个管理员的用户名。只在第一次启动、第一个管理员还没有密码时用一次，之后在网页上管理用户，见 [登录与权限](rest_api.md#auth) |
+| `NIULAI_ADMIN_PASSWORD` | 否 | `niulai` | 第一个管理员的初始密码，同样只用一次；之后修改它没有效果，密码在网页「我的」页面改。用默认值时启动日志有警告，登录后页面顶部提醒修改 |
 | `NIULAI_UPGRADE_DIR` | 否 | 无；Docker 部署的 `compose.yml` 中是 `/upgrade` | 与 upgrader 容器共享的目录，为空时不能一键升级，见 [一键升级](../operations/runbook.md#one_click_upgrade) |
 | `NIULAI_UPDATE_REPO` | 否 | `duoyuli/niulai` | 到哪个 GitHub 仓库查新版本；设为空时不检查 |
 | `NIULAI_API_BIND` | 否 | `127.0.0.1:8080` | API 监听地址；Docker 镜像中默认 `0.0.0.0:8080` |

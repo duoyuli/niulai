@@ -1,6 +1,6 @@
 # ADR：网页登录
 
-- 状态：已采纳（accepted），2026-10-16。部分取代 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md) 中「项目不包含登录」的决定。
+- 状态：部分被取代（superseded），2026-10-16。决策第 1、4 条和取舍中「密码哈希存储」已被 [ADR：多用户登录与角色](multi_user_login.md) 取代；第 2、3 条仍然有效，签名内容改为用户编号和密码哈希。部分取代 [ADR：CI 构建镜像，部署只交付服务本身](ci_cd.md) 中「项目不包含登录」的决定。
 - 相关文档：[登录](../interfaces/rest_api.md#auth)、[环境变量](../interfaces/configuration.md#settings)、[部署](../operations/runbook.md#deployment)。
 
 ## 背景

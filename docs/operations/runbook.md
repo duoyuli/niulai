@@ -6,6 +6,7 @@
 
 - [本地运行](#local_setup)：第一次在本机启动。
 - [首次回补](#backfill)、[日常同步](#daily_sync)、[重拉指定数据](#rerun)、[查看进度](#monitoring)、[处理失败任务](#failure_handling)、[修改配置](#config_changes)：同步相关的操作。
+- [用户与密码](#users)：添加用户、设管理员、停用，忘记密码。
 - [部署](#deployment)：构建镜像、Docker 部署、源码部署、一键升级、部署迁移、数据目录、手动升级、备份与恢复。
 - [测试](#testing)：提交代码前。
 
@@ -94,6 +95,24 @@ WHERE dataset_id = 'special.limit_down_pool' AND status IN ('pending', 'failed',
 ## 修改配置
 
 修改 `backend/config/datasets.yaml` 后先 `cargo test` 确认能解析，再重启 `niulai serve`（Ctrl+C 或 SIGTERM 后等正在执行的任务结束）。启动时新配置同步到 `ops.dataset`。已规划的任务按规划时的参数执行。
+
+<a id="users"></a>
+## 用户与密码
+
+第一次启动时，第一个管理员的用户名和密码来自 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD`（默认都是 `niulai`）。之后这两个变量不再起作用：
+
+1. 用这个账号登录，点右上角的用户名，在「我的」页面改密码。
+2. 在「用户」页添加其他人：不开放注册，用户都由管理员添加。不填密码时系统生成一个，只显示一次，转交本人；本人登录后会被提醒改成自己的密码。新用户默认是普通用户，需要时再「设为管理员」。
+3. 不再使用的账号点「停用」：不能登录，已登录的立即退出，数据保留。
+
+忘记密码：请另一个管理员在「用户」页重置。管理员自己也忘了时，在服务器上执行（停用的用户同时恢复）：
+
+```bash
+docker compose exec niulai niulai user reset-password <用户名>   # Docker 部署，在部署目录执行
+./target/release/niulai user reset-password <用户名>             # 源码部署，在 backend/ 下执行
+```
+
+命令打印新密码，登录后立即修改。`niulai user list` 列出全部用户。
 
 <a id="deployment"></a>
 ## 部署

@@ -56,10 +56,13 @@
 | `/sync` | 数据同步，从上到下：「立即同步全部」「手动同步」（按计划全选或勾选到单个数据集，选增量或全部重取）；一句话状态；同步计划（时间可改，可「现在同步一次」）；同步记录（标明来源，几批合成一行）；需要注意（缺口和失败，一键补齐）；数据核检；按分类的数据集 | `GET /sync/health`、`/sync/schedule`、`/sync/runs`、`/sync/check`、`/datasets`，`PUT /sync/schedule`，`POST /sync/runs`、`/sync/repair`、`/sync/check` |
 | `/sync/runs/:runId` | 一次同步的详情（任意一批的编号都行）：各批状态、还没开始的批次、各数据集进度、没有新建任务的数据及原因、失败的任务；合计与同步记录用同一个函数（`lib/runs.ts`） | `GET /sync/runs/{run_id}`、`/datasets` |
 | `/login` | 登录，成功后回到 `next` 参数指向的页面；不在 `Layout` 中 | `POST /auth/login` |
-| `/setup` | API Key 引导和更换：验证并保存，显示来源和末尾 4 位 | `GET /setup`、`PUT /setup/api-key` |
+| `/setup` | API Key 引导和更换：验证并保存，显示来源和末尾 4 位（管理员） | `GET /setup`、`PUT /setup/api-key` |
+| `/users` | 用户管理（管理员）：添加用户（默认普通用户，不填密码时生成一个、只显示一次），设为管理员或普通用户，重置密码，停用和启用；不能修改自己 | `GET /users`、`POST /users`、`PUT /users/{user_id}`、`POST /users/{user_id}/password` |
+| `/me` | 本人：角色，改密码（要输入现在的密码） | `GET /auth/me`、`PUT /auth/password` |
 
 全局行为（`Layout`、`VersionBadge`）：
-- 请求收到 401 时整页跳到 `/login?next=<当前地址>`；登录后还没配置 API Key（`GET /setup` 的 `api_key_configured` 为 false）时，所有页面跳到 `/setup`；仍在用默认账号密码时页面顶部提示。
+- 请求收到 401 时整页跳到 `/login?next=<当前地址>`；管理员登录后还没配置 API Key（`GET /setup` 的 `api_key_configured` 为 false）时，所有页面跳到 `/setup`；`GET /auth/me` 的 `must_change_password` 为 true 时页面顶部提醒去「我的」改密码。
+- 按角色显示（`useIsAdmin`）：普通用户看不到版本号和升级、「数据」「设置」「用户」入口（换成「指数」），策略和信号页上没有新建、修改、删除、巡检按钮；直接打开管理员页面时 `AdminOnly` 给一句说明，不发请求。后端同样拦截，前端只是不显示用不了的按钮。
 - 版本号每 30 分钟请求一次 `GET /system/version`，有新版本时亮红点，点开可以一键升级。升级进行中每 2 秒刷新（服务重启时请求失败也继续），版本号弹窗和每个页面顶部都显示进度条和每一步的状态（`UpgradeProgress`、`UpgradeBanner`，步骤来自升级助手写的状态）；所有步骤结束、运行的版本变成目标版本后整页刷新。
 - 刷新间隔：同步页的运行列表 10 秒、同步状态 15 秒、数据集和同步计划 30 秒；运行详情在进行中时 5 秒。
 

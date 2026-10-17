@@ -32,6 +32,7 @@ import {
   Table,
 } from "../components/ui";
 import { WatchButton } from "../components/WatchButton";
+import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtBig, fmtDateTime, fmtInt, fmtPctValue, fmtPrice, RANGES, rangeStart, upDownClass } from "../lib/format";
 import { holdingsText, MAX_HOLDINGS } from "../lib/strategy";
@@ -53,6 +54,7 @@ export function StrategyPage() {
   const refresh = () => qc.invalidateQueries();
   const update = useUpdateStrategy({ mutation: { onSuccess: refresh } });
   const remove = useDeleteStrategy({ mutation: { onSuccess: () => nav("/strategies") } });
+  const admin = useIsAdmin();
 
   if (strategy.isPending) return <Spinner />;
   if (strategy.error) return <ErrorState error={strategy.error} onRetry={() => strategy.refetch()} />;
@@ -86,39 +88,41 @@ export function StrategyPage() {
           </h1>
           <Conditions e={st.explained} />
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <Link to={`/strategies/${id}/edit`} className={buttonClass("ghost")}>
-            修改条件
-          </Link>
-          <button
-            type="button"
-            className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-            disabled={update.isPending}
-            onClick={() => save({ screening: !st.screening })}
-          >
-            {st.screening ? "暂停巡检" : "开启巡检"}
-          </button>
-          <button
-            type="button"
-            className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-            disabled={update.isPending}
-            title="只是试试的策略可以不在「今日」页出现，照常巡检"
-            onClick={() => save({ show_on_today: !st.show_on_today })}
-          >
-            {st.show_on_today ? "不在今日展示" : "在今日展示"}
-          </button>
-          <button
-            type="button"
-            className="text-zinc-500 hover:text-red-600"
-            disabled={remove.isPending}
-            onClick={() => {
-              if (window.confirm(`删除策略「${st.name}」？它的巡检记录也会一起删除。`))
-                remove.mutate({ strategyId: id });
-            }}
-          >
-            删除
-          </button>
-        </div>
+        {admin && (
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <Link to={`/strategies/${id}/edit`} className={buttonClass("ghost")}>
+              修改条件
+            </Link>
+            <button
+              type="button"
+              className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+              disabled={update.isPending}
+              onClick={() => save({ screening: !st.screening })}
+            >
+              {st.screening ? "暂停巡检" : "开启巡检"}
+            </button>
+            <button
+              type="button"
+              className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+              disabled={update.isPending}
+              title="只是试试的策略可以不在「今日」页出现，照常巡检"
+              onClick={() => save({ show_on_today: !st.show_on_today })}
+            >
+              {st.show_on_today ? "不在今日展示" : "在今日展示"}
+            </button>
+            <button
+              type="button"
+              className="text-zinc-500 hover:text-red-600"
+              disabled={remove.isPending}
+              onClick={() => {
+                if (window.confirm(`删除策略「${st.name}」？它的巡检记录也会一起删除。`))
+                  remove.mutate({ strategyId: id });
+              }}
+            >
+              删除
+            </button>
+          </div>
+        )}
       </div>
       {!!(update.error || remove.error) && (
         <p className="text-sm text-red-600">{errorText(update.error ?? remove.error)}</p>
@@ -162,6 +166,7 @@ function Picks({ id, st, date, onDate }: { id: number; st: StrategyItem; date: s
   const qc = useQueryClient();
   const results = useResults(id, date ? { date } : undefined, { query: { placeholderData: keepPreviousData } });
   const run = useRunScreening({ mutation: { onSuccess: () => qc.invalidateQueries() } });
+  const admin = useIsAdmin();
   return (
     <Card
       extra={
@@ -180,15 +185,17 @@ function Picks({ id, st, date, onDate }: { id: number; st: StrategyItem; date: s
               ))}
             </select>
           )}
-          <button
-            type="button"
-            className="text-sm text-zinc-500 hover:text-zinc-900 disabled:opacity-50 dark:hover:text-zinc-100"
-            disabled={run.isPending}
-            title="现在用这个策略在最新交易日选一次"
-            onClick={() => run.mutate({ params: { strategy_id: id } })}
-          >
-            {run.isPending ? "选股中…" : "重新选一次"}
-          </button>
+          {admin && (
+            <button
+              type="button"
+              className="text-sm text-zinc-500 hover:text-zinc-900 disabled:opacity-50 dark:hover:text-zinc-100"
+              disabled={run.isPending}
+              title="现在用这个策略在最新交易日选一次"
+              onClick={() => run.mutate({ params: { strategy_id: id } })}
+            >
+              {run.isPending ? "选股中…" : "重新选一次"}
+            </button>
+          )}
         </div>
       }
       title={results.data?.trade_date ? `${results.data.trade_date} 收盘后` : "买卖点"}

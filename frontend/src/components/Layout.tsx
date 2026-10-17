@@ -12,19 +12,22 @@ const NAV = [
   { to: "/watchlist", label: "自选" },
 ];
 
-/** 数据同步、指数板块、设置：不是每天用的，放在右侧 */
+/** 不是每天用的，放在右侧。数据同步、数据源设置、用户管理只有管理员能用；普通用户从「指数」进指数板块 */
 const AUX = [
-  { to: "/guide", label: "说明", title: "指标、信号、策略是什么，怎么用" },
-  { to: "/sync", label: "数据", title: "数据同步与指数板块" },
-  { to: "/setup", label: "设置", title: "数据源设置：API Key" },
-];
+  { to: "/guide", label: "说明", title: "指标、信号、策略是什么，怎么用", who: "all" },
+  { to: "/indices", label: "指数", title: "指数与板块", who: "member" },
+  { to: "/sync", label: "数据", title: "数据同步与指数板块", who: "admin" },
+  { to: "/setup", label: "设置", title: "数据源设置：API Key", who: "admin" },
+  { to: "/users", label: "用户", title: "添加用户、重置密码、停用", who: "admin" },
+] as const;
 
 export function Layout() {
   // 没有登录时 fetcher 收到 401 会转到登录页；登录后才检查 API Key
   const me = useMe({ query: { staleTime: Number.POSITIVE_INFINITY } });
   const logout = useLogout({ mutation: { onSuccess: () => window.location.assign("/login") } });
-  // 首次登录引导：还没有配置 API Key 时，所有页面都先去配置
-  const setup = useGetSetup({ query: { staleTime: 30_000, enabled: me.isSuccess } });
+  const admin = me.data?.role === "admin";
+  // 首次登录引导：还没有配置 API Key 时，管理员的所有页面都先去配置
+  const setup = useGetSetup({ query: { staleTime: 30_000, enabled: admin } });
   const { pathname } = useLocation();
   const nav = useNavigate();
   if (setup.data && !setup.data.api_key_configured && pathname !== "/setup") return <Navigate to="/setup" replace />;
@@ -36,7 +39,7 @@ export function Layout() {
             <img src="/favicon.svg" alt="" className="size-6" />
             <span className="hidden sm:inline">牛来</span>
           </NavLink>
-          {me.isSuccess && <VersionBadge />}
+          {admin && <VersionBadge />}
           <nav className="flex min-w-0 gap-1 overflow-x-auto">
             {NAV.map((n) => (
               <NavLink
@@ -60,7 +63,7 @@ export function Layout() {
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-3">
             <SecuritySearch onPick={(code) => nav(`/securities/${code}`)} width="w-28 sm:w-56" />
-            {AUX.map((a) => (
+            {AUX.filter((a) => a.who === "all" || a.who === (admin ? "admin" : "member")).map((a) => (
               <NavLink
                 key={a.to}
                 to={a.to}
@@ -68,7 +71,7 @@ export function Layout() {
                 className={({ isActive }) =>
                   clsx(
                     "hidden text-xs whitespace-nowrap sm:inline",
-                    isActive || (a.to === "/sync" && pathname.startsWith("/indices"))
+                    isActive || (a.to === "/sync" && admin && pathname.startsWith("/indices"))
                       ? "text-zinc-900 dark:text-zinc-100"
                       : "text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100",
                   )
@@ -77,9 +80,24 @@ export function Layout() {
                 {a.label}
               </NavLink>
             ))}
+            {me.data && (
+              <NavLink
+                to="/me"
+                title="改密码"
+                className={({ isActive }) =>
+                  clsx(
+                    "hidden max-w-24 truncate text-xs whitespace-nowrap sm:inline",
+                    isActive
+                      ? "text-zinc-900 dark:text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100",
+                  )
+                }
+              >
+                {me.data.username}
+              </NavLink>
+            )}
             <button
               type="button"
-              title={me.data ? `已登录：${me.data.username}` : undefined}
               onClick={() => logout.mutate()}
               className="hidden text-xs whitespace-nowrap text-zinc-500 hover:text-zinc-900 sm:inline dark:hover:text-zinc-100"
             >
@@ -90,10 +108,13 @@ export function Layout() {
       </header>
       <main className="mx-auto flex w-full min-w-0 max-w-7xl flex-1 flex-col gap-4 px-4 py-6">
         {me.isSuccess && <UpgradeBanner />}
-        {me.data?.default_credentials && (
+        {me.data?.must_change_password && pathname !== "/me" && (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-            正在使用默认账号密码 niulai / niulai。请在部署配置中设置 <code>NIULAI_ADMIN_USER</code> 和{" "}
-            <code>NIULAI_ADMIN_PASSWORD</code>，重启后生效。
+            现在的密码是默认的或管理员设置的，请
+            <NavLink to="/me" className="mx-1 underline">
+              改成只有你自己知道的密码
+            </NavLink>
+            。
           </p>
         )}
         <Outlet />
