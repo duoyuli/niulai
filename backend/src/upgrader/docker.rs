@@ -9,6 +9,11 @@ pub struct Docker {
     http: reqwest::Client,
 }
 
+/// 写到文件时每这么多字节 sync 一次，限制写盘脏页占用的内存
+const SYNC_EVERY: usize = 32 * 1024 * 1024;
+/// 标准错误只保留最后这么多字节
+const MAX_STDERR: usize = 64 * 1024;
+
 impl Docker {
     pub fn new(socket: &Path) -> anyhow::Result<Self> {
         // 不设总超时：拉取镜像、等待容器停止都可能要几分钟
@@ -152,7 +157,9 @@ impl Docker {
         Ok((String::from_utf8_lossy(&out).into_owned(), String::from_utf8_lossy(&err).into_owned()))
     }
 
-    /// 在容器中执行命令，标准输出写入文件；返回退出码和标准错误
+    /// 在容器中执行命令，标准输出写入文件；返回退出码和标准错误。
+    /// 每写 [`SYNC_EVERY`] 字节就把数据刷到磁盘：备份文件有几百 MB，写脏页如果一直攒在内存里，
+    /// 会撞上容器的内存上限被 OOM 杀掉（2026-10-18 升级时实测，见 docs/operations/runbook.md#resource_limits）。
     pub async fn exec_to_file(&self, container: &str, cmd: &[&str], out: &Path) -> anyhow::Result<(i64, String)> {
         let created: Value = self
             .post(
@@ -169,16 +176,28 @@ impl Docker {
         let mut file = std::io::BufWriter::new(std::fs::File::create(out)?);
         let mut frames = Frames::default();
         let mut stderr = Vec::new();
+        let mut unsynced = 0usize;
         while let Some(chunk) = resp.chunk().await? {
             for (stream, data) in frames.push(&chunk) {
                 if stream == 1 {
                     file.write_all(&data)?;
+                    unsynced += data.len();
+                    if unsynced >= SYNC_EVERY {
+                        file.flush()?;
+                        file.get_ref().sync_data()?;
+                        unsynced = 0;
+                    }
                 } else {
+                    // 只留最后一段错误输出：正常情况下很小，异常时也不该把内存吃光
                     stderr.extend_from_slice(&data);
+                    if stderr.len() > MAX_STDERR {
+                        stderr.drain(..stderr.len() - MAX_STDERR);
+                    }
                 }
             }
         }
         file.flush()?;
+        file.get_ref().sync_data()?;
         let info = self.get(&format!("/exec/{exec}/json"), "查看执行结果").await?;
         Ok((info["ExitCode"].as_i64().unwrap_or(-1), String::from_utf8_lossy(&stderr).into_owned()))
     }

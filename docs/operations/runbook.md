@@ -237,9 +237,11 @@ upgrader 收到请求后依次执行，每一步的状态和说明写在 `status
 
 1. 在服务器上编辑部署目录的 `compose.yml`，参照仓库中的新文件给 `postgres`、`niulai` 加 `mem_limit`、`cpus`，给 `upgrader` 加 `mem_limit`、`cpus`、`security_opt`、`cap_drop`、`cap_add` 和 `healthcheck`。只加这些行，保留自己改过的端口、镜像、挂载等；不要整个替换文件。
 2. 在部署目录执行 `docker compose up -d`。参数变了的服务会被重建：数据库和 niulai 会短暂重启（几秒到几十秒），正在执行的同步任务在下次启动后继续，不会丢数据。
-3. 验证：`docker compose ps` 中 `upgrader` 为 `healthy`；`docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}}' "$(docker compose ps -q upgrader)"` 显示 `134217728 500000000 [ALL] [no-new-privileges:true]`。之后一键升级重建容器时会沿用这些参数，不用再改。
+3. 验证：`docker compose ps` 中 `upgrader` 为 `healthy`；`docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}}' "$(docker compose ps -q upgrader)"` 显示 `1073741824 500000000 [ALL] [no-new-privileges:true]`。之后一键升级重建容器时会沿用这些参数，不用再改。
 
-只想先加固升级助手、不重启数据库和 niulai 时，执行 `docker compose up -d upgrader`。服务器内存小于 3 GB 时按比例调低上限，例如 `postgres` 1024m、`niulai` 800m；大于 4 GiB 时可以观察 `docker stats` 的峰值后适当调高。
+只想先加固升级助手、不重启数据库和 niulai 时，执行 `docker compose up -d upgrader`。服务器内存小于 3 GB 时按比例调低上限，例如 `postgres` 1024m、`niulai` 800m，但 `upgrader` 不要低于 512m；大于 4 GiB 时可以观察 `docker stats` 的峰值后适当调高。
+
+**升级助手的内存为什么要留大：** 备份在 postgres 容器里 `pg_dump` 后，会经 Docker 控制接口流式写到部署目录的 `backups/`。写盘产生的脏页会计入 upgrader 容器的内存上限，数据约 650 MB 时，128 MB 的限制会在备份中途把进程 OOM 杀掉（2026-10-18 发布 v2026.10.18.9 时实际发生：pg_dump 写完 `.tmp` 文件、进程被杀、升级停在「备份数据库」，niulai 和数据库本身没有受影响）。现在的版本每写 32 MB 就 sync 一次，把脏页压低，`compose.yml` 里仍留 1 GB 上限；**如果某个部署的 upgrader 在升级或每日备份时卡在「pg_dump」、容器重启过，先看 `docker inspect` 和 `dmesg` 有没有 OOM，并把 `mem_limit` 调大。** 升级卡住后恢复：`docker compose up -d upgrader` 换个内存够的配置，删掉 `backups/` 下残留的 `*.tmp` 和共享卷里的 `status`（`docker compose exec upgrader rm -f /upgrade/status`），再重新点一键升级；数据库和正在运行的服务不需要动。
 
 <a id="data_dir"></a>
 ### 数据目录
