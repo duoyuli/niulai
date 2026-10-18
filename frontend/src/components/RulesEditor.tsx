@@ -71,13 +71,13 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
   return (
     <QueryView query={guide}>
       {(g) => {
-        // 够门槛的策略（还没统计的先算够）；过去不如随便买的折叠起来
+        // 够门槛的策略（还没统计的先算够）列在上面；不够门槛的折叠在分界线下面，灰显
         const qualifies = (s: StrategyQuality) => {
           const e = excessOf(s);
           return e === null || e > value.min_edge_pct;
         };
-        const better = g.strategies.filter((s) => excessOf(s) === null || (excessOf(s) ?? 0) > 0);
-        const worse = g.strategies.filter((s) => !better.includes(s));
+        const above = g.strategies.filter(qualifies);
+        const below = g.strategies.filter((s) => !qualifies(s));
         // 勾选只表示参考它；够不够门槛单独显示。null 表示全部（以后新增的也自动参考）
         const picked = value.strategies;
         const checked = (s: StrategyQuality) => picked === null || picked.includes(s.strategy_id);
@@ -94,10 +94,9 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
             <li key={s.strategy_id}>
               <label className="flex cursor-pointer items-center gap-2 py-0.5">
                 <input type="checkbox" checked={checked(s)} onChange={() => toggle(s)} />
-                <span className={clsx("min-w-0 flex-1 truncate", !checked(s) && "text-zinc-400")}>
+                <span className={clsx("min-w-0 flex-1 truncate", (!checked(s) || !ok) && "text-zinc-400")}>
                   {s.name}
-                  <span className="ml-1 text-xs text-zinc-400">{s.builtin ? "内置" : "自建"}</span>
-                  {!ok && <span className="ml-2 text-xs text-zinc-400">不够门槛，不会用来选股</span>}
+                  {!s.builtin && <span className="ml-1 text-xs text-zinc-400">自建</span>}
                 </span>
                 <span className={clsx("num w-16 text-right text-xs", upDownClass(e))}>
                   {e === null ? "统计中" : fmtPctValue(e, 1)}
@@ -137,7 +136,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 </div>
                 <div className="mt-3 flex items-baseline justify-between gap-2 text-xs text-zinc-500">
                   <span>
-                    参考的策略（右边是比随便买多涨多少）：勾上的才参考，其中够门槛的才用来选股。
+                    参考的策略（右边是过去 3 年比随便买多涨多少）：
                     {picked === null ? "现在是全部参考，以后新增的策略也自动参考。" : `现在勾了 ${picked.length} 个。`}
                   </span>
                   <span className="flex shrink-0 gap-3">
@@ -167,13 +166,16 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 {picked !== null && picked.length === 0 && (
                   <p className="mt-1 text-sm text-red-600">至少勾选一个策略，否则没有候选股</p>
                 )}
-                <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">{better.map(row)}</ul>
-                {worse.length > 0 && (
-                  <details className="mt-1 text-sm">
+                <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">{above.map(row)}</ul>
+                {above.length === 0 && (
+                  <p className="mt-1 text-sm text-zinc-500">没有策略够这个门槛，可以把门槛调低一些</p>
+                )}
+                {below.length > 0 && (
+                  <details className="mt-2 border-t border-dashed border-zinc-300 pt-1 text-sm dark:border-zinc-700">
                     <summary className="cursor-pointer text-xs text-zinc-500">
-                      过去不如随便买的 {worse.length} 个（勾上也不会用来选股）
+                      以下 {below.length} 个比随便买多涨不到 {value.min_edge_pct}%，不够门槛，暂时不用来选股
                     </summary>
-                    <ul className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">{worse.map(row)}</ul>
+                    <ul className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">{below.map(row)}</ul>
                   </details>
                 )}
               </section>
