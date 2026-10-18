@@ -12,7 +12,7 @@ import type { SkippedCandidate } from './skippedCandidate';
 export interface Advice {
   after: AdviceAfter;
   cash: number;
-  /** 一句话结论：「今天不用操作」或「卖出 1 只、买入 2 只」 */
+  /** 一句话结论：「不用操作」或「卖出 1 只、买入 2 只」，说的是下一个交易日 */
   headline: string;
   /** 卖出、减仓、买入、继续拿、不动，按这个顺序 */
   items: AdviceItem[];
@@ -25,6 +25,11 @@ export interface Advice {
   next_date: string;
   /** 需要用户知道的事，例如有持仓没填成本价 */
   notes: string[];
+  /**
+     * 没有候选股是因为账户的设置（参考的策略都不够门槛、要求同时看好的策略太多）时，告诉用户怎么调
+     * @nullable
+     */
+  settings_hint?: string | null;
   /** 今天有买点、但没进建议的候选和原因 */
   skipped: SkippedCandidate[];
   total_assets: number;

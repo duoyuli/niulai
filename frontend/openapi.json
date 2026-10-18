@@ -127,7 +127,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "修改名字、选股和风控规则、费率、备注；之后重新生成今天的建议",
+        "summary": "修改名字、选股和风控规则、费率、备注；之后重新生成操作计划",
         "operationId": "update_account",
         "parameters": [
           {
@@ -345,7 +345,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "按现在的持仓和最新的巡检结果重新生成今天的建议",
+        "summary": "按现在的持仓和最新的巡检结果重新生成操作计划",
         "operationId": "refresh_advice",
         "parameters": [
           {
@@ -4199,7 +4199,7 @@
           },
           "headline": {
             "type": "string",
-            "description": "一句话结论：「今天不用操作」或「卖出 1 只、买入 2 只」"
+            "description": "一句话结论：「不用操作」或「卖出 1 只、买入 2 只」，说的是下一个交易日"
           },
           "items": {
             "type": "array",
@@ -4229,6 +4229,13 @@
               "type": "string"
             },
             "description": "需要用户知道的事，例如有持仓没填成本价"
+          },
+          "settings_hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "没有候选股是因为账户的设置（参考的策略都不够门槛、要求同时看好的策略太多）时，告诉用户怎么调"
           },
           "skipped": {
             "type": "array",
@@ -4439,6 +4446,14 @@
             "type": "string",
             "description": "例：sell-000858.SZ；执行、不做都按它记"
           },
+          "limit_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "买入时：下一个交易日开盘价不高于它才买，高于就是追高、放弃（参考价加追高上限）"
+          },
           "name": {
             "type": "string"
           },
@@ -4530,7 +4545,7 @@
               "null"
             ],
             "format": "date",
-            "description": "最新日线的日期：比建议的交易日新时，说明今天的建议还在等巡检"
+            "description": "最新日线的日期：比建议的交易日新时，说明新的操作计划还在等巡检"
           },
           "waiting": {
             "type": [

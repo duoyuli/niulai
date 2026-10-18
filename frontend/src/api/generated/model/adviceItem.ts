@@ -22,6 +22,11 @@ export interface AdviceItem {
   headline: string;
   /** 例：sell-000858.SZ；执行、不做都按它记 */
   key: string;
+  /**
+     * 买入时：下一个交易日开盘价不高于它才买，高于就是追高、放弃（参考价加追高上限）
+     * @nullable
+     */
+  limit_price?: number | null;
   name: string;
   /** 怎么做、什么时候结论会变 */
   plan: string[];

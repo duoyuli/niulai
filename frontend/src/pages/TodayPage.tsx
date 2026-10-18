@@ -8,11 +8,11 @@ import { useListWatchlist } from "../api/generated/watchlist/watchlist";
 import { SignalChip } from "../components/SignalChip";
 import { Card, Empty, ErrorState, QueryView, Spinner } from "../components/ui";
 import { useIsAdmin } from "../hooks/useIsAdmin";
-import { fmtInt, fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
+import { dayLabel, fmtInt, fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
 import { holdingsText } from "../lib/strategy";
 import { TodayAccounts } from "./AccountsPage";
 
-/** 每天打开看的一页：我的账户明天要做什么 → 大盘怎么样 → 策略今天选出了什么 → 我关注的股票有什么变化 */
+/** 每天收盘后打开看的一页：我的账户下个交易日要做什么 → 最近一天收盘大盘怎么样 → 策略选出了什么 → 我关注的股票有什么变化 */
 export function TodayPage() {
   const overview = useMarketOverview();
   return (
@@ -20,11 +20,11 @@ export function TodayPage() {
       <TodayAccounts />
       <div>
         <h1 className="text-xl font-semibold">
-          今日
-          {overview.data && (
-            <span className="num ml-2 text-sm font-normal text-zinc-500">{overview.data.trade_date} 收盘</span>
-          )}
+          {overview.data ? `${dayLabel(overview.data.trade_date)}收盘` : "最近收盘"}
         </h1>
+        <p className="mt-0.5 text-xs text-zinc-500">
+          数据都截至这天收盘；下面的买点、卖点按规则在下一个交易日开盘执行。
+        </p>
       </div>
       <div className="grid gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-2">
@@ -115,7 +115,7 @@ function Sectors() {
   );
 }
 
-/** 每个开启巡检的策略今天的买点和卖点，新出现的买点排在前面 */
+/** 每个开启巡检的策略最近一次巡检的买点和卖点，新出现的买点排在前面 */
 function Picks() {
   const admin = useIsAdmin();
   const list = useListStrategies();
@@ -124,7 +124,7 @@ function Picks() {
   const results = useQueries({ queries: active.map((s) => getResultsQueryOptions(s.strategy_id)) });
   return (
     <Card
-      title="策略今天的买点和卖点"
+      title="策略的买点和卖点"
       extra={
         <Link to="/strategies" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
           管理策略 →
@@ -180,7 +180,7 @@ function PickRow({ s, r }: { s: StrategyItem; r?: ScreenResults }) {
       <div className="flex min-w-0 flex-col gap-1.5">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span className="text-xs text-up">买</span>
-          {hits.length === 0 && latest && <span className="text-sm text-zinc-400">今天没有新的买点</span>}
+          {hits.length === 0 && latest && <span className="text-sm text-zinc-400">没有新的买点</span>}
           {hits.map((h) => (
             <Link
               key={h.thscode}
@@ -227,7 +227,7 @@ function PickRow({ s, r }: { s: StrategyItem; r?: ScreenResults }) {
   );
 }
 
-/** 自选股里今天值得看一眼的：有新信号的排在前面 */
+/** 自选股里值得看一眼的：有新信号的排在前面 */
 function Watch() {
   const q = useListWatchlist();
   return (

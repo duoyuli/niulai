@@ -94,6 +94,13 @@ export function fmtDuration(fromIso: string, toIso?: string | null, now = Date.n
 }
 
 /** 上海时区的今天，yyyy-MM-dd */
+const WEEK = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+/** 交易日的短写法：2026-10-19 → 10-19（周一） */
+export function dayLabel(d: string): string {
+  return `${d.slice(5)}（${WEEK[new Date(`${d}T00:00:00Z`).getUTCDay()]}）`;
+}
+
 export function todayCn(now = new Date()): string {
   return now.toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
 }

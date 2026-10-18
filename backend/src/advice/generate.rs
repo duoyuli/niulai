@@ -13,7 +13,7 @@ use crate::account::lots::{self, Fees, round2};
 use crate::account::rules::{Rules, WeakMarket};
 
 /// 生成规则的版本：规则改了就加一，历史建议记着当时的版本
-pub const RULES_VERSION: i32 = 1;
+pub const RULES_VERSION: i32 = 2;
 /// 「没选上的候选」最多列几只
 const MAX_SKIPPED: usize = 8;
 
@@ -182,6 +182,9 @@ pub struct Item {
     /// 买入时：选中它的策略（排第一的）；执行后记在持仓上，以后按它的卖出条件判断
     pub strategy_id: Option<i64>,
     pub stop_price: Option<f64>,
+    /// 买入时：下一个交易日开盘价不高于它才买，高于就是追高、放弃（参考价加追高上限）
+    #[serde(default)]
+    pub limit_price: Option<f64>,
     /// 连续第几天给出这条卖出或减仓
     pub streak: u32,
     /// 现在占总资产的百分比（买入时是买入后的占比）
@@ -218,7 +221,7 @@ pub struct After {
 pub struct Advice {
     pub trade_date: NaiveDate,
     pub next_date: NaiveDate,
-    /// 一句话结论：「今天不用操作」或「卖出 1 只、买入 2 只」
+    /// 一句话结论：「不用操作」或「卖出 1 只、买入 2 只」，说的是下一个交易日
     pub headline: String,
     /// 不用操作时的原因
     pub why_nothing: Option<String>,
@@ -234,6 +237,9 @@ pub struct Advice {
     pub after: After,
     /// 需要用户知道的事，例如有持仓没填成本价
     pub notes: Vec<String>,
+    /// 没有候选股是因为账户的设置（参考的策略都不够门槛、要求同时看好的策略太多）时，告诉用户怎么调
+    #[serde(default)]
+    pub settings_hint: Option<String>,
 }
 
 pub fn yuan(v: f64) -> String {
@@ -283,6 +289,7 @@ pub fn generate(inp: &Input) -> Advice {
     let skip = |skipped: &mut Vec<Skipped>, c: &CandidateIn, reason: String| skipped.push(Skipped { thscode: c.thscode.clone(), name: c.name.clone(), reason });
     // (候选, 采纳的策略, 被排除的策略)
     let mut ranked: Vec<(&CandidateIn, Vec<&Pick>, Vec<&Pick>)> = vec![];
+    let mut too_few_picks = false;
     for c in &inp.candidates {
         if held.contains(c.thscode.as_str()) || sold.contains(c.thscode.as_str()) {
             continue;
@@ -300,6 +307,7 @@ pub fn generate(inp: &Input) -> Advice {
             continue;
         }
         if (kept.len() as u32) < p.min_picks {
+            too_few_picks = true;
             skip(&mut skipped, c, format!("只有 {} 个有效策略选中（{}），本账户要求至少 {} 个", kept.len(), names(&kept), p.min_picks));
             continue;
         }
@@ -377,6 +385,21 @@ pub fn generate(inp: &Input) -> Advice {
     let n_sell = items.iter().filter(|i| i.action == Action::Sell).count();
     let n_reduce = items.iter().filter(|i| i.action == Action::Reduce).count();
     let n_buy = buys.len();
+    let used: Vec<&StrategyIn> = inp.strategies.iter().filter(|s| p.uses(s.strategy_id)).collect();
+    let good = used.iter().filter(|s| effective(s.strategy_id)).count();
+    let settings_hint = if n_buy > 0 || pause {
+        None
+    } else if good == 0 {
+        Some(format!(
+            "参考的 {} 个策略都不够有效门槛（过去 3 年比随便买多涨 {}% 以上），所以选不出股票。可以在「设置」里多勾几个策略，或者调低有效门槛",
+            used.len(),
+            p.min_edge_pct
+        ))
+    } else if ranked.is_empty() && too_few_picks {
+        Some(format!("有效策略选出了股票，但没有一只同时被 {} 个有效策略看好。可以在「设置」里调低「至少几个有效策略同时看好」", p.min_picks))
+    } else {
+        None
+    };
     let (headline, why_nothing) = if n_sell + n_reduce + n_buy == 0 {
         let holding_part = if inp.holdings.is_empty() {
             "现在空仓".to_string()
@@ -388,7 +411,7 @@ pub fn generate(inp: &Input) -> Advice {
         let buy_part = if pause && !ranked.is_empty() {
             "全市场偏弱，本账户的规则是暂停买入".to_string()
         } else if ranked.is_empty() {
-            "今天没有符合本账户规则的新买点".to_string()
+            format!("{} 收盘没有符合本账户规则的新买点", inp.trade_date)
         } else if full {
             format!("仓位已满（最多 {} 只）", p.max_positions)
         } else if no_money {
@@ -396,14 +419,12 @@ pub fn generate(inp: &Input) -> Advice {
         } else {
             "没有要买入的".to_string()
         };
-        ("今天不用操作".to_string(), Some(format!("{holding_part}；{buy_part}。")))
+        ("不用操作".to_string(), Some(format!("{holding_part}；{buy_part}。")))
     } else {
         let parts: Vec<String> = [(n_sell, "卖出"), (n_reduce, "减仓"), (n_buy, "买入")].iter().filter(|(n, _)| *n > 0).map(|(n, w)| format!("{w} {n} 只")).collect();
         (parts.join("、"), None)
     };
 
-    let used: Vec<&StrategyIn> = inp.strategies.iter().filter(|s| p.uses(s.strategy_id)).collect();
-    let good = used.iter().filter(|s| effective(s.strategy_id)).count();
     let mut notes = vec![format!(
         "参考 {} 个策略，其中 {good} 个过去 3 年买点之后 20 个交易日平均比随便买多涨 {}% 以上（有效策略），只有它们选中的股票才考虑买入",
         used.len(),
@@ -440,6 +461,7 @@ pub fn generate(inp: &Input) -> Advice {
         skipped,
         after,
         notes,
+        settings_hint,
     }
 }
 
@@ -461,6 +483,7 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         plan: vec![],
         strategy_id: h.strategy.as_ref().map(|s| s.strategy_id),
         stop_price: None,
+        limit_price: None,
         streak: 0,
         weight_pct: 0.0,
     };
@@ -729,6 +752,7 @@ fn buy_item(
         plan,
         strategy_id: kept.first().map(|k| k.strategy_id),
         stop_price: Some(stop_price),
+        limit_price: Some(round2(chase)),
         streak: 0,
         weight_pct: amount / total.max(1.0) * 100.0,
     }
@@ -867,6 +891,8 @@ mod tests {
         assert_eq!(buys[0].shares, 400, "15,000 元：500 股加佣金超了，买 400 股");
         assert_eq!(buys[1].shares, 700, "剩下 77,995 元分给 5 个空位，每只 15,599 元");
         assert!(buys[0].plan[0].contains("31.50 元"), "追高上限 5%：{}", buys[0].plan[0]);
+        assert_eq!(buys[0].limit_price, Some(31.5));
+        assert_eq!(buys[0].stop_price, Some(27.6));
         assert!(buys[0].plan[1].contains("止损价 27.60 元"), "{}", buys[0].plan[1]);
         assert!(buys[0].evidence.iter().any(|n| n.kind == "stat" && n.text.contains("随便买")));
         let reasons: HashMap<&str, &str> = a.skipped.iter().map(|s| (s.thscode.as_str(), s.reason.as_str())).collect();
@@ -900,7 +926,7 @@ mod tests {
         inp.strategies.iter_mut().for_each(|s| s.stat = Some(stat(1.5)));
         inp.market = Some(MarketIn { above_ma20_pct: 22.0, stocks: 5000 });
         let a = generate(&inp);
-        assert_eq!(a.headline, "今天不用操作");
+        assert_eq!(a.headline, "不用操作");
         assert!(a.why_nothing.as_deref().unwrap().contains("暂停买入"), "{:?}", a.why_nothing);
         assert!(a.market.as_deref().unwrap().contains("算弱市"));
 
@@ -913,10 +939,37 @@ mod tests {
     }
 
     #[test]
+    fn hints_at_settings_when_no_strategy_clears_the_threshold() {
+        let mut inp = input(Preset::Balanced, 100_000.0, vec![], vec![cand("X", 20.0, &[3], 9e8)]);
+        inp.rules.strategies = Some(vec![3]);
+        let a = generate(&inp);
+        assert_eq!(a.headline, "不用操作");
+        assert!(a.settings_hint.as_deref().unwrap().contains("参考的 1 个策略都不够有效门槛"), "{:?}", a.settings_hint);
+        // 都够门槛、但要求同时看好的太多
+        let mut inp = input(Preset::Balanced, 100_000.0, vec![], vec![cand("X", 20.0, &[1], 9e8)]);
+        inp.rules.min_picks = 2;
+        let a = generate(&inp);
+        assert!(a.settings_hint.as_deref().unwrap().contains("调低「至少几个有效策略同时看好」"), "{:?}", a.settings_hint);
+    }
+
+    #[test]
+    fn reads_advice_saved_before_new_fields() {
+        // 早先保存的建议没有 limit_price、settings_hint，照样能读出来
+        let mut v = serde_json::to_value(generate(&input(Preset::Balanced, 100_000.0, vec![], vec![cand("Y", 30.0, &[1, 2], 2e8)]))).unwrap();
+        v.as_object_mut().unwrap().remove("settings_hint");
+        for it in v["items"].as_array_mut().unwrap() {
+            it.as_object_mut().unwrap().remove("limit_price");
+        }
+        let a: Advice = serde_json::from_value(v).unwrap();
+        assert!(a.items[0].limit_price.is_none() && a.settings_hint.is_none());
+    }
+
+    #[test]
     fn nothing_to_do_explains_why() {
         let a = generate(&input(Preset::Balanced, 100_000.0, vec![holding("C", 500, None, snap(12.0, 11.6))], vec![]));
-        assert_eq!(a.headline, "今天不用操作");
-        assert_eq!(a.why_nothing.as_deref(), Some("1 只持仓都还没有触发卖出规则；今天没有符合本账户规则的新买点。"));
+        assert_eq!(a.headline, "不用操作");
+        assert_eq!(a.why_nothing.as_deref(), Some("1 只持仓都还没有触发卖出规则；2026-10-16 收盘没有符合本账户规则的新买点。"));
+        assert!(a.settings_hint.is_none(), "没有买点不是设置的问题");
         assert!(a.notes[1].contains("没填成本价"), "{:?}", a.notes);
         let mut h = holding("D", 100, Some(10.0), snap(9.0, 9.5));
         h.last_date = Some(day().pred_opt().unwrap());

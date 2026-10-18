@@ -288,7 +288,7 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
     Ok(AccountDetail { summary, positions: views })
 }
 
-/// 改了持仓、现金或设置后重新生成今天的建议；失败只写日志，不影响这次修改
+/// 改了持仓、现金或设置后重新生成操作计划；失败只写日志，不影响这次修改
 async fn regenerate(s: &AppState, me: &CurrentUser, id: i64) {
     let r = async {
         let acc = account::get(&s.pool, me.user_id, id).await.map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -328,7 +328,7 @@ async fn get_account(State(s): State<AppState>, me: CurrentUser, Path(id): Path<
     Ok(Json(detail(&s, &me, id).await?))
 }
 
-/// 修改名字、选股和风控规则、费率、备注；之后重新生成今天的建议
+/// 修改名字、选股和风控规则、费率、备注；之后重新生成操作计划
 #[utoipa::path(put, path = "/accounts/{account_id}", tag = "accounts", params(("account_id" = i64, Path)), request_body = AccountUpdate,
     responses((status = 200, description = "已保存", body = AccountDetail),
               (status = 400, description = "参数不合法", body = crate::error::ErrorBody),
@@ -423,7 +423,7 @@ pub struct AdviceResponse {
     /// 没有建议时的原因，例如还没有巡检结果
     pub waiting: Option<String>,
     pub advice: Option<StoredAdvice>,
-    /// 最新日线的日期：比建议的交易日新时，说明今天的建议还在等巡检
+    /// 最新日线的日期：比建议的交易日新时，说明新的操作计划还在等巡检
     pub latest_bar: Option<NaiveDate>,
 }
 
@@ -452,7 +452,7 @@ async fn current_advice(State(s): State<AppState>, me: CurrentUser, Path(id): Pa
     Ok(Json(advice_response(&s, id, q.date).await?))
 }
 
-/// 按现在的持仓和最新的巡检结果重新生成今天的建议
+/// 按现在的持仓和最新的巡检结果重新生成操作计划
 #[utoipa::path(post, path = "/accounts/{account_id}/advice/refresh", tag = "accounts", params(("account_id" = i64, Path)),
     responses((status = 200, description = "已重新生成", body = AdviceResponse), (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
 async fn refresh_advice(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>) -> ApiResult<Json<AdviceResponse>> {

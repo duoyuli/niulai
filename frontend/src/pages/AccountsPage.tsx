@@ -4,7 +4,7 @@ import { useListAccounts } from "../api/generated/accounts/accounts";
 import type { AccountSummary } from "../api/generated/model";
 import { buttonClass, Card, Empty, PageHeader, QueryView, Spinner } from "../components/ui";
 import { yuan } from "../lib/accounts";
-import { upDownClass } from "../lib/format";
+import { dayLabel, upDownClass } from "../lib/format";
 
 /** 建议的一句话，带颜色：要操作的突出显示 */
 export function AdviceLine({ a }: { a: AccountSummary }) {
@@ -13,7 +13,7 @@ export function AdviceLine({ a }: { a: AccountSummary }) {
   const act = b.sells + b.reduces + b.buys > 0;
   return (
     <span className={act ? "font-medium text-zinc-900 dark:text-zinc-100" : "text-zinc-500"}>
-      {b.next_date}：{b.headline}
+      {dayLabel(b.next_date)}操作计划：{b.headline}
       {act && b.pending > 0 && (
         <span className="ml-1 text-xs font-normal text-amber-700 dark:text-amber-400">（{b.pending} 条待处理）</span>
       )}
@@ -34,7 +34,7 @@ function AccountCard({ a }: { a: AccountSummary }) {
         <span>
           总资产 <span className="num font-medium">{yuan(a.total_assets)}</span>
         </span>
-        <span className={clsx("num", upDownClass(a.day_pnl))}>今日 {yuan(a.day_pnl)}</span>
+        <span className={clsx("num", upDownClass(a.day_pnl))}>当日 {yuan(a.day_pnl)}</span>
         <span className="text-zinc-500">
           现金 {yuan(a.account.cash)} · 持仓 {a.positions} 只
         </span>
@@ -47,7 +47,7 @@ function AccountCard({ a }: { a: AccountSummary }) {
   );
 }
 
-/** 我的账户：每个账户一张卡片，写着明天要做什么 */
+/** 我的账户：每个账户一张卡片，写着下个交易日要做什么 */
 export function AccountsPage() {
   const list = useListAccounts();
   return (
