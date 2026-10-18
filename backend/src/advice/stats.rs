@@ -104,11 +104,12 @@ pub fn edge(sig: &DayAcc, base: &DayAcc, keep: impl Fn(NaiveDate) -> bool) -> Op
 }
 
 /// 第 s 天收盘出现买点：第二天开盘买入、第 s + HORIZON 天收盘的涨跌（%，前复权）。
-/// 第二天开盘一字涨停（全天一个价且比前一天收盘高）买不进，不算
+/// 第二天开盘一字涨停（全天一个价且比前一天收盘高）买不进，不算。
+/// 判断用前复权价，和 `points::run` 的口径一致：除权日的未复权价会被除低，拿未复权价比较会漏判。
 pub fn forward_return(bars: &[prices::DailyBar], s: usize) -> Option<f64> {
     let entry = bars.get(s + 1)?;
     let exit = bars.get(s + HORIZON)?;
-    if entry.high == entry.low && entry.close > bars[s].close {
+    if entry.q_high == entry.q_low && entry.q_open > bars[s].q_close {
         return None;
     }
     Some((exit.q_close / entry.q_open - 1.0) * 100.0).filter(|r| r.is_finite())
