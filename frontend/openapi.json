@@ -7593,7 +7593,8 @@
         "type": "object",
         "required": [
           "summary",
-          "equity"
+          "equity",
+          "trades"
         ],
         "properties": {
           "equity": {
@@ -7605,6 +7606,13 @@
           },
           "summary": {
             "$ref": "#/components/schemas/RulesBacktestSummary"
+          },
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RulesTrade"
+            },
+            "description": "全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，这里为空"
           }
         }
       },
@@ -7738,6 +7746,93 @@
               "$ref": "#/components/schemas/StrategyQuality"
             },
             "description": "全部参加巡检的策略，过去表现好的在前"
+          }
+        }
+      },
+      "RulesTrade": {
+        "type": "object",
+        "description": "回测中的一笔交易",
+        "required": [
+          "thscode",
+          "name",
+          "signal_date",
+          "entry_date",
+          "entry_price",
+          "days_held",
+          "invest",
+          "profit",
+          "return_pct",
+          "strategies"
+        ],
+        "properties": {
+          "days_held": {
+            "type": "integer",
+            "format": "int32",
+            "description": "持有的交易日数（还持有时算到回测最后一天）",
+            "minimum": 0
+          },
+          "entry_date": {
+            "type": "string",
+            "format": "date",
+            "description": "下一个交易日开盘买入；价格是未复权开盘价"
+          },
+          "entry_price": {
+            "type": "number",
+            "format": "double"
+          },
+          "exit_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "卖出日和未复权开盘价；回测结束时还持有为空"
+          },
+          "exit_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "exit_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "为什么卖：止损、跌破均线、买入依据策略的卖出条件；还持有为空"
+          },
+          "invest": {
+            "type": "number",
+            "format": "double",
+            "description": "投入的金额（本金 100 万元时）"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profit": {
+            "type": "number",
+            "format": "double",
+            "description": "盈亏金额和收益率（%，前复权，扣佣金和印花税；还持有的按最后收盘价，不扣卖出费用）"
+          },
+          "return_pct": {
+            "type": "number",
+            "format": "double"
+          },
+          "signal_date": {
+            "type": "string",
+            "format": "date",
+            "description": "出现买点的那天（收盘后知道）"
+          },
+          "strategies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "当时选中它的有效策略"
+          },
+          "thscode": {
+            "type": "string"
           }
         }
       },

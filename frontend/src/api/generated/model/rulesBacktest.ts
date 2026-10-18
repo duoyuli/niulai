@@ -7,9 +7,12 @@
  */
 import type { RulesBacktestSummary } from './rulesBacktestSummary';
 import type { RulesEquityPoint } from './rulesEquityPoint';
+import type { RulesTrade } from './rulesTrade';
 
 export interface RulesBacktest {
   /** 每周一个点 */
   equity: RulesEquityPoint[];
   summary: RulesBacktestSummary;
+  /** 全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，这里为空 */
+  trades: RulesTrade[];
 }

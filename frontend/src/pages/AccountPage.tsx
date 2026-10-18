@@ -17,6 +17,7 @@ import {
 } from "../api/generated/accounts/accounts";
 import type { AccountDetail, TradeKind } from "../api/generated/model";
 import { AdviceView } from "../components/AdviceView";
+import { BacktestTrades } from "../components/BacktestTrades";
 import { PositionsEditor } from "../components/PositionsEditor";
 import { type ChartRange, RangePicker, rangeQuery } from "../components/RangePicker";
 import { BacktestLine, type FullRules, RulesEditor } from "../components/RulesEditor";
@@ -570,6 +571,7 @@ function Settings({ d }: { d: AccountDetail }) {
         {backtest.data && (
           <div className="mt-2">
             <BacktestLine b={backtest.data} />
+            <BacktestTrades trades={backtest.data.trades} />
           </div>
         )}
         {!!backtest.error && <p className="mt-2 text-sm text-red-600">{errorText(backtest.error)}</p>}

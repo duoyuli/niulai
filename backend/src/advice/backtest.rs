@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
-use crate::account::lots::{Fees, STAMP_TAX_RATE};
+use crate::account::lots::{Fees, STAMP_TAX_RATE, round2};
 use crate::account::rules::{Preset, Rules, WeakMarket};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef};
 use crate::analysis::market::{self, calendar_days_for};
@@ -84,17 +84,49 @@ pub struct RulesEquityPoint {
     pub benchmark: Option<f64>,
 }
 
+/// 回测中的一笔交易
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
+pub struct RulesTrade {
+    pub thscode: String,
+    pub name: String,
+    /// 出现买点的那天（收盘后知道）
+    pub signal_date: NaiveDate,
+    /// 下一个交易日开盘买入；价格是未复权开盘价
+    pub entry_date: NaiveDate,
+    pub entry_price: f64,
+    /// 卖出日和未复权开盘价；回测结束时还持有为空
+    pub exit_date: Option<NaiveDate>,
+    pub exit_price: Option<f64>,
+    /// 为什么卖：止损、跌破均线、买入依据策略的卖出条件；还持有为空
+    pub exit_reason: Option<String>,
+    /// 持有的交易日数（还持有时算到回测最后一天）
+    pub days_held: u32,
+    /// 投入的金额（本金 100 万元时）
+    pub invest: f64,
+    /// 盈亏金额和收益率（%，前复权，扣佣金和印花税；还持有的按最后收盘价，不扣卖出费用）
+    pub profit: f64,
+    pub return_pct: f64,
+    /// 当时选中它的有效策略
+    pub strategies: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
 pub struct RulesBacktest {
     pub summary: RulesBacktestSummary,
     /// 每周一个点
     pub equity: Vec<RulesEquityPoint>,
+    /// 全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，这里为空
+    pub trades: Vec<RulesTrade>,
 }
 
 /// 一只股票在回测区间内每天的数据（前复权价）
 struct Stock {
+    code: String,
+    name: String,
     /// 第 k 天对应全局日历的下标
     day: Vec<u32>,
+    /// 未复权开盘价：交易记录里展示用
+    open: Vec<f32>,
     q_open: Vec<f32>,
     q_close: Vec<f32>,
     one_price: Vec<bool>,
@@ -158,10 +190,13 @@ fn add(m: &mut (f64, u64), r: f64) {
 // @project-doc docs/domains/accounts.md#rules_backtest
 /// 回测 [start, end]（用 resolve_range 定好的区间）
 pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start: NaiveDate, end: NaiveDate) -> anyhow::Result<Option<RulesBacktest>> {
-    let defs: Vec<&Definition> = all.iter().filter(|(id, _)| rules.uses(*id)).map(|(_, d)| d).take(MAX_STRATEGIES).collect();
-    if defs.is_empty() {
+    let used: Vec<&(i64, Definition)> = all.iter().filter(|(id, _)| rules.uses(*id)).take(MAX_STRATEGIES).collect();
+    if used.is_empty() {
         return Ok(None);
     }
+    let defs: Vec<&Definition> = used.iter().map(|(_, d)| d).collect();
+    let names: HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>("SELECT strategy_id, name FROM app.strategy").fetch_all(pool).await?.into_iter().collect();
+    let strategy_names: Vec<String> = used.iter().map(|(id, _)| names.get(id).cloned().unwrap_or_else(|| format!("策略 {id}"))).collect();
     let edge_from = start - chrono::Duration::days(365 * YEARS);
     let sec = market::securities(pool).await?;
     let base_def = Definition { universe: Universe::default(), all: vec![], any: vec![], exit: Default::default(), sort: Default::default(), limit: 50, lib: SignalLib::default() };
@@ -204,7 +239,10 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
         let ma = f.get(IndicatorRef::new(IndicatorId::Ma, Some(rules.trend_ma)));
         let exits: Vec<Vec<bool>> = defs.iter().map(|d| d.exit_series(&f)).collect();
         let mut s = Stock {
+            code: code.to_string(),
+            name: sec.names.get(code).cloned().unwrap_or_default(),
             day: vec![],
+            open: Vec::with_capacity(n),
             q_open: Vec::with_capacity(n),
             q_close: Vec::with_capacity(n),
             one_price: Vec::with_capacity(n),
@@ -226,6 +264,7 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
                 }
             }
             dates.push(b.date);
+            s.open.push(b.open as f32);
             s.q_open.push(b.q_open as f32);
             s.q_close.push(b.q_close as f32);
             s.one_price.push(b.high == b.low);
@@ -258,7 +297,7 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
     }
     let edges: HashMap<i32, YearEdge> = (calendar[0].year()..=calendar[calendar.len() - 1].year()).map(|y| (y, sums.edges(defs.len(), y, rules.min_edge_pct))).collect();
     let bench = crate::analysis::portfolio::benchmark(pool, calendar[0], *calendar.last().expect("日历不为空")).await?;
-    let mut r = simulate(rules, &stocks, &signals, &calendar, &breadth, &edges, bench);
+    let mut r = simulate(rules, &stocks, &signals, &calendar, &breadth, &edges, bench, &strategy_names);
     r.summary.strategies = defs.len();
     Ok(Some(r))
 }
@@ -271,8 +310,35 @@ struct Held {
     /// 买入依据的策略（位）
     origin: u64,
     last_close: f64,
+    /// 信号日、买入日（全局日历下标）、未复权买入价、当时选中它的有效策略（位）
+    signal_day: u32,
+    entry_day: u32,
+    entry_raw: f64,
+    picks: u64,
 }
 
+/// 明天开盘要卖的一只，以及为什么
+struct PendingSell {
+    stock: usize,
+    reason: String,
+}
+
+/// 明天开盘要买的一只
+struct PendingBuy {
+    stock: usize,
+    budget: f64,
+    origin: u64,
+    picks: u64,
+    ref_close: f64,
+    signal_day: u32,
+}
+
+/// 按位列出策略名
+fn names_of(bits: u64, names: &[String]) -> Vec<String> {
+    (0..names.len()).filter(|k| bits & (1 << k) != 0).map(|k| names[k].clone()).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn simulate(
     p: &Rules,
     stocks: &[Stock],
@@ -281,12 +347,31 @@ fn simulate(
     breadth: &HashMap<NaiveDate, (u32, u32)>,
     edges: &HashMap<i32, YearEdge>,
     bench: Option<(String, HashMap<NaiveDate, f64>)>,
+    strategy_names: &[String],
 ) -> RulesBacktest {
     let mut cash = CAPITAL;
     let mut held: Vec<Held> = vec![];
-    let mut pending_sell: Vec<usize> = vec![];
-    // (股票, 预算, 依据的策略位, 信号日收盘价)
-    let mut pending_buy: Vec<(usize, f64, u64, f64)> = vec![];
+    let mut pending_sell: Vec<PendingSell> = vec![];
+    let mut pending_buy: Vec<PendingBuy> = vec![];
+    let mut trades: Vec<RulesTrade> = vec![];
+    let trade = |h: &Held, exit: Option<(u32, f64, String)>, net: f64, end_day: u32| {
+        let s = &stocks[h.stock];
+        RulesTrade {
+            thscode: s.code.clone(),
+            name: s.name.clone(),
+            signal_date: calendar[h.signal_day as usize],
+            entry_date: calendar[h.entry_day as usize],
+            entry_price: round2(h.entry_raw),
+            exit_date: exit.as_ref().map(|e| calendar[e.0 as usize]),
+            exit_price: exit.as_ref().map(|e| round2(e.1)),
+            days_held: exit.as_ref().map_or(end_day, |e| e.0) - h.entry_day,
+            exit_reason: exit.map(|e| e.2),
+            invest: round2(h.cost),
+            profit: round2(net - h.cost),
+            return_pct: (net / h.cost - 1.0) * 100.0,
+            strategies: names_of(h.picks, strategy_names),
+        }
+    };
     let (mut peak, mut max_dd) = (CAPITAL, 0.0f64);
     let (mut closed, mut wins) = (0usize, 0usize);
     let (mut pos_sum, mut cash_ratio_sum, mut eff_sum) = (0.0, 0.0, 0.0);
@@ -299,40 +384,52 @@ fn simulate(
         eff_sum += year.mask.count_ones() as f64;
         // 开盘：卖出（一字跌停或停牌顺延），再买入（停牌、一字涨停、高开超过追高上限时放弃）
         let mut still = vec![];
-        for &si in &pending_sell {
-            let s = &stocks[si];
+        for ps in pending_sell.drain(..) {
+            let s = &stocks[ps.stock];
             let Some(k) = s.at(d32) else {
-                still.push(si);
+                still.push(ps);
                 continue;
             };
             if s.one_price[k] && k > 0 && s.q_open[k] < s.q_close[k - 1] {
-                still.push(si);
+                still.push(ps);
                 continue;
             }
-            if let Some(pos) = held.iter().position(|h| h.stock == si) {
+            if let Some(pos) = held.iter().position(|h| h.stock == ps.stock) {
                 let h = held.swap_remove(pos);
                 let gross = h.units * s.q_open[k] as f64;
                 let net = gross - FEES.commission(gross) - gross * STAMP_TAX_RATE;
                 cash += net;
                 closed += 1;
                 wins += (net > h.cost) as usize;
+                trades.push(trade(&h, Some((d32, s.open[k] as f64, ps.reason)), net, d32));
             }
         }
         pending_sell = still;
-        for (si, budget, origin, ref_close) in pending_buy.drain(..) {
-            let s = &stocks[si];
+        for b in pending_buy.drain(..) {
+            let s = &stocks[b.stock];
             let Some(k) = s.at(d32) else { continue };
             let open = s.q_open[k] as f64;
-            if (s.one_price[k] && open > ref_close) || open / ref_close - 1.0 > p.chase_limit_pct / 100.0 {
+            if (s.one_price[k] && open > b.ref_close) || open / b.ref_close - 1.0 > p.chase_limit_pct / 100.0 {
                 continue;
             }
-            let invest = budget.min(cash);
+            let invest = b.budget.min(cash);
             let fee = FEES.commission(invest);
             if invest <= fee * 2.0 {
                 continue;
             }
             cash -= invest;
-            held.push(Held { stock: si, units: (invest - fee) / open, cost: invest, entry_q: open, origin, last_close: open });
+            held.push(Held {
+                stock: b.stock,
+                units: (invest - fee) / open,
+                cost: invest,
+                entry_q: open,
+                origin: b.origin,
+                last_close: open,
+                signal_day: b.signal_day,
+                entry_day: d32,
+                entry_raw: s.open[k] as f64,
+                picks: b.picks,
+            });
         }
 
         // 收盘：市值
@@ -354,17 +451,25 @@ fn simulate(
 
         // 收盘后：决定明天卖什么
         for h in &held {
-            if pending_sell.contains(&h.stock) {
+            if pending_sell.iter().any(|x| x.stock == h.stock) {
                 continue;
             }
             let s = &stocks[h.stock];
             let Some(k) = s.at(d32) else { continue };
             let close = s.q_close[k] as f64;
             let ma = s.ma_trend[k] as f64;
-            let stop = close / h.entry_q - 1.0 <= -p.stop_loss_pct / 100.0;
-            let trend = !ma.is_nan() && close < ma;
-            if stop || trend || s.exit[k] & h.origin != 0 {
-                pending_sell.push(h.stock);
+            let ret = close / h.entry_q - 1.0;
+            let reason = if ret <= -p.stop_loss_pct / 100.0 {
+                Some(format!("止损：亏 {:.1}%", -ret * 100.0))
+            } else if s.exit[k] & h.origin != 0 {
+                Some(format!("「{}」的卖出条件", names_of(h.origin, strategy_names).join("")))
+            } else if !ma.is_nan() && close < ma {
+                Some(format!("收盘跌破 {} 日均线", p.trend_ma))
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                pending_sell.push(PendingSell { stock: h.stock, reason });
             }
         }
         // 再决定明天买什么
@@ -374,7 +479,7 @@ fn simulate(
             continue;
         }
         let mut slots = p.max_positions as i64 - held.len().saturating_sub(pending_sell.len()) as i64;
-        let proceeds: f64 = held.iter().filter(|h| pending_sell.contains(&h.stock)).map(|h| h.units * h.last_close).sum();
+        let proceeds: f64 = held.iter().filter(|h| pending_sell.iter().any(|x| x.stock == h.stock)).map(|h| h.units * h.last_close).sum();
         let mut available = cash + proceeds - value * p.min_cash_pct / 100.0;
         if weak && p.weak_market == WeakMarket::Half {
             available *= 0.5;
@@ -396,12 +501,17 @@ fn simulate(
                 break;
             }
             let target = (available / slots as f64).min(value * p.max_weight_pct / 100.0);
-            pending_buy.push((si, target, m.isolate_lowest_one(), stocks[si].q_close[k] as f64));
+            pending_buy.push(PendingBuy { stock: si, budget: target, origin: m.isolate_lowest_one(), picks: m, ref_close: stocks[si].q_close[k] as f64, signal_day: d32 });
             available -= target;
             slots -= 1;
         }
     }
     let n = calendar.len();
+    // 回测结束时还持有的：按最后收盘价算，不扣卖出费用
+    for h in &held {
+        trades.push(trade(h, None, h.units * h.last_close, n as u32 - 1));
+    }
+    trades.sort_by(|a, b| b.entry_date.cmp(&a.entry_date).then_with(|| a.thscode.cmp(&b.thscode)));
     let last = equity.last().map_or(1.0, |e| e.value);
     let days = (calendar[n - 1] - calendar[0]).num_days();
     RulesBacktest {
@@ -421,6 +531,7 @@ fn simulate(
             avg_effective: eff_sum / n as f64,
         },
         equity,
+        trades,
     }
 }
 
@@ -432,7 +543,9 @@ pub async fn refresh_presets(pool: &PgPool) -> anyhow::Result<()> {
         let started = std::time::Instant::now();
         let Some(latest) = market::resolve_date(pool, None).await? else { return Ok(()) };
         let start = latest.checked_sub_months(chrono::Months::new(12 * YEARS as u32)).unwrap_or(latest);
-        let Some(r) = run(pool, &rules, &defs, start, latest).await? else { continue };
+        let Some(mut r) = run(pool, &rules, &defs, start, latest).await? else { continue };
+        // 参考值只展示汇总，不保存几百笔交易记录
+        r.trades.clear();
         sqlx::query(
             "INSERT INTO app.preset_stat (preset, rules_hash, end_date, result) VALUES ($1, $2, $3, $4)
              ON CONFLICT (preset) DO UPDATE SET rules_hash = EXCLUDED.rules_hash, end_date = EXCLUDED.end_date, result = EXCLUDED.result, computed_at = now()",
@@ -461,7 +574,10 @@ mod tests {
     fn stocks() -> (Vec<Stock>, Vec<NaiveDate>) {
         let cal: Vec<NaiveDate> = (0..10).map(|i| NaiveDate::from_ymd_opt(2026, 9, 1).unwrap() + chrono::Duration::days(i)).collect();
         let mk = |closes: Vec<f32>, buy_days: &[usize], bits: u64| Stock {
+            code: "T".into(),
+            name: "测试".into(),
             day: (0..10).collect(),
+            open: (0..10).map(|i| closes[i.max(1) - 1]).collect(),
             q_open: (0..10).map(|i| closes[i.max(1) - 1]).collect(),
             q_close: closes.clone(),
             one_price: vec![false; 10],
@@ -492,20 +608,32 @@ mod tests {
         let (stocks, cal) = stocks();
         let breadth: HashMap<NaiveDate, (u32, u32)> = cal.iter().map(|d| (*d, (60, 100))).collect();
         let p = Preset::Aggressive.rules();
+        let names = vec!["策略一".to_string(), "策略二".to_string()];
         // 两个策略都有效：A 第 1 天买入一路涨；B 第 2 天买入，第 3 天收盘亏 10% 触发止损，第 4 天卖出
         let both: HashMap<i32, YearEdge> = HashMap::from([(2026, YearEdge { mask: 0b11, edge: vec![1.0, 2.0] })]);
-        let r = simulate(&p, &stocks, &signals(&stocks), &cal, &breadth, &both, None);
+        let r = simulate(&p, &stocks, &signals(&stocks), &cal, &breadth, &both, None, &names);
         assert_eq!(r.summary.trades, 1, "{:?}", r.summary);
         assert_eq!(r.summary.win_rate, Some(0.0));
         assert!(r.summary.total_return > 0.0, "{:?}", r.summary);
         assert!(r.equity.len() >= 2 && r.equity[0].date == cal[0]);
+        // 交易记录：B 止损卖出，A 期末还持有；买入日新的在前
+        assert_eq!(r.trades.len(), 2, "{:?}", r.trades);
+        let b = r.trades.iter().find(|t| t.exit_date.is_some()).unwrap();
+        // 第 4 天收盘亏 20%（第 3 天亏 10% 差一点没到止损线），第 5 天开盘卖出
+        assert_eq!((b.signal_date, b.entry_date, b.exit_date), (cal[1], cal[2], Some(cal[5])));
+        assert_eq!(b.exit_reason.as_deref(), Some("止损：亏 20.0%"));
+        assert_eq!(b.strategies, ["策略一", "策略二"]);
+        assert!(b.return_pct < 0.0 && b.profit < 0.0 && b.days_held == 3);
+        let a = r.trades.iter().find(|t| t.exit_date.is_none()).unwrap();
+        assert!(a.return_pct > 0.0 && a.exit_reason.is_none());
+        assert!(r.trades[0].entry_date >= r.trades[1].entry_date);
         // 只有策略 2 有效：A 只被策略 1 选中，不买；只买 B
         let second: HashMap<i32, YearEdge> = HashMap::from([(2026, YearEdge { mask: 0b10, edge: vec![-1.0, 2.0] })]);
-        let r = simulate(&p, &stocks, &signals(&stocks), &cal, &breadth, &second, None);
+        let r = simulate(&p, &stocks, &signals(&stocks), &cal, &breadth, &second, None, &names);
         assert!(r.summary.total_return < 0.0, "{:?}", r.summary);
         // 要求至少 2 个有效策略：只剩 B（两个策略都选中）
         let strict = Rules { min_picks: 2, ..p };
-        let r = simulate(&strict, &stocks, &signals(&stocks), &cal, &breadth, &both, None);
+        let r = simulate(&strict, &stocks, &signals(&stocks), &cal, &breadth, &both, None, &names);
         assert_eq!(r.summary.trades, 1);
         assert!(r.summary.total_return < 0.0);
     }

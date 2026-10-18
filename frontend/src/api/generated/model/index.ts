@@ -134,6 +134,7 @@ export * from './rulesBacktest';
 export * from './rulesBacktestSummary';
 export * from './rulesEquityPoint';
 export * from './rulesGuide';
+export * from './rulesTrade';
 export * from './runDetail';
 export * from './runScreeningParams';
 export * from './runSummary';
