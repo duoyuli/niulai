@@ -3,7 +3,6 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router";
 import type { EquityPoint, PortfolioResult, Summary, Trade } from "../api/generated/model";
 import { useListStrategies } from "../api/generated/strategy/strategy";
-import { downloadCsv } from "../lib/csv";
 import { fmtBig, fmtInt, fmtPercent, fmtPrice, upDownClass } from "../lib/format";
 import { EXIT_REASONS } from "../lib/strategy";
 import { EquityChart } from "./EquityChart";
@@ -343,36 +342,10 @@ export function PortfolioView({
         <summary className="cursor-pointer text-zinc-500 select-none">
           交易记录（{data.trades.length} 笔{data.trades.length >= 500 ? "，只显示最近的" : ""}）和费用
         </summary>
-        <div className="my-3 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-zinc-500">
-            手续费 {fmtBig(m.fees)} 元；区间内出现买入信号 {fmtInt(m.signals)} 次，其中仓位已满没买{" "}
-            {fmtInt(m.skipped_full)} 次。
-          </p>
-          <button
-            type="button"
-            className="text-sm text-accent hover:underline"
-            onClick={() =>
-              downloadCsv(
-                `组合回测交易记录-${new Date().toISOString().slice(0, 10)}`,
-                ["股票", "代码", "信号日", "买入日", "买入价", "卖出日", "卖出价", "为什么卖", "持有交易日", "收益率%"],
-                data.trades.map((t) => [
-                  t.name,
-                  t.thscode,
-                  t.signal_date,
-                  t.entry_date,
-                  t.entry_price,
-                  t.exit_date,
-                  t.exit_price,
-                  t.exit_reason ? EXIT_REASONS[t.exit_reason] : "",
-                  t.bars_held,
-                  t.return_pct,
-                ]),
-              )
-            }
-          >
-            下载 CSV
-          </button>
-        </div>
+        <p className="my-3 text-xs text-zinc-500">
+          手续费 {fmtBig(m.fees)} 元；区间内出现买入信号 {fmtInt(m.signals)} 次，其中仓位已满没买{" "}
+          {fmtInt(m.skipped_full)} 次。
+        </p>
         {data.trades.length === 0 ? (
           <Empty>区间内没有发生过买入</Empty>
         ) : (
@@ -423,89 +396,48 @@ export function PortfolioView({
 export function TradeTable({ trades }: { trades: Trade[] }) {
   if (trades.length === 0) return <Empty>区间内没有发生过买入</Empty>;
   return (
-    <div>
-      <div className="mb-2 flex justify-end">
-        <button
-          type="button"
-          className="text-sm text-accent hover:underline"
-          onClick={() =>
-            downloadCsv(
-              `单只股票回测交易记录-${new Date().toISOString().slice(0, 10)}`,
-              [
-                "买入日",
-                "买入价",
-                "卖出日",
-                "卖出价",
-                "为什么卖",
-                "买入股数",
-                "卖出股数",
-                "持有交易日",
-                "分红（元）",
-                "盈亏（元）",
-                "收益率%",
-              ],
-              trades.map((t) => [
-                t.entry_date,
-                t.entry_price,
-                t.exit_date,
-                t.exit_price,
-                t.exit_reason ? EXIT_REASONS[t.exit_reason] : "",
-                t.shares,
-                t.exit_shares,
-                t.bars_held,
-                t.dividends,
-                t.pnl,
-                t.return_pct,
-              ]),
-            )
-          }
-        >
-          下载 CSV
-        </button>
-      </div>
-      <div className="max-h-[32rem] overflow-y-auto">
-        <Table>
-          <thead>
-            <tr>
-              <th>买入日期</th>
-              <th className="text-right!">买入价</th>
-              <th>卖出日期</th>
-              <th className="text-right!">卖出价</th>
-              <th>为什么卖</th>
-              <th className="text-right!">股数</th>
-              <th className="text-right!">持有（交易日）</th>
-              <th className="text-right!" title="持有期间收到的现金分红，税前">
-                分红（元）
-              </th>
-              <th className="text-right!" title="卖出所得加分红减成本，已扣手续费">
-                盈亏（元）
-              </th>
-              <th className="text-right!">收益率</th>
+    <div className="max-h-[32rem] overflow-y-auto">
+      <Table>
+        <thead>
+          <tr>
+            <th>买入日期</th>
+            <th className="text-right!">买入价</th>
+            <th>卖出日期</th>
+            <th className="text-right!">卖出价</th>
+            <th>为什么卖</th>
+            <th className="text-right!">股数</th>
+            <th className="text-right!">持有（交易日）</th>
+            <th className="text-right!" title="持有期间收到的现金分红，税前">
+              分红（元）
+            </th>
+            <th className="text-right!" title="卖出所得加分红减成本，已扣手续费">
+              盈亏（元）
+            </th>
+            <th className="text-right!">收益率</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...trades].reverse().map((t) => (
+            <tr key={t.entry_date}>
+              <td className="num">{t.entry_date}</td>
+              <td className="num text-right">{fmtPrice(t.entry_price)}</td>
+              <td className="num">{t.exit_date ?? <span className="text-amber-600">仍持有</span>}</td>
+              <td className="num text-right">
+                {t.exit_price === null || t.exit_price === undefined ? "—" : fmtPrice(t.exit_price)}
+              </td>
+              <td>{t.exit_reason ? EXIT_REASONS[t.exit_reason] : "—"}</td>
+              <td className="num text-right" title={t.exit_shares !== t.shares ? "持有期间有送转股" : undefined}>
+                {fmtInt(t.shares)}
+                {t.exit_shares !== t.shares && <span className="text-zinc-500"> → {fmtInt(t.exit_shares)}</span>}
+              </td>
+              <td className="num text-right">{t.bars_held}</td>
+              <td className="num text-right">{t.dividends > 0 ? fmtBig(t.dividends) : "—"}</td>
+              <td className={`num text-right ${upDownClass(t.pnl)}`}>{fmtBig(t.pnl)}</td>
+              <td className={`num text-right ${upDownClass(t.return_pct)}`}>{fmtPercent(t.return_pct)}</td>
             </tr>
-          </thead>
-          <tbody>
-            {[...trades].reverse().map((t) => (
-              <tr key={t.entry_date}>
-                <td className="num">{t.entry_date}</td>
-                <td className="num text-right">{fmtPrice(t.entry_price)}</td>
-                <td className="num">{t.exit_date ?? <span className="text-amber-600">仍持有</span>}</td>
-                <td className="num text-right">
-                  {t.exit_price === null || t.exit_price === undefined ? "—" : fmtPrice(t.exit_price)}
-                </td>
-                <td>{t.exit_reason ? EXIT_REASONS[t.exit_reason] : "—"}</td>
-                <td className="num text-right" title={t.exit_shares !== t.shares ? "持有期间有送转股" : undefined}>
-                  {fmtInt(t.shares)}
-                  {t.exit_shares !== t.shares && <span className="text-zinc-500"> → {fmtInt(t.exit_shares)}</span>}
-                </td>
-                <td className="num text-right">{t.bars_held}</td>
-                <td className="num text-right">{t.dividends > 0 ? fmtBig(t.dividends) : "—"}</td>
-                <td className={`num text-right ${upDownClass(t.pnl)}`}>{fmtBig(t.pnl)}</td>
-                <td className={`num text-right ${upDownClass(t.return_pct)}`}>{fmtPercent(t.return_pct)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </div>
+          ))}
+        </tbody>
+      </Table>
     </div>
   );
 }

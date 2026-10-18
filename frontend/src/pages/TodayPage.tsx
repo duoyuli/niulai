@@ -1,13 +1,13 @@
 import { useQueries } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { Link } from "react-router";
-import { useMarketHot, useMarketOverview, useSectors } from "../api/generated/market/market";
-import type { HotMarket, Overview, ScreenResults, StrategyItem, WatchItem } from "../api/generated/model";
+import { useMarketOverview, useSectors } from "../api/generated/market/market";
+import type { Overview, ScreenResults, StrategyItem, WatchItem } from "../api/generated/model";
 import { getResultsQueryOptions, useListStrategies } from "../api/generated/strategy/strategy";
 import { useDataStatus } from "../api/generated/system/system";
 import { useListWatchlist } from "../api/generated/watchlist/watchlist";
 import { SignalChip } from "../components/SignalChip";
-import { Card, Empty, ErrorState, HelpTip, QueryView, Spinner } from "../components/ui";
+import { Card, Empty, ErrorState, QueryView, Spinner } from "../components/ui";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { dayLabel, fmtInt, fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
 import { holdingsText } from "../lib/strategy";
@@ -40,7 +40,6 @@ export function TodayPage() {
         </Card>
         <Sectors />
       </div>
-      <Hotspots />
       <Picks />
       <Watch />
     </>
@@ -87,102 +86,6 @@ function Market({ o }: { o: Overview }) {
           {(o.above_ma20 * 100).toFixed(0)}% 站上 20 日均线
         </span>
       </p>
-    </div>
-  );
-}
-
-/** 今日热点：权威涨停、跌停、炸板池。这些数据每周同步，最近几天可能还没更新，没更新时显示白话空态 */
-function Hotspots() {
-  const q = useMarketHot();
-  return (
-    <Card
-      title={
-        <>
-          今日热点
-          <HelpTip>
-            涨停是当天涨到允许的上限；炸板是盘中涨停过、收盘又打开；跌停是跌到当天的下限。数据由同花顺整理，每周同步一次，最近几天可能还没更新。
-          </HelpTip>
-        </>
-      }
-      extra={
-        <Link to="/hot" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
-          全部热点 →
-        </Link>
-      }
-    >
-      <QueryView query={q}>{(d) => <HotBrief d={d} />}</QueryView>
-    </Card>
-  );
-}
-
-function HotBrief({ d }: { d: HotMarket }) {
-  if (!d.available) {
-    return <p className="py-6 text-center text-sm text-zinc-500">{d.note ?? "今天的涨停数据还没同步，稍后再看"}</p>;
-  }
-  const chip =
-    "inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-0.5 text-sm hover:border-accent/60 dark:border-zinc-700";
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
-        <span>
-          涨停 <b className="num text-up">{fmtInt(d.limit_up_total)}</b> 家
-        </span>
-        <span>
-          跌停 <b className="num text-down">{fmtInt(d.limit_down_total)}</b> 家
-        </span>
-        <span>
-          炸板 <b className="num">{fmtInt(d.broken_total)}</b> 家
-        </span>
-        <span title="连板高度指连续涨停的天数，1 天就是首板">
-          {d.max_board >= 2 ? (
-            <>
-              最高 <b className="num text-up">{d.max_board} 板</b>
-            </>
-          ) : d.limit_up_total > 0 ? (
-            "最高首板"
-          ) : (
-            "没有涨停"
-          )}
-        </span>
-        {d.stats?.seal_rate != null && (
-          <span title="收盘还封在涨停的，占盘中触及过涨停的比例">
-            封板率 <b className="num">{(d.stats.seal_rate * 100).toFixed(0)}%</b>
-          </span>
-        )}
-      </div>
-      {d.limit_up_groups.length === 0 ? (
-        <p className="text-sm text-zinc-500">这一天没有涨停的股票。</p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {d.limit_up_groups.slice(0, 4).map((g) => (
-            <li key={g.board_num} className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <span className="w-16 shrink-0 text-xs font-medium text-zinc-500">
-                {g.label}
-                <span className="num ml-1 text-zinc-400">{fmtInt(g.count)} 家</span>
-              </span>
-              {g.stocks.slice(0, 6).map((x) => (
-                <Link
-                  key={x.thscode}
-                  to={`/securities/${x.thscode}`}
-                  title={[x.continue_day_text, x.limit_up_reason].filter(Boolean).join("；")}
-                  className={chip}
-                >
-                  {x.name}
-                  {x.is_st && <span className="text-xs text-zinc-400">ST</span>}
-                </Link>
-              ))}
-              {g.count > 6 && (
-                <Link
-                  to={`/hot${d.trade_date ? `?date=${d.trade_date}` : ""}`}
-                  className="text-xs text-zinc-500 hover:underline"
-                >
-                  还有 {fmtInt(g.count - 6)} 只 →
-                </Link>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

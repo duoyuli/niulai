@@ -1,13 +1,13 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
-  accountBacktest,
   getGetAccountQueryKey,
   getListAccountsQueryKey,
   getListCorpActionsQueryKey,
   getListTradesQueryKey,
+  useAccountBacktest,
   useAccountReview,
   useAddTrade,
   useAdviceHistory,
@@ -26,7 +26,6 @@ import type { AccountDetail, AccountTrade, TradeKind } from "../api/generated/mo
 import { AccountEquityChart } from "../components/AccountEquityChart";
 import { AdviceView } from "../components/AdviceView";
 import { BacktestTrades } from "../components/BacktestTrades";
-import { TaskRunning, useElapsedSeconds } from "../components/longTask";
 import { PositionsEditor } from "../components/PositionsEditor";
 import { type ChartRange, RangePicker, rangeQuery } from "../components/RangePicker";
 import { BacktestLine, type FullRules, RulesEditor } from "../components/RulesEditor";
@@ -726,35 +725,8 @@ function Settings({ d }: { d: AccountDetail }) {
       },
     },
   });
+  const backtest = useAccountBacktest();
   const [range, setRange] = useState<ChartRange>({ range: "ytd", from: "", to: "" });
-  // 规则回测要算全市场几年，只有点按钮才开始；改区间不会自动重算，算的时候可以取消
-  const backtestParams = rangeQuery(range);
-  const backtestParamsKey = JSON.stringify(backtestParams);
-  const [backtestRun, setBacktestRun] = useState<{ params: { start?: string; end?: string }; key: string } | null>(
-    null,
-  );
-  const backtest = useQuery({
-    queryKey: ["account-backtest", id, backtestRun?.key ?? ""],
-    queryFn: ({ signal }) => accountBacktest(id, backtestRun?.params, { signal }),
-    enabled: backtestRun !== null,
-    staleTime: 5 * 60_000,
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const backtestChanged = backtestRun !== null && backtestRun.key !== backtestParamsKey;
-  const backtestRunning = backtestRun !== null && backtest.isFetching;
-  const backtestSeconds = useElapsedSeconds(backtestRunning);
-  const startBacktest = () => {
-    if (backtestRun && !backtestChanged) {
-      void backtest.refetch();
-      return;
-    }
-    setBacktestRun({ params: backtestParams, key: backtestParamsKey });
-  };
-  const cancelBacktest = () => {
-    if (backtestRun) void qc.cancelQueries({ queryKey: ["account-backtest", id, backtestRun.key] });
-    setBacktestRun(null);
-  };
   return (
     <div className="flex flex-col gap-4">
       <Card title="名字和备注">
@@ -823,41 +795,26 @@ function Settings({ d }: { d: AccountDetail }) {
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           按保存后的规则，假设这段时间每天都照着建议做，账户会怎样。点快捷区间会把起止日期填进框里，也可以直接改日期（最长
           5 年，结束日期最晚到最新交易日）。哪些策略算有效，每年只用之前 3
-          年的数据判断。全市场计算，通常要几十秒到一两分钟，算的时候可以取消；改日期不会自动重算。
+          年的数据判断。全市场计算，要几十秒到一两分钟。
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <RangePicker value={range} options={BACKTEST_RANGES} onChange={(p) => setRange((r) => ({ ...r, ...p }))} />
-          {backtestRunning ? (
-            <TaskRunning
-              text="正在按账户规则逐只计算全市场的日线"
-              seconds={backtestSeconds}
-              onCancel={cancelBacktest}
-            />
-          ) : (
-            <>
-              <button type="button" className={buttonClass("ghost")} onClick={startBacktest}>
-                {backtestRun && backtestChanged ? "按新日期重新计算" : backtestRun ? "重新回测" : "开始回测"}
-              </button>
-              <span className="text-xs text-zinc-500" title="依据：文档实测账户规则回测本地约几十秒到一两分钟">
-                全市场计算，通常几十秒到一两分钟
-              </span>
-            </>
-          )}
+          <button
+            type="button"
+            className={buttonClass("ghost")}
+            disabled={backtest.isPending}
+            onClick={() => backtest.mutate({ accountId: id, params: rangeQuery(range) })}
+          >
+            {backtest.isPending ? "计算中…" : "开始回测"}
+          </button>
         </div>
-        {backtestChanged && !backtestRunning && (
-          <p className="mt-2 text-xs text-amber-600">
-            日期已改，下面显示的还是上一次按旧日期算的结果；点「按新日期重新计算」。
-          </p>
-        )}
         {backtest.data && (
           <div className="mt-2">
             <BacktestLine b={backtest.data} />
             <BacktestTrades trades={backtest.data.trades ?? []} />
           </div>
         )}
-        {!!backtest.error && !backtestRunning && (
-          <p className="mt-2 text-sm text-red-600">{errorText(backtest.error)}</p>
-        )}
+        {!!backtest.error && <p className="mt-2 text-sm text-red-600">{errorText(backtest.error)}</p>}
       </Card>
       <Card title="删除账户">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">

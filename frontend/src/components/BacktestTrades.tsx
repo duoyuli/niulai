@@ -3,7 +3,6 @@ import { useState } from "react";
 import { Link } from "react-router";
 import type { RulesTrade } from "../api/generated/model";
 import { yuan } from "../lib/accounts";
-import { downloadCsv } from "../lib/csv";
 import { fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
 import { Segmented, Table } from "./ui";
 
@@ -38,40 +37,6 @@ export function BacktestTrades({ trades }: { trades: RulesTrade[] }) {
           : true,
   );
   const rows = all ? shown : shown.slice(0, FIRST);
-  const download = () =>
-    downloadCsv(
-      `规则回测交易记录-${new Date().toISOString().slice(0, 10)}`,
-      [
-        "买入日",
-        "信号日",
-        "股票",
-        "代码",
-        "选中它的策略",
-        "买入价",
-        "卖出日",
-        "卖出价",
-        "为什么卖",
-        "持有天数",
-        "投入",
-        "盈亏",
-        "收益率%",
-      ],
-      trades.map((t) => [
-        t.entry_date,
-        t.signal_date,
-        t.name,
-        t.thscode,
-        t.strategies.join("、"),
-        t.entry_price,
-        t.exit_date,
-        t.exit_price,
-        t.exit_reason,
-        t.days_held,
-        t.invest,
-        t.profit,
-        t.return_pct,
-      ]),
-    );
   return (
     <div className="mt-3 flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -80,19 +45,14 @@ export function BacktestTrades({ trades }: { trades: RulesTrade[] }) {
           {open} 笔；合计盈亏 <span className={clsx("num font-medium", upDownClass(profit))}>{yuan(profit)}</span>
           <span className="text-xs text-zinc-500">（本金按 100 万元算）</span>
         </p>
-        <div className="flex items-center gap-2">
-          <button type="button" className="text-sm text-accent hover:underline" onClick={download}>
-            下载 CSV
-          </button>
-          <Segmented
-            value={filter}
-            options={FILTERS}
-            onChange={(f) => {
-              setFilter(f);
-              setAll(false);
-            }}
-          />
-        </div>
+        <Segmented
+          value={filter}
+          options={FILTERS}
+          onChange={(f) => {
+            setFilter(f);
+            setAll(false);
+          }}
+        />
       </div>
       <Table>
         <thead>
