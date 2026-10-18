@@ -440,7 +440,7 @@
             }
           },
           "400": {
-            "description": "这条不能执行、已经执行过，或现金、股数不够",
+            "description": "这条不能执行、已经执行过、没填成交价，或现金、股数不够",
             "content": {
               "application/json": {
                 "schema": {
@@ -5547,7 +5547,7 @@
               "null"
             ],
             "format": "double",
-            "description": "实际成交价；默认按参考价"
+            "description": "实际成交价，必填：参考价是前一天的收盘价，不能当成交价记"
           },
           "shares": {
             "type": [
@@ -5563,7 +5563,7 @@
               "null"
             ],
             "format": "date",
-            "description": "成交日；默认今天"
+            "description": "成交日；默认这份建议的操作日"
           }
         }
       },

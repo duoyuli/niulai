@@ -425,8 +425,11 @@ function ExecuteForm({
 }) {
   const done = useAfterChange(accountId);
   const [shares, setShares] = useState(String(item.shares));
-  const [price, setPrice] = useState(fmtPrice(item.ref_price));
+  // 成交价不预填：参考价是前一天的收盘价，照抄会把账记错
+  const [price, setPrice] = useState("");
+  const [date, setDate] = useState(s.advice.next_date);
   const [fee, setFee] = useState("");
+  const chased = item.action === "buy" && !!item.limit_price && Number(price) > item.limit_price;
   const exec = useExecuteItem({
     mutation: {
       onSuccess: (r) => {
@@ -445,10 +448,14 @@ function ExecuteForm({
           onChange={(e) => setShares(e.target.value)}
         />
       </Field>
+      <Field label="成交日">
+        <input type="date" className={`${inputClass} w-36`} value={date} onChange={(e) => setDate(e.target.value)} />
+      </Field>
       <Field label="实际成交价">
         <input
           className={`${inputClass} w-28`}
           inputMode="decimal"
+          placeholder={`参考 ${fmtPrice(item.ref_price)}`}
           value={price}
           onChange={(e) => setPrice(e.target.value)}
         />
@@ -470,7 +477,12 @@ function ExecuteForm({
             accountId,
             adviceId: s.advice_id,
             key: item.key,
-            data: { shares: Math.round(Number(shares)), price: Number(price), fee: fee === "" ? null : Number(fee) },
+            data: {
+              shares: Math.round(Number(shares)),
+              price: Number(price),
+              fee: fee === "" ? null : Number(fee),
+              trade_date: date || null,
+            },
           })
         }
       >
@@ -479,6 +491,11 @@ function ExecuteForm({
       <button type="button" className="text-sm text-zinc-500" onClick={onClose}>
         取消
       </button>
+      {chased && item.limit_price && (
+        <p className="basis-full text-sm text-amber-700 dark:text-amber-400">
+          成交价高于最高买入价 {fmtPrice(item.limit_price)}，属于追高；已经买了就照实记。
+        </p>
+      )}
       {!!exec.error && <p className="basis-full text-sm text-red-600">{errorText(exec.error)}</p>}
     </div>
   );

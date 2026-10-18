@@ -47,10 +47,18 @@ fn move_text(v: f64) -> String {
     if v >= 0.0 { format!("涨 {v:.1}%") } else { format!("跌 {:.1}%", -v) }
 }
 
+/// 过去 3 年至少这么多次买点，超额才拿来判断有效策略；更少时平均数主要是运气
+pub const MIN_SIGNALS: u64 = 30;
+
 impl StrategyStat {
     /// 超额：买点之后 20 个交易日的平均涨跌减去随便买的
     pub fn excess20_pct(&self) -> Option<f64> {
         Some(self.after20_avg_pct? - self.base20_avg_pct?)
+    }
+
+    /// 判断有效策略用的超额：买点不到 [`MIN_SIGNALS`] 次时没有
+    pub fn edge_pct(&self) -> Option<f64> {
+        if self.signals >= MIN_SIGNALS { self.excess20_pct() } else { None }
     }
 
     /// 一句话，建议的理由里引用

@@ -102,7 +102,8 @@ export function PositionsEditor({
       <details className="rounded-lg border border-dashed border-zinc-300 p-3 text-sm dark:border-zinc-700">
         <summary className="cursor-pointer text-zinc-600 dark:text-zinc-400">从券商 App 复制持仓，粘贴到这里</summary>
         <p className="mt-2 text-xs text-zinc-500">
-          每行一只股票，有 6 位代码或简称、股数就能认出来；带小数点的数当作成本价。表头、合计等认不出的行会跳过。
+          每行一只股票，有 6
+          位代码或简称、股数就能认出来；带小数点的数当作成本价。表头、合计等行会跳过；认不出的股票标红列在下面，不会加进去。
         </p>
         <textarea
           className={`${inputClass} mt-2 h-28 w-full font-mono text-xs`}
@@ -121,7 +122,8 @@ export function PositionsEditor({
           </button>
           {parsed && (
             <span className="text-xs text-zinc-500">
-              认出 {usable.length} 只{parsed.length > usable.length && `，${parsed.length - usable.length} 行缺股数`}
+              认出 {usable.length} 只
+              {parsed.length > usable.length && `，${parsed.length - usable.length} 行没认全（标红的不会加）`}
             </span>
           )}
           {usable.length > 0 && (

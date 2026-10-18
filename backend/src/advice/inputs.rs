@@ -184,7 +184,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
 
     // 候选：参考的策略今天的买点，按股票合并；先按和生成时相同的优先级预选，只细看前面的
     let ids: Vec<i64> = sh.screening.iter().map(|(id, _)| *id).filter(|id| rules.uses(*id)).collect();
-    let excess = |id: i64| sh.stats.get(&id).and_then(StrategyStat::excess20_pct);
+    let excess = |id: i64| sh.stats.get(&id).and_then(StrategyStat::edge_pct);
     let effective = |id: i64| rules.effective(excess(id));
     let mut by_code: HashMap<&str, (Vec<Pick>, f64)> = HashMap::new();
     for (id, code, reasons, amount) in &sh.hits {

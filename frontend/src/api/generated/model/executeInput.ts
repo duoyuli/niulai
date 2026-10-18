@@ -13,7 +13,7 @@ export interface ExecuteInput {
      */
   fee?: number | null;
   /**
-     * 实际成交价；默认按参考价
+     * 实际成交价，必填：参考价是前一天的收盘价，不能当成交价记
      * @nullable
      */
   price?: number | null;
@@ -23,7 +23,7 @@ export interface ExecuteInput {
      */
   shares?: number | null;
   /**
-     * 成交日；默认今天
+     * 成交日；默认这份建议的操作日
      * @nullable
      */
   trade_date?: string | null;

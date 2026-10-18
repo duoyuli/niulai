@@ -40,6 +40,9 @@ export function BacktestLine({ b }: { b: RulesBacktest }) {
   );
 }
 
+/** 过去 3 年买点少于这个次数的策略在观察期，不算有效（和后端 MIN_SIGNALS 一致） */
+const MIN_SIGNALS = 30;
+
 const excessOf = (s: StrategyQuality) =>
   s.stat?.after20_avg_pct != null && s.stat.base20_avg_pct != null
     ? s.stat.after20_avg_pct - s.stat.base20_avg_pct
@@ -71,10 +74,10 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
   return (
     <QueryView query={guide}>
       {(g) => {
-        // 够门槛的策略（还没统计的先算够）列在上面；不够门槛的折叠在分界线下面，灰显
+        // 够门槛的策略列在上面；不够门槛的、还在观察期的（没统计出来或买点太少）在分界线下面，灰显
         const qualifies = (s: StrategyQuality) => {
           const e = excessOf(s);
-          return e === null || e > value.min_edge_pct;
+          return e !== null && (s.stat?.signals ?? 0) >= MIN_SIGNALS && e > value.min_edge_pct;
         };
         const above = g.strategies.filter(qualifies);
         const below = g.strategies.filter((s) => !qualifies(s));
@@ -99,10 +102,10 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                   {!s.builtin && <span className="ml-1 text-xs text-zinc-400">自建</span>}
                 </span>
                 <span className={clsx("num w-16 text-right text-xs", upDownClass(e))}>
-                  {e === null ? "统计中" : fmtPctValue(e, 1)}
+                  {e === null ? "观察期" : fmtPctValue(e, 1)}
                 </span>
                 <span className="num hidden w-20 text-right text-xs text-zinc-400 sm:inline">
-                  {s.stat ? `${s.stat.signals} 次` : ""}
+                  {s.stat ? `${s.stat.signals} 次${s.stat.signals < MIN_SIGNALS ? "，太少" : ""}` : "统计中"}
                 </span>
               </label>
             </li>
@@ -189,7 +192,8 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 {below.length > 0 && (
                   <details className="mt-2 border-t border-dashed border-zinc-300 pt-1 text-sm dark:border-zinc-700">
                     <summary className="cursor-pointer text-xs text-zinc-500">
-                      以下 {below.length} 个比随便买多涨不到 {value.min_edge_pct}%，不够门槛，暂时不用来选股
+                      以下 {below.length} 个比随便买多涨不到 {value.min_edge_pct}%，或还在观察期（没统计出来、3
+                      年里买点不到 {MIN_SIGNALS} 次），暂时不用来选股
                     </summary>
                     <ul className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">{below.map(row)}</ul>
                   </details>

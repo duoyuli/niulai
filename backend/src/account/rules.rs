@@ -86,9 +86,10 @@ impl Rules {
         self.strategies.as_ref().is_none_or(|l| l.contains(&strategy_id))
     }
 
-    /// 超额（过去 3 年买点之后 20 日平均比随便买多涨的百分点）是否够得上有效策略；还没有统计的先算有效
+    /// 超额（过去 3 年买点之后 20 日平均比随便买多涨的百分点）是否够得上有效策略。
+    /// 还没有统计、或买点太少（None）的在观察期，不算有效：新建的策略不会当晚就被拿来买入
     pub fn effective(&self, excess: Option<f64>) -> bool {
-        excess.is_none_or(|e| e > self.min_edge_pct)
+        excess.is_some_and(|e| e > self.min_edge_pct)
     }
 }
 
@@ -217,7 +218,7 @@ mod tests {
         assert!(c.min_picks >= b.min_picks && b.min_picks >= a.min_picks);
         assert!(c.min_edge_pct > b.min_edge_pct && b.min_edge_pct > a.min_edge_pct, "越保守，有效策略的门槛越高");
         assert_eq!(Rules::default(), b);
-        assert!(b.effective(None) && b.effective(Some(0.5)) && !b.effective(Some(0.3)));
+        assert!(!b.effective(None) && b.effective(Some(0.5)) && !b.effective(Some(0.3)));
     }
 
     #[test]

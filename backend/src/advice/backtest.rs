@@ -45,7 +45,6 @@ pub fn resolve_range(latest: NaiveDate, start: Option<NaiveDate>, end: Option<Na
 /// 买点之后看多少个交易日
 const HORIZON: usize = 20;
 /// 一个窗口里至少有多少次买点才判断这个策略有没有效
-const MIN_SAMPLES: u64 = 30;
 /// 一次最多参考多少个策略（按位记录）
 pub const MAX_STRATEGIES: usize = 64;
 /// 本金（只影响金额，不影响收益率）
@@ -172,7 +171,7 @@ impl Sums {
         let base = bs / bn as f64;
         for k in 0..n {
             let (s, c) = window.clone().filter_map(|y| self.by_year.get(&(k, y))).fold((0.0, 0u64), |a, b| (a.0 + b.0, a.1 + b.1));
-            if c >= MIN_SAMPLES {
+            if c >= super::stats::MIN_SIGNALS {
                 let e = s / c as f64 - base;
                 out.edge[k] = e;
                 if e > min_edge {

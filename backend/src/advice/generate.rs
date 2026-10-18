@@ -8,7 +8,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::stats::StrategyStat;
+use super::stats::{MIN_SIGNALS, StrategyStat};
 use crate::account::lots::{self, Fees, round2};
 use crate::account::rules::{Rules, WeakMarket};
 
@@ -280,8 +280,8 @@ pub fn generate(inp: &Input) -> Advice {
     let mut slots = p.max_positions as i64 - remaining as i64;
     let held: HashSet<&str> = inp.holdings.iter().map(|h| h.thscode.as_str()).collect();
     let stats: HashMap<i64, &StrategyIn> = inp.strategies.iter().map(|s| (s.strategy_id, s)).collect();
-    let excess = |id: i64| stats.get(&id).and_then(|s| s.stat.as_ref()).and_then(|s| s.excess20_pct());
-    // 有效策略：过去 3 年买点之后 20 日平均比随便买多涨，超过账户的门槛；还没有统计的先算有效
+    let excess = |id: i64| stats.get(&id).and_then(|s| s.stat.as_ref()).and_then(|s| s.edge_pct());
+    // 有效策略：过去 3 年买点之后 20 日平均比随便买多涨，超过账户的门槛；还没有统计、买点太少的在观察期，不算
     let effective = |id: i64| p.effective(excess(id));
     let name_of = |id: i64| stats.get(&id).map_or_else(|| format!("策略 {id}"), |s| s.name.clone());
 
@@ -434,8 +434,16 @@ pub fn generate(inp: &Input) -> Advice {
     if missing_cost > 0 {
         notes.push(format!("{missing_cost} 只持仓没填成本价，不能按止损线判断，可以在持仓页补上"));
     }
-    if inp.strategies.iter().any(|s| s.stat.is_none()) {
-        notes.push("部分策略的过去表现还在统计中（每周统计一次）；统计出来之前先按有效策略算".into());
+    let watching: Vec<String> = used
+        .iter()
+        .filter(|s| s.stat.as_ref().is_none_or(|t| t.signals < MIN_SIGNALS))
+        .map(|s| format_name(&s.name))
+        .collect();
+    if !watching.is_empty() {
+        notes.push(format!(
+            "{}还在观察期（过去表现还没统计出来，或 3 年里买点不到 {MIN_SIGNALS} 次），先不拿来买入",
+            watching.join("、")
+        ));
     }
 
     // 卖出、减仓、买入、继续拿、不动
@@ -950,6 +958,18 @@ mod tests {
         inp.rules.min_picks = 2;
         let a = generate(&inp);
         assert!(a.settings_hint.as_deref().unwrap().contains("调低「至少几个有效策略同时看好」"), "{:?}", a.settings_hint);
+    }
+
+    #[test]
+    fn unproven_strategies_are_watched_not_bought() {
+        // 刚建的策略（没有统计）和买点太少的策略都在观察期：只被它们选中的股票不买
+        for st in [None, Some(StrategyStat { signals: MIN_SIGNALS - 1, ..stat(5.0) })] {
+            let mut inp = input(Preset::Aggressive, 100_000.0, vec![], vec![cand("N", 20.0, &[4], 9e8)]);
+            inp.strategies.push(StrategyIn { strategy_id: 4, name: "新策略".into(), stat: st });
+            let a = generate(&inp);
+            assert!(a.items.iter().all(|i| i.action != Action::Buy), "{a:#?}");
+            assert!(a.notes.iter().any(|n| n.contains("「新策略」还在观察期")), "{:?}", a.notes);
+        }
     }
 
     #[test]

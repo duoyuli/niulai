@@ -2,7 +2,8 @@
 //!
 //! 券商的格式各不相同，按行宽松地认：一行里有 6 位代码（`600519`、`600519.SH`、`SH600519` 都行），
 //! 没有代码时找这一行里出现的股票简称；代码之外第一个整数是股数，第一个带小数点的数是成本价。
-//! 认不出代码的行（表头、空行）跳过。规则见 docs/domains/accounts.md#positions。
+//! 没有代码也没有简称的行（表头、合计）跳过；有 6 位代码却不是本地的 A 股个股（ETF、可转债等）的行照样返回，
+//! 写明为什么不记，不悄悄丢掉。规则见 docs/domains/accounts.md#positions。
 
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -50,7 +51,18 @@ fn parse_line(line: &str, known: &[Known]) -> Option<ParsedRow> {
     if stock.is_none() {
         stock = known.iter().filter(|k| k.name.chars().count() >= 2 && line.contains(k.name)).max_by_key(|k| k.name.chars().count());
     }
-    let stock = stock?;
+    let Some(stock) = stock else {
+        // 只认像代码的写法（6 位数字，或带交易所前后缀），金额「123456.78」不算
+        let code = tokens.iter().filter(|t| t.len() == 6 || t.chars().any(|c| c.is_ascii_alphabetic())).find_map(|t| ticker_of(t))?;
+        return Some(ParsedRow {
+            line: line.to_string(),
+            thscode: None,
+            name: None,
+            shares: None,
+            cost_price: None,
+            problem: Some(format!("{code} 不是本地有的 A 股个股（ETF、可转债、港股通等不记），这一行不加")),
+        });
+    };
     let mut shares = None;
     let mut cost = None;
     for (i, t) in tokens.iter().enumerate() {
@@ -130,5 +142,10 @@ mod tests {
         assert!(rows.iter().all(|r| r.problem.is_none()));
         let rows = parse("600519 贵州茅台", &known());
         assert_eq!(rows[0].problem.as_deref(), Some("没有找到股数"));
+        // ETF 认不出：照样返回并说明，不悄悄丢掉
+        assert!(parse("合计 123456.78", &known()).is_empty(), "金额不是代码");
+        let rows = parse("510300 沪深300ETF 1000 4.012", &known());
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].thscode.is_none() && rows[0].problem.as_deref().unwrap().contains("510300 不是"), "{rows:?}");
     }
 }

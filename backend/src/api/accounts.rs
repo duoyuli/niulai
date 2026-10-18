@@ -480,13 +480,13 @@ pub struct ExecuteInput {
     /// 实际成交的股数；默认按建议
     #[serde(default)]
     pub shares: Option<i64>,
-    /// 实际成交价；默认按参考价
+    /// 实际成交价，必填：参考价是前一天的收盘价，不能当成交价记
     #[serde(default)]
     pub price: Option<f64>,
     /// 实际费用；默认按账户费率估算
     #[serde(default)]
     pub fee: Option<f64>,
-    /// 成交日；默认今天
+    /// 成交日；默认这份建议的操作日
     #[serde(default)]
     pub trade_date: Option<NaiveDate>,
 }
@@ -495,7 +495,7 @@ pub struct ExecuteInput {
 #[utoipa::path(post, path = "/accounts/{account_id}/advice/{advice_id}/items/{key}/execute", tag = "accounts",
     params(("account_id" = i64, Path), ("advice_id" = i64, Path), ("key" = String, Path, description = "例：buy-601012.SH")), request_body = ExecuteInput,
     responses((status = 200, description = "已记下", body = AdviceResponse),
-              (status = 400, description = "这条不能执行、已经执行过，或现金、股数不够", body = crate::error::ErrorBody),
+              (status = 400, description = "这条不能执行、已经执行过、没填成交价，或现金、股数不够", body = crate::error::ErrorBody),
               (status = 404, description = "账户、建议或条目不存在", body = crate::error::ErrorBody)))]
 async fn execute_item(
     State(s): State<AppState>,
@@ -519,12 +519,13 @@ async fn execute_item(
     if done.as_deref() == Some("executed") {
         return Err(ApiError::BadRequest("这一条已经记过了".into()));
     }
+    let price = input.price.filter(|p| *p > 0.0).ok_or_else(|| ApiError::BadRequest("请填实际成交价".into()))?;
     let trade = TradeInput {
         kind,
-        trade_date: input.trade_date,
+        trade_date: Some(input.trade_date.unwrap_or(a.next_date)),
         thscode: Some(item.thscode.clone()),
         shares: Some(input.shares.unwrap_or(item.shares)),
-        price: Some(input.price.unwrap_or(item.ref_price)),
+        price: Some(price),
         amount: None,
         fee: input.fee,
         note: format!("按 {} 的建议：{}", a.trade_date, item.headline),
