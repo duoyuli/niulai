@@ -1,6 +1,6 @@
 # ADR：部署迁移与升级进度
 
-- 状态：已采纳（accepted），2026-10-17。部分取代 [ADR：Docker 部署的一键升级](one_click_upgrade.md) 中「先升级 niulai、最后换掉 upgrader」的顺序，以及「一键升级只更换镜像」。
+- 状态：已采纳（accepted），2026-10-17。部分取代 [ADR：Docker 部署的一键升级](one_click_upgrade.md) 中「先升级 niulai、最后换掉 upgrader」的顺序，以及「一键升级只更换镜像」。决策第 4 条中「页面顶部」显示进度已于 2026-10-17 去掉：进度只在版本号弹窗里显示，收起后保留，避免打扰其它页面。
 - 相关文档：[一键升级](../operations/runbook.md#one_click_upgrade)、[部署迁移](../operations/runbook.md#deploy_migrations)、[数据目录](../operations/runbook.md#data_dir)。
 
 ## 背景

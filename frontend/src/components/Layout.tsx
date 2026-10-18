@@ -4,7 +4,7 @@ import { useMe } from "../api/generated/auth/auth";
 import { useGetSetup } from "../api/generated/setup/setup";
 import { SecuritySearch } from "./SecuritySearch";
 import { UserMenu } from "./UserMenu";
-import { UpgradeBanner, VersionBadge } from "./VersionBadge";
+import { VersionBadge } from "./VersionBadge";
 
 /** 主导航：今天看什么、我的账户（每天的调仓建议）、选股方法、我关注的股票。个股从页头搜索进入 */
 const NAV = [
@@ -88,7 +88,6 @@ export function Layout() {
         </div>
       </header>
       <main className="mx-auto flex w-full min-w-0 max-w-7xl flex-1 flex-col gap-4 px-4 py-6">
-        {me.isSuccess && <UpgradeBanner />}
         {me.data?.must_change_password && pathname !== "/me" && (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
             现在的密码是默认的或管理员设置的，请

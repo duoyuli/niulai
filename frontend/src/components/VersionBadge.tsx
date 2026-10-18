@@ -6,7 +6,7 @@ import { getVersionQueryKey, useUpgrade, useVersion, version } from "../api/gene
 import { buttonClass, errorText } from "./ui";
 
 /** 页头 logo 后面的版本号：有新版本时亮红点，点开可以一键升级（Docker 部署启用了 upgrader 时）。
- * 升级时服务会重启，期间请求失败是正常的；看到运行的版本变成目标版本后刷新页面 */
+ * 升级进度只在这个弹窗里显示，收起后版本号上的圆点一直闪，再点开接着看。升级时服务会重启，期间请求失败是正常的；看到运行的版本变成目标版本后刷新页面 */
 export function VersionBadge() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -212,15 +212,7 @@ const STEP_ICON: Record<string, { icon: string; className: string }> = {
 };
 
 /** 升级进度：进度条和每一步的状态；升级助手还没接手（没有步骤）时只显示一句当前在做什么 */
-export function UpgradeProgress({
-  u,
-  target,
-  compact = false,
-}: {
-  u: UpgradeStatus;
-  target?: string | null;
-  compact?: boolean;
-}) {
+function UpgradeProgress({ u, target }: { u: UpgradeStatus; target?: string | null }) {
   const steps = u.steps;
   const pct = progressOf(steps);
   // 状态文件 10 分钟没有更新：升级助手可能卡住了
@@ -238,7 +230,7 @@ export function UpgradeProgress({
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
             <div className="h-full bg-accent transition-all duration-500" style={{ width: `${pct * 100}%` }} />
           </div>
-          <ol className={compact ? "flex flex-wrap gap-x-4 gap-y-1 text-xs" : "flex flex-col gap-1 text-xs"}>
+          <ol className="flex flex-col gap-1 text-xs">
             {steps.map((s) => {
               const st = STEP_ICON[s.state] ?? STEP_ICON.pending;
               return (
@@ -249,9 +241,7 @@ export function UpgradeProgress({
                     <span className="w-2.5 shrink-0 text-center">{st?.icon}</span>
                   )}
                   <span className="shrink-0 whitespace-nowrap">{s.label}</span>
-                  {s.detail && (!compact || s.state === "running") && (
-                    <span className="min-w-0 break-words font-normal text-zinc-500">{s.detail}</span>
-                  )}
+                  {s.detail && <span className="min-w-0 break-words font-normal text-zinc-500">{s.detail}</span>}
                 </li>
               );
             })}
@@ -266,21 +256,9 @@ export function UpgradeProgress({
         </p>
       ) : (
         <p className="text-xs text-zinc-400">
-          升级时服务会重启，期间页面可能暂时打不开，进度会在重新连上后接着显示。完成后自动刷新。
+          升级时服务会重启，期间页面可能暂时打不开，进度会在重新连上后接着显示。完成后自动刷新；点别处收起，再点版本号还能看到进度。
         </p>
       )}
-    </div>
-  );
-}
-
-/** 页面顶部的升级进度：升级进行中时在每个页面都显示，不用点开版本号 */
-export function UpgradeBanner() {
-  const q = useVersion(undefined, { query: { staleTime: 60_000 } });
-  const u = q.data?.upgrade;
-  if (!u || !isBusy(u)) return null;
-  return (
-    <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-sm">
-      <UpgradeProgress u={u} target={u.target} compact />
     </div>
   );
 }
