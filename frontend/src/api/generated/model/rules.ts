@@ -33,8 +33,11 @@ export interface Rules {
   sell_st?: boolean;
   /** 止损线：比成本价亏多少（%）就卖 */
   stop_loss_pct?: number;
-  /** 参考哪些策略（策略编号）；为空表示全部参加巡检的策略 */
-  strategies?: number[];
+  /**
+     * 只参考这些策略（策略编号）；为空（null）表示全部参加巡检的策略，以后新增的也自动参考
+     * @nullable
+     */
+  strategies?: number[] | null;
   /**
      * 收盘跌破几日均线就卖
      * @minimum 0

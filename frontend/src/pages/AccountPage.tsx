@@ -529,7 +529,7 @@ function Settings({ d }: { d: AccountDetail }) {
         <button
           type="button"
           className={buttonClass()}
-          disabled={update.isPending || !name.trim()}
+          disabled={update.isPending || !name.trim() || rules.strategies?.length === 0}
           onClick={() => {
             setSaved(false);
             update.mutate({

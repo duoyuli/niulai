@@ -702,7 +702,10 @@ fn buy_item(
     if let Some(ma) = s.ma_trend {
         plan.push(format!("收盘跌破 {} 日均线（现在 {ma:.2} 元）也会建议卖出", p.trend_ma));
     }
-    let scope = if p.strategies.is_empty() { "全部参加巡检的策略".to_string() } else { format!("勾选的 {} 个策略", p.strategies.len()) };
+    let scope = match &p.strategies {
+        None => "全部参加巡检的策略".to_string(),
+        Some(l) => format!("勾选的 {} 个策略", l.len()),
+    };
     let rule = format!(
         "本账户的规则：参考{scope}中过去 3 年比随便买多涨 {}% 以上的（有效策略），至少 {} 个同时选中才买；按「同时选中的有效策略数 → 它们的超额之和 → 成交额」排序；每只投入「可用的钱 ÷ 空余仓位」，不超过总资产的 {}%{}",
         p.min_edge_pct,
@@ -883,7 +886,7 @@ mod tests {
 
         // 只勾选了策略 2：只按它选中的算
         let mut inp = input(Preset::Balanced, 100_000.0, vec![], vec![cand("X", 20.0, &[1], 9e8), cand("Y", 30.0, &[1, 2], 2e8)]);
-        inp.rules.strategies = vec![2];
+        inp.rules.strategies = Some(vec![2]);
         let a = generate(&inp);
         let y = a.items.iter().find(|i| i.thscode == "Y").unwrap();
         assert!(y.headline.starts_with("「MACD 金叉」选中"), "{}", y.headline);

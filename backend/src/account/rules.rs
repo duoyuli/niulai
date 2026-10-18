@@ -24,8 +24,8 @@ pub enum WeakMarket {
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Rules {
-    /// 参考哪些策略（策略编号）；为空表示全部参加巡检的策略
-    pub strategies: Vec<i64>,
+    /// 只参考这些策略（策略编号）；为空（null）表示全部参加巡检的策略，以后新增的也自动参考
+    pub strategies: Option<Vec<i64>>,
     /// 有效策略的门槛：过去 3 年买点之后 20 个交易日，平均比随便买至少多涨几个百分点
     pub min_edge_pct: f64,
     /// 至少几个有效策略同时选中才买
@@ -73,15 +73,17 @@ impl Rules {
         if !TREND_MAS.contains(&self.trend_ma) {
             return Err(format!("趋势均线只能是 {TREND_MAS:?} 日之一"));
         }
-        if self.strategies.len() > 64 {
-            return Err("最多勾选 64 个策略".into());
+        match &self.strategies {
+            Some(l) if l.is_empty() => return Err("至少勾选一个策略".into()),
+            Some(l) if l.len() > 64 => return Err("最多勾选 64 个策略".into()),
+            _ => {}
         }
         Ok(())
     }
 
     /// 这个策略是否参考
     pub fn uses(&self, strategy_id: i64) -> bool {
-        self.strategies.is_empty() || self.strategies.contains(&strategy_id)
+        self.strategies.as_ref().is_none_or(|l| l.contains(&strategy_id))
     }
 
     /// 超额（过去 3 年买点之后 20 日平均比随便买多涨的百分点）是否够得上有效策略；还没有统计的先算有效
@@ -158,7 +160,7 @@ impl Preset {
     // @project-doc docs/domains/accounts.md#rules
     pub fn rules(self) -> Rules {
         let base = Rules {
-            strategies: vec![],
+            strategies: None,
             min_edge_pct: 0.3,
             min_picks: 1,
             max_positions: 6,
@@ -224,8 +226,9 @@ mod tests {
         assert_eq!(r.stop_loss_pct, 5.0);
         assert_eq!(r.max_positions, Preset::Balanced.rules().max_positions);
         assert!(r.uses(42));
-        let r = Rules { strategies: vec![1, 2], ..r };
+        let r = Rules { strategies: Some(vec![1, 2]), ..r };
         assert!(r.uses(1) && !r.uses(3));
+        assert!(Rules { strategies: Some(vec![]), ..r.clone() }.validate().is_err(), "一个都不勾不行，不会当成全部");
         assert!(Rules { trend_ma: 7, ..r }.validate().is_err());
     }
 }

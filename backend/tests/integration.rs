@@ -1224,6 +1224,10 @@ async fn accounts_positions_and_daily_advice() {
     let rules = |stop: f64| json!({"name": "华泰主账户", "fees": {"commission_rate": 0.00025, "min_commission": 5}, "rules": {"stop_loss_pct": stop}});
     let (r, _) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(50.0))).await;
     assert_eq!(st(&r), StatusCode::BAD_REQUEST, "止损线超出范围");
+    let mut none = rules(8.0);
+    none["rules"]["strategies"] = json!([]);
+    let (r, v) = call_as(&app, Some(&mama), "PUT", &base, Some(none)).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "一个策略都不勾不会被当成全部：{v}");
     let (r, v) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(8.0))).await;
     assert_eq!(st(&r), StatusCode::OK, "{v}");
     let (r, _) = call_as(&app, Some(&mama), "POST", "/api/v1/accounts", Some(json!({"name": "华泰主账户"}))).await;

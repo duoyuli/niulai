@@ -7533,13 +7533,16 @@
             "default": 8.0
           },
           "strategies": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": "integer",
               "format": "int64"
             },
-            "description": "参考哪些策略（策略编号）；为空表示全部参加巡检的策略",
-            "default": []
+            "description": "只参考这些策略（策略编号）；为空（null）表示全部参加巡检的策略，以后新增的也自动参考",
+            "default": null
           },
           "trend_ma": {
             "type": "integer",

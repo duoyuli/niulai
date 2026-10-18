@@ -11,7 +11,7 @@ export type FullRules = Required<Rules>;
 /** 规则写成几句白话 */
 export function rulesText(p: FullRules): string[] {
   return [
-    `参考${p.strategies.length ? `勾选的 ${p.strategies.length} 个策略` : "全部够门槛的策略"}：过去 3 年比随便买多涨 ${p.min_edge_pct}% 以上才算有效，至少 ${p.min_picks} 个有效策略同时看好才买`,
+    `参考${p.strategies ? `勾选的 ${p.strategies.length} 个策略` : "全部策略"}：过去 3 年比随便买多涨 ${p.min_edge_pct}% 以上才算有效，至少 ${p.min_picks} 个有效策略同时看好才买`,
     `最多同时持有 ${p.max_positions} 只，单只最多占总资产的 ${p.max_weight_pct}%${p.min_cash_pct > 0 ? `，至少留 ${p.min_cash_pct}% 现金` : ""}`,
     `比成本价亏 ${p.stop_loss_pct}% 就卖（止损），收盘跌破 ${p.trend_ma} 日均线也卖`,
     `全市场站上 20 日均线的股票不到 ${p.weak_threshold_pct}% 时算弱市：${WEAK_MARKET[p.weak_market]}`,
@@ -78,27 +78,26 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
         };
         const better = g.strategies.filter((s) => excessOf(s) === null || (excessOf(s) ?? 0) > 0);
         const worse = g.strategies.filter((s) => !better.includes(s));
-        const custom = value.strategies.length > 0;
-        const checked = (s: StrategyQuality) => qualifies(s) && (!custom || value.strategies.includes(s.strategy_id));
+        // 勾选只表示参考它；够不够门槛单独显示。null 表示全部（以后新增的也自动参考）
+        const picked = value.strategies;
+        const checked = (s: StrategyQuality) => picked === null || picked.includes(s.strategy_id);
         const toggle = (s: StrategyQuality) => {
-          const now = g.strategies.filter(checked).map((x) => x.strategy_id);
-          const next = now.includes(s.strategy_id) ? now.filter((x) => x !== s.strategy_id) : [...now, s.strategy_id];
-          const all = g.strategies.filter(qualifies).map((x) => x.strategy_id);
-          set({ strategies: next.length === all.length ? [] : next });
+          const now = picked ?? g.strategies.map((x) => x.strategy_id);
+          set({
+            strategies: now.includes(s.strategy_id) ? now.filter((x) => x !== s.strategy_id) : [...now, s.strategy_id],
+          });
         };
         const row = (s: StrategyQuality) => {
           const e = excessOf(s);
           const ok = qualifies(s);
           return (
             <li key={s.strategy_id}>
-              <label
-                className={clsx("flex items-center gap-2 py-0.5", !ok && "opacity-45")}
-                title={ok ? undefined : "不够有效门槛，不会用它选股"}
-              >
-                <input type="checkbox" disabled={!ok} checked={checked(s)} onChange={() => toggle(s)} />
-                <span className="min-w-0 flex-1 truncate">
+              <label className="flex cursor-pointer items-center gap-2 py-0.5">
+                <input type="checkbox" checked={checked(s)} onChange={() => toggle(s)} />
+                <span className={clsx("min-w-0 flex-1 truncate", !checked(s) && "text-zinc-400")}>
                   {s.name}
                   <span className="ml-1 text-xs text-zinc-400">{s.builtin ? "内置" : "自建"}</span>
+                  {!ok && <span className="ml-2 text-xs text-zinc-400">不够门槛，不会用来选股</span>}
                 </span>
                 <span className={clsx("num w-16 text-right text-xs", upDownClass(e))}>
                   {e === null ? "统计中" : fmtPctValue(e, 1)}
@@ -138,23 +137,27 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 </div>
                 <div className="mt-3 flex items-baseline justify-between gap-2 text-xs text-zinc-500">
                   <span>
-                    参考的策略（右边是比随便买多涨多少）：默认参考全部够门槛的，以后新增的自动参考；取消勾选就不参考它
+                    参考的策略（右边是比随便买多涨多少）：勾上的才参考，其中够门槛的才用来选股。
+                    {picked === null ? "现在是全部参考，以后新增的策略也自动参考。" : `现在勾了 ${picked.length} 个。`}
                   </span>
-                  {custom && (
+                  {picked !== null && (
                     <button
                       type="button"
                       className="shrink-0 text-accent hover:underline"
-                      onClick={() => set({ strategies: [] })}
+                      onClick={() => set({ strategies: null })}
                     >
-                      恢复全部
+                      全部参考
                     </button>
                   )}
                 </div>
+                {picked !== null && picked.length === 0 && (
+                  <p className="mt-1 text-sm text-red-600">至少勾选一个策略，否则没有候选股</p>
+                )}
                 <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">{better.map(row)}</ul>
                 {worse.length > 0 && (
                   <details className="mt-1 text-sm">
                     <summary className="cursor-pointer text-xs text-zinc-500">
-                      过去不如随便买的 {worse.length} 个（不会用来选股）
+                      过去不如随便买的 {worse.length} 个（勾上也不会用来选股）
                     </summary>
                     <ul className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">{worse.map(row)}</ul>
                   </details>
@@ -226,7 +229,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                   <button
                     type="button"
                     className="self-start text-xs text-zinc-500 underline decoration-dotted hover:text-zinc-900 dark:hover:text-zinc-100"
-                    onClick={() => onChange({ ...(p.rules as FullRules), strategies: [] })}
+                    onClick={() => onChange({ ...(p.rules as FullRules), strategies: null })}
                   >
                     照这个填
                   </button>
