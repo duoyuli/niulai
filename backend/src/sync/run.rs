@@ -150,3 +150,28 @@ pub async fn stalled(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
     .fetch_all(pool)
     .await?)
 }
+
+/// API 后台规划中进程重启后留下的运行：超过 10 分钟仍带 planning 标记就结束为失败。
+pub async fn stale_planning(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT run_id FROM ops.run
+         WHERE status = 'running'
+           AND coalesce((params->>'planning')::boolean, false)
+           AND started_at < now() - interval '10 minutes'
+         ORDER BY run_id",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+/// 标记中断的后台规划，去掉 planning 让运行不再卡住。
+pub async fn fail_planning(pool: &PgPool, run_id: i64) -> anyhow::Result<bool> {
+    Ok(sqlx::query(
+        "UPDATE ops.run SET status = 'failed', error = '规划中断（服务重启），请重新发起', finished_at = now(), params = params - 'planning'
+         WHERE run_id = $1 AND status = 'running' AND coalesce((params->>'planning')::boolean, false)",
+    )
+    .bind(run_id)
+    .execute(pool)
+    .await?
+    .rows_affected() > 0)
+}

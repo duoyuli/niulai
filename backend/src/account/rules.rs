@@ -94,10 +94,6 @@ impl Rules {
             .is_none_or(|l| l.contains(&strategy_id))
     }
 
-    /// 旧版本兼容方法。当前账户建议不再用历史表现判断策略是否有效。
-    pub fn effective(&self, edge: Option<(f64, f64)>) -> bool {
-        edge.is_some_and(|(e, se)| e > self.min_edge_pct && e > 2.0 * se)
-    }
 }
 
 /// 三组参考值：只是辅助，套用后还可以改
@@ -226,13 +222,6 @@ mod tests {
         assert!(c.stop_loss_pct < b.stop_loss_pct && b.stop_loss_pct < a.stop_loss_pct);
         assert!(c.min_picks >= b.min_picks && b.min_picks >= a.min_picks);
         assert_eq!(Rules::default(), b);
-        assert!(
-            !b.effective(None) && b.effective(Some((0.5, 0.1))) && b.effective(Some((0.3, 0.1)))
-        );
-        assert!(
-            !b.effective(Some((1.0, 0.6))),
-            "超额不到标准误的 2 倍，多半是运气"
-        );
     }
 
     #[test]

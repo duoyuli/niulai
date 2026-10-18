@@ -26,6 +26,9 @@ fn rows_json(rows: &[RecordRow]) -> Value {
 
 /// 按 (sink, 数据集) 选择投影；同一张表的不同来源（例如历史接口与快照）写法不同
 pub async fn apply(pool: &PgPool, sink: &str, ctx: &SinkContext<'_>, rows: &[RecordRow]) -> anyhow::Result<usize> {
+    if matches!((sink, ctx.dataset_id), ("mkt.stock_bar_1d", "a_share.bar_1d") | ("mkt.stock_bar_1d", "a_share.snapshot") | ("mkt.index_bar_1d", "index.bar_1d") | ("mkt.index_bar_1d", "index.snapshot")) {
+        log_bad_bar_rows(ctx, rows);
+    }
     let data = rows_json(rows);
     let run_id = ctx.run_id;
     let trade_date = ctx.trade_date;
@@ -48,6 +51,29 @@ pub async fn apply(pool: &PgPool, sink: &str, ctx: &SinkContext<'_>, rows: &[Rec
         (s, d) => bail!("没有为数据集 {d} 实现 sink {s}"),
     };
     Ok(n)
+}
+
+/// 供应商历史行情偶尔有成交量或成交额数量级异常。写入 SQL 会跳过这些行，
+/// 这里把具体证券、日期和原始数值写进日志，便于复核而不让整段窗口失败。
+fn log_bad_bar_rows(ctx: &SinkContext<'_>, rows: &[RecordRow]) {
+    for row in rows {
+        let volume = row.payload.get("volume").and_then(number);
+        let turnover = row.payload.get("turnover").and_then(number);
+        if volume.is_some_and(|v| v >= 1e13) || turnover.is_some_and(|v| v >= 1e13) {
+            tracing::warn!(
+                dataset = ctx.dataset_id,
+                thscode = ?row.thscode,
+                obs_date = ?row.obs_date,
+                volume = ?volume,
+                turnover = ?turnover,
+                "过滤供应商异常成交量或成交额"
+            );
+        }
+    }
+}
+
+fn number(v: &Value) -> Option<f64> {
+    v.as_f64().or_else(|| v.as_str()?.parse::<f64>().ok()).filter(|n| n.is_finite())
 }
 
 async fn exec(pool: &PgPool, sql: &'static str, data: &Value, run_id: i64) -> anyhow::Result<usize> {

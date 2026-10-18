@@ -127,66 +127,6 @@ pub fn forward_return(bars: &[prices::DailyBar], s: usize) -> Option<f64> {
     Some((exit.q_close / entry.q_open - 1.0) * 100.0).filter(|r| r.is_finite())
 }
 
-fn move_text(v: f64) -> String {
-    if v >= 0.0 {
-        format!("涨 {v:.1}%")
-    } else {
-        format!("跌 {:.1}%", -v)
-    }
-}
-
-/// 过去 3 年至少这么多次买点，超额才拿来判断有效策略；更少时平均数主要是运气
-pub const MIN_SIGNALS: u64 = 30;
-
-impl StrategyStat {
-    /// 超额：买点之后 20 个交易日的平均涨跌减去随便买的
-    pub fn excess20_pct(&self) -> Option<f64> {
-        Some(self.after20_avg_pct? - self.base20_avg_pct?)
-    }
-
-    /// 判断有效策略用的（超额, 标准误）：买点不到 [`MIN_SIGNALS`] 次、或旧口径的统计（没有标准误）时没有
-    pub fn edge(&self) -> Option<(f64, f64)> {
-        if self.signals < MIN_SIGNALS {
-            return None;
-        }
-        Some((self.excess20_pct()?, self.excess_se_pct?))
-    }
-
-    /// 超额是否明显不是运气：超过标准误的 2 倍
-    pub fn convincing(&self) -> bool {
-        self.edge().is_some_and(|(e, se)| e > 2.0 * se)
-    }
-
-    /// 一句话，建议的理由里引用
-    pub fn describe(&self, name: &str) -> String {
-        let mut s = format!(
-            "「{name}」过去 {YEARS} 年在全市场出现 {} 次买点",
-            self.signals
-        );
-        if let (Some(a), Some(b)) = (self.after20_avg_pct, self.base20_avg_pct) {
-            s.push_str(&format!(
-                "，第二天开盘买、拿 20 个交易日平均{}，同一天随便买平均{}",
-                move_text(a),
-                move_text(b)
-            ));
-            if let Some(se) = self.excess_se_pct {
-                s.push_str(&format!("（差别的误差约 ±{:.1} 个百分点）", 2.0 * se));
-            }
-        }
-        if let (Some(w), Some(r), Some(h)) =
-            (self.win_rate, self.avg_return_pct, self.avg_bars_held)
-        {
-            s.push_str(&format!(
-                "；按它的卖出规则卖出，{:.0}% 的交易赚钱，平均每笔{}、持有 {h:.0} 个交易日",
-                w * 100.0,
-                move_text(r)
-            ));
-        }
-        s.push_str(&format!("（统计到 {}，不扣费用，不代表以后）", self.end));
-        s
-    }
-}
-
 /// 定义加上统计口径的版本：两者有一个变了就重算
 pub fn definition_hash(d: &Definition) -> String {
     hash_json(&format!(
@@ -361,61 +301,6 @@ pub async fn refresh(pool: &PgPool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn describes_with_numbers_and_excess() {
-        let d = NaiveDate::from_ymd_opt(2026, 10, 16).unwrap();
-        let s = StrategyStat {
-            start: d,
-            end: d,
-            signals: 3412,
-            closed: 3300,
-            win_rate: Some(0.52),
-            avg_return_pct: Some(-0.3),
-            avg_bars_held: Some(9.4),
-            after20_avg_pct: Some(2.4),
-            base20_avg_pct: Some(0.6),
-            after20_up_ratio: Some(0.55),
-            excess_se_pct: Some(0.4),
-            signal_days: Some(500),
-        };
-        assert!((s.excess20_pct().unwrap() - 1.8).abs() < 1e-9);
-        let t = s.describe("放量突破");
-        assert!(
-            t.contains("3412 次买点")
-                && t.contains("平均涨 2.4%")
-                && t.contains("随便买平均涨 0.6%")
-                && t.contains("±0.8")
-                && t.contains("平均每笔跌 0.3%"),
-            "{t}"
-        );
-        assert!(
-            StrategyStat {
-                base20_avg_pct: None,
-                ..s.clone()
-            }
-            .excess20_pct()
-            .is_none()
-        );
-        assert!(s.convincing());
-        assert!(
-            !StrategyStat {
-                excess_se_pct: Some(1.0),
-                ..s.clone()
-            }
-            .convincing(),
-            "超额不到误差的 2 倍"
-        );
-        assert!(
-            StrategyStat {
-                excess_se_pct: None,
-                ..s
-            }
-            .edge()
-            .is_none(),
-            "旧口径的统计要重算"
-        );
-    }
 
     #[test]
     fn same_day_excess_and_clustered_error() {

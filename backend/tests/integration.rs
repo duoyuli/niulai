@@ -706,6 +706,32 @@ async fn sync_schedule_can_be_viewed_and_changed() {
 }
 
 #[tokio::test]
+async fn interrupted_planning_run_is_failed_by_maintenance_rule() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO ops.run (kind, status, params, started_at) VALUES ('backfill', 'running', '{\"planning\": true}'::jsonb, now() - interval '11 minutes') RETURNING run_id",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let stale = niulai::sync::run::stale_planning(&db.pool).await.unwrap();
+    assert_eq!(stale, vec![run_id]);
+    assert!(niulai::sync::run::fail_planning(&db.pool, run_id).await.unwrap());
+    let state: (String, Option<String>, serde_json::Value) = sqlx::query_as("SELECT status, error, params FROM ops.run WHERE run_id = $1")
+        .bind(run_id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(state.0, "failed");
+    assert_eq!(state.1.as_deref(), Some("规划中断（服务重启），请重新发起"));
+    assert_eq!(state.2.get("planning"), None);
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn data_check_finds_gaps_refetches_and_confirms_suspensions() {
     let Some(db) = TestDb::create().await else {
         eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");

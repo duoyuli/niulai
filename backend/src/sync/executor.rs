@@ -125,6 +125,11 @@ impl Executor {
         for run_id in run::stalled(&self.pool).await? {
             self.after_task(run_id).await?;
         }
+        for run_id in run::stale_planning(&self.pool).await? {
+            if run::fail_planning(&self.pool, run_id).await? {
+                tracing::error!(run_id, "后台规划已中断，运行标为失败");
+            }
+        }
         for run_id in run::unchained(&self.pool).await? {
             if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry).continue_chain(run_id).await? {
                 tracing::warn!(run_id, next, "运行结束后没有接上下一个波次，已补上");
