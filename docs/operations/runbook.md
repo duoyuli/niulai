@@ -7,7 +7,7 @@
 - [本地运行](#local_setup)：第一次在本机启动。
 - [首次回补](#backfill)、[日常同步](#daily_sync)、[重拉指定数据](#rerun)、[查看进度](#monitoring)、[处理失败任务](#failure_handling)、[修改配置](#config_changes)：同步相关的操作。
 - [用户与密码](#users)：添加用户、设管理员、停用，忘记密码。
-- [部署](#deployment)：构建镜像、Docker 部署、探活与告警、源码部署、一键升级、部署迁移、资源限制与升级助手加固、数据目录、手动升级、备份与恢复。
+- [部署](#deployment)：构建镜像、Docker 部署、源码部署、一键升级、部署迁移、数据目录、手动升级、备份与恢复。
 - [测试](#testing)：提交代码前。
 
 <a id="local_setup"></a>
@@ -46,7 +46,7 @@ Key 来自环境变量或需要重新回补时手动规划：
 - 某个数据集：`niulai plan backfill -d special.limit_up_pool`。
 - 网页：同步页的「手动同步」选「全部重取」，可以只填几只股票。
 
-重复规划是安全的：同一分区已有未完成任务时不会重复创建，写入都是 UPSERT。重拉日线或公司行动后运行结束时自动重算复权；需要立即重算用 `niulai recompute`（本机全市场约 2 秒，见 [运行结束后的计算](../architecture/sync_pipeline.md#postprocess)）。
+重复规划是安全的：同一分区已有未完成任务时不会重复创建，写入都是 UPSERT。重拉日线或公司行动后运行结束时自动重算复权；需要立即重算用 `niulai recompute`（几秒）。
 
 <a id="monitoring"></a>
 ## 查看进度
@@ -121,7 +121,7 @@ CI 在 GitHub 上检查代码、发布时构建镜像。服务有两种运行方
 - **Docker 部署**（默认）：CI 构建的镜像，`deploy/compose.yml` 运行内置 PostgreSQL、niulai 和一键升级助手，配置在 `deploy/.env`。
 - **源码部署**：在服务器上编译，直接运行 `niulai`，配置在 `backend/.env`，数据库自己准备。
 
-对外只有一个 HTTP 端口，默认 `127.0.0.1:8080`：`/` 是网页，`/api/v1/*` 是 [REST API](../interfaces/rest_api.md)，`/api/v1/health` 是存活检查、`/api/v1/ready` 在能连上数据库时返回 200，这两个检查不需要登录。打开网页先要登录（默认 `niulai` / `niulai`，部署后先改掉），然后按引导配置 API Key。取舍见 [ADR：CI 构建镜像，部署只交付服务本身](../decisions/ci_cd.md)。
+对外只有一个 HTTP 端口，默认 `127.0.0.1:8080`：`/` 是网页，`/api/v1/*` 是 [REST API](../interfaces/rest_api.md)，`/api/v1/health` 是存活检查，`/api/v1/ready` 在能连上数据库时返回 200。打开网页先要登录（默认 `niulai` / `niulai`，部署后先改掉），然后按引导配置 API Key。取舍见 [ADR：CI 构建镜像，部署只交付服务本身](../decisions/ci_cd.md)。
 
 <a id="release_image"></a>
 ### 构建镜像与发布
@@ -139,7 +139,7 @@ git push origin v2026.10.18
 <a id="server_install"></a>
 ### Docker 部署
 
-前提：Docker Engine 和 Compose 插件 2.20 或以上；内存 3 GB 以上（`compose.yml` 的资源上限按 4 vCPU、3.6 GiB 的服务器设置，更小的机器先调低上限，见 [资源限制](#resource_limits)）；部署目录所在的磁盘 20 GB 以上（全量数据约 4 GB，之后持续增长）。
+前提：Docker Engine 和 Compose 插件 2.20 或以上；内存 2 GB 以上；部署目录所在的磁盘 20 GB 以上（全量数据约 4 GB，之后持续增长）。
 
 1. 把 `deploy/compose.yml` 和 `deploy/.env.example` 放到服务器的一个目录，例如 `/opt/niulai/`。
 2. `cp .env.example .env`，默认值可以直接用，按需改端口、镜像版本、管理员密码，见 [部署配置](../interfaces/configuration.md#deploy_env)。
@@ -149,18 +149,6 @@ git push origin v2026.10.18
 常用命令（在部署目录执行）：`docker compose ps`、`docker compose logs -f niulai`、`docker compose exec niulai niulai status`（其他子命令同理）。停机用 `docker compose down`，niulai 等正在执行的任务结束（最多 2 分钟），未完成的任务下次启动继续。数据库数据在部署目录的 `data/postgres`，加 `-v` 也不会删掉，见 [数据目录](#data_dir)。
 
 使用本机构建的镜像：在仓库根目录 `docker build -f deploy/Dockerfile -t niulai:local .`，`.env` 中 `NIULAI_IMAGE=niulai:local`，再 `docker compose up -d`。
-
-<a id="health_monitoring"></a>
-### 探活与告警
-
-`GET /api/v1/health` 不需要登录（免登录的只有 `/health`、`/ready`、`/auth/login`、`/auth/logout` 和接口规范本身，见 [哪些接口要登录](../interfaces/rest_api.md#auth)），返回 `{"status":"ok"}`。它只说明进程还在，不查数据库；`GET /api/v1/ready` 也不需要登录，能连上数据库才返回 200，用来区分「服务停了」和「数据库有问题」。
-
-用部署在服务器之外的监控服务定期请求对外地址，失败时发通知。例如每分钟请求 `https://niulai.liduoyu.site/api/v1/health`，连续 3 次超时或返回非 200 就告警：
-
-- 从服务器之外请求，才能发现对外地址失效、机房网络不通这类问题；在服务器上用本机地址探测发现不了它们。
-- 用「连续 3 次失败再报」：一键升级会停 niulai 一两分钟，单次失败是正常的；恢复也要等一次成功确认，不因为短暂恢复就撤销告警。
-- 同时监控 `/api/v1/ready`：进程活着但数据库连不上时 `/health` 仍是 200，只看它会把「网页打得开但什么都查不到」漏掉。
-- 探活只需要这一个地址，不需要账号；监控服务本身的配置不放在本仓库里。
 
 <a id="source_deploy"></a>
 ### 源码部署
@@ -182,7 +170,7 @@ niulai 每 6 小时查一次 GitHub 上的版本标签（`NIULAI_UPDATE_REPO`，
 
 执行升级的是 `upgrader` 容器（与 niulai 同一个镜像，运行 `niulai upgrader`，由 `.env` 的 `COMPOSE_PROFILES=upgrader` 启用），它通过 `/var/run/docker.sock` 调用 Docker Engine API。niulai 和它通过卷 `upgrade`（`NIULAI_UPGRADE_DIR=/upgrade`）交换文件：niulai 写 `request`（只有版本号）；upgrader 每 3 秒写 `heartbeat`（30 秒没更新时页面显示手动升级的命令），把进度写在 `status`、输出写在 `log`。
 
-upgrader 收到请求后依次执行，每一步的状态和说明写在 `status` 的 `steps` 中，版本号弹窗里显示进度条和步骤（收起后进度保留）：
+upgrader 收到请求后依次执行，每一步的状态和说明写在 `status` 的 `steps` 中，页面顶部和版本号弹窗显示进度条和步骤：
 1. **下载新版本**，显示百分比和 MB。失败且本机没有这个镜像时什么都不改。
 2. **更新升级助手**：用新镜像重建自己，进度写在 `handoff` 交给新的 upgrader 继续。新版本的部署迁移只有新版本知道，所以先换掉自己；换不成时由当前的继续。
 3. **备份数据库**：用内置数据库时在 postgres 容器中 `pg_dump` 并校验，写到 `backups/niulai-before-<版本>-<时间>.dump`（保留最近 3 份，见 [备份与恢复](#backup_restore)）。失败时不升级。
@@ -205,22 +193,6 @@ upgrader 收到请求后依次执行，每一步的状态和说明写在 `status
 | 编号 | 内容 |
 | --- | --- |
 | `2026-10-17-postgres-data-dir` | 数据库数据从 Docker 卷 `pgdata` 移到部署目录的 `data/postgres`，见 [数据目录](#data_dir) |
-
-<a id="resource_limits"></a>
-### 资源限制与升级助手加固
-
-2026-10-18 起的 `compose.yml` 给三个服务加了内存和 CPU 上限，给 upgrader 加了安全选项（`no-new-privileges`，放弃全部 capability 后只保留 `CHOWN` 和 `DAC_OVERRIDE`）和健康检查，数值的依据写在文件注释里。这两项没有写成部署迁移，原因：
-
-- 升级助手重建容器时沿用原容器的启动参数（`backend/src/upgrader/mod.rs` 的 `create_body`），只改服务器上的 `compose.yml`，正在运行的容器不会变，要 `docker compose up -d` 重建才生效；由迁移改文件会让人误以为已经生效。
-- 内存和 CPU 上限取决于服务器大小，猜错会让数据库或 niulai 被强制杀掉并重启，不适合自动做。
-
-已有部署按下面手动更新（先 [备份](#backup_restore)）：
-
-1. 在服务器上编辑部署目录的 `compose.yml`，参照仓库中的新文件给 `postgres`、`niulai` 加 `mem_limit`、`cpus`，给 `upgrader` 加 `mem_limit`、`cpus`、`security_opt`、`cap_drop`、`cap_add` 和 `healthcheck`。只加这些行，保留自己改过的端口、镜像、挂载等；不要整个替换文件。
-2. 在部署目录执行 `docker compose up -d`。参数变了的服务会被重建：数据库和 niulai 会短暂重启（几秒到几十秒），正在执行的同步任务在下次启动后继续，不会丢数据。
-3. 验证：`docker compose ps` 中 `upgrader` 为 `healthy`；`docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}}' "$(docker compose ps -q upgrader)"` 显示 `134217728 500000000 [ALL] [no-new-privileges:true]`。之后一键升级重建容器时会沿用这些参数，不用再改。
-
-只想先加固升级助手、不重启数据库和 niulai 时，执行 `docker compose up -d upgrader`。服务器内存小于 3 GB 时按比例调低上限，例如 `postgres` 1024m、`niulai` 800m；大于 4 GiB 时可以观察 `docker stats` 的峰值后适当调高。
 
 <a id="data_dir"></a>
 ### 数据目录

@@ -6,10 +6,6 @@
 #
 # 使用本机构建的镜像时，在 .env 中把 NIULAI_IMAGE 改成那个镜像（构建命令见 Dockerfile 开头）。
 # 不用 Docker、直接编译运行的方式见 docs/operations/runbook.md#source_deploy；升级、备份、恢复见同一文档的「部署」一节。
-#
-# 资源上限按 2026-10-18 的服务器实测设置：4 vCPU、3.6 GiB 内存；docker stats 观察到 postgres 常驻约 1.0 GiB、
-# niulai 约 240 MiB。上限是峰值的最高值，不是预留：三个服务加起来可以超过物理核数和内存，真正的用量仍受物理资源限制。
-# 换到差别较大的服务器时按实测改下面的 mem_limit、cpus；已有部署怎么更新见 docs/operations/runbook.md#resource_limits。
 name: niulai
 
 x-logging: &logging
@@ -29,10 +25,6 @@ services:
     command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_wal_size=2GB"]
     volumes: ["${POSTGRES_DATA:-./data/postgres}:/var/lib/postgresql"]
     restart: unless-stopped
-    # 数据库是内存大户：常驻约 1.0 GiB。上限 1.5 GiB 留出备份、数据核检、排序等的峰值，又不至于把内存全占掉；
-    # 2.0 个 CPU 是 4 vCPU 的一半，另一半留给 niulai 和系统
-    mem_limit: 1536m
-    cpus: 2.0
     shm_size: 256mb
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "niulai", "-d", "niulai"]
@@ -57,9 +49,6 @@ services:
     ports: ["${NIULAI_LISTEN_ADDR:-127.0.0.1}:${NIULAI_PORT:-8080}:8080"]
     restart: unless-stopped
     stop_grace_period: 2m      # 停机时等正在执行的任务结束
-    # 常驻约 240 MiB；上限 1.2 GiB 覆盖全市场巡检、组合回测等峰值，日常远用不到
-    mem_limit: 1200m
-    cpus: 2.5
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /api/v1/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
       interval: 15s
@@ -76,30 +65,11 @@ services:
     profiles: [upgrader]
     command: ["niulai", "upgrader"]
     user: root                 # 访问 Docker 的控制接口需要 root
-    # 加固：以 root 运行只为访问 docker.sock（它属于 root，按文件的属主判断权限，不需要额外的 capability）。
-    # 放弃全部 capability 后，root 不再是「超级用户」：给共享卷改属主要 CHOWN；
-    # 部署目录的文件属于 ubuntu，读写 .env、compose.yml 和 backups/ 要 DAC_OVERRIDE。
-    # no-new-privileges 防止程序借 setuid、setgid 程序提权。
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: [ALL]
-    cap_add: [CHOWN, DAC_OVERRIDE]
-    # 挂载不能再小：部署迁移要改写 compose.yml 和 .env，备份和迁移结果要写进 backups/、.niulai-migrations，
-    # 数据目录迁移还要写入 data/postgres，所以整个部署目录都挂进来；upgrade 卷和 Docker 的控制接口也是必需的。
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./:/deploy             # 改写 .env 中的 NIULAI_IMAGE，备份写到 backups/
       - upgrade:/upgrade
     restart: unless-stopped
-    # 升级助手平时只轮询文件，128 MB 内存、0.5 个 CPU 够用；备份和复制数据由数据库容器完成
-    mem_limit: 128m
-    cpus: 0.5
-    # 健康检查看心跳文件：程序每 3 秒写一次 /upgrade/heartbeat，30 秒没有更新说明卡住了或已经退出
-    healthcheck:
-      test: ["CMD-SHELL", "[ $(( $$(date +%s) - $$(cat /upgrade/heartbeat 2>/dev/null || echo 0) )) -lt 30 ]"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
     logging: *logging
 
 volumes:
