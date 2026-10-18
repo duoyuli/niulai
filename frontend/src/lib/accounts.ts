@@ -21,7 +21,6 @@ export const TRADE_KINDS: Record<TradeKind, string> = {
   sell: "卖出",
   dividend: "分红",
   bonus: "送转",
-  rights: "配股认购",
   cash_in: "转入现金",
   cash_out: "转出现金",
   adjust: "校准",

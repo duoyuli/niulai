@@ -14,7 +14,6 @@ export const TradeKind = {
   sell: 'sell',
   dividend: 'dividend',
   bonus: 'bonus',
-  rights: 'rights',
   cash_in: 'cash_in',
   cash_out: 'cash_out',
   adjust: 'adjust',

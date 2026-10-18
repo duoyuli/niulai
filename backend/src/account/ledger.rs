@@ -91,19 +91,6 @@ pub fn replay(entries: &[Entry]) -> Result<Replay, ReplayError> {
                 };
                 out.shares += n;
             }
-            TradeKind::Rights => {
-                // 配股认购和买入一样参与平均成本，但前提是当时还持有这只股票（配股是按持仓配的）
-                let n = e.shares.unwrap_or(0);
-                if n <= 0 {
-                    continue;
-                }
-                if out.shares <= 0 {
-                    return Err(ReplayError::HoldingGone { trade_id: e.trade_id });
-                }
-                let pay = -e.amount;
-                out.cost_price = out.cost_price.map(|c| round4((c * out.shares as f64 + pay) / (out.shares + n) as f64));
-                out.shares += n;
-            }
             TradeKind::Sell => {
                 let n = e.shares.unwrap_or(0).abs();
                 if n <= 0 {
@@ -221,19 +208,6 @@ mod tests {
         assert_eq!(r.cost_price, Some(17.5423));
         assert_eq!(r.realized_pnl, Some(0.0), "没有卖出时已实现盈亏是 0");
         assert_eq!(r.sell_pnls.len(), 0);
-    }
-
-    #[test]
-    fn rights_subscription_joins_the_average_cost() {
-        // 买 1,000 股成本 23.005；每 10 股配 3 股、配股价 10 元，认购 300 股，费用 5 元：
-        // 成本 (23,005 + 3,005) ÷ 1,300 = 20.0077
-        let buy = entry(1, TradeKind::Buy, d(2), Some(1_000), Some(23.0), -23_005.0);
-        let rights = entry(2, TradeKind::Rights, d(8), Some(300), Some(10.0), -3_005.0);
-        let r = replay(&[buy, rights.clone()]).unwrap();
-        assert_eq!(r.shares, 1_300);
-        assert_eq!(r.cost_price, Some(20.0077));
-        // 配股要有持仓才能认购：撤销支撑它的买入以后就对不上了
-        assert_eq!(replay(&[rights]), Err(ReplayError::HoldingGone { trade_id: 2 }));
     }
 
     #[test]

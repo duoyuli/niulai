@@ -5,7 +5,6 @@ import { Link, useNavigate, useParams } from "react-router";
 import {
   getGetAccountQueryKey,
   getListAccountsQueryKey,
-  getListCorpActionsQueryKey,
   getListTradesQueryKey,
   useAccountBacktest,
   useAccountReview,
@@ -13,17 +12,12 @@ import {
   useAdviceHistory,
   useDeleteAccount,
   useGetAccount,
-  useGetEquity,
-  useIgnoreRights,
-  useListCorpActions,
   useListTrades,
   useMarkChecked,
-  useSubscribeRights,
   useUndoTrade,
   useUpdateAccount,
 } from "../api/generated/accounts/accounts";
 import type { AccountDetail, AccountTrade, TradeKind } from "../api/generated/model";
-import { AccountEquityChart } from "../components/AccountEquityChart";
 import { AdviceView } from "../components/AdviceView";
 import { BacktestTrades } from "../components/BacktestTrades";
 import { PositionsEditor } from "../components/PositionsEditor";
@@ -132,186 +126,92 @@ function Positions({ d }: { d: AccountDetail }) {
   const [mode, setMode] = useState<"view" | "calibrate" | "trade">("view");
   const p = d.summary.account.rules as FullRules;
   return (
-    <>
-      <RightsNotice d={d} />
-      <Card
-        title="持仓"
-        extra={
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className={buttonClass(mode === "trade" ? "primary" : "ghost")}
-              onClick={() => setMode(mode === "trade" ? "view" : "trade")}
-            >
-              记一笔
-            </button>
-            <button
-              type="button"
-              className={buttonClass(mode === "calibrate" ? "primary" : "ghost")}
-              onClick={() => setMode(mode === "calibrate" ? "view" : "calibrate")}
-            >
-              校准持仓和现金
-            </button>
-          </div>
-        }
-      >
-        {mode === "calibrate" && (
-          <div className="mb-4">
-            <PositionsEditor detail={d} onDone={() => setMode("view")} />
-          </div>
-        )}
-        {mode === "trade" && <TradeForm d={d} onDone={() => setMode("view")} />}
-        {d.positions.length === 0 ? (
-          <Empty>还没有持仓。点「校准持仓和现金」把券商里的持仓填进来，或者照着建议买入后点「已执行」。</Empty>
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <th>股票</th>
-                <th>股数</th>
-                <th>现价</th>
-                <th>市值 / 占比</th>
-                <th>盈亏</th>
-                <th
-                  title={`跌到止损价（比成本亏 ${p.stop_loss_pct}%）或收盘跌破 ${p.trend_ma} 日均线时，建议会提示卖出`}
-                >
-                  止损价 / {p.trend_ma} 日均线
-                </th>
-                <th>买入依据</th>
+    <Card
+      title="持仓"
+      extra={
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={buttonClass(mode === "trade" ? "primary" : "ghost")}
+            onClick={() => setMode(mode === "trade" ? "view" : "trade")}
+          >
+            记一笔
+          </button>
+          <button
+            type="button"
+            className={buttonClass(mode === "calibrate" ? "primary" : "ghost")}
+            onClick={() => setMode(mode === "calibrate" ? "view" : "calibrate")}
+          >
+            校准持仓和现金
+          </button>
+        </div>
+      }
+    >
+      {mode === "calibrate" && (
+        <div className="mb-4">
+          <PositionsEditor detail={d} onDone={() => setMode("view")} />
+        </div>
+      )}
+      {mode === "trade" && <TradeForm d={d} onDone={() => setMode("view")} />}
+      {d.positions.length === 0 ? (
+        <Empty>还没有持仓。点「校准持仓和现金」把券商里的持仓填进来，或者照着建议买入后点「已执行」。</Empty>
+      ) : (
+        <Table>
+          <thead>
+            <tr>
+              <th>股票</th>
+              <th>股数</th>
+              <th>现价</th>
+              <th>市值 / 占比</th>
+              <th>盈亏</th>
+              <th title={`跌到止损价（比成本亏 ${p.stop_loss_pct}%）或收盘跌破 ${p.trend_ma} 日均线时，建议会提示卖出`}>
+                止损价 / {p.trend_ma} 日均线
+              </th>
+              <th>买入依据</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.positions.map((v) => (
+              <tr key={v.position.thscode}>
+                <td>
+                  <Link to={`/securities/${v.position.thscode}`} className="hover:underline">
+                    {v.name}
+                  </Link>
+                  <span className="ml-1 text-xs text-zinc-400">{v.position.thscode}</span>
+                  {v.delisted && <span className="ml-1 text-xs text-red-600">已退市</span>}
+                </td>
+                <td className="num">{v.position.shares}</td>
+                <td className="num">
+                  {fmtPrice(v.close)}{" "}
+                  <span className={clsx("text-xs", upDownClass(v.change_pct))}>{fmtPctValue(v.change_pct)}</span>
+                </td>
+                <td className="num">
+                  {yuan(v.market_value)} <span className="text-xs text-zinc-500">{v.weight_pct.toFixed(1)}%</span>
+                </td>
+                <td className={clsx("num", upDownClass(v.pnl))}>
+                  {v.pnl === null || v.pnl === undefined ? (
+                    <span className="text-xs text-zinc-400">没填成本</span>
+                  ) : (
+                    `${yuan(v.pnl)}（${fmtPctValue(v.pnl_pct, 1)}）`
+                  )}
+                </td>
+                <td className="num text-xs">
+                  {v.stop_price ? fmtPrice(v.stop_price) : "—"} / {fmtPrice(v.trend_ma)}
+                  {v.trend_gap_pct !== null && v.trend_gap_pct !== undefined && (
+                    <span className={clsx("ml-1", upDownClass(v.trend_gap_pct))}>
+                      （{fmtPctValue(v.trend_gap_pct, 1)}）
+                    </span>
+                  )}
+                </td>
+                <td className="text-xs text-zinc-500">{v.strategy_name ?? "手动录入"}</td>
               </tr>
-            </thead>
-            <tbody>
-              {d.positions.map((v) => (
-                <tr key={v.position.thscode}>
-                  <td>
-                    <Link to={`/securities/${v.position.thscode}`} className="hover:underline">
-                      {v.name}
-                    </Link>
-                    <span className="ml-1 text-xs text-zinc-400">{v.position.thscode}</span>
-                    {v.delisted && <span className="ml-1 text-xs text-red-600">已退市</span>}
-                  </td>
-                  <td className="num">{v.position.shares}</td>
-                  <td className="num">
-                    {fmtPrice(v.close)}{" "}
-                    <span className={clsx("text-xs", upDownClass(v.change_pct))}>{fmtPctValue(v.change_pct)}</span>
-                  </td>
-                  <td className="num">
-                    {yuan(v.market_value)} <span className="text-xs text-zinc-500">{v.weight_pct.toFixed(1)}%</span>
-                  </td>
-                  <td className={clsx("num", upDownClass(v.pnl))}>
-                    {v.pnl === null || v.pnl === undefined ? (
-                      <span className="text-xs text-zinc-400">没填成本</span>
-                    ) : (
-                      `${yuan(v.pnl)}（${fmtPctValue(v.pnl_pct, 1)}）`
-                    )}
-                  </td>
-                  <td className="num text-xs">
-                    {v.stop_price ? fmtPrice(v.stop_price) : "—"} / {fmtPrice(v.trend_ma)}
-                    {v.trend_gap_pct !== null && v.trend_gap_pct !== undefined && (
-                      <span className={clsx("ml-1", upDownClass(v.trend_gap_pct))}>
-                        （{fmtPctValue(v.trend_gap_pct, 1)}）
-                      </span>
-                    )}
-                  </td>
-                  <td className="text-xs text-zinc-500">{v.strategy_name ?? "手动录入"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        )}
-        <p className="mt-2 text-xs text-zinc-500">
-          上面的「盈亏」是还拿在手里的股票按现价算的浮动盈亏。已经卖掉的赚亏看页面顶部的「已实现盈亏」：按卖出时的平均成本算，买卖费用都扣掉了。
-        </p>
-      </Card>
-    </>
-  );
-}
-
-/** 待处理的配股：不自动买、不自动扣钱，由用户选「记一笔配股认购」或「暂不处理」 */
-function RightsNotice({ d }: { d: AccountDetail }) {
-  const id = d.summary.account.account_id;
-  const qc = useQueryClient();
-  const list = useListCorpActions(id);
-  const [error, setError] = useState<string | null>(null);
-  const refresh = (r: AccountDetail) => {
-    qc.setQueryData(getGetAccountQueryKey(id), r);
-    qc.invalidateQueries({ queryKey: getListCorpActionsQueryKey(id) });
-    qc.invalidateQueries();
-  };
-  const subscribe = useSubscribeRights({
-    mutation: {
-      onSuccess: (r) => {
-        setError(null);
-        refresh(r);
-      },
-      onError: (e) => setError(errorText(e)),
-    },
-  });
-  const ignore = useIgnoreRights({
-    mutation: {
-      onSuccess: () => {
-        setError(null);
-        qc.invalidateQueries({ queryKey: getListCorpActionsQueryKey(id) });
-        qc.invalidateQueries();
-      },
-      onError: (e) => setError(errorText(e)),
-    },
-  });
-  const items = list.data ?? [];
-  if (items.length === 0) return null;
-  return (
-    <Card title="待处理的公司行动（配股）">
-      <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">
-        配股是公司让老股东按持股数量、用比市场价便宜的价格再买一些新股。要不要认购由你决定：系统不会自动买、也不会自动扣钱。要认购就点「记一笔配股认购」，会从现金里扣配股款和费用；不想认购就点「暂不处理」，之后不再提醒。
+            ))}
+          </tbody>
+        </Table>
+      )}
+      <p className="mt-2 text-xs text-zinc-500">
+        上面的「盈亏」是还拿在手里的股票按现价算的浮动盈亏。已经卖掉的赚亏看页面顶部的「已实现盈亏」：按卖出时的平均成本算，买卖费用都扣掉了。
       </p>
-      <div className="flex flex-col gap-3">
-        {items.map((r) => {
-          const pay = r.amount + r.fee;
-          return (
-            <div key={`${r.thscode}-${r.ex_date}`} className="rounded-lg bg-amber-50 p-3 text-sm dark:bg-amber-500/10">
-              <p>
-                <span className="font-medium">{r.name}</span>
-                <span className="ml-1 text-xs text-zinc-500">{r.thscode}</span>
-                <span className="ml-2 text-xs text-zinc-500">除权日 {r.ex_date}</span>
-              </p>
-              <p className="mt-1">
-                每 10 股配 {r.rights_per_10} 股，配股价 ¥{fmtPrice(r.rights_price)}；除权日持有 {r.held_shares}{" "}
-                股，可以认购 {r.rights_shares} 股。
-              </p>
-              <p className="mt-1 text-xs text-zinc-500">
-                要付 ¥{yuan(r.amount, 2)}（配股款）加约 ¥{yuan(r.fee, 2)}（费用），共 ¥{yuan(pay, 2)}。
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={buttonClass()}
-                  disabled={subscribe.isPending || ignore.isPending}
-                  onClick={() => {
-                    const ok = window.confirm(
-                      `认购 ${r.rights_shares} 股 ${r.name}？\n会从现金里扣 ¥${pay.toFixed(2)}（配股款 ¥${r.amount.toFixed(2)} 加费用 ¥${r.fee.toFixed(2)}），持仓成本按平均成本重新算。`,
-                    );
-                    if (ok) subscribe.mutate({ accountId: id, thscode: r.thscode, exDate: r.ex_date });
-                  }}
-                >
-                  记一笔配股认购
-                </button>
-                <button
-                  type="button"
-                  className={buttonClass("ghost")}
-                  disabled={subscribe.isPending || ignore.isPending}
-                  onClick={() => {
-                    if (window.confirm("暂不处理这次配股？不会买入、不会扣钱，之后不再提醒。"))
-                      ignore.mutate({ accountId: id, thscode: r.thscode, exDate: r.ex_date });
-                  }}
-                >
-                  暂不处理
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </Card>
   );
 }
@@ -459,7 +359,6 @@ function Records({ id }: { id: number }) {
           <AdviceView accountId={id} date={day} />
         </div>
       )}
-      <EquityCard id={id} />
       <Card title="过去的建议准不准">
         <QueryView query={review}>
           {(r) => (
@@ -637,62 +536,6 @@ function Records({ id }: { id: number }) {
         </QueryView>
       </Card>
     </div>
-  );
-}
-
-const EQUITY_RANGES = [
-  { days: 90, label: "近 3 个月" },
-  { days: 180, label: "近 6 个月" },
-  { days: 365, label: "近 1 年" },
-  { days: 730, label: "近 2 年" },
-] as const;
-
-/** 每日净值曲线：每个交易日收盘后的总资产，以及剔除转入转出后的区间收益率 */
-function EquityCard({ id }: { id: number }) {
-  const [days, setDays] = useState(180);
-  const equity = useGetEquity(id, { days });
-  return (
-    <Card
-      title="账户净值（每天收盘后的总资产）"
-      extra={
-        <div className="flex flex-wrap gap-2">
-          {EQUITY_RANGES.map((r) => (
-            <button
-              key={r.days}
-              type="button"
-              className={buttonClass(days === r.days ? "primary" : "ghost")}
-              onClick={() => setDays(r.days)}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-      }
-    >
-      <QueryView query={equity}>
-        {(c) =>
-          c.points.length === 0 ? (
-            <Empty>还没有净值数据。账户里有现金或持仓、并且日线同步到最新交易日之后，这里会按每个交易日画出来。</Empty>
-          ) : (
-            <>
-              <p className="mb-2 text-sm">
-                区间收益率{" "}
-                <span className={clsx("num", upDownClass(c.return_pct))}>{fmtPctValue(c.return_pct, 1)}</span>
-                <span className="ml-1 text-xs text-zinc-500">
-                  （{c.since ?? "—"} 开始，共 {c.points.length} 个交易日
-                  {Math.abs(c.net_transfer) >= 0.01 ? `，期间转入减转出 ${yuan(c.net_transfer, 2)}` : ""}）
-                </span>
-              </p>
-              <AccountEquityChart points={c.points} />
-              <p className="mt-2 text-xs text-zinc-500">
-                收益率已经剔除转入、转出：（期末利润 − 期初利润）÷ 期初总资产，利润 = 总资产 −
-                累计转入（减转出）；钱在区间中间进出时是简单估算。每天的总资产按当天收盘价算，停牌用之前最近的收盘价，不取盘中价格。每次打开都按流水和收盘价重新算，补记或撤销流水后历史也会跟着改。
-              </p>
-            </>
-          )
-        }
-      </QueryView>
-    </Card>
   );
 }
 

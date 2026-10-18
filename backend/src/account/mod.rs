@@ -5,7 +5,6 @@
 //! 规则见 docs/domains/accounts.md。
 
 pub mod corp;
-pub mod equity;
 pub mod ledger;
 pub mod lots;
 pub mod paste;
@@ -66,8 +65,6 @@ pub enum TradeKind {
     Dividend,
     /// 送转股，系统按公告自动记账
     Bonus,
-    /// 配股认购：用户点了「记一笔配股认购」后按公告的配股比例和配股价记账
-    Rights,
     CashIn,
     CashOut,
     /// 校准：直接改持仓或现金
@@ -81,7 +78,7 @@ pub enum TradeSource {
     User,
     /// 在建议上点了「已执行」
     Advice,
-    /// 系统按公司行动自动记的（分红送转、配股认购）
+    /// 系统按分红送转公告自动记的
     CorpAction,
 }
 
@@ -92,7 +89,6 @@ impl TradeKind {
             TradeKind::Sell => "sell",
             TradeKind::Dividend => "dividend",
             TradeKind::Bonus => "bonus",
-            TradeKind::Rights => "rights",
             TradeKind::CashIn => "cash_in",
             TradeKind::CashOut => "cash_out",
             TradeKind::Adjust => "adjust",
@@ -622,7 +618,7 @@ pub async fn undo_trade(pool: &PgPool, user_id: i64, account_id: i64, trade_id: 
     if source != TradeSource::User {
         let why = match source {
             TradeSource::Advice => "按建议执行的流水不能在这里撤销；在持仓页校准可以改回现金和持仓",
-            TradeSource::CorpAction => "分红送转、配股认购是系统按公告自动记的，不能单独撤销；金额不对时校准现金",
+            TradeSource::CorpAction => "分红送转是系统按公告自动记的，不能单独撤销；金额不对时校准现金",
             TradeSource::User => unreachable!(),
         };
         return invalid(why);
@@ -819,7 +815,7 @@ mod tests {
 
     #[test]
     fn enum_keys_match_serde_names() {
-        for k in [TradeKind::Buy, TradeKind::Sell, TradeKind::Dividend, TradeKind::Bonus, TradeKind::Rights, TradeKind::CashIn, TradeKind::CashOut, TradeKind::Adjust] {
+        for k in [TradeKind::Buy, TradeKind::Sell, TradeKind::Dividend, TradeKind::Bonus, TradeKind::CashIn, TradeKind::CashOut, TradeKind::Adjust] {
             assert_eq!(parse_enum::<TradeKind>(k.key()).unwrap(), k);
         }
         for s in [TradeSource::User, TradeSource::Advice, TradeSource::CorpAction] {
