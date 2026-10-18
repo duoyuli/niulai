@@ -14,6 +14,8 @@ use utoipa_axum::routes;
 
 use super::AppState;
 use super::auth::CurrentUser;
+use crate::account::corp::PendingRights;
+use crate::account::equity::EquityCurve;
 use crate::account::paste::{self, Known, ParsedRow};
 use crate::account::rules::{Preset, Rules};
 use crate::account::{self, Account, AccountError, AccountUpdate, NewAccount, Position, PositionInput, Trade, TradeInput, TradeKind, TradeSource};
@@ -35,6 +37,11 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(parse_positions))
         .routes(routes!(calibrate))
         .routes(routes!(list_trades, add_trade))
+        .routes(routes!(undo_trade))
+        .routes(routes!(list_corp_actions))
+        .routes(routes!(subscribe_rights))
+        .routes(routes!(ignore_rights))
+        .routes(routes!(get_equity))
         .routes(routes!(current_advice))
         .routes(routes!(refresh_advice))
         .routes(routes!(advice_history))
@@ -48,7 +55,7 @@ impl From<AccountError> for ApiError {
     fn from(e: AccountError) -> Self {
         match e {
             AccountError::Invalid(m) => ApiError::BadRequest(m),
-            AccountError::NotFound => ApiError::NotFound(e.to_string()),
+            AccountError::NotFound | AccountError::TradeNotFound => ApiError::NotFound(e.to_string()),
             AccountError::Taken(_) => ApiError::Conflict(e.to_string()),
             AccountError::Internal(e) => ApiError::Internal(e),
         }
@@ -139,6 +146,8 @@ pub struct AccountSummary {
     pub total_assets: f64,
     /// 按最近一个交易日的涨跌估算的当日盈亏
     pub day_pnl: f64,
+    /// 已实现盈亏（元）：已经卖出的部分，按卖出时的平均成本算，含买卖费用；有卖出没填成本价时为空
+    pub realized_pnl: Option<f64>,
     pub advice: Option<AdviceBrief>,
     /// 持仓很久没变动、又有没执行的建议时，提醒核对
     pub check_hint: Option<String>,
@@ -220,6 +229,7 @@ async fn check_hint(s: &AppState, acc: &Account) -> ApiResult<Option<String>> {
 
 async fn summary(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
     let positions = account::positions(&s.pool, acc.account_id).await?;
+    let realized = account::realized(&s.pool, acc.account_id).await?;
     let (mut mv, mut day) = (0.0, 0.0);
     for p in &positions {
         if let (_, Some((_, close, ch))) = quote(s, &p.thscode, 2).await? {
@@ -235,6 +245,7 @@ async fn summary(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
         market_value: mv,
         total_assets: acc.cash + mv,
         day_pnl: day,
+        realized_pnl: realized.total,
         advice: brief(s, acc.account_id).await?,
         check_hint: check_hint(s, &acc).await?,
         account: acc,
@@ -416,6 +427,71 @@ async fn add_trade(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i6
     account::record(&s.pool, me.user_id, id, &input, TradeSource::User, None).await?;
     regenerate(&s, &me, id).await;
     Ok(Json(detail(&s, &me, id).await?))
+}
+
+/// 撤销一条手动记的流水（红冲）：现金和持仓、成本、已实现盈亏重新算一遍。按建议执行、自动记账、校准的流水不能单独撤销
+#[utoipa::path(delete, path = "/accounts/{account_id}/trades/{trade_id}", tag = "accounts",
+    params(("account_id" = i64, Path), ("trade_id" = i64, Path, description = "流水编号")),
+    responses((status = 200, description = "已撤销，返回重算后的账户", body = AccountDetail),
+              (status = 400, description = "不是手动流水、已经撤销过，或撤销后现金、持仓会变成负数", body = crate::error::ErrorBody),
+              (status = 404, description = "账户或流水不存在", body = crate::error::ErrorBody)))]
+async fn undo_trade(State(s): State<AppState>, me: CurrentUser, Path((id, trade_id)): Path<(i64, i64)>) -> ApiResult<Json<AccountDetail>> {
+    account::undo_trade(&s.pool, me.user_id, id, trade_id).await?;
+    regenerate(&s, &me, id).await;
+    Ok(Json(detail(&s, &me, id).await?))
+}
+
+/// 待处理的公司行动（目前是配股）：除权日已经过去、还没认购也没选「暂不处理」的配股
+#[utoipa::path(get, path = "/accounts/{account_id}/corp-actions", tag = "accounts", params(("account_id" = i64, Path)),
+    responses((status = 200, description = "成功；没有待处理的配股时是空列表", body = [PendingRights]),
+              (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
+async fn list_corp_actions(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>) -> ApiResult<Json<Vec<PendingRights>>> {
+    account::get(&s.pool, me.user_id, id).await?;
+    let Some(through) = crate::analysis::market::resolve_date(&s.pool, None).await? else { return Ok(Json(vec![])) };
+    Ok(Json(account::corp::pending_rights(&s.pool, id, through).await?))
+}
+
+/// 记一笔配股认购：按除权日持有的股数和公告的配股比例算出认购股数，扣配股款和费用，按平均成本更新持仓；
+/// 提醒随之消失，之后重新生成建议
+#[utoipa::path(post, path = "/accounts/{account_id}/corp-actions/rights/{thscode}/{ex_date}/subscribe", tag = "accounts",
+    params(("account_id" = i64, Path), ("thscode" = String, Path, description = "股票代码"), ("ex_date" = NaiveDate, Path, description = "除权日")),
+    responses((status = 200, description = "已记下，返回更新后的账户", body = AccountDetail),
+              (status = 400, description = "没有这次配股、已经处理过、按股数不足 1 股或现金不够", body = crate::error::ErrorBody),
+              (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
+async fn subscribe_rights(
+    State(s): State<AppState>,
+    me: CurrentUser,
+    Path((id, thscode, ex_date)): Path<(i64, String, NaiveDate)>,
+) -> ApiResult<Json<AccountDetail>> {
+    account::corp::subscribe_rights(&s.pool, me.user_id, id, &thscode, ex_date).await?;
+    regenerate(&s, &me, id).await;
+    Ok(Json(detail(&s, &me, id).await?))
+}
+
+/// 暂不处理这次配股：不买、不扣钱，只记下处理状态，提醒消失
+#[utoipa::path(post, path = "/accounts/{account_id}/corp-actions/rights/{thscode}/{ex_date}/ignore", tag = "accounts",
+    params(("account_id" = i64, Path), ("thscode" = String, Path, description = "股票代码"), ("ex_date" = NaiveDate, Path, description = "除权日")),
+    responses((status = 204, description = "已记下，不再提醒"),
+              (status = 400, description = "没有这次配股、已经处理过或不足 1 股", body = crate::error::ErrorBody),
+              (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
+async fn ignore_rights(State(s): State<AppState>, me: CurrentUser, Path((id, thscode, ex_date)): Path<(i64, String, NaiveDate)>) -> ApiResult<StatusCode> {
+    account::corp::ignore_rights(&s.pool, me.user_id, id, &thscode, ex_date).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize, IntoParams)]
+pub struct EquityQuery {
+    /// 最近多少个交易日，默认 180，最多 1,825（约 7 年）
+    pub days: Option<i64>,
+}
+
+/// 每日净值曲线：每个交易日的现金、持仓市值、总资产和当天盈亏，返回最近 `days` 个交易日
+#[utoipa::path(get, path = "/accounts/{account_id}/equity", tag = "accounts", params(("account_id" = i64, Path), EquityQuery),
+    responses((status = 200, description = "成功；还没有日线或账户还没有资金时是空曲线", body = EquityCurve),
+              (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
+async fn get_equity(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>, Query(q): Query<EquityQuery>) -> ApiResult<Json<EquityCurve>> {
+    account::get(&s.pool, me.user_id, id).await?;
+    Ok(Json(account::equity::refresh(&s.pool, id, q.days.unwrap_or(180).clamp(5, 1825), None).await?))
 }
 
 #[derive(Serialize, ToSchema)]

@@ -24,12 +24,14 @@ import type {
   BarSeries,
   Diagnosis,
   ErrorBody,
+  HotMarket,
   IndexBarsParams,
   IndexInfo,
   IndexMember,
   IndexMembersParams,
   ListIndicesParams,
   ListSecuritiesParams,
+  MarketHotParams,
   MarketOverviewParams,
   Overview,
   PageSecurity,
@@ -387,6 +389,115 @@ export function useIndexMembers<TData = Awaited<ReturnType<typeof indexMembers>>
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getIndexMembersQueryOptions(thscode,params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getMarketHotUrl = (params?: MarketHotParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/market/hot?${stringifiedParams}` : `/api/v1/market/hot`
+}
+
+/**
+ * 涨跌停池由供应商整理，按周同步，最近几天可能还没更新；`available` 为 false 时
+ * `note` 用白话说明原因，页面据此显示空态。
+ * @summary 今日热点：权威涨停、跌停、炸板池和当天的封板率。
+ */
+export const marketHot = async (params?: MarketHotParams, options?: Parameters<typeof apiFetch>[1]): Promise<HotMarket> => {
+
+  return apiFetch<HotMarket>(getMarketHotUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getMarketHotQueryKey = (params?: MarketHotParams,) => {
+    return [
+    `/api/v1/market/hot`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getMarketHotQueryOptions = <TData = Awaited<ReturnType<typeof marketHot>>, TError = unknown>(params?: MarketHotParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketHot>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getMarketHotQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof marketHot>>> = ({ signal }) => marketHot(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof marketHot>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type MarketHotQueryResult = NonNullable<Awaited<ReturnType<typeof marketHot>>>
+export type MarketHotQueryError = unknown
+
+
+export function useMarketHot<TData = Awaited<ReturnType<typeof marketHot>>, TError = unknown>(
+ params: undefined |  MarketHotParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketHot>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof marketHot>>,
+          TError,
+          Awaited<ReturnType<typeof marketHot>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useMarketHot<TData = Awaited<ReturnType<typeof marketHot>>, TError = unknown>(
+ params?: MarketHotParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketHot>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof marketHot>>,
+          TError,
+          Awaited<ReturnType<typeof marketHot>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useMarketHot<TData = Awaited<ReturnType<typeof marketHot>>, TError = unknown>(
+ params?: MarketHotParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketHot>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 今日热点：权威涨停、跌停、炸板池和当天的封板率。
+ */
+
+export function useMarketHot<TData = Awaited<ReturnType<typeof marketHot>>, TError = unknown>(
+ params?: MarketHotParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof marketHot>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getMarketHotQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

@@ -1,10 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link } from "react-router";
 import type { HorizonStat, SignalStats, SignalTarget } from "../api/generated/model";
 import { signalStats, signalToday } from "../api/generated/signal/signal";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtInt, fmtPctValue, upDownClass } from "../lib/format";
-import { Card, Empty, ErrorState, errorText, Segmented, Spinner, Table } from "./ui";
+import { SIGNAL_STATS_ESTIMATE_BASIS, signalStatsEstimate, TaskRunning, useElapsedSeconds } from "./longTask";
+import { buttonClass, Card, Empty, ErrorState, errorText, Segmented, Spinner, Table } from "./ui";
 
 const YEARS = [
   { value: "1", label: "近 1 年" },
@@ -14,27 +16,79 @@ const YEARS = [
 
 const ratio = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${(v * 100).toFixed(0)}%`);
 
-/** 过去表现：这个信号出现之后几天的涨跌，和同期所有股票对比。全市场统计第一次要十几秒，之后有缓存 */
+/** 过去表现：这个信号出现之后几天的涨跌，和同期所有股票对比。要逐只统计全市场，第一次十几秒到二十秒，之后有缓存 */
 export function SignalStatsCard({ target, enabled = true }: { target: SignalTarget; enabled?: boolean }) {
   const [s, set] = useSearchState({ years: "3" });
+  const qc = useQueryClient();
+  const targetKey = JSON.stringify(target);
+  // 只有点「计算过去表现」时才发请求；换年份、改条件都不会自动重算
+  const [req, setReq] = useState<{ target: SignalTarget; targetKey: string; years: string } | null>(null);
+  const queryKey = ["signal-stats", req?.targetKey ?? "", req?.years ?? ""];
   const q = useQuery({
-    queryKey: ["signal-stats", JSON.stringify(target), s.years],
-    queryFn: () => signalStats({ target, years: Number(s.years) }),
-    enabled,
+    queryKey,
+    queryFn: ({ signal }) =>
+      signalStats({ target: req?.target ?? target, years: Number(req?.years ?? s.years) }, { signal }),
+    enabled: enabled && req !== null,
     staleTime: 10 * 60_000,
     retry: false,
+    refetchOnWindowFocus: false,
   });
+  const running = req !== null && q.isFetching;
+  const seconds = useElapsedSeconds(running);
+  const changed = req !== null && (req.targetKey !== targetKey || req.years !== s.years);
+  const start = () => {
+    // 参数没变时再点一次，就是按同一组参数重算（不走缓存）
+    if (req && !changed) {
+      void q.refetch();
+      return;
+    }
+    setReq({ target, targetKey, years: s.years });
+  };
+  const cancel = () => {
+    if (req) void qc.cancelQueries({ queryKey: ["signal-stats", req.targetKey, req.years] });
+    setReq(null);
+  };
   return (
     <Card
       title="过去表现：出现之后涨了还是跌了"
       extra={<Segmented value={s.years} options={YEARS} onChange={(years) => set({ years })} />}
     >
-      {q.isPending ? (
-        <Spinner label="正在用全市场的日线逐只统计，第一次要十几秒" />
-      ) : q.error ? (
-        <ErrorState error={q.error} onRetry={() => q.refetch()} />
+      {req === null ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="button" className={buttonClass()} disabled={!enabled} onClick={start}>
+              计算过去表现
+            </button>
+            <span className="text-xs text-zinc-500" title={SIGNAL_STATS_ESTIMATE_BASIS}>
+              {signalStatsEstimate(s.years)}
+            </span>
+          </div>
+          <p className="text-xs text-zinc-500">
+            要用全市场的日线逐只统计，所以打开页面时不自动算：点「计算过去表现」开始，算的时候可以取消。算过一次之后再看会很快。
+          </p>
+        </div>
       ) : (
-        <StatsView d={q.data} />
+        <div className="flex flex-col gap-3">
+          {running ? (
+            <TaskRunning text="正在用全市场的日线逐只统计" seconds={seconds} onCancel={cancel} />
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" className={buttonClass("ghost")} onClick={start}>
+                重新计算
+              </button>
+              {changed && (
+                <span className="text-xs text-amber-600">
+                  参数已改，下面显示的还是上一次的结果；点「重新计算」按新的参数算。
+                </span>
+              )}
+            </div>
+          )}
+          {q.error ? (
+            <ErrorState error={q.error} onRetry={() => q.refetch()} />
+          ) : (
+            q.data !== undefined && <StatsView d={q.data} />
+          )}
+        </div>
       )}
     </Card>
   );

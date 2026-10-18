@@ -189,6 +189,22 @@ impl Executor {
         self.after_task(task.run_id).await
     }
 
+    /// 这个运行写入了权威涨跌停池（special.limit_up_pool、limit_down_pool、limit_break_pool）的话，
+    /// 更新 `ops.derived_version` 的 `limit_pool` 行：市场概况、信号过去表现的进程内缓存以它为版本号。
+    /// 与行情是否变化无关：行情没变、只补上了滞后的涨停名单时，涨停数也要跟着变
+    async fn mark_limit_pool_changed(&self, run_id: i64) -> anyhow::Result<()> {
+        let changed: i64 = sqlx::query_scalar("SELECT coalesce(sum(changed), 0) FROM ops.task WHERE run_id = $1 AND dataset_id = ANY($2) AND status = 'done'")
+            .bind(run_id)
+            .bind(crate::analysis::limit_pool::DATASETS.to_vec())
+            .fetch_one(&self.pool)
+            .await?;
+        if changed > 0 {
+            sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = 'limit_pool'").execute(&self.pool).await?;
+            tracing::info!(run_id, changed, "权威涨跌停池有变化，市场概况和信号统计的缓存已失效");
+        }
+        Ok(())
+    }
+
     /// 执行期间定期续租；返回的句柄被丢弃时停止
     fn keep_lease(&self, task_id: i64) -> AbortOnDrop {
         let queue = self.queue.clone();
@@ -259,6 +275,11 @@ impl Executor {
     async fn after_task(&self, run_id: i64) -> anyhow::Result<()> {
         let Some(status) = run::try_complete(&self.pool, run_id).await? else { return Ok(()) };
         tracing::info!(run_id, %status, "运行结束，开始后处理");
+        // 权威涨跌停池只写 raw.record、没有类型化表，不在 PRICE_TABLES 里；单独统计它的变化来更新版本号。
+        // 更新失败不影响运行状态，只写日志（下次有变化的运行还会再更新）
+        if let Err(e) = self.mark_limit_pool_changed(run_id).await {
+            tracing::error!(run_id, error = %format!("{e:#}"), "更新权威涨跌停池的版本号失败");
+        }
         if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry).continue_chain(run_id).await? {
             tracing::info!(run_id, next, "已规划下一个波次");
         }

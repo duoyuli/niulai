@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   getCurrentAdviceQueryKey,
   getGetAccountQueryKey,
+  getGetEquityQueryKey,
   getListAccountsQueryKey,
   useCalibrate,
   useParsePositions,
@@ -59,6 +60,7 @@ export function PositionsEditor({
         qc.setQueryData(getGetAccountQueryKey(id), d);
         qc.invalidateQueries({ queryKey: getListAccountsQueryKey() });
         qc.invalidateQueries({ queryKey: getCurrentAdviceQueryKey(id) });
+        qc.invalidateQueries({ queryKey: getGetEquityQueryKey(id) });
         onDone();
       },
     },

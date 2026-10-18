@@ -104,11 +104,12 @@ pub fn edge(sig: &DayAcc, base: &DayAcc, keep: impl Fn(NaiveDate) -> bool) -> Op
 }
 
 /// 第 s 天收盘出现买点：第二天开盘买入、第 s + HORIZON 天收盘的涨跌（%，前复权）。
-/// 第二天开盘一字涨停（全天一个价且比前一天收盘高）买不进，不算
+/// 第二天开盘一字涨停（全天一个价且比前一天收盘高）买不进，不算。
+/// 判断用前复权价，和 `points::run` 的口径一致：除权日的未复权价会被除低，拿未复权价比较会漏判。
 pub fn forward_return(bars: &[prices::DailyBar], s: usize) -> Option<f64> {
     let entry = bars.get(s + 1)?;
     let exit = bars.get(s + HORIZON)?;
-    if entry.high == entry.low && entry.close > bars[s].close {
+    if entry.q_high == entry.q_low && entry.q_open > bars[s].q_close {
         return None;
     }
     Some((exit.q_close / entry.q_open - 1.0) * 100.0).filter(|r| r.is_finite())
@@ -190,12 +191,15 @@ pub async fn compute(pool: &PgPool, defs: &[(i64, Definition)]) -> anyhow::Resul
     let sec = market::securities(pool).await?;
     let base_def = Definition::any_stock();
     let warmup = defs.iter().map(|(_, d)| d.warmup()).max().unwrap_or(30) + 5;
+    let lo = start - chrono::Duration::days(calendar_days_for(warmup));
+    // 权威涨跌停池：策略过去表现里的买卖点同样以供应商的名单为准
+    let limits = crate::analysis::limit_pool::LimitPool::load(pool, lo, end).await?;
     let mut accs: Vec<Acc> = defs.iter().map(|_| Acc::default()).collect();
     let mut base = DayAcc::default();
-    prices::for_each_stock(pool, start - chrono::Duration::days(calendar_days_for(warmup)), end, |code, bars| {
+    prices::for_each_stock(pool, lo, end, |code, bars| {
         let Some(meta) = sec.meta.get(code) else { return };
         let Some(first) = bars.iter().position(|b| b.date >= start) else { return };
-        let f = Frame::new(bars, Some(meta));
+        let f = Frame::with_authority(bars, Some(meta), &limits, code);
         for (acc, (_, d)) in accs.iter_mut().zip(defs) {
             let p = points::run(bars, &f, meta, d, first);
             for t in &p.trades {

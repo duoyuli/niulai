@@ -1,23 +1,32 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
+  accountBacktest,
   getGetAccountQueryKey,
   getListAccountsQueryKey,
-  useAccountBacktest,
+  getListCorpActionsQueryKey,
+  getListTradesQueryKey,
   useAccountReview,
   useAddTrade,
   useAdviceHistory,
   useDeleteAccount,
   useGetAccount,
+  useGetEquity,
+  useIgnoreRights,
+  useListCorpActions,
   useListTrades,
   useMarkChecked,
+  useSubscribeRights,
+  useUndoTrade,
   useUpdateAccount,
 } from "../api/generated/accounts/accounts";
-import type { AccountDetail, TradeKind } from "../api/generated/model";
+import type { AccountDetail, AccountTrade, TradeKind } from "../api/generated/model";
+import { AccountEquityChart } from "../components/AccountEquityChart";
 import { AdviceView } from "../components/AdviceView";
 import { BacktestTrades } from "../components/BacktestTrades";
+import { TaskRunning, useElapsedSeconds } from "../components/longTask";
 import { PositionsEditor } from "../components/PositionsEditor";
 import { type ChartRange, RangePicker, rangeQuery } from "../components/RangePicker";
 import { BacktestLine, type FullRules, RulesEditor } from "../components/RulesEditor";
@@ -67,6 +76,17 @@ export function AccountPage() {
                 value={<span className={upDownClass(d.summary.day_pnl)}>{yuan(d.summary.day_pnl)}</span>}
               />
               <Stat label="现金" value={yuan(d.summary.account.cash)} />
+              <Stat
+                label="已实现盈亏"
+                value={
+                  d.summary.realized_pnl === null || d.summary.realized_pnl === undefined ? (
+                    <span className="text-xs font-normal text-zinc-500">算不出（有卖出没填成本）</span>
+                  ) : (
+                    <span className={upDownClass(d.summary.realized_pnl)}>{yuan(d.summary.realized_pnl)}</span>
+                  )
+                }
+                sub="已经卖掉的赚亏"
+              />
               <Stat label="持仓" value={`${d.summary.positions} 只`} />
             </div>
           </div>
@@ -113,89 +133,186 @@ function Positions({ d }: { d: AccountDetail }) {
   const [mode, setMode] = useState<"view" | "calibrate" | "trade">("view");
   const p = d.summary.account.rules as FullRules;
   return (
-    <Card
-      title="持仓"
-      extra={
-        <div className="flex gap-2">
-          <button
-            type="button"
-            className={buttonClass(mode === "trade" ? "primary" : "ghost")}
-            onClick={() => setMode(mode === "trade" ? "view" : "trade")}
-          >
-            记一笔
-          </button>
-          <button
-            type="button"
-            className={buttonClass(mode === "calibrate" ? "primary" : "ghost")}
-            onClick={() => setMode(mode === "calibrate" ? "view" : "calibrate")}
-          >
-            校准持仓和现金
-          </button>
-        </div>
-      }
-    >
-      {mode === "calibrate" && (
-        <div className="mb-4">
-          <PositionsEditor detail={d} onDone={() => setMode("view")} />
-        </div>
-      )}
-      {mode === "trade" && <TradeForm d={d} onDone={() => setMode("view")} />}
-      {d.positions.length === 0 ? (
-        <Empty>还没有持仓。点「校准持仓和现金」把券商里的持仓填进来，或者照着建议买入后点「已执行」。</Empty>
-      ) : (
-        <Table>
-          <thead>
-            <tr>
-              <th>股票</th>
-              <th>股数</th>
-              <th>现价</th>
-              <th>市值 / 占比</th>
-              <th>盈亏</th>
-              <th title={`跌到止损价（比成本亏 ${p.stop_loss_pct}%）或收盘跌破 ${p.trend_ma} 日均线时，建议会提示卖出`}>
-                止损价 / {p.trend_ma} 日均线
-              </th>
-              <th>买入依据</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d.positions.map((v) => (
-              <tr key={v.position.thscode}>
-                <td>
-                  <Link to={`/securities/${v.position.thscode}`} className="hover:underline">
-                    {v.name}
-                  </Link>
-                  <span className="ml-1 text-xs text-zinc-400">{v.position.thscode}</span>
-                  {v.delisted && <span className="ml-1 text-xs text-red-600">已退市</span>}
-                </td>
-                <td className="num">{v.position.shares}</td>
-                <td className="num">
-                  {fmtPrice(v.close)}{" "}
-                  <span className={clsx("text-xs", upDownClass(v.change_pct))}>{fmtPctValue(v.change_pct)}</span>
-                </td>
-                <td className="num">
-                  {yuan(v.market_value)} <span className="text-xs text-zinc-500">{v.weight_pct.toFixed(1)}%</span>
-                </td>
-                <td className={clsx("num", upDownClass(v.pnl))}>
-                  {v.pnl === null || v.pnl === undefined ? (
-                    <span className="text-xs text-zinc-400">没填成本</span>
-                  ) : (
-                    `${yuan(v.pnl)}（${fmtPctValue(v.pnl_pct, 1)}）`
-                  )}
-                </td>
-                <td className="num text-xs">
-                  {v.stop_price ? fmtPrice(v.stop_price) : "—"} / {fmtPrice(v.trend_ma)}
-                  {v.trend_gap_pct !== null && v.trend_gap_pct !== undefined && (
-                    <span className={clsx("ml-1", upDownClass(v.trend_gap_pct))}>
-                      （{fmtPctValue(v.trend_gap_pct, 1)}）
-                    </span>
-                  )}
-                </td>
-                <td className="text-xs text-zinc-500">{v.strategy_name ?? "手动录入"}</td>
+    <>
+      <RightsNotice d={d} />
+      <Card
+        title="持仓"
+        extra={
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className={buttonClass(mode === "trade" ? "primary" : "ghost")}
+              onClick={() => setMode(mode === "trade" ? "view" : "trade")}
+            >
+              记一笔
+            </button>
+            <button
+              type="button"
+              className={buttonClass(mode === "calibrate" ? "primary" : "ghost")}
+              onClick={() => setMode(mode === "calibrate" ? "view" : "calibrate")}
+            >
+              校准持仓和现金
+            </button>
+          </div>
+        }
+      >
+        {mode === "calibrate" && (
+          <div className="mb-4">
+            <PositionsEditor detail={d} onDone={() => setMode("view")} />
+          </div>
+        )}
+        {mode === "trade" && <TradeForm d={d} onDone={() => setMode("view")} />}
+        {d.positions.length === 0 ? (
+          <Empty>还没有持仓。点「校准持仓和现金」把券商里的持仓填进来，或者照着建议买入后点「已执行」。</Empty>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <th>股票</th>
+                <th>股数</th>
+                <th>现价</th>
+                <th>市值 / 占比</th>
+                <th>盈亏</th>
+                <th
+                  title={`跌到止损价（比成本亏 ${p.stop_loss_pct}%）或收盘跌破 ${p.trend_ma} 日均线时，建议会提示卖出`}
+                >
+                  止损价 / {p.trend_ma} 日均线
+                </th>
+                <th>买入依据</th>
               </tr>
-            ))}
-          </tbody>
-        </Table>
-      )}
+            </thead>
+            <tbody>
+              {d.positions.map((v) => (
+                <tr key={v.position.thscode}>
+                  <td>
+                    <Link to={`/securities/${v.position.thscode}`} className="hover:underline">
+                      {v.name}
+                    </Link>
+                    <span className="ml-1 text-xs text-zinc-400">{v.position.thscode}</span>
+                    {v.delisted && <span className="ml-1 text-xs text-red-600">已退市</span>}
+                  </td>
+                  <td className="num">{v.position.shares}</td>
+                  <td className="num">
+                    {fmtPrice(v.close)}{" "}
+                    <span className={clsx("text-xs", upDownClass(v.change_pct))}>{fmtPctValue(v.change_pct)}</span>
+                  </td>
+                  <td className="num">
+                    {yuan(v.market_value)} <span className="text-xs text-zinc-500">{v.weight_pct.toFixed(1)}%</span>
+                  </td>
+                  <td className={clsx("num", upDownClass(v.pnl))}>
+                    {v.pnl === null || v.pnl === undefined ? (
+                      <span className="text-xs text-zinc-400">没填成本</span>
+                    ) : (
+                      `${yuan(v.pnl)}（${fmtPctValue(v.pnl_pct, 1)}）`
+                    )}
+                  </td>
+                  <td className="num text-xs">
+                    {v.stop_price ? fmtPrice(v.stop_price) : "—"} / {fmtPrice(v.trend_ma)}
+                    {v.trend_gap_pct !== null && v.trend_gap_pct !== undefined && (
+                      <span className={clsx("ml-1", upDownClass(v.trend_gap_pct))}>
+                        （{fmtPctValue(v.trend_gap_pct, 1)}）
+                      </span>
+                    )}
+                  </td>
+                  <td className="text-xs text-zinc-500">{v.strategy_name ?? "手动录入"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+        <p className="mt-2 text-xs text-zinc-500">
+          上面的「盈亏」是还拿在手里的股票按现价算的浮动盈亏。已经卖掉的赚亏看页面顶部的「已实现盈亏」：按卖出时的平均成本算，买卖费用都扣掉了。
+        </p>
+      </Card>
+    </>
+  );
+}
+
+/** 待处理的配股：不自动买、不自动扣钱，由用户选「记一笔配股认购」或「暂不处理」 */
+function RightsNotice({ d }: { d: AccountDetail }) {
+  const id = d.summary.account.account_id;
+  const qc = useQueryClient();
+  const list = useListCorpActions(id);
+  const [error, setError] = useState<string | null>(null);
+  const refresh = (r: AccountDetail) => {
+    qc.setQueryData(getGetAccountQueryKey(id), r);
+    qc.invalidateQueries({ queryKey: getListCorpActionsQueryKey(id) });
+    qc.invalidateQueries();
+  };
+  const subscribe = useSubscribeRights({
+    mutation: {
+      onSuccess: (r) => {
+        setError(null);
+        refresh(r);
+      },
+      onError: (e) => setError(errorText(e)),
+    },
+  });
+  const ignore = useIgnoreRights({
+    mutation: {
+      onSuccess: () => {
+        setError(null);
+        qc.invalidateQueries({ queryKey: getListCorpActionsQueryKey(id) });
+        qc.invalidateQueries();
+      },
+      onError: (e) => setError(errorText(e)),
+    },
+  });
+  const items = list.data ?? [];
+  if (items.length === 0) return null;
+  return (
+    <Card title="待处理的公司行动（配股）">
+      <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">
+        配股是公司让老股东按持股数量、用比市场价便宜的价格再买一些新股。要不要认购由你决定：系统不会自动买、也不会自动扣钱。要认购就点「记一笔配股认购」，会从现金里扣配股款和费用；不想认购就点「暂不处理」，之后不再提醒。
+      </p>
+      <div className="flex flex-col gap-3">
+        {items.map((r) => {
+          const pay = r.amount + r.fee;
+          return (
+            <div key={`${r.thscode}-${r.ex_date}`} className="rounded-lg bg-amber-50 p-3 text-sm dark:bg-amber-500/10">
+              <p>
+                <span className="font-medium">{r.name}</span>
+                <span className="ml-1 text-xs text-zinc-500">{r.thscode}</span>
+                <span className="ml-2 text-xs text-zinc-500">除权日 {r.ex_date}</span>
+              </p>
+              <p className="mt-1">
+                每 10 股配 {r.rights_per_10} 股，配股价 ¥{fmtPrice(r.rights_price)}；除权日持有 {r.held_shares}{" "}
+                股，可以认购 {r.rights_shares} 股。
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                要付 ¥{yuan(r.amount, 2)}（配股款）加约 ¥{yuan(r.fee, 2)}（费用），共 ¥{yuan(pay, 2)}。
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={buttonClass()}
+                  disabled={subscribe.isPending || ignore.isPending}
+                  onClick={() => {
+                    const ok = window.confirm(
+                      `认购 ${r.rights_shares} 股 ${r.name}？\n会从现金里扣 ¥${pay.toFixed(2)}（配股款 ¥${r.amount.toFixed(2)} 加费用 ¥${r.fee.toFixed(2)}），持仓成本按平均成本重新算。`,
+                    );
+                    if (ok) subscribe.mutate({ accountId: id, thscode: r.thscode, exDate: r.ex_date });
+                  }}
+                >
+                  记一笔配股认购
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass("ghost")}
+                  disabled={subscribe.isPending || ignore.isPending}
+                  onClick={() => {
+                    if (window.confirm("暂不处理这次配股？不会买入、不会扣钱，之后不再提醒。"))
+                      ignore.mutate({ accountId: id, thscode: r.thscode, exDate: r.ex_date });
+                  }}
+                >
+                  暂不处理
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </Card>
   );
 }
@@ -310,10 +427,29 @@ function TradeForm({ d, onDone }: { d: AccountDetail; onDone: () => void }) {
 }
 
 function Records({ id }: { id: number }) {
+  const qc = useQueryClient();
   const history = useAdviceHistory(id);
   const review = useAccountReview(id);
   const trades = useListTrades(id);
   const [day, setDay] = useState<string | null>(null);
+  const [undoError, setUndoError] = useState<string | null>(null);
+  const undo = useUndoTrade({
+    mutation: {
+      onSuccess: (r) => {
+        qc.setQueryData(getGetAccountQueryKey(id), r);
+        qc.invalidateQueries({ queryKey: getListAccountsQueryKey() });
+        qc.invalidateQueries({ queryKey: getListTradesQueryKey(id) });
+        qc.invalidateQueries();
+        setUndoError(null);
+      },
+      onError: (e) => setUndoError(errorText(e)),
+    },
+  });
+  // 只有手动记的买入、卖出、转入、转出能撤销；按建议执行、分红送转、校准的流水用校准改
+  const canUndo = (t: AccountTrade) =>
+    t.source === "user" &&
+    !t.reversed_at &&
+    (t.kind === "buy" || t.kind === "sell" || t.kind === "cash_in" || t.kind === "cash_out");
   return (
     <div className="flex flex-col gap-4">
       {day && (
@@ -324,6 +460,7 @@ function Records({ id }: { id: number }) {
           <AdviceView accountId={id} date={day} />
         </div>
       )}
+      <EquityCard id={id} />
       <Card title="过去的建议准不准">
         <QueryView query={review}>
           {(r) => (
@@ -428,45 +565,135 @@ function Records({ id }: { id: number }) {
         </QueryView>
       </Card>
       <Card title="流水（持仓和现金的每一次变动）">
+        <p className="mb-2 text-xs text-zinc-500">
+          手动记错的买入、卖出、转入、转出可以点「撤销」：这笔流水会标成已撤销，现金和持仓按剩下的流水重新算一遍，已实现盈亏也跟着变。按建议执行、分红送转、校准的流水不能单独撤销，用「校准持仓和现金」改。
+          分红按税前金额记账，没有扣红利税（税在卖出时由券商代扣），所以这里算出的收益会比券商实际看到的高一点。
+        </p>
         <QueryView query={trades}>
           {(list) => (
-            <Table>
-              <thead>
-                <tr>
-                  <th>日期</th>
-                  <th>类型</th>
-                  <th>股票</th>
-                  <th>股数</th>
-                  <th>价格</th>
-                  <th>现金变化</th>
-                  <th>说明</th>
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((t) => (
-                  <tr key={t.trade_id}>
-                    <td className="num text-xs">{t.trade_date}</td>
-                    <td>
-                      {TRADE_KINDS[t.kind]}
-                      <span className="ml-1 text-xs text-zinc-400">{TRADE_SOURCES[t.source]}</span>
-                    </td>
-                    <td>{t.name ?? t.thscode ?? ""}</td>
-                    <td className="num">{t.shares ?? ""}</td>
-                    <td className="num">{t.price ? fmtPrice(t.price) : ""}</td>
-                    <td className={clsx("num", upDownClass(t.amount === 0 ? null : t.amount))}>
-                      {t.amount === 0 ? "" : yuan(t.amount, 2)}
-                    </td>
-                    <td className="max-w-80 text-xs text-zinc-500" title={fmtDateTime(t.created_at)}>
-                      {t.note}
-                    </td>
+            <>
+              <Table>
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th>类型</th>
+                    <th>股票</th>
+                    <th>股数</th>
+                    <th>价格</th>
+                    <th>现金变化</th>
+                    <th>已实现盈亏</th>
+                    <th>说明</th>
+                    <th>操作</th>
                   </tr>
-                ))}
-              </tbody>
-            </Table>
+                </thead>
+                <tbody>
+                  {list.map((t) => (
+                    <tr key={t.trade_id} className={t.reversed_at ? "opacity-50" : undefined}>
+                      <td className="num text-xs">{t.trade_date}</td>
+                      <td>
+                        {TRADE_KINDS[t.kind]}
+                        <span className="ml-1 text-xs text-zinc-400">{TRADE_SOURCES[t.source]}</span>
+                      </td>
+                      <td>{t.name ?? t.thscode ?? ""}</td>
+                      <td className="num">{t.shares ?? ""}</td>
+                      <td className="num">{t.price ? fmtPrice(t.price) : ""}</td>
+                      <td className={clsx("num", upDownClass(t.amount === 0 ? null : t.amount))}>
+                        {t.amount === 0 ? "" : yuan(t.amount, 2)}
+                      </td>
+                      <td className={clsx("num", upDownClass(t.realized_pnl))}>
+                        {t.realized_pnl === null || t.realized_pnl === undefined ? "" : yuan(t.realized_pnl, 2)}
+                      </td>
+                      <td className="max-w-80 text-xs text-zinc-500" title={fmtDateTime(t.created_at)}>
+                        {t.note}
+                        {t.reversed_at && <span className="ml-1 text-red-600">已撤销</span>}
+                      </td>
+                      <td className="text-xs">
+                        {canUndo(t) && (
+                          <button
+                            type="button"
+                            className="text-red-600 hover:underline disabled:opacity-40"
+                            disabled={undo.isPending}
+                            onClick={() => {
+                              const what = t.thscode ? `${t.name ?? t.thscode} 的持仓和成本` : "现金";
+                              const ok = window.confirm(
+                                `撤销这笔${TRADE_KINDS[t.kind]}？\n会把这笔流水标成已撤销，${what}按剩下的流水重新算一遍，已实现盈亏也会跟着变。`,
+                              );
+                              if (ok) {
+                                setUndoError(null);
+                                undo.mutate({ accountId: id, tradeId: t.trade_id });
+                              }
+                            }}
+                          >
+                            撤销
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+              {undoError && <p className="mt-2 text-sm text-red-600">{undoError}</p>}
+            </>
           )}
         </QueryView>
       </Card>
     </div>
+  );
+}
+
+const EQUITY_RANGES = [
+  { days: 90, label: "近 3 个月" },
+  { days: 180, label: "近 6 个月" },
+  { days: 365, label: "近 1 年" },
+  { days: 730, label: "近 2 年" },
+] as const;
+
+/** 每日净值曲线：每个交易日收盘后的总资产，以及剔除转入转出后的区间收益率 */
+function EquityCard({ id }: { id: number }) {
+  const [days, setDays] = useState(180);
+  const equity = useGetEquity(id, { days });
+  return (
+    <Card
+      title="账户净值（每天收盘后的总资产）"
+      extra={
+        <div className="flex flex-wrap gap-2">
+          {EQUITY_RANGES.map((r) => (
+            <button
+              key={r.days}
+              type="button"
+              className={buttonClass(days === r.days ? "primary" : "ghost")}
+              onClick={() => setDays(r.days)}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      <QueryView query={equity}>
+        {(c) =>
+          c.points.length === 0 ? (
+            <Empty>还没有净值数据。账户里有现金或持仓、并且日线同步到最新交易日之后，这里会按每个交易日画出来。</Empty>
+          ) : (
+            <>
+              <p className="mb-2 text-sm">
+                区间收益率{" "}
+                <span className={clsx("num", upDownClass(c.return_pct))}>{fmtPctValue(c.return_pct, 1)}</span>
+                <span className="ml-1 text-xs text-zinc-500">
+                  （{c.since ?? "—"} 开始，共 {c.points.length} 个交易日
+                  {Math.abs(c.net_transfer) >= 0.01 ? `，期间转入减转出 ${yuan(c.net_transfer, 2)}` : ""}）
+                </span>
+              </p>
+              <AccountEquityChart points={c.points} />
+              <p className="mt-2 text-xs text-zinc-500">
+                收益率已经剔除转入、转出：（期末利润 − 期初利润）÷ 期初总资产，利润 = 总资产 −
+                累计转入（减转出）；钱在区间中间进出时是简单估算。每天的总资产按当天收盘价算，停牌用之前最近的收盘价，不取盘中价格。每次打开都按流水和收盘价重新算，补记或撤销流水后历史也会跟着改。
+              </p>
+            </>
+          )
+        }
+      </QueryView>
+    </Card>
   );
 }
 
@@ -499,8 +726,35 @@ function Settings({ d }: { d: AccountDetail }) {
       },
     },
   });
-  const backtest = useAccountBacktest();
   const [range, setRange] = useState<ChartRange>({ range: "ytd", from: "", to: "" });
+  // 规则回测要算全市场几年，只有点按钮才开始；改区间不会自动重算，算的时候可以取消
+  const backtestParams = rangeQuery(range);
+  const backtestParamsKey = JSON.stringify(backtestParams);
+  const [backtestRun, setBacktestRun] = useState<{ params: { start?: string; end?: string }; key: string } | null>(
+    null,
+  );
+  const backtest = useQuery({
+    queryKey: ["account-backtest", id, backtestRun?.key ?? ""],
+    queryFn: ({ signal }) => accountBacktest(id, backtestRun?.params, { signal }),
+    enabled: backtestRun !== null,
+    staleTime: 5 * 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const backtestChanged = backtestRun !== null && backtestRun.key !== backtestParamsKey;
+  const backtestRunning = backtestRun !== null && backtest.isFetching;
+  const backtestSeconds = useElapsedSeconds(backtestRunning);
+  const startBacktest = () => {
+    if (backtestRun && !backtestChanged) {
+      void backtest.refetch();
+      return;
+    }
+    setBacktestRun({ params: backtestParams, key: backtestParamsKey });
+  };
+  const cancelBacktest = () => {
+    if (backtestRun) void qc.cancelQueries({ queryKey: ["account-backtest", id, backtestRun.key] });
+    setBacktestRun(null);
+  };
   return (
     <div className="flex flex-col gap-4">
       <Card title="名字和备注">
@@ -569,26 +823,41 @@ function Settings({ d }: { d: AccountDetail }) {
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           按保存后的规则，假设这段时间每天都照着建议做，账户会怎样。点快捷区间会把起止日期填进框里，也可以直接改日期（最长
           5 年，结束日期最晚到最新交易日）。哪些策略算有效，每年只用之前 3
-          年的数据判断。全市场计算，要几十秒到一两分钟。
+          年的数据判断。全市场计算，通常要几十秒到一两分钟，算的时候可以取消；改日期不会自动重算。
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <RangePicker value={range} options={BACKTEST_RANGES} onChange={(p) => setRange((r) => ({ ...r, ...p }))} />
-          <button
-            type="button"
-            className={buttonClass("ghost")}
-            disabled={backtest.isPending}
-            onClick={() => backtest.mutate({ accountId: id, params: rangeQuery(range) })}
-          >
-            {backtest.isPending ? "计算中…" : "开始回测"}
-          </button>
+          {backtestRunning ? (
+            <TaskRunning
+              text="正在按账户规则逐只计算全市场的日线"
+              seconds={backtestSeconds}
+              onCancel={cancelBacktest}
+            />
+          ) : (
+            <>
+              <button type="button" className={buttonClass("ghost")} onClick={startBacktest}>
+                {backtestRun && backtestChanged ? "按新日期重新计算" : backtestRun ? "重新回测" : "开始回测"}
+              </button>
+              <span className="text-xs text-zinc-500" title="依据：文档实测账户规则回测本地约几十秒到一两分钟">
+                全市场计算，通常几十秒到一两分钟
+              </span>
+            </>
+          )}
         </div>
+        {backtestChanged && !backtestRunning && (
+          <p className="mt-2 text-xs text-amber-600">
+            日期已改，下面显示的还是上一次按旧日期算的结果；点「按新日期重新计算」。
+          </p>
+        )}
         {backtest.data && (
           <div className="mt-2">
             <BacktestLine b={backtest.data} />
             <BacktestTrades trades={backtest.data.trades ?? []} />
           </div>
         )}
-        {!!backtest.error && <p className="mt-2 text-sm text-red-600">{errorText(backtest.error)}</p>}
+        {!!backtest.error && !backtestRunning && (
+          <p className="mt-2 text-sm text-red-600">{errorText(backtest.error)}</p>
+        )}
       </Card>
       <Card title="删除账户">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">

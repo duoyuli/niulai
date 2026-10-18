@@ -24,6 +24,7 @@
 | --- | --- | --- |
 | `GET /health` | 存活检查 | — |
 | `GET /ready` | 就绪检查，能连上数据库时返回 200 | — |
+| `GET /metrics` | Prometheus 文本格式的监控指标（进程、请求、队列、连接池）；默认关闭 | 设置 `NIULAI_METRICS_TOKEN` 后启用，请求要带 `Authorization: Bearer <令牌>` 或 `?token=<令牌>`，不带时返回 404；见 [监控指标](../operations/runbook.md#metrics) |
 | `POST /auth/login` | 登录，成功时设置登录 Cookie | 请求体 `{username, password}`，用户名不区分大小写；连续输错 5 次后返回 429；见 [登录与权限](#auth) |
 | `POST /auth/logout` | 退出登录，清除 Cookie；返回 204 | — |
 | `GET /auth/me` | 当前用户：编号、用户名、角色（`admin` / `member`）、是否要提醒修改密码（`must_change_password`） | 没有登录时返回 401 |
@@ -65,16 +66,22 @@
 | `GET /securities/{thscode}/diagnosis` | 个股诊断：四个维度的结论、最近 20 个交易日的信号、关键价位、当天符合的策略 | 规则见 [个股诊断](../domains/strategies.md#diagnosis) |
 | `GET /market/overview` | 市场概况：涨跌家数、涨跌停数、涨跌幅中位数、站上 20 日均线的比例 | `date` 默认最新交易日 |
 | `GET /market/sectors` | 板块强弱排名 | `category`（`industry` 默认 / `cn_concept`）、`days` 默认 5、范围 1 到 60、`date`；规则见 [市场环境](../domains/strategies.md#market) |
+| `GET /market/hot` | 今日热点：权威涨停池按连板高度分组、跌停、炸板、封板率等统计；普通用户可看 | `date` 是截止日期，默认最新交易日；每组和每个列表最多 50 只，全部家数在 `*_total`；数据每周同步，这一天的数据还没同步时 `available` 为 `false`、`note` 用白话说明原因；口径和空态见 [今日热点](../domains/hotspots.md) |
 | `GET /watchlist` | 当前用户的自选股及诊断（每个用户各自一份）：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |
 | `GET /rules/guide` | 设置规则时的辅助：三组参考值（适合什么样的账户、怎么设计、规则、过去 3 年回测），全部参加巡检的策略和它们的过去表现、是否有效 | 见 [选股和风控规则](../domains/accounts.md#rules) |
-| `GET /accounts` | 当前用户的账户：总资产、当日盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的 |
+| `GET /accounts` | 当前用户的账户：总资产、当日盈亏、已实现盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的；已实现盈亏见 [撤销流水和已实现盈亏](../domains/accounts.md#undo) |
 | `POST /accounts` | 新建账户（规则用稳健型的参考值），返回 201 和详情，并生成第一份建议 | 请求体 `{name, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
 | `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比、盈亏、止损价、趋势均线）；修改名字、规则 `rules`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [选股和风控规则](../domains/accounts.md#rules)，之后重新生成建议 |
 | `POST /accounts/{id}/positions/parse` | 识别粘贴的持仓文字，只返回预览 | 请求体 `{text}`，最多 20,000 字；规则见 [持仓](../domains/accounts.md#positions) |
 | `PUT /accounts/{id}/positions` | 校准：整体替换持仓和现金，差异记为校准流水，之后重新生成建议 | 请求体 `{cash, positions: [{thscode, shares, cost_price?, opened_on?}]}`；代码不存在、股数不大于 0、重复时返回 400 |
-| `GET` / `POST /accounts/{id}/trades` | 流水（新的在前，`limit` 默认 100、最多 500）；手动记一笔买入、卖出、转入、转出，之后重新生成建议 | 请求体 `{kind, thscode?, shares?, price?, amount?, fee?, trade_date?, note?}`；现金不够、卖出超过持有时返回 400 |
+| `GET` / `POST /accounts/{id}/trades` | 流水（新的在前，`limit` 默认 100、最多 500，已撤销的也列出并带撤销时间）；手动记一笔买入、卖出、转入、转出，之后重新生成建议 | 请求体 `{kind, thscode?, shares?, price?, amount?, fee?, trade_date?, note?}`；现金不够、卖出超过持有时返回 400；卖出流水带这一笔的 `realized_pnl`；配股认购（`kind` 为 `rights`）也在流水里 |
+| `DELETE /accounts/{id}/trades/{trade_id}` | 撤销一条手动流水（红冲）：标成已撤销，现金和这只股票的持仓、成本、已实现盈亏在同一个事务里重算，之后重新生成建议 | 只能撤销手动记的买入、卖出、转入、转出；按建议执行、分红送转、校准的流水、已经撤销过的流水返回 400；撤销后现金会变成负数、或后面的卖出/分红送转会前后对不上时返回 400；口径见 [撤销流水和已实现盈亏](../domains/accounts.md#undo) |
+| `GET /accounts/{id}/corp-actions` | 待处理的公司行动（目前是配股）：股票、除权日、每 10 股配几股、配股价、可认购的股数、要付的配股款和费用 | 只看最近 180 天、除权日已过、还没处理过的；口径见 [分红送转自动记账与配股提醒](../domains/accounts.md#corp_actions) |
+| `POST /accounts/{id}/corp-actions/rights/{thscode}/{ex_date}/subscribe` | 记一笔配股认购：扣配股款和费用，持仓按平均成本更新，提醒消失，之后重新生成建议 | 没有这次配股、不足 1 股、已经处理过或现金不够时返回 400；口径同上 |
+| `POST /accounts/{id}/corp-actions/rights/{thscode}/{ex_date}/ignore` | 暂不处理这次配股（不买、不扣钱），返回 204，之后不再提醒 | 已经处理过或不足 1 股返回 400 |
+| `GET /accounts/{id}/equity` | 每日净值曲线：每个交易日的现金、持仓市值、总资产、当日盈亏，以及剔除转入转出后的区间收益率 | `days` 默认 180、最多 1,825 个交易日；口径见 [每日净值](../domains/accounts.md#equity) |
 | `POST /accounts/{id}/checked` | 确认持仓和券商一致（只记时间），返回 204 | — |
 | `GET /accounts/{id}/advice` | 最新一份建议（`date` 指定交易日）和每条的处理状态；没有时 `waiting` 说明原因 | 结构和规则见 [生成建议](../domains/accounts.md#generation) |
 | `POST /accounts/{id}/advice/refresh` | 按现在的持仓和最新巡检重新生成 | — |
@@ -105,8 +112,8 @@
 
 用户保存在 `app.user`，**不开放注册**：管理员在「用户」页（`POST /users`）添加用户、设置或生成初始密码。第一个管理员由迁移创建，启动时如果它还没有密码，用 `NIULAI_ADMIN_USER`、`NIULAI_ADMIN_PASSWORD`（默认都是 `niulai`）设置，之后这两个变量不再起作用。用户、密码、会话签名在 `backend/src/auth.rs`，接口和中间件在 `backend/src/api/auth.rs`、`users.rs`。
 
-- **哪些接口要登录：** 除 `/health`、`/ready`、`/auth/login`、`/auth/logout`、`/openapi.json` 外的全部 `/api/v1/*` 接口。前端页面本身（`/` 和静态文件）不需要登录，页面在收到 401 时转到登录页。
-- **角色：** 管理员（`admin`）什么都能做。普通用户（`member`）：`/sync`、`/datasets`、`/setup`、`/users`、`/system/upgrade`、`/screening` 开头的接口连查看都不行；其余接口可以查看；写操作只有改自己的密码、收藏和取消收藏、管理自己的账户（`/accounts` 下的新建、修改、删除、校准、记账、建议的执行和不做、回测），以及只计算不保存的四个（`POST /signals/stats`、`/signals/today`、`/strategies/preview`、`/securities/{thscode}/signal-days`）。名单在 `api/auth.rs` 的 `ADMIN_PREFIXES`、`MEMBER_WRITES`，新增的写接口默认只有管理员能用。不允许时返回 403。
+- **哪些接口要登录：** 除 `/health`、`/ready`、`/metrics`、`/auth/login`、`/auth/logout`、`/openapi.json` 外的全部 `/api/v1/*` 接口。其中 `/metrics` 默认关闭，设置 `NIULAI_METRICS_TOKEN` 后改为校验令牌，见 [监控指标](../operations/runbook.md#metrics)。前端页面本身（`/` 和静态文件）不需要登录，页面在收到 401 时转到登录页。
+- **角色：** 管理员（`admin`）什么都能做。普通用户（`member`）：`/sync`、`/datasets`、`/setup`、`/users`、`/system/upgrade`、`/screening` 开头的接口连查看都不行；其余接口可以查看；写操作只有改自己的密码、收藏和取消收藏、管理自己的账户（`/accounts` 下的新建、修改、删除、校准、记账、撤销流水、建议的执行和不做、回测），以及只计算不保存的四个（`POST /signals/stats`、`/signals/today`、`/strategies/preview`、`/securities/{thscode}/signal-days`）。名单在 `api/auth.rs` 的 `ADMIN_PREFIXES`、`MEMBER_WRITES`，新增的写接口默认只有管理员能用。不允许时返回 403。
 - **我的数据：** 自选股、账户（含持仓、流水、建议）按当前用户保存，接口从 `CurrentUser` 取用户编号过滤；管理员也看不到别人的，别人的账户返回 404。
 - **密码：** Argon2id 哈希，至少 8 个字符。管理员添加、重置的密码和默认密码都标记 `must_change_password`，本人登录后页面顶部提醒，本人改过后清除。
 - **登录状态：** 登录成功后设置 Cookie `niulai_session`，`HttpOnly`、`SameSite=Lax`、`Path=/`，保存 30 天（`Max-Age=2592000`），期间使用不会延长。内容是 `用户编号.到期时间.签名`，HMAC-SHA256 签名覆盖用户编号、到期时间和密码哈希；签名密钥第一次用到时随机生成，保存在 `app.setting` 的 `session_secret`，重启后仍然有效。改密码、被重置密码后这个用户之前的登录全部失效；停用的用户每次请求都被拒绝。服务端不保存会话列表，退出登录只是清除这台浏览器的 Cookie。

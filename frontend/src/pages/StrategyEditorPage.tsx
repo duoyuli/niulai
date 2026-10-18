@@ -351,6 +351,9 @@ function Editor({
       )}
       {preview.data && (
         <Card title={`预览：${preview.data.trade_date} 有 ${fmtInt(preview.data.matched)} 只符合`}>
+          <p className="mb-4 text-xs text-zinc-500">
+            预览只看这一天是否满足买入条件：不考虑是否已经持有，也不判断下一个交易日开盘能不能买到。结论以每日巡检的买卖点为准。
+          </p>
           <div className="mb-4 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
             <ExplainedView e={preview.data.explained} />
           </div>

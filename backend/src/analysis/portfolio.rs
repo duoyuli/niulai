@@ -1,8 +1,10 @@
 //! 全市场组合回测：用一个选股策略在一段时间里每天选股，最多同时持有 max_positions 只，每只等额买入。
 //! 规则与近似见 docs/domains/backtest.md#portfolio。
 //!
-//! 做法：先逐只股票找出所有「信号日」，并按卖出规则算出每个信号对应的一笔候选交易（何时买、何时卖）；
+//! 做法：先按每日巡检和 K 线买卖点同一套规则（`points::run`）逐只股票找出全部候选交易（何时买、何时卖）；
 //! 再按日期模拟账户：每天开盘先卖出到期的持仓，再用空出来的仓位按排序买入当天的候选。
+//! 资金、仓位、费用和「前复权价近似分红再投资」是这一路径和单股回测不同的地方，口径见
+//! docs/domains/backtest.md#calibers。
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -12,8 +14,9 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 
 use super::backtest::{Costs, ExitReason, payoff};
-use super::indicators::Frame;
+use super::indicators::{Frame, StockMeta};
 use super::market::{self, calendar_days_for};
+use super::points;
 use super::prices::{self, DailyBar};
 use super::strategy::Definition;
 
@@ -112,84 +115,62 @@ struct Stock {
     closes: Vec<(NaiveDate, f64)>,
 }
 
-/// 从信号日 i 起模拟一笔交易：i + 1 开盘买入，按卖出规则在之后某天开盘卖出。开盘一字涨停买不进时返回 None
-fn simulate(bars: &[DailyBar], f: &Frame, d: &Definition, i: usize, last: usize) -> Option<(usize, Option<(usize, ExitReason)>)> {
-    let j = i + 1;
-    if j > last {
-        return None;
-    }
-    let one_price = |k: usize| bars[k].high == bars[k].low;
-    if one_price(j) && bars[j].q_open > bars[i].q_close {
-        return None;
-    }
-    let entry_q = bars[j].q_open;
-    let r = &d.exit;
-    let mut pending: Option<ExitReason> = None;
-    for k in j..=last {
-        if let Some(reason) = pending {
-            // 开盘一字跌停卖不出，顺延
-            if !(one_price(k) && bars[k].q_open < bars[k - 1].q_close) {
-                return Some((j, Some((k, reason))));
-            }
-        }
-        if pending.is_none() {
-            let ret = bars[k].q_close / entry_q - 1.0;
-            pending = if d.exit_signal(f, k) {
-                Some(ExitReason::Signal)
-            } else if r.stop_loss_pct.is_some_and(|s| ret <= -s / 100.0) {
-                Some(ExitReason::StopLoss)
-            } else if r.take_profit_pct.is_some_and(|t| ret >= t / 100.0) {
-                Some(ExitReason::TakeProfit)
-            } else if r.max_hold_days.is_some_and(|h| k + 1 - j >= h as usize) {
-                Some(ExitReason::MaxHold)
-            } else {
-                None
+/// 按策略的买卖点规则（`points::run`，与每日巡检、K 线买卖点、单股回测同一套）从第 from 根日线
+/// （空仓起步）起找出全部候选交易。资金、仓位、费用和分红处理不在这里，留给账户循环。
+fn candidates(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, from: usize, stock: usize) -> Vec<Candidate> {
+    points::run(bars, f, meta, d, from)
+        .trades
+        .into_iter()
+        .filter_map(|t| {
+            let si = bars.binary_search_by_key(&t.signal_date, |b| b.date).ok()?;
+            let entry_q = bars[bars.binary_search_by_key(&t.entry_date, |b| b.date).ok()?].q_open;
+            let exit = match (t.exit_date, t.exit_reason) {
+                (Some(date), Some(reason)) => {
+                    let x = &bars[bars.binary_search_by_key(&date, |b| b.date).ok()?];
+                    Some((date, x.q_open, x.open, reason))
+                }
+                _ => None,
             };
-        }
-    }
-    Some((j, None))
+            Some(Candidate {
+                stock,
+                signal_date: t.signal_date,
+                entry_date: t.entry_date,
+                entry_q,
+                entry_raw: t.entry_price,
+                exit,
+                bars_held: t.bars_held,
+                sort_value: f.at(d.sort.by, si),
+            })
+        })
+        .collect()
 }
 
 // @project-doc docs/domains/backtest.md#portfolio
 pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Option<PortfolioOutcome>> {
     let sec = market::securities(pool).await?;
     let warmup = d.warmup() + 5;
+    let lo = p.start - chrono::Duration::days(calendar_days_for(warmup));
+    // 权威涨跌停池：候选买卖点里的涨跌停、炸板、连板信号同样以供应商的名单为准
+    let limits = super::limit_pool::LimitPool::load(pool, lo, p.end).await?;
     let mut stocks: Vec<Stock> = vec![];
     let mut cands: Vec<Candidate> = vec![];
     let mut calendar: BTreeSet<NaiveDate> = BTreeSet::new();
     let mut ew = EqualWeight::default();
     let any_stock = Definition::any_stock();
-    prices::for_each_stock(pool, p.start - chrono::Duration::days(calendar_days_for(warmup)), p.end, |code, bars| {
+    prices::for_each_stock(pool, lo, p.end, |code, bars| {
         let Some(meta) = sec.meta.get(code) else { return };
         let Some(first) = bars.iter().position(|b| b.date >= p.start) else { return };
         for b in &bars[first..] {
             calendar.insert(b.date);
         }
-        let f = Frame::new(bars, Some(meta));
+        let f = Frame::with_authority(bars, Some(meta), &limits, code);
         ew.add(&any_stock, bars, &f, meta, first);
-        let last = bars.len() - 1;
-        let stock = stocks.len();
-        let mut any = false;
-        for i in first..last {
-            if !d.in_universe(&f, meta, i) || !d.matches(&f, i) {
-                continue;
-            }
-            let Some((j, exit)) = simulate(bars, &f, d, i, last) else { continue };
-            any = true;
-            cands.push(Candidate {
-                stock,
-                signal_date: bars[i].date,
-                entry_date: bars[j].date,
-                entry_q: bars[j].q_open,
-                entry_raw: bars[j].open,
-                exit: exit.map(|(k, r)| (bars[k].date, bars[k].q_open, bars[k].open, r)),
-                bars_held: exit.map_or(last, |(k, _)| k) as i64 - j as i64,
-                sort_value: f.at(d.sort.by, i),
-            });
+        let found = candidates(bars, &f, meta, d, first, stocks.len());
+        if found.is_empty() {
+            return;
         }
-        if any {
-            stocks.push(Stock { code: code.to_string(), closes: bars[first..].iter().map(|b| (b.date, b.q_close)).collect() });
-        }
+        cands.extend(found);
+        stocks.push(Stock { code: code.to_string(), closes: bars[first..].iter().map(|b| (b.date, b.q_close)).collect() });
     })
     .await?;
     if calendar.is_empty() {
@@ -377,17 +358,30 @@ impl EqualWeight {
 mod tests {
     use super::*;
     use crate::analysis::indicators::tests::bars_from;
-    use crate::analysis::strategy::{Condition, ExitRule};
 
+    /// 组合回测的候选交易必须就是 `points::run` 算出的买卖点：日期、成交价、卖出原因都一致
     #[test]
-    fn simulate_exits_on_max_hold() {
-        let b = bars_from(&[10.0; 10]);
+    fn candidates_follow_points() {
+        let closes = [10.0, 9.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 10.0, 9.0, 8.0, 7.0];
+        let b = bars_from(&closes);
         let f = Frame::new(&b, None);
-        let mut d: Definition = serde_json::from_value(serde_json::json!({"all": [{"kind": "compare", "left": {"id": "close"}, "op": ">", "right": {"value": 0}}]})).unwrap();
-        d.exit = ExitRule { any: Vec::<Condition>::new(), stop_loss_pct: None, take_profit_pct: None, max_hold_days: Some(3) };
-        let (j, exit) = simulate(&b, &f, &d, 2, 9).unwrap();
-        assert_eq!(j, 3);
-        // 下标 3 买入，持有 3 天（3、4、5），下标 5 收盘触发，下标 6 开盘卖出
-        assert_eq!(exit.map(|e| e.0), Some(6));
+        let meta = StockMeta { board: "main".into(), is_st: false, list_date: None };
+        let d: Definition = serde_json::from_value(serde_json::json!({
+            "universe": {"exclude_st": false},
+            "all": [{"kind": "compare", "left": {"id": "close"}, "op": "crosses_above", "right": {"id": "ma", "n": 3}}],
+            "exit": {"any": [{"kind": "compare", "left": {"id": "close"}, "op": "crosses_below", "right": {"id": "ma", "n": 3}}]}
+        }))
+        .unwrap();
+        let cs = candidates(&b, &f, &meta, &d, 0, 7);
+        let pts = points::run(&b, &f, &meta, &d, 0);
+        assert!(!pts.trades.is_empty());
+        assert_eq!(cs.len(), pts.trades.len());
+        for (c, t) in cs.iter().zip(&pts.trades) {
+            assert_eq!(c.stock, 7);
+            assert_eq!((c.signal_date, c.entry_date), (t.signal_date, t.entry_date));
+            assert_eq!(c.entry_raw, t.entry_price);
+            assert_eq!(c.bars_held, t.bars_held);
+            assert_eq!(c.exit.map(|e| (e.0, e.3)), t.exit_date.zip(t.exit_reason));
+        }
     }
 }

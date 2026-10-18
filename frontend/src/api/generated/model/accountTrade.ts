@@ -20,6 +20,16 @@ export interface AccountTrade {
   /** @nullable */
   price?: number | null;
   /**
+     * 这一笔卖出实现了多少盈亏：卖出净回款（扣费用）− 卖出股数 × 卖出时的平均成本；不是卖出、或没填成本价时为空
+     * @nullable
+     */
+  realized_pnl?: number | null;
+  /**
+     * 撤销的时间；空表示这笔流水有效
+     * @nullable
+     */
+  reversed_at?: string | null;
+  /**
      * 持仓股数的变化：买入、送转为正，卖出为负
      * @nullable
      */

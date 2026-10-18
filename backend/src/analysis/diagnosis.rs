@@ -6,6 +6,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::indicators::{Frame, IndicatorId, IndicatorRef, StockMeta};
+use super::limit_pool::LimitPool;
 use super::prices::DailyBar;
 use super::signals::{self, Params, SignalKind, Tone};
 use super::strategy::Definition;
@@ -97,9 +98,13 @@ pub fn recent_signals(f: &Frame, days: usize) -> Vec<SignalEvent> {
 }
 
 // @project-doc docs/domains/strategies.md#diagnosis
-pub fn diagnose(bars: &[DailyBar], meta: &StockMeta, strategies: &[(i64, String, Definition)]) -> Option<Diagnosis> {
+/// authority：权威涨跌停池和这只股票的代码；有它时最近的涨跌停信号以供应商的名单为准
+pub fn diagnose(bars: &[DailyBar], meta: &StockMeta, strategies: &[(i64, String, Definition)], authority: Option<(&LimitPool, &str)>) -> Option<Diagnosis> {
     let last = bars.last()?;
-    let f = Frame::new(bars, Some(meta));
+    let f = match authority {
+        Some((pool, code)) => Frame::with_authority(bars, Some(meta), pool, code),
+        None => Frame::new(bars, Some(meta)),
+    };
     let i = bars.len() - 1;
     let v = |id, n| f.at(IndicatorRef::new(id, n), i);
     let close = last.q_close;
@@ -213,7 +218,7 @@ mod tests {
         let closes: Vec<f64> = (0..120).map(|i| 10.0 * 1.01f64.powi(i)).collect();
         let b = bars_from(&closes);
         let meta = StockMeta { board: "main".into(), is_st: false, list_date: None };
-        let d = diagnose(&b, &meta, &[]).unwrap();
+        let d = diagnose(&b, &meta, &[], None).unwrap();
         assert_eq!(d.dimensions[0].verdict, Verdict::Strong, "{}", d.dimensions[0].headline);
         assert_eq!(d.dimensions[3].headline, "接近 60 日高点");
         assert!(d.levels.iter().any(|l| l.name == "20 日均线" && l.kind == "support"));

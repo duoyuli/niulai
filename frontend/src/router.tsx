@@ -16,6 +16,7 @@ const AccountNewPage = page(() => import("./pages/AccountNewPage"), "AccountNewP
 const AccountPage = page(() => import("./pages/AccountPage"), "AccountPage");
 const AccountsPage = page(() => import("./pages/AccountsPage"), "AccountsPage");
 const GuidePage = page(() => import("./pages/GuidePage"), "GuidePage");
+const HotPage = page(() => import("./pages/HotPage"), "HotPage");
 const IndexDetailPage = page(() => import("./pages/IndexDetailPage"), "IndexDetailPage");
 const IndicatorDetailPage = page(() => import("./pages/IndicatorsPage"), "IndicatorDetailPage");
 const IndicatorsPage = page(() => import("./pages/IndicatorsPage"), "IndicatorsPage");
@@ -87,6 +88,7 @@ export const router = createBrowserRouter([
           { path: "/indicators/:id", element: <IndicatorDetailPage /> },
           { path: "/watchlist", element: <WatchlistPage /> },
           { path: "/securities/:thscode", element: <SecurityDetailPage /> },
+          { path: "/hot", element: <HotPage /> },
           { path: "/guide", element: <GuidePage /> },
           { path: "/indices", element: <IndicesPage /> },
           { path: "/indices/:thscode", element: <IndexDetailPage /> },

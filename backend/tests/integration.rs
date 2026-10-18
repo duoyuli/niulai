@@ -1284,6 +1284,8 @@ async fn accounts_positions_and_daily_advice() {
     assert!(d["positions"].as_array().unwrap().is_empty());
     let cash = d["summary"]["account"]["cash"].as_f64().unwrap();
     assert!((cash - (100_000.0 + 22_500.0 - 5.63 - 11.25)).abs() < 0.02, "卖出 22,500 元，扣佣金 5.63 元和印花税 11.25 元：{cash}");
+    let realized = d["summary"]["realized_pnl"].as_f64().unwrap();
+    assert!((realized - (22_500.0 - 5.63 - 11.25 - 30_000.0)).abs() < 0.02, "按建议执行的卖出也算已实现盈亏：{realized}");
 
     // 手动买入；现金不够时拒绝
     let (r, v) = call_as(&app, Some(&mama), "POST", &format!("{base}/trades"), Some(json!({"kind": "buy", "thscode": "600000.SH", "shares": 1000, "price": 23}))).await;
@@ -1356,6 +1358,293 @@ async fn accounts_positions_and_daily_advice() {
     db.drop().await;
 }
 
+/// 取一个账户的流水和详情，撤销测试里反复用
+async fn account_trades(app: &axum::Router, cookie: &str, base: &str) -> Vec<Value> {
+    let (_, v) = call_as(app, Some(cookie), "GET", &format!("{base}/trades"), None).await;
+    v.as_array().cloned().unwrap_or_default()
+}
+
+#[tokio::test]
+async fn undo_manual_trades_recomputes_cash_position_cost_and_realized_pnl() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    synthetic_stock(&db.pool).await;
+    let app = niulai::api::router(Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), db.pool.clone()).await.unwrap());
+    let admin = login(&app, "admin", "secret-pass").await.expect("管理员登录");
+    let (_, v) = call_as(&app, Some(&admin), "POST", "/api/v1/users", Some(json!({"username": "undoer", "password": "undo-pass-1"}))).await;
+    assert_eq!(v["user"]["role"], "member");
+    let member = login(&app, "undoer", "undo-pass-1").await.expect("普通用户登录");
+    let st = |r: &axum::http::Response<()>| r.status();
+
+    // 普通用户也能撤销自己的流水（新接口在 MEMBER_WRITES 里）
+    let (r, v) = call_as(&app, Some(&member), "POST", "/api/v1/accounts", Some(json!({"name": "记账测试", "cash": 100000}))).await;
+    assert_eq!(st(&r), StatusCode::CREATED, "{v}");
+    let acc = v["summary"]["account"]["account_id"].as_i64().unwrap();
+    let base = format!("/api/v1/accounts/{acc}");
+    let (r, v) = call_as(&app, Some(&member), "POST", &format!("{base}/trades"), Some(json!({"kind": "buy", "thscode": "600000.SH", "shares": 1000, "price": 23}))).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    assert_eq!(v["summary"]["realized_pnl"], 0.0, "还没卖出时已实现盈亏是 0");
+    let cost1 = 23_005.75 / 1000.0; // 成交额 23,000 元加佣金 5.75 元
+
+    // 撤销建账户时的转入会让现金变成负数：拒绝
+    let cash_in = account_trades(&app, &member, &base).await.into_iter().find(|t| t["kind"] == "cash_in").unwrap();
+    let (r, v) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/{}", cash_in["trade_id"]), None).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "现金不够扣回时不能撤销：{v}");
+    assert!(v["message"].as_str().unwrap().contains("不够"), "{v}");
+
+    // 再买 500 股，然后卖 400 股：卖出时的平均成本是两笔买入合起来的
+    let (r, v) = call_as(&app, Some(&member), "POST", &format!("{base}/trades"), Some(json!({"kind": "buy", "thscode": "600000.SH", "shares": 500, "price": 25}))).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    let (r, v) = call_as(&app, Some(&member), "POST", &format!("{base}/trades"), Some(json!({"kind": "sell", "thscode": "600000.SH", "shares": 400, "price": 30}))).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    let sell_id = account_trades(&app, &member, &base).await.into_iter().find(|t| t["kind"] == "sell").unwrap()["trade_id"].as_i64().unwrap();
+    let cost_both = 35_510.75 / 1500.0;
+    let realized_both = 11_989.0 - 400.0 * cost_both; // 卖出 12,000 元，佣金 5 元加印花税 6 元
+    let (_, d) = call_as(&app, Some(&member), "GET", &base, None).await;
+    assert_eq!(d["positions"][0]["position"]["shares"], 1100);
+    let got = d["summary"]["realized_pnl"].as_f64().unwrap();
+    assert!((got - realized_both).abs() < 0.05, "已实现盈亏按卖出时的平均成本算：{got} vs {realized_both}");
+    let sell = account_trades(&app, &member, &base).await.into_iter().find(|t| t["trade_id"].as_i64() == Some(sell_id)).unwrap();
+    assert!((sell["realized_pnl"].as_f64().unwrap() - realized_both).abs() < 0.05, "{sell}");
+
+    // 撤销第二笔买入：股数、成本、已实现盈亏全部按剩下的流水重算
+    let buy2_id = account_trades(&app, &member, &base).await.into_iter().find(|t| t["kind"] == "buy" && t["shares"] == 500).unwrap()["trade_id"]
+        .as_i64()
+        .unwrap();
+    let (r, v) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/{buy2_id}"), None).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    assert_eq!(v["positions"][0]["position"]["shares"], 600);
+    let cost = v["positions"][0]["position"]["cost_price"].as_f64().unwrap();
+    assert!((cost - cost1).abs() < 0.001, "撤销后成本回到第一笔买入：{cost} vs {cost1}");
+    let cash = v["summary"]["account"]["cash"].as_f64().unwrap();
+    assert!((cash - 88_983.25).abs() < 0.02, "撤销买入要把付出的钱加回现金：{cash}");
+    let realized_after_undo = 11_989.0 - 400.0 * cost1;
+    let got = v["summary"]["realized_pnl"].as_f64().unwrap();
+    assert!((got - realized_after_undo).abs() < 0.05, "后面的卖出按新的平均成本重算：{got} vs {realized_after_undo}");
+    assert!(account_trades(&app, &member, &base).await.iter().any(|t| t["trade_id"].as_i64() == Some(buy2_id) && t["reversed_at"].is_string()), "撤销的记录保留下来");
+
+    // 撤销第一笔买入会让后面那笔卖出的持仓不够：拒绝并提示去校准
+    let buy1_id = account_trades(&app, &member, &base).await.into_iter().find(|t| t["kind"] == "buy" && t["reversed_at"].is_null()).unwrap()["trade_id"].as_i64().unwrap();
+    let (r, v) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/{buy1_id}"), None).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "后面已经卖出过，不能撤销支撑它的买入：{v}");
+    assert!(v["message"].as_str().unwrap().contains("校准"), "{v}");
+
+    // 撤销卖出：持仓和成本恢复，已实现盈亏回到 0
+    let (r, v) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/{sell_id}"), None).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    assert_eq!(v["positions"][0]["position"]["shares"], 1000);
+    assert_eq!(v["summary"]["realized_pnl"], 0.0);
+    let cash = v["summary"]["account"]["cash"].as_f64().unwrap();
+    assert!((cash - 76_994.25).abs() < 0.02, "撤销卖出要把回款扣回去：{cash}");
+
+    // 同一笔不能撤销两次；撤销最后一笔买入后持仓清空、现金回到建账户时
+    let (r, _) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/{sell_id}"), None).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "已经撤销过");
+    let (r, v) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/{buy1_id}"), None).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    assert!(v["positions"].as_array().unwrap().is_empty(), "撤销后持仓清空");
+    assert_eq!(v["summary"]["account"]["cash"], 100_000.0);
+    let (r, _) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/{buy1_id}"), None).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "已经撤销过");
+    let (r, _) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/999999"), None).await;
+    assert_eq!(st(&r), StatusCode::NOT_FOUND, "没有这笔流水");
+
+    // 按建议执行、分红送转、校准的流水不能单独撤销
+    for (kind, source, want) in [("buy", "advice", "按建议"), ("dividend", "corp_action", "分红送转")] {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO app.account_trade (account_id, kind, trade_date, thscode, shares, amount, source, note)
+             VALUES ($1, $2, current_date, '600000.SH', $3, 0, $4, '测试') RETURNING trade_id",
+        )
+        .bind(acc)
+        .bind(kind)
+        .bind(if kind == "buy" { 100 } else { 0 })
+        .bind(source)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        let (r, v) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/{id}"), None).await;
+        assert_eq!(st(&r), StatusCode::BAD_REQUEST, "{kind}/{source} 不能撤销：{v}");
+        assert!(v["message"].as_str().unwrap().contains(want), "{v}");
+        sqlx::query("DELETE FROM app.account_trade WHERE trade_id = $1").bind(id).execute(&db.pool).await.unwrap();
+    }
+
+    // 校准流水不能撤销；没填成本价的持仓卖出后，已实现盈亏算不出来
+    let (r, _) = call_as(&app, Some(&member), "PUT", &format!("{base}/positions"), Some(json!({"cash": 50000, "positions": [{"thscode": "600000.SH", "shares": 1000}]}))).await;
+    assert_eq!(st(&r), StatusCode::OK);
+    let adjust = account_trades(&app, &member, &base).await.into_iter().find(|t| t["kind"] == "adjust").unwrap();
+    let (r, v) = call_as(&app, Some(&member), "DELETE", &format!("{base}/trades/{}", adjust["trade_id"]), None).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("校准"), "{v}");
+    let (r, _) = call_as(&app, Some(&member), "POST", &format!("{base}/trades"), Some(json!({"kind": "sell", "thscode": "600000.SH", "shares": 500, "price": 24}))).await;
+    assert_eq!(st(&r), StatusCode::OK);
+    let (_, d) = call_as(&app, Some(&member), "GET", &base, None).await;
+    assert!(d["summary"]["realized_pnl"].is_null(), "有卖出没填成本价时显示算不出，而不是错的数字：{d}");
+
+    // 别人的账户和自己的流水一样：看不到、也撤销不了
+    let (_, v) = call_as(&app, Some(&admin), "POST", "/api/v1/accounts", Some(json!({"name": "管理员账户", "cash": 1000}))).await;
+    let admin_acc = v["summary"]["account"]["account_id"].as_i64().unwrap();
+    let (_, admin_trades) = call_as(&app, Some(&admin), "GET", &format!("/api/v1/accounts/{admin_acc}/trades"), None).await;
+    let admin_trade = admin_trades[0]["trade_id"].as_i64().unwrap();
+    let (r, _) = call_as(&app, Some(&member), "DELETE", &format!("/api/v1/accounts/{admin_acc}/trades/{admin_trade}"), None).await;
+    assert_eq!(st(&r), StatusCode::NOT_FOUND, "管理员看不到普通用户，普通用户也看不到管理员的账户");
+
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn rights_reminder_and_daily_equity() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    synthetic_stock(&db.pool).await;
+    let app = niulai::api::router(Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), db.pool.clone()).await.unwrap());
+    let admin = login(&app, "admin", "secret-pass").await.expect("管理员登录");
+    let (_, v) = call_as(&app, Some(&admin), "POST", "/api/v1/users", Some(json!({"username": "investor", "password": "invest-pass-1"}))).await;
+    assert_eq!(v["user"]["role"], "member");
+    let member = login(&app, "investor", "invest-pass-1").await.expect("普通用户登录");
+    let st = |r: &axum::http::Response<()>| r.status();
+
+    // 建账户时现金为 0，用一笔转入和一笔买入构成历史（成交日落在日线范围内，便于核对净值）
+    let (r, v) = call_as(&app, Some(&member), "POST", "/api/v1/accounts", Some(json!({"name": "净值测试", "cash": 0}))).await;
+    assert_eq!(st(&r), StatusCode::CREATED, "{v}");
+    let acc = v["summary"]["account"]["account_id"].as_i64().unwrap();
+    let base = format!("/api/v1/accounts/{acc}");
+    let (r, v) = call_as(&app, Some(&member), "POST", &format!("{base}/trades"), Some(json!({"kind": "cash_in", "amount": 100000, "trade_date": "2026-02-27"}))).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    let (r, v) = call_as(&app, Some(&member), "POST", &format!("{base}/trades"), Some(json!({"kind": "buy", "thscode": "600000.SH", "shares": 1000, "price": 20, "trade_date": "2026-03-02"}))).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    assert_eq!(v["summary"]["account"]["cash"], 79_995.0, "100,000 元减 20,000 元成交额和 5 元佣金");
+    assert_eq!(v["positions"][0]["position"]["shares"], 1000);
+
+    let end: chrono::NaiveDate = sqlx::query_scalar("SELECT max(trade_date) FROM mkt.stock_bar_1d").fetch_one(&db.pool).await.unwrap();
+    // 配股不自动记账：自动记账只处理分红送转
+    assert_eq!(niulai::account::corp::apply(&db.pool, end).await.unwrap(), 0);
+
+    // 配股提醒：除权日已过、按除权日持有的股数可以认购；4 月 1 日每 10 股配 3 股，配股价 10 元
+    sqlx::query("INSERT INTO mkt.corp_action (thscode, ex_date, seq, rights_ratio, rights_price, source, run_id) VALUES ('600000.SH', '2026-04-01', 1, 0.3, 10, 'dump', 1)")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (r, v) = call_as(&app, Some(&member), "GET", &format!("{base}/corp-actions"), None).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    let rights = &v[0];
+    assert_eq!(rights["thscode"], "600000.SH");
+    assert_eq!(rights["name"], "测试银行");
+    assert_eq!(rights["rights_per_10"], 3.0);
+    assert_eq!(rights["rights_price"], 10.0);
+    assert_eq!(rights["held_shares"], 1000);
+    assert_eq!(rights["rights_shares"], 300);
+    assert_eq!((rights["amount"].as_f64().unwrap(), rights["fee"].as_f64().unwrap()), (3_000.0, 5.0));
+
+    // 认购：扣配股款和费用，持仓按平均成本更新，记一条 rights 流水，提醒消失
+    let sub = format!("{base}/corp-actions/rights/600000.SH/2026-04-01/subscribe");
+    let (r, v) = call_as(&app, Some(&member), "POST", &sub, None).await;
+    assert_eq!(st(&r), StatusCode::OK, "{v}");
+    assert_eq!(v["positions"][0]["position"]["shares"], 1300);
+    let cost = v["positions"][0]["position"]["cost_price"].as_f64().unwrap();
+    assert!((cost - (20.005 * 1000.0 + 3_005.0) / 1300.0).abs() < 0.001, "{cost}");
+    assert_eq!(v["summary"]["account"]["cash"], 76_990.0, "扣 3,000 元配股款和 5 元费用");
+    let (_, trades) = call_as(&app, Some(&member), "GET", &format!("{base}/trades"), None).await;
+    let right_trade = trades.as_array().unwrap().iter().find(|t| t["kind"] == "rights").unwrap();
+    assert_eq!(right_trade["shares"], 300);
+    assert_eq!(right_trade["source"], "corp_action");
+    assert!((right_trade["amount"].as_f64().unwrap() + 3_005.0).abs() < 0.01, "{right_trade}");
+    let (_, v) = call_as(&app, Some(&member), "GET", &format!("{base}/corp-actions"), None).await;
+    assert!(v.as_array().unwrap().is_empty(), "处理过的不再提醒：{v}");
+    let (r, v) = call_as(&app, Some(&member), "POST", &sub, None).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "同一笔配股不能认购两次：{v}");
+
+    // 暂不处理：只记状态，不买、不扣钱，提醒消失
+    sqlx::query("INSERT INTO mkt.corp_action (thscode, ex_date, seq, rights_ratio, rights_price, source, run_id) VALUES ('600000.SH', '2026-05-04', 1, 0.2, 8, 'dump', 1)")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (_, before) = call_as(&app, Some(&member), "GET", &base, None).await;
+    let cash_before = before["summary"]["account"]["cash"].as_f64().unwrap();
+    let ignore = format!("{base}/corp-actions/rights/600000.SH/2026-05-04/ignore");
+    let (r, _) = call_as(&app, Some(&member), "POST", &ignore, None).await;
+    assert_eq!(st(&r), StatusCode::NO_CONTENT);
+    let (_, d) = call_as(&app, Some(&member), "GET", &base, None).await;
+    assert_eq!(d["summary"]["account"]["cash"], cash_before);
+    assert_eq!(d["positions"][0]["position"]["shares"], 1300, "暂不处理不加股数");
+    let (_, v) = call_as(&app, Some(&member), "GET", &format!("{base}/corp-actions"), None).await;
+    assert!(v.as_array().unwrap().is_empty(), "{v}");
+
+    // 配股款超过现金：拒绝并提示先转入现金
+    sqlx::query("INSERT INTO mkt.corp_action (thscode, ex_date, seq, rights_ratio, rights_price, source, run_id) VALUES ('600000.SH', '2026-06-01', 1, 3.0, 100, 'dump', 1)")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (_, v) = call_as(&app, Some(&member), "GET", &format!("{base}/corp-actions"), None).await;
+    assert_eq!(v[0]["rights_shares"], 3000);
+    let expensive = format!("{base}/corp-actions/rights/600000.SH/2026-06-01/subscribe");
+    let (r, v) = call_as(&app, Some(&member), "POST", &expensive, None).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("不够"), "{v}");
+    // 除权日在本笔买入之前的配股不算：当时还没有持仓
+    sqlx::query("INSERT INTO mkt.corp_action (thscode, ex_date, seq, rights_ratio, rights_price, source, run_id) VALUES ('600000.SH', '2026-02-01', 1, 0.5, 9, 'dump', 1)")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (_, v) = call_as(&app, Some(&member), "GET", &format!("{base}/corp-actions"), None).await;
+    assert_eq!(v.as_array().unwrap().len(), 1, "买入之前的配股不算，仍只有 6 月 1 日那笔：{v}");
+    let (r, _) = call_as(&app, Some(&member), "POST", &format!("{base}/corp-actions/rights/600000.SH/2026-06-01/ignore"), None).await;
+    assert_eq!(st(&r), StatusCode::NO_CONTENT);
+
+    // 净值测试用完整的交易日历：停牌那天日线里没有这一天，但净值也要有点
+    sqlx::query("INSERT INTO ref.trading_day (cal_date, source) SELECT DISTINCT trade_date, 'derived' FROM mkt.stock_bar_1d ON CONFLICT DO NOTHING")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    // 每日净值：最后一个点是日线最新一天；现金扣掉买入的费用，持仓按当天收盘价
+    let (r, curve) = call_as(&app, Some(&member), "GET", &format!("{base}/equity?days=200"), None).await;
+    assert_eq!(st(&r), StatusCode::OK, "{curve}");
+    let points = curve["points"].as_array().unwrap();
+    assert!(!points.is_empty(), "{curve}");
+    let last = points.last().unwrap();
+    assert_eq!(last["trade_date"], end.to_string());
+    let close: f64 = sqlx::query_scalar("SELECT close::float8 FROM mkt.stock_bar_1d WHERE thscode = '600000.SH' AND trade_date = $1")
+        .bind(end)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(last["cash"], 79_995.0, "配股认购记在今天，6 月的净值里还没有它");
+    assert!((last["market_value"].as_f64().unwrap() - 1000.0 * close).abs() < 0.01, "{last}");
+    assert!((last["total_assets"].as_f64().unwrap() - (79_995.0 + 1000.0 * close)).abs() < 0.01, "{last}");
+    let return_pct = curve["return_pct"].as_f64().unwrap();
+    assert!((return_pct - (1000.0 * close - 20_005.0) / 100_000.0 * 100.0).abs() < 0.01, "区间收益率：{return_pct}");
+    assert_eq!(curve["net_transfer"], 0.0, "区间内没有转入转出");
+    assert_eq!(points[0]["trade_date"], "2026-02-27", "从第一笔流水（转入）那天开始");
+
+    // 停牌：没有当天日线时沿用最近收盘价，当天盈亏按没有变化算
+    sqlx::query("DELETE FROM mkt.stock_bar_1d WHERE thscode = '600000.SH' AND trade_date = '2026-04-15'").execute(&db.pool).await.unwrap();
+    let (_, curve) = call_as(&app, Some(&member), "GET", &format!("{base}/equity?days=200"), None).await;
+    let suspended = curve["points"].as_array().unwrap().iter().find(|p| p["trade_date"] == "2026-04-15").expect("停牌那天也要有点");
+    let prev: f64 = sqlx::query_scalar("SELECT close::float8 FROM mkt.stock_bar_1d WHERE thscode = '600000.SH' AND trade_date < '2026-04-15' ORDER BY trade_date DESC LIMIT 1")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert!((suspended["market_value"].as_f64().unwrap() - 1000.0 * prev).abs() < 0.01, "{suspended}");
+    assert_eq!(suspended["day_pnl"], 0.0, "停牌当天没有涨跌：{suspended}");
+
+    // 快照落库；days 限制返回的天数
+    let snapshots: i64 = sqlx::query_scalar("SELECT count(*) FROM app.account_equity WHERE account_id = $1").bind(acc).fetch_one(&db.pool).await.unwrap();
+    let total_points = curve["points"].as_array().unwrap().len() as i64;
+    assert!(snapshots >= total_points, "快照按交易日 upsert：{snapshots} vs {total_points}");
+    let (_, short) = call_as(&app, Some(&member), "GET", &format!("{base}/equity?days=10"), None).await;
+    assert_eq!(short["points"].as_array().unwrap().len(), 10);
+    let (r, _) = call_as(&app, Some(&admin), "GET", &format!("{base}/equity"), None).await;
+    assert_eq!(st(&r), StatusCode::NOT_FOUND, "别人看不到这个账户的净值");
+    let (r, _) = call_as(&app, Some(&admin), "GET", &format!("{base}/corp-actions"), None).await;
+    assert_eq!(st(&r), StatusCode::NOT_FOUND);
+
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn finished_run_continues_its_chain_once() {
     let Some(db) = TestDb::create().await else {
@@ -1379,4 +1668,282 @@ async fn finished_run_continues_its_chain_once() {
     assert!(!niulai::sync::run::take_pending_waves(&mut tx, run_id).await.unwrap());
     tx.rollback().await.unwrap();
     assert!(niulai::sync::run::unchained(&db.pool).await.unwrap().is_empty());
+}
+
+/// 写一条涨跌停池的 raw.record；payload 是供应商原样的 JSON
+async fn put_hot_record(pool: &PgPool, dataset: &str, date: &str, key: &str, payload: Value) {
+    sqlx::query(
+        "INSERT INTO raw.record (dataset_id, rkey, obs_date, thscode, payload, payload_hash)
+         VALUES ($1, $2, $3::date, $4, $5, 'test')",
+    )
+    .bind(dataset)
+    .bind(format!("{date}|{key}"))
+    .bind(date)
+    .bind(payload.get("thscode").and_then(Value::as_str).filter(|s| !s.is_empty()))
+    .bind(&payload)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// 写 2026-10-12 到 2026-10-16 的 5 根日线；highs 与 closes 一一对应
+async fn five_bars(pool: &PgPool, run_id: i64, code: &str, closes: &[f64], highs: &[f64]) {
+    let dates = ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16"];
+    for (i, date) in dates.iter().enumerate() {
+        let close = closes[i];
+        let high = highs[i];
+        let low = close.min(high) * 0.99;
+        sqlx::query(
+            "INSERT INTO mkt.stock_bar_1d (thscode, trade_date, open, high, low, close, volume, amount, run_id)
+             VALUES ($1, $2::date, $3::float8::numeric, $4::float8::numeric, $5::float8::numeric, $6::float8::numeric, 1000000, 1000000, $7)",
+        )
+        .bind(code)
+        .bind(date)
+        .bind(close)
+        .bind(high)
+        .bind(low)
+        .bind(close)
+        .bind(run_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// 权威涨跌停池是内部计算的依据：市场概况的涨停跌停数、巡检的涨停/炸板/连板、K 线上的信号日都和池一致；
+/// 池没有覆盖的日期、没进池的股票回退自算（这里覆盖了 2026-10-16 这一天）。
+/// 另外验证 limit_pool 版本更新后市场概况的缓存不再命中
+#[tokio::test]
+async fn authoritative_limit_pool_drives_overview_screening_and_signals() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let run_id: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind) VALUES ('backfill') RETURNING run_id").fetch_one(&db.pool).await.unwrap();
+    for (code, name, board) in [("600001.SH", "实涨停", "main"), ("600002.SH", "ST旧规则", "main"), ("600003.SH", "炸板旧算法", "main"), ("600004.SH", "ST跌停旧规则", "main")] {
+        sqlx::query(
+            "INSERT INTO ref.security (thscode, ticker, name, exchange, board, list_date, first_seen, last_seen)
+             VALUES ($1, $2, $3, 'SH', $4, '2020-01-02', current_date, current_date)",
+        )
+        .bind(code)
+        .bind(&code[..6])
+        .bind(name)
+        .bind(board)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+    // 最后一天：600001 涨 10%（在涨停池里，5 连板）；600002 是主板 ST 涨 7%，自算按 5% 会误判成涨停；
+    // 600003 盘中冲到涨停价、收盘回落（自算会判成炸板）；600004 是 ST 跌 7%（自算按 5% 会误判成跌停）
+    five_bars(&db.pool, run_id, "600001.SH", &[10.0, 10.1, 10.2, 10.3, 11.33], &[10.0, 10.1, 10.2, 10.3, 11.33]).await;
+    five_bars(&db.pool, run_id, "600002.SH", &[10.0, 10.1, 10.2, 10.3, 11.02], &[10.0, 10.1, 10.2, 10.3, 11.02]).await;
+    five_bars(&db.pool, run_id, "600003.SH", &[10.0, 10.1, 10.2, 10.3, 10.6], &[10.0, 10.1, 10.2, 10.3, 11.33]).await;
+    five_bars(&db.pool, run_id, "600004.SH", &[10.0, 9.9, 9.8, 9.7, 9.02], &[10.0, 9.9, 9.8, 9.7, 9.02]).await;
+    // 2026-10-16 的权威名单：涨停只有 600001（5 连板）；另一只不存在的股票 600099.SH 进了跌停、炸板池，
+    // 证明这两个池覆盖了这一天，而 600003、600004 不在名单里
+    put_hot_record(&db.pool, "special.limit_up_pool", "2026-10-16", "600001.SH", json!({"thscode": "600001.SH", "continue_day_cnt": 5, "is_st": false})).await;
+    put_hot_record(&db.pool, "special.limit_up_pool", "2026-10-16", "600099.SH", json!({"thscode": "600099.SH", "continue_day_cnt": 1, "is_st": false})).await;
+    put_hot_record(&db.pool, "special.limit_down_pool", "2026-10-16", "600099.SH", json!({"thscode": "600099.SH"})).await;
+    put_hot_record(&db.pool, "special.limit_break_pool", "2026-10-16", "600099.SH", json!({"thscode": "600099.SH"})).await;
+    // 迁移建好了 limit_pool 的版本行
+    let has_version: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ops.derived_version WHERE name = 'limit_pool')").fetch_one(&db.pool).await.unwrap();
+    assert!(has_version, "迁移应插入 limit_pool 版本行");
+
+    let settings = bare_settings("http://127.0.0.1:1", Some("test"));
+    let engine = Engine::new(settings, db.pool.clone()).await.unwrap();
+    let app = logged_in(niulai::api::router(engine)).await;
+
+    // 市场概况：涨停 1 只（自算会是 2 只），跌停 0 只（自算会是 1 只）
+    let (st, ov) = call(&app, "GET", "/api/v1/market/overview?date=2026-10-16", None).await;
+    assert_eq!(st, StatusCode::OK, "{ov}");
+    assert_eq!(ov["stocks"], 4);
+    assert_eq!(ov["limit_up"], 1, "以涨停池为准：600002 涨 7% 不是涨停");
+    assert_eq!(ov["limit_down"], 0, "以跌停池为准：600004 跌 7% 不是跌停");
+
+    // 巡检：涨停只命中 600001；炸板不命中（600003 只是自算的炸板）；3 连板只命中 600001（供应商的 5 连板）
+    let make = |sig: &str, params: Value| json!({"universe": {"exclude_st": false}, "all": [{"kind": "signal", "signal": sig, "params": params}], "exit": {}});
+    let mut ids = vec![];
+    for (name, sig, params) in [
+        ("池涨停", "limit_up", json!({})),
+        ("池炸板", "broken_limit_up", json!({})),
+        ("池连板", "consecutive_limit_up", json!({"n": 3})),
+        ("池跌停", "limit_down", json!({})),
+    ] {
+        let (st, created) = call(&app, "POST", "/api/v1/strategies", Some(json!({"name": name, "definition": make(sig, params)}))).await;
+        assert_eq!(st, StatusCode::CREATED, "{created}");
+        let id = created["strategy_id"].as_i64().unwrap();
+        let (st, run) = call(&app, "POST", &format!("/api/v1/screening/run?strategy_id={id}"), None).await;
+        assert_eq!(st, StatusCode::OK, "{run}");
+        let (_, res) = call(&app, "GET", &format!("/api/v1/strategies/{id}/results"), None).await;
+        let hits: Vec<&str> = res["hits"].as_array().unwrap().iter().map(|h| h["thscode"].as_str().unwrap()).collect();
+        let want = if name == "池涨停" || name == "池连板" { vec!["600001.SH"] } else { vec![] };
+        assert_eq!(hits, want, "{name} 的巡检结果：{res}");
+        ids.push(id);
+    }
+
+    // K 线上的信号日：600002 自算的涨停不再出现；600001 的 3 连板在 2026-10-16 出现（自算从数据起点数是 0 连板）
+    let target = json!({"condition": {"kind": "signal", "signal": "limit_up"}});
+    let (st, d) = call(&app, "POST", "/api/v1/securities/600002.SH/signal-days", Some(json!({"target": target}))).await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert_eq!(d["dates"], json!([]), "600002 不在涨停池里，涨 7% 不算涨停");
+    let target = json!({"condition": {"kind": "signal", "signal": "consecutive_limit_up", "params": {"n": 3}}});
+    let (st, d) = call(&app, "POST", "/api/v1/securities/600001.SH/signal-days", Some(json!({"target": target}))).await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert_eq!(d["dates"], json!(["2026-10-16"]), "用供应商的 5 连板");
+
+    // 缓存：第一次市场概况已缓存；补上 600002 的涨停记录并更新 limit_pool 版本后，不再命中旧结果
+    assert_eq!(ov["limit_up"], 1);
+    put_hot_record(&db.pool, "special.limit_up_pool", "2026-10-16", "600002.SH", json!({"thscode": "600002.SH", "continue_day_cnt": 1, "is_st": true})).await;
+    sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = 'limit_pool'").execute(&db.pool).await.unwrap();
+    let (st, ov2) = call(&app, "GET", "/api/v1/market/overview?date=2026-10-16", None).await;
+    assert_eq!(st, StatusCode::OK, "{ov2}");
+    assert_eq!(ov2["limit_up"], 2, "版本更新后重新计算，600002 现在在池里");
+
+    for id in ids {
+        call(&app, "DELETE", &format!("/api/v1/strategies/{id}"), None).await;
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn market_hot_groups_truncates_and_explains_missing_data() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let app = niulai::api::router(Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), db.pool.clone()).await.unwrap());
+    let admin = login(&app, "admin", "secret-pass").await.expect("管理员登录");
+    let get = |date: &str| format!("/api/v1/market/hot?date={date}");
+
+    // 还没有任何日线和涨跌停池：空态用白话说明，交易日为空
+    let (r, v) = call_as(&app, Some(&admin), "GET", "/api/v1/market/hot", None).await;
+    assert_eq!(r.status(), StatusCode::OK, "{v}");
+    assert_eq!(v["available"], false);
+    assert!(v["trade_date"].is_null(), "{v}");
+    assert!(v["note"].as_str().unwrap().contains("还没有行情数据"), "{v}");
+    assert_eq!(v["limit_up_total"], 0);
+    assert_eq!(v["limit_up_groups"].as_array().unwrap().len(), 0);
+
+    // 2026-10-15：首板 2 只（其中一只的 thscode 为空，按 ticker 补）、3 连板 1 只；跌停 2 只、炸板 1 只；另有统计
+    let up = |name: &str, ticker: &str, thscode: &str, seal: f64, cnt: i64| {
+        json!({
+            "name": name, "ticker": ticker, "thscode": thscode, "is_st": false,
+            "last_price": 61.44, "seal_money": seal, "limit_up_time": "10:55",
+            "limit_up_reason": "半导体存储+重组审核中止", "continue_day_cnt": cnt,
+            "continue_day_text": if cnt == 1 { "首板" } else { "3连板" }, "price_change_ratio_pct": 10.009
+        })
+    };
+    put_hot_record(&db.pool, "special.limit_up_pool", "2026-10-15", "600002.SH", up("大封单", "600002", "600002.SH", 9_000_000.0, 1)).await;
+    put_hot_record(&db.pool, "special.limit_up_pool", "2026-10-15", "605178.SH", up("时空科技", "605178", "", 1_000_000.0, 1)).await;
+    put_hot_record(&db.pool, "special.limit_up_pool", "2026-10-15", "600001.SH", up("三连板", "600001", "600001.SH", 2_000_000.0, 3)).await;
+    put_hot_record(
+        &db.pool,
+        "special.limit_down_pool",
+        "2026-10-15",
+        "002134.SZ",
+        json!({"name": "天津普林", "ticker": "002134", "thscode": "002134.SZ", "last_price": 21.91,
+               "last_limit_time": "14:03", "first_limit_time": "13:42", "price_change_ratio_pct": -9.98}),
+    )
+    .await;
+    put_hot_record(
+        &db.pool,
+        "special.limit_down_pool",
+        "2026-10-15",
+        "002552.SZ",
+        json!({"name": "宝鼎科技", "ticker": "002552", "thscode": "002552.SZ", "last_price": 42.06,
+               "last_limit_time": "14:18", "first_limit_time": "14:15", "price_change_ratio_pct": -9.99}),
+    )
+    .await;
+    put_hot_record(
+        &db.pool,
+        "special.limit_break_pool",
+        "2026-10-15",
+        "000011.SZ",
+        json!({"name": "深物业A", "ticker": "000011", "thscode": "000011.SZ", "turnover": 1050535140.0,
+               "last_price": 11.4, "open_times": 2, "turnover_ratio_pct": 17.3043, "price_change_ratio_pct": 5.3604}),
+    )
+    .await;
+    put_hot_record(
+        &db.pool,
+        "special.limit_up_stats",
+        "2026-10-15",
+        "trade_date",
+        json!({"seal_rate": 0.5, "trade_date": "2026-10-15", "limit_up_stock_count": 3,
+               "touched_limit_up_stock_count": 6, "open_stock_count": 3}),
+    )
+    .await;
+
+    // 没传日期：没有日线时退回涨跌停池里最新的那一天
+    let (r, v) = call_as(&app, Some(&admin), "GET", "/api/v1/market/hot", None).await;
+    assert_eq!(r.status(), StatusCode::OK, "{v}");
+    assert_eq!(v["trade_date"], "2026-10-15");
+    assert_eq!(v["available"], true);
+    assert!(v["note"].is_null(), "{v}");
+    assert_eq!((v["limit_up_total"].as_i64(), v["max_board"].as_i64()), (Some(3), Some(3)));
+    let groups = v["limit_up_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2, "{v}");
+    assert_eq!((groups[0]["board_num"].as_i64(), groups[0]["label"].as_str(), groups[0]["count"].as_i64()), (Some(3), Some("3 板"), Some(1)));
+    assert_eq!((groups[1]["label"].as_str(), groups[1]["count"].as_i64()), (Some("首板"), Some(2)));
+    // 组内按封单额从大到小；thscode 为空的那只按 ticker 补交易所后缀
+    assert_eq!(groups[1]["stocks"][0]["name"], "大封单");
+    assert_eq!(groups[1]["stocks"][1]["thscode"], "605178.SH", "{v}");
+    assert_eq!(groups[1]["stocks"][1]["continue_day_text"], "首板");
+    assert_eq!(groups[1]["stocks"][1]["seal_money"], "1000000");
+    assert_eq!(v["limit_down_total"], 2);
+    assert_eq!(v["limit_down_stocks"][0]["name"], "宝鼎科技", "跌得多的在前");
+    assert_eq!(v["broken_total"], 1);
+    assert_eq!(v["broken_stocks"][0]["open_times"], 2);
+    assert_eq!(v["broken_stocks"][0]["turnover"], "1050535140");
+    assert_eq!(v["stats"]["seal_rate"], 0.5);
+    assert_eq!(v["stats"]["touched_limit_up_count"], 6);
+
+    // 日期是截止日期：这天还没有数据时给出空态和白话说明
+    let (r, v) = call_as(&app, Some(&admin), "GET", &get("2026-10-14"), None).await;
+    assert_eq!(r.status(), StatusCode::OK, "{v}");
+    assert_eq!(v["trade_date"], "2026-10-14");
+    assert_eq!(v["available"], false);
+    assert!(v["note"].as_str().unwrap().contains("2026-10-14"), "{}", v["note"]);
+
+    // 2026-10-14：55 只首板、55 只炸板；每组只列 50 只，总数另给，没有统计时 stats 为空
+    for i in 0..55 {
+        let code = format!("60{:04}.SH", i);
+        put_hot_record(&db.pool, "special.limit_up_pool", "2026-10-14", &code, up(&format!("涨停{i}"), &format!("60{i:04}"), &code, f64::from(i), 1)).await;
+        put_hot_record(
+            &db.pool,
+            "special.limit_break_pool",
+            "2026-10-14",
+            &code,
+            json!({"name": format!("炸板{i}"), "ticker": format!("60{i:04}"), "thscode": code, "open_times": i % 5}),
+        )
+        .await;
+    }
+    let (r, v) = call_as(&app, Some(&admin), "GET", &get("2026-10-14"), None).await;
+    assert_eq!(r.status(), StatusCode::OK, "{v}");
+    assert_eq!(v["available"], true);
+    assert_eq!(v["limit_up_total"], 55);
+    let first = &v["limit_up_groups"][0];
+    assert_eq!((first["count"].as_i64(), first["stocks"].as_array().unwrap().len() as i64), (Some(55), 50));
+    assert_eq!((v["broken_total"].as_i64(), v["broken_stocks"].as_array().unwrap().len() as i64), (Some(55), 50));
+    assert_eq!(v["limit_down_total"], 0);
+    assert!(v["stats"].is_null());
+    assert_eq!(v["broken_stocks"][0]["open_times"], 4, "炸板次数多的在前");
+
+    // 日期格式不对时返回 400
+    let (r, _) = call_as(&app, Some(&admin), "GET", "/api/v1/market/hot?date=2026-13-01", None).await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+
+    // 比涨停池开始采集更早的日期：说明那时还没有数据，不是「没同步」
+    let (r, v) = call_as(&app, Some(&admin), "GET", &get("2019-01-04"), None).await;
+    assert_eq!(r.status(), StatusCode::OK, "{v}");
+    assert_eq!(v["available"], false);
+    assert!(v["note"].as_str().unwrap().contains("2020 年 7 月"), "{}", v["note"]);
+
+    // 普通用户也能看
+    let (_, u) = call_as(&app, Some(&admin), "POST", "/api/v1/users", Some(json!({"username": "hotfan"}))).await;
+    let generated = u["generated_password"].as_str().expect("生成初始密码").to_string();
+    let member = login(&app, "hotfan", &generated).await.expect("普通用户登录");
+    let (r, _) = call_as(&app, Some(&member), "GET", &get("2026-10-15"), None).await;
+    assert_eq!(r.status(), StatusCode::OK, "今日热点对普通用户开放");
+
+    db.drop().await;
 }
