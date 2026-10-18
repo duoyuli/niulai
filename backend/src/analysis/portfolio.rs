@@ -149,21 +149,18 @@ fn candidates(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, fr
 pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Option<PortfolioOutcome>> {
     let sec = market::securities(pool).await?;
     let warmup = d.warmup() + 5;
-    let lo = p.start - chrono::Duration::days(calendar_days_for(warmup));
-    // 权威涨跌停池：候选买卖点里的涨跌停、炸板、连板信号同样以供应商的名单为准
-    let limits = super::limit_pool::LimitPool::load(pool, lo, p.end).await?;
     let mut stocks: Vec<Stock> = vec![];
     let mut cands: Vec<Candidate> = vec![];
     let mut calendar: BTreeSet<NaiveDate> = BTreeSet::new();
     let mut ew = EqualWeight::default();
     let any_stock = Definition::any_stock();
-    prices::for_each_stock(pool, lo, p.end, |code, bars| {
+    prices::for_each_stock(pool, p.start - chrono::Duration::days(calendar_days_for(warmup)), p.end, |code, bars| {
         let Some(meta) = sec.meta.get(code) else { return };
         let Some(first) = bars.iter().position(|b| b.date >= p.start) else { return };
         for b in &bars[first..] {
             calendar.insert(b.date);
         }
-        let f = Frame::with_authority(bars, Some(meta), &limits, code);
+        let f = Frame::new(bars, Some(meta));
         ew.add(&any_stock, bars, &f, meta, first);
         let found = candidates(bars, &f, meta, d, first, stocks.len());
         if found.is_empty() {

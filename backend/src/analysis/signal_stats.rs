@@ -92,18 +92,15 @@ pub async fn compute(pool: &PgPool, cond: &Condition, lib: &SignalLib, years: u3
         lib: lib.clone(),
     };
     let warmup = d.warmup() + 5;
-    let lo = start - chrono::Duration::days(calendar_days_for(warmup));
-    // 权威涨跌停池：统计历史时同样以供应商的名单为准
-    let limits = super::limit_pool::LimitPool::load(pool, lo, end).await?;
     let mut accs: Vec<Acc> = HORIZONS.iter().map(|_| Acc::default()).collect();
     let mut base = [Base::default(); HORIZONS.len()];
     let mut occurrences = 0u64;
     let mut stocks = 0u64;
     let mut recent: Vec<Occurrence> = vec![];
-    prices::for_each_stock(pool, lo, end, |code, bars| {
+    prices::for_each_stock(pool, start - chrono::Duration::days(calendar_days_for(warmup)), end, |code, bars| {
         let Some(meta) = sec.meta.get(code) else { return };
         let Some(first) = bars.iter().position(|b| b.date >= start) else { return };
-        let f = Frame::with_authority(bars, Some(meta), &limits, code);
+        let f = Frame::new(bars, Some(meta));
         let s = cond.series(&f, lib);
         let mut hit = false;
         for i in first..bars.len() {

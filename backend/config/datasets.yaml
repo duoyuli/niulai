@@ -302,7 +302,7 @@ datasets:
     summary: 每天涨停的股票、涨停原因、首次涨停时间、连板天数，2020 年 7 月起
     endpoint: /api/a-share/special-data/limit-up-pool
     priority: P1
-    schedule: daily
+    schedule: weekly
     partition: {trading_day: {from: 2020-07-01}}
     params: {date_ms: "{date_ms}"}
     paging: {page: {page_param: page, size_param: size, size: 200}}
@@ -311,7 +311,7 @@ datasets:
     thscode: "{thscode}"
     obs_date: "{_part.date}"
     incremental: {since_cursor: {overlap_days: 1}}
-    notes: 涨停原因、首次涨停时间、连板天数、封单额、是否 ST；最早有数据的交易日是 2020-07-22，更早的日期返回空。每天同步：内部计算的涨停、连板信号以这个名单为准（见 docs/domains/strategies.md#limits）。
+    notes: 涨停原因、首次涨停时间、连板天数、封单额、是否 ST；最早有数据的交易日是 2020-07-22，更早的日期返回空。
 
   - id: special.limit_down_pool
     title: 跌停股
@@ -319,7 +319,7 @@ datasets:
     summary: 每天跌停的股票，最近一年
     endpoint: /api/a-share/special-data/limit-down-pool
     priority: P1
-    schedule: daily
+    schedule: weekly
     partition: {trading_day: {from: -1y}}
     params: {date_ms: "{date_ms}"}
     paging: {page: {page_param: page, size_param: size, size: 200}}
@@ -328,14 +328,14 @@ datasets:
     thscode: "{thscode}"
     obs_date: "{_part.date}"
     incremental: {since_cursor: {overlap_days: 1}}
-    notes: 只支持最近一年（实测 2025-10-15 起可用，更早的日期返回 1002 Invalid parameter format）。每天同步：有名单的日期以名单为准，更早的日期回退自算。
+    notes: 只支持最近一年（实测 2025-10-15 起可用，更早的日期返回 1002 Invalid parameter format）。
   - id: special.limit_break_pool
     title: 炸板股
     category: 涨跌停
     summary: 盘中涨停、收盘没封住的股票，最近一年
     endpoint: /api/a-share/special-data/limit-break-pool
     priority: P1
-    schedule: daily
+    schedule: weekly
     partition: {trading_day: {from: -1y}}
     params: {date_ms: "{date_ms}"}
     paging: {page: {page_param: page, size_param: size, size: 200}}
@@ -344,7 +344,7 @@ datasets:
     thscode: "{thscode}"
     obs_date: "{_part.date}"
     incremental: {since_cursor: {overlap_days: 1}}
-    notes: 只支持最近一年（实测 2025-10-15 起可用，更早的日期返回 1002 Invalid parameter format）。每天同步：有名单的日期以名单为准，更早的日期回退自算。
+    notes: 只支持最近一年（实测 2025-10-15 起可用，更早的日期返回 1002 Invalid parameter format）。
   - id: special.limit_up_ladder
     title: 连板梯队
     category: 涨跌停

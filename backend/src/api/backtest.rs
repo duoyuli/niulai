@@ -13,7 +13,6 @@ use super::AppState;
 use super::market::windows;
 use crate::analysis::backtest::{self, Costs, EquityPoint, Risk, Signals, Summary, Trade};
 use crate::analysis::indicators::Frame;
-use crate::analysis::limit_pool::LimitPool;
 use crate::analysis::portfolio::{self, PortfolioOutcome};
 use crate::analysis::strategy::Definition;
 use crate::analysis::{market, prices};
@@ -194,14 +193,8 @@ async fn strategy_backtest(State(s): State<AppState>, Query(q): Query<StrategyBa
     let meta = sec.meta.get(&q.thscode).ok_or_else(|| ApiError::NotFound(format!("证券不存在：{}", q.thscode)))?;
     let bars = prices::stock_bars(&s.pool, &q.thscode, q.end).await?;
     let events = prices::corp_events(&s.pool, &q.thscode, q.end).await?;
-    // 权威涨跌停池：策略里的涨跌停、炸板、连板信号以供应商的名单为准；一字板能否成交的判断不变
-    let codes = [q.thscode.clone()];
-    let limits = match (bars.first(), bars.last()) {
-        (Some(first), Some(last)) => LimitPool::load_for(&s.pool, &codes, first.date, last.date).await?,
-        _ => LimitPool::empty(),
-    };
     let (entry, exit) = {
-        let f = Frame::with_authority(&bars, Some(meta), &limits, &q.thscode);
+        let f = Frame::new(&bars, Some(meta));
         let entry: Vec<bool> = (0..bars.len()).map(|i| d.in_universe(&f, meta, i) && d.matches(&f, i)).collect();
         let exit: Vec<bool> = (0..bars.len()).map(|i| d.exit_signal(&f, i)).collect();
         (entry, exit)

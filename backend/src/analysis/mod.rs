@@ -6,7 +6,6 @@
 pub mod backtest;
 pub mod diagnosis;
 pub mod indicators;
-pub mod limit_pool;
 pub mod ma;
 pub mod market;
 pub mod points;

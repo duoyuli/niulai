@@ -18,7 +18,7 @@
 <a id="schedules"></a>
 **执行频率**：
 
-- 每个交易日收盘后：日线（`a_share.snapshot`、`index.snapshot`）、公司行动（`a_share.corp_action_dump`，每天 1 次请求，影响复权）、只有当天值的 `a_share.valuation`、`a_share.auction_final`、`special.anomaly_reason`，以及涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`，三个池各 1 次请求）。涨跌停池改成每天同步，是因为内部计算的涨停、连板、炸板信号以它为准；每周同步会让最近几天的名单滞后。
+- 每个交易日收盘后：日线（`a_share.snapshot`、`index.snapshot`）、公司行动（`a_share.corp_action_dump`，每天 1 次请求，影响复权）、只有当天值的 `a_share.valuation`、`a_share.auction_final`、`special.anomaly_reason`。
 - 每周一次（默认周六 08:00）：其余已开启的数据集。按交易日或时间窗口同步的数据集每周从游标往后补，不会漏掉中间的日子。
 - 时间可以在同步页上修改，各计划的规则见 [定时调度](../architecture/sync_pipeline.md#scheduling)。
 - 指数成分改为每周快照，成分变化的记录精度是周。
@@ -54,8 +54,8 @@
 
 | 数据集 | 内容 | 历史 |
 | --- | --- | --- |
-| `special.limit_up_pool` | 涨停股（涨停原因、首次涨停时间、连板天数、封单额、是否 ST）。每天同步，内部计算的涨跌停、连板信号以它为准 | 2020-07-22 起，1,511 个交易日、约 9.7 万行，平均每天约 64 只；没有北交所（`.BJ` 0 行），每天有 1 行 `thscode` 为空（`ticker` 有值，按「不在池内」处理） |
-| `special.limit_down_pool`、`special.limit_break_pool` | 跌停股、炸板股。每天同步，有名单的日期以名单为准 | 最近一年（2025-10-16 起）；没有北交所 |
+| `special.limit_up_pool` | 涨停股（涨停原因、首次涨停时间、连板天数、封单额、是否 ST） | 2020-07-22 起 |
+| `special.limit_down_pool`、`special.limit_break_pool` | 跌停股、炸板股 | 最近一年 |
 | `special.limit_up_ladder` | 最近 30 个交易日的连板梯队 | 每周重取，按日期积累 |
 | `special.limit_up_stats` | 封板率、涨停家数、各连板高度的家数 | 最近一年 |
 | `special.dragon_tiger`、`special.dragon_tiger_institution` | 龙虎榜；上榜 A 股的机构买卖金额和席位 | 最近一年 |
@@ -93,5 +93,5 @@
 
 | 频率 | 请求数 |
 | --- | --- |
-| 每个交易日 | 约 163：快照 28、指数快照 15、公司行动 2、估值 56、竞价终态 56、异动原因 1、涨跌停池 3 |
+| 每个交易日 | 约 160：快照 28、指数快照 15、公司行动 2、估值 56、竞价终态 56、异动原因 1 |
 | 每周 | 约 3.6 万：日线校对约 5,580、三张报表各约 5,580、财务指标约 1.1 万（最近 2 期）、指数成分和指数日线各约 1,430，其余数十次；约需 6 小时 |

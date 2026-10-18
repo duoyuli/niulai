@@ -16,7 +16,6 @@ use utoipa_axum::routes;
 use super::AppState;
 use crate::analysis::backtest::ExitReason;
 use crate::analysis::indicators::{self, Frame, IndicatorId, IndicatorInfo, IndicatorRef};
-use crate::analysis::limit_pool::{CacheVersions, LimitPool};
 use crate::analysis::points::{self, PointTrade, Today};
 use crate::analysis::screener::{self, Hit};
 use crate::analysis::signal_stats::{self, SignalStats};
@@ -353,7 +352,7 @@ pub struct StatsInput {
 
 /// 统计结果的缓存：全市场几年的日线逐只算一遍要几秒，数据不变时直接复用
 /// (键, 数据版本, 结果)
-type CachedStats = (String, CacheVersions, SignalStats);
+type CachedStats = (String, Option<DateTime<Utc>>, SignalStats);
 
 #[derive(Default)]
 pub struct StatsCache {
@@ -372,8 +371,7 @@ async fn signal_stats(State(s): State<AppState>, Json(input): Json<StatsInput>) 
     // 键包含条件本身和草稿或自定义信号的定义：改了定义就不会命中旧结果
     let defs: Vec<(i64, String)> = lib.iter().map(|(k, v)| (*k, serde_json::to_string(&v.def).unwrap_or_default())).collect();
     let key = format!("{}|{years}|{defs:?}", serde_json::to_string(&cond).unwrap_or_default());
-    // 复权价或权威涨跌停池有变化都会让统计结果失效
-    let version = CacheVersions::load(&s.pool).await?;
+    let version: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT updated_at FROM ops.derived_version WHERE name = 'adj_factor'").fetch_optional(&s.pool).await?;
     if let Some(hit) = s.stats.entries.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, v, _)| *k == key && *v == version) {
         return Ok(Json(hit.2.clone()));
     }
@@ -407,23 +405,13 @@ async fn stock(s: &AppState, code: &str) -> ApiResult<(Vec<prices::DailyBar>, in
     Ok((prices::stock_bars(&s.pool, code, None).await?, meta))
 }
 
-/// 这只股票在日线窗口内的权威涨跌停记录：K 线上的涨跌停、炸板、连板信号以供应商的名单为准
-async fn load_limits(s: &AppState, code: &str, bars: &[prices::DailyBar]) -> ApiResult<LimitPool> {
-    let codes = [code.to_string()];
-    Ok(match (bars.first(), bars.last()) {
-        (Some(first), Some(last)) => LimitPool::load_for(&s.pool, &codes, first.date, last.date).await?,
-        _ => LimitPool::empty(),
-    })
-}
-
 /// 这只股票上，信号在哪些交易日出现（K 线上画标记用）
 #[utoipa::path(post, path = "/securities/{thscode}/signal-days", tag = "signal", params(("thscode" = String, Path)), request_body = DaysInput,
     responses((status = 200, description = "成功", body = SignalDays), (status = 400, description = "定义不合法", body = crate::error::ErrorBody), (status = 404, description = "证券不存在", body = crate::error::ErrorBody)))]
 async fn signal_days(State(s): State<AppState>, Path(code): Path<String>, Json(input): Json<DaysInput>) -> ApiResult<Json<SignalDays>> {
     let (cond, lib) = resolve(&s, &input.target).await?;
     let (bars, meta) = stock(&s, &code).await?;
-    let limits = load_limits(&s, &code, &bars).await?;
-    let f = Frame::with_authority(&bars, Some(&meta), &limits, &code);
+    let f = Frame::new(&bars, Some(&meta));
     let series = cond.series(&f, &lib);
     let dates = (0..bars.len())
         .filter(|&i| series[i] && (i == 0 || !series[i - 1]))
@@ -609,8 +597,7 @@ async fn strategy_points(State(s): State<AppState>, Path(code): Path<String>, Qu
     let (name, v) = row.ok_or_else(|| ApiError::NotFound(format!("策略不存在：{}", q.strategy_id)))?;
     let d = serde_json::from_value::<Definition>(v).map_err(anyhow::Error::from)?.with_lib(signal_lib::load(&s.pool).await?);
     let (bars, meta) = stock(&s, &code).await?;
-    let limits = load_limits(&s, &code, &bars).await?;
-    let f = Frame::with_authority(&bars, Some(&meta), &limits, &code);
+    let f = Frame::new(&bars, Some(&meta));
     let start = q.start.unwrap_or_else(|| bars.last().map_or(crate::time::today_cn(), |b| b.date) - chrono::Duration::days(365 * 3));
     let from = bars.iter().position(|b| b.date >= start).unwrap_or(bars.len());
     let p = points::run(&bars, &f, &meta, &d, from);

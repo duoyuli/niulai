@@ -9,7 +9,6 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::limit_pool::LimitPool;
 use super::ma::sma;
 use super::prices::DailyBar;
 
@@ -220,8 +219,6 @@ pub struct Frame<'a> {
     /// 信号序列的缓存，键是信号和参数（由 signals 模块生成）
     bools: RefCell<HashMap<String, Rc<Vec<bool>>>>,
     limits: RefCell<Option<Rc<Limits>>>,
-    /// 权威涨跌停池和这只股票的代码；没有时涨跌停全部自算
-    authority: Option<(&'a LimitPool, &'a str)>,
 }
 
 /// 涨跌停价与当天是否涨停、跌停、炸板
@@ -232,19 +229,11 @@ pub struct Limits {
     pub limit_down: Vec<bool>,
     /// 盘中触及涨停但收盘没封住
     pub broken: Vec<bool>,
-    /// 连续第几个涨停；权威日期取供应商的连板数，否则取自算的连续天数
-    pub consecutive_up: Vec<u32>,
 }
 
 impl<'a> Frame<'a> {
     pub fn new(bars: &'a [DailyBar], meta: Option<&'a StockMeta>) -> Self {
-        Frame { bars, meta, cache: RefCell::new(HashMap::new()), bools: RefCell::new(HashMap::new()), limits: RefCell::new(None), authority: None }
-    }
-
-    /// 带权威涨跌停池的 Frame：涨停、跌停、炸板以供应商的池为准，池没有覆盖的日期和北交所回退自算。
-    /// pool 的加载窗口必须覆盖 bars 的全部日期，否则窗口外的日期会回退自算（见 [`LimitPool::load`] 的覆盖裁剪）
-    pub fn with_authority(bars: &'a [DailyBar], meta: Option<&'a StockMeta>, pool: &'a LimitPool, code: &'a str) -> Self {
-        Frame { bars, meta, cache: RefCell::new(HashMap::new()), bools: RefCell::new(HashMap::new()), limits: RefCell::new(None), authority: Some((pool, code)) }
+        Frame { bars, meta, cache: RefCell::new(HashMap::new()), bools: RefCell::new(HashMap::new()), limits: RefCell::new(None) }
     }
 
     /// 布尔序列（信号）的缓存：同一只股票上同一个信号只算一次
@@ -415,24 +404,14 @@ impl<'a> Frame<'a> {
 
     // @project-doc docs/domains/strategies.md#limits
     /// 涨跌停价按交易所规则推算：涨跌幅限制按板块和 ST 确定，基准是前一交易日的收盘价（除权日按除权参考价），
-    /// 四舍五入到分。上市后前 5 个交易日没有涨跌幅限制，不判断。
-    ///
-    /// 有权威池时，池覆盖内的日期以池里的成员为准（涨停、跌停、炸板、连板数），其他日期保留自算结果。
-    /// 跌停、炸板还要求这一天出现在涨停池里：池缺一天的数据时，不会把当天所有股票都判成没有跌停
+    /// 四舍五入到分。上市后前 5 个交易日没有涨跌幅限制，不判断
     pub fn limits(&self) -> Rc<Limits> {
         if let Some(l) = self.limits.borrow().as_ref() {
             return l.clone();
         }
         let b = self.bars;
         let n = b.len();
-        let mut l = Limits {
-            up_price: vec![f64::NAN; n],
-            down_price: vec![f64::NAN; n],
-            limit_up: vec![false; n],
-            limit_down: vec![false; n],
-            broken: vec![false; n],
-            consecutive_up: vec![0; n],
-        };
+        let mut l = Limits { up_price: vec![f64::NAN; n], down_price: vec![f64::NAN; n], limit_up: vec![false; n], limit_down: vec![false; n], broken: vec![false; n] };
         for i in 1..n {
             if self.ipo_period(i) {
                 continue;
@@ -447,46 +426,6 @@ impl<'a> Frame<'a> {
             l.limit_up[i] = b[i].close >= up - 0.005;
             l.limit_down[i] = b[i].close <= down + 0.005;
             l.broken[i] = b[i].high >= up - 0.005 && !l.limit_up[i];
-        }
-        // 权威池。北交所不在池里（池里没有 %.BJ），回退自算；没有证券信息时也不知道板块，同样自算
-        let authority = self.authority.filter(|_| self.meta.is_some_and(|m| m.board != "bse"));
-        let empty = super::limit_pool::CodeLimits::default();
-        let code_limits = authority.map(|(pool, code)| (pool, pool.code(code).unwrap_or(&empty)));
-        let mut run = 0u32;
-        let (mut ui, mut di, mut bi) = (0usize, 0usize, 0usize);
-        for (i, bar) in b.iter().enumerate() {
-            if self.ipo_period(i) {
-                continue;
-            }
-            let date = bar.date;
-            match code_limits {
-                Some((pool, limits)) if pool.up.covers(date) => {
-                    // 升序一次推进三个指针，不每根 K 线二分
-                    while ui < limits.up.len() && limits.up[ui].0 < date {
-                        ui += 1;
-                    }
-                    let count = limits.up.get(ui).filter(|(d, _)| *d == date).map_or(0, |(_, count)| *count);
-                    l.limit_up[i] = count > 0;
-                    l.consecutive_up[i] = count;
-                    run = count;
-                    if pool.down.covers(date) && pool.is_trading_day(date) {
-                        while di < limits.down.len() && limits.down[di] < date {
-                            di += 1;
-                        }
-                        l.limit_down[i] = limits.down.get(di) == Some(&date);
-                    }
-                    if pool.broken.covers(date) && pool.is_trading_day(date) {
-                        while bi < limits.broken.len() && limits.broken[bi] < date {
-                            bi += 1;
-                        }
-                        l.broken[i] = limits.broken.get(bi) == Some(&date);
-                    }
-                }
-                _ => {
-                    run = if l.limit_up[i] { run + 1 } else { 0 };
-                    l.consecutive_up[i] = run;
-                }
-            }
         }
         let l = Rc::new(l);
         *self.limits.borrow_mut() = Some(l.clone());
@@ -800,117 +739,5 @@ pub(crate) mod tests {
         let star = StockMeta { board: "star".into(), is_st: false, list_date: None };
         let f = Frame::new(&b, Some(&star));
         assert!(!f.limits().limit_up[1], "科创板 20% 才涨停");
-    }
-
-    fn meta(board: &str, is_st: bool) -> StockMeta {
-        StockMeta { board: board.into(), is_st, list_date: None }
-    }
-
-    /// 主板 ST：自算按 5% 判断，但 2026-07-06 起涨跌幅限制改为 10%，涨 7% 不是涨停。
-    /// 权威池覆盖这一天时以池为准；没在池里就是没有涨停，不能再用自算的 5% 误判
-    #[test]
-    fn authority_pool_decides_main_board_st_limit_up() {
-        let mut b = bars_from(&[10.0, 10.7, 11.0]);
-        b[1].high = 10.7;
-        b[2].high = 11.0;
-        let st = meta("main", true);
-        // 老的自算结果：涨 7% 被当成涨停（5% 的限制）
-        assert!(Frame::new(&b, Some(&st)).limits().limit_up[1], "自算按 5% 判断，涨 7% 算涨停");
-        // 权威池覆盖 10-02 这一天，但这只股票不在涨停名单里
-        let mut pool = LimitPool::empty();
-        pool.push_up("600000.SH", b[1].date, 1);
-        let f = Frame::with_authority(&b, Some(&st), &pool, "600519.SH");
-        let l = f.limits();
-        assert!(!l.limit_up[1], "权威名单里没有它，就不是涨停");
-        assert!((l.up_price[1] - 10.5).abs() < 1e-9, "涨停价仍然输出自算值");
-        // 涨 10%、在权威名单里（连板数 2）；前一天名单里没有它
-        let mut pool = LimitPool::empty();
-        pool.push_up("600000.SH", b[1].date, 1);
-        pool.push_up("600519.SH", b[2].date, 2);
-        let f = Frame::with_authority(&b, Some(&st), &pool, "600519.SH");
-        let l = f.limits();
-        assert!(l.limit_up[2], "ST 涨 10% 在名单里，是涨停");
-        assert_eq!(l.consecutive_up[2], 2);
-        assert_eq!(l.consecutive_up[1], 0, "前一天不在名单里，连板数为 0");
-    }
-
-    /// 跌停、炸板同样以名单为准；要求这一天出现在涨停池里（池缺数据时不把全部股票判成没有）
-    #[test]
-    fn authority_pool_decides_limit_down_and_broken() {
-        // 自算：ST 跌 5% 是跌停；第 3 天盘中冲到 10.0（超过按 9.5 算出的 5% 涨停价 9.975），收盘只有 9.6，是炸板
-        let mut b = bars_from(&[10.0, 9.5, 9.6]);
-        b[2].high = 10.0;
-        let st = meta("main", true);
-        let self_limits = Frame::new(&b, Some(&st)).limits();
-        assert!(self_limits.limit_down[1] && self_limits.broken[2], "自算结果");
-        // 权威池：只想说明这两个池覆盖了这三天（用别的股票登记），目标股票不在名单里
-        let mut pool = LimitPool::empty();
-        pool.push_up("600000.SH", b[1].date, 1);
-        pool.push_up("600000.SH", b[2].date, 1);
-        pool.push_down("600000.SH", b[1].date);
-        pool.push_broken("600000.SH", b[2].date);
-        let f = Frame::with_authority(&b, Some(&st), &pool, "600519.SH");
-        let l = f.limits();
-        assert!(!l.limit_down[1] && !l.broken[2], "权威名单里没有它，就不是跌停、炸板");
-        // 在名单里就是
-        let mut pool = LimitPool::empty();
-        pool.push_up("600519.SH", b[1].date, 1);
-        pool.push_up("600519.SH", b[2].date, 1);
-        pool.push_down("600519.SH", b[1].date);
-        pool.push_broken("600519.SH", b[2].date);
-        let f = Frame::with_authority(&b, Some(&st), &pool, "600519.SH");
-        let l = f.limits();
-        assert!(l.limit_down[1] && l.broken[2], "在名单里就是跌停、炸板");
-    }
-
-    /// 池没有覆盖的日期、北交所、没有证券信息时回退自算，结果与 Frame::new 逐位一致
-    #[test]
-    fn authority_falls_back_outside_coverage_and_for_bse() {
-        let b = bars_from(&[10.0, 11.0, 12.1, 13.31]);
-        let main = meta("main", false);
-        // 池只覆盖第 2 天的涨停（第 1 天在 from 之前、第 3 天在 through 之后）
-        let mut pool = LimitPool::empty();
-        pool.push_up("600000.SH", b[1].date, 1);
-        let f = Frame::with_authority(&b, Some(&main), &pool, "600519.SH");
-        let self_l = Frame::new(&b, Some(&main)).limits();
-        let l = f.limits();
-        assert_eq!((l.limit_up[0], l.limit_up[2], l.limit_up[3]), (self_l.limit_up[0], self_l.limit_up[2], self_l.limit_up[3]), "覆盖外回退自算");
-        assert!(!l.limit_up[1], "覆盖内、名单里没有就不是涨停");
-        // 覆盖内的日期不再从自算的连续涨停累加：名单里没有，连板数为 0
-        assert_eq!(l.consecutive_up[1], 0);
-        // 第 3 天在 through 之后，回退自算的连续天数从 1 重新数
-        assert_eq!(l.consecutive_up[2], 1);
-        assert_eq!(l.consecutive_up[3], 2);
-        // 北交所不在池里：即使池覆盖这一天，也回退自算（30%）
-        let bse = meta("bse", false);
-        let mut pool = LimitPool::empty();
-        pool.push_up("600000.SH", b[2].date, 1);
-        pool.push_up("920001.BJ", b[2].date, 1);
-        let f = Frame::with_authority(&b, Some(&bse), &pool, "920001.BJ");
-        let self_l = Frame::new(&b, Some(&bse)).limits();
-        assert_eq!(f.limits().limit_up, self_l.limit_up);
-        // 没有证券信息时不知道板块，也回退自算
-        let f = Frame::with_authority(&b, None, &pool, "920001.BJ");
-        assert_eq!(f.limits().limit_up, Frame::new(&b, None).limits().limit_up);
-    }
-
-    /// 数据起点就是第 5 板时，供应商的连板数让「连续 3 个涨停」在第一天就成立
-    #[test]
-    fn authority_continue_count_is_not_truncated_at_data_start() {
-        use crate::analysis::signals::{self, Params, SignalId};
-        let b = bars_from(&[10.0, 11.0, 12.1, 13.31, 14.64]);
-        let main = meta("main", false);
-        let mut pool = LimitPool::empty();
-        pool.push_up("600519.SH", b[0].date, 5);
-        let f = Frame::with_authority(&b, Some(&main), &pool, "600519.SH");
-        let runs = f.limits().consecutive_up.clone();
-        assert_eq!(runs[0], 5);
-        let mut p = Params::new();
-        p.insert("n".into(), 3.0);
-        let series = signals::series(&f, SignalId::ConsecutiveLimitUp, &p);
-        assert!(series[0], "第 5 板的第一天就满足「连续 3 个涨停」");
-        // 没有池时从数据起点重新数，第一天不算
-        let self_f = Frame::new(&b, Some(&main));
-        assert!(!signals::series(&self_f, SignalId::ConsecutiveLimitUp, &p)[0]);
     }
 }

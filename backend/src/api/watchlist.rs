@@ -17,7 +17,6 @@ use super::market::windows;
 use crate::analysis::ma::{CrossSignal, ma_cross, state_of};
 use crate::analysis::diagnosis::{SignalEvent, recent_signals};
 use crate::analysis::indicators::Frame;
-use crate::analysis::limit_pool::LimitPool;
 use crate::analysis::{market, prices};
 use crate::error::{ApiError, ApiResult};
 
@@ -124,17 +123,12 @@ async fn list_watchlist(State(s): State<AppState>, me: CurrentUser, Query(q): Qu
     let series = prices::recent_closes(&s.pool, &codes, LOOKBACK).await?;
 
     let sec = market::securities(&s.pool).await?;
-    // 权威涨跌停池：最近信号里的涨跌停、炸板、连板以供应商的名单为准；自选股数量不多，按股票只读需要的行
-    let limits = match market::resolve_date(&s.pool, None).await? {
-        Some(last) => LimitPool::load_for(&s.pool, &codes, last - chrono::Duration::days(market::calendar_days_for((RECENT_BARS + 10) as u32)), last).await?,
-        None => LimitPool::empty(),
-    };
     let mut items = vec![];
     for (thscode, name, board, delisted_on, added_at, last_date, close) in base {
         let diagnosis = series.get(&thscode).and_then(|pts| diagnose(pts, fast, slow));
         let bars = prices::recent_bars(&s.pool, &thscode, RECENT_BARS).await?;
         let recent_signals = {
-            let f = Frame::with_authority(&bars, sec.meta.get(&thscode), &limits, &thscode);
+            let f = Frame::new(&bars, sec.meta.get(&thscode));
             recent_signals(&f, 5)
         };
         items.push(WatchItem { thscode, name, board, delisted_on, added_at, last_date, close, diagnosis, recent_signals });

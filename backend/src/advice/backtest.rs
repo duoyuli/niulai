@@ -197,18 +197,15 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
     let sec = market::securities(pool).await?;
     let base_def = Definition::any_stock();
     let warmup = defs.iter().map(|d| d.warmup()).max().unwrap_or(30).max(rules.trend_ma) + 5;
-    let lo = edge_from - chrono::Duration::days(calendar_days_for(warmup));
-    // 权威涨跌停池：参考值回测里的买卖点同样以供应商的名单为准
-    let limits = crate::analysis::limit_pool::LimitPool::load(pool, lo, end).await?;
     let mut raw: Vec<(Vec<NaiveDate>, Stock)> = vec![];
     let mut sums = Sums::new(defs.len());
     let mut ew = crate::analysis::portfolio::EqualWeight::default();
     // 每天：收盘站上 20 日均线的股票数、当天有日线的股票数
     let mut breadth: HashMap<NaiveDate, (u32, u32)> = HashMap::new();
-    prices::for_each_stock(pool, lo, end, |code, bars| {
+    prices::for_each_stock(pool, edge_from - chrono::Duration::days(calendar_days_for(warmup)), end, |code, bars| {
         let Some(meta) = sec.meta.get(code) else { return };
         let Some(first_edge) = bars.iter().position(|b| b.date >= edge_from) else { return };
-        let f = Frame::with_authority(bars, Some(meta), &limits, code);
+        let f = Frame::new(bars, Some(meta));
         for i in first_edge..bars.len() {
             if base_def.in_universe(&f, meta, i)
                 && let Some(r) = forward_return(bars, i)

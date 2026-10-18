@@ -59,17 +59,14 @@ pub struct Overview {
 pub async fn overview(pool: &PgPool, date: Option<NaiveDate>) -> anyhow::Result<Option<Overview>> {
     let Some(date) = resolve_date(pool, date).await? else { return Ok(None) };
     let sec = securities(pool).await?;
-    let lo = date - chrono::Duration::days(calendar_days_for(25));
-    // 涨停、跌停数以供应商的名单为准；名单没有覆盖的日期回退自算
-    let limits = super::limit_pool::LimitPool::load(pool, lo, date).await?;
     let (mut up, mut down, mut flat, mut lu, mut ld, mut above, mut with_ma) = (0, 0, 0, 0, 0, 0usize, 0usize);
     let mut changes = vec![];
-    prices::for_each_stock(pool, lo, date, |code, bars| {
+    prices::for_each_stock(pool, date - chrono::Duration::days(calendar_days_for(25)), date, |code, bars| {
         let Some(last) = bars.last() else { return };
         if last.date != date || bars.len() < 2 {
             return;
         }
-        let f = Frame::with_authority(bars, sec.meta.get(code), &limits, code);
+        let f = Frame::new(bars, sec.meta.get(code));
         let i = bars.len() - 1;
         let ch = f.at(IndicatorRef::new(IndicatorId::ChangePct, None), i);
         changes.push(ch);
@@ -158,20 +155,21 @@ pub async fn stocks_in_top_sectors(pool: &PgPool, category: &str, days: u32, top
     Ok(members.into_iter().collect())
 }
 
-/// 市场概况的缓存：要把全市场的日线算一遍（约 1 秒），结果只在有新日线或新的涨跌停名单后才变。
-/// 以交易日和 `ops.derived_version` 中 adj_factor、limit_pool 的时间戳为键，任一时间戳更新，旧结果不再命中
+/// 市场概况的缓存：要把全市场的日线算一遍（约 1 秒），结果只在有新日线后才变。
+/// 以交易日和 `ops.derived_version` 中 adj_factor 的时间戳为键，每次同步写入行情后时间戳更新，旧结果不再命中
 #[derive(Default)]
 pub struct OverviewCache {
     entries: std::sync::Mutex<Vec<OverviewEntry>>,
 }
 
 /// (交易日, 数据版本, 结果)
-type OverviewEntry = (NaiveDate, super::limit_pool::CacheVersions, Overview);
+type OverviewEntry = (NaiveDate, Option<chrono::DateTime<chrono::Utc>>, Overview);
 
 impl OverviewCache {
     pub async fn get(&self, pool: &PgPool, date: Option<NaiveDate>) -> anyhow::Result<Option<Overview>> {
         let Some(date) = resolve_date(pool, date).await? else { return Ok(None) };
-        let version = super::limit_pool::CacheVersions::load(pool).await?;
+        let version: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT updated_at FROM ops.derived_version WHERE name = 'adj_factor'").fetch_optional(pool).await?;
         if let Some(hit) = self.entries.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, v, _)| *d == date && *v == version) {
             return Ok(Some(hit.2.clone()));
         }
