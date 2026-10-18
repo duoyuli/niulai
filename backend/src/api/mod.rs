@@ -3,7 +3,6 @@
 pub mod accounts;
 pub mod auth;
 pub mod market;
-pub mod metrics;
 pub mod notify;
 pub mod setup;
 pub mod signal;
@@ -49,8 +48,6 @@ pub struct AppState {
     pub overview: Arc<crate::analysis::market::OverviewCache>,
     /// 信号的过去表现，有新日线或改了定义后失效
     pub stats: Arc<signal::StatsCache>,
-    /// 请求计数和耗时，`GET /api/v1/metrics` 用
-    pub metrics: Arc<metrics::Metrics>,
 }
 
 #[derive(OpenApi)]
@@ -82,7 +79,6 @@ pub fn router(engine: Arc<Engine>) -> Router {
         latest: Arc::default(),
         overview: Arc::default(),
         stats: Arc::default(),
-        metrics: Arc::default(),
     };
     let (api, openapi) = routes().split_for_parts();
     let openapi = Arc::new(openapi);
@@ -90,11 +86,7 @@ pub fn router(engine: Arc<Engine>) -> Router {
     let web_dir = state.engine.settings.web_dir.clone();
     let api = api
         .route("/openapi.json", axum::routing::get(move || async move { Json(openapi.as_ref().clone()) }))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), auth::require_login))
-        // 指标接口不经过登录：它自己校验 NIULAI_METRICS_TOKEN，方便外部监控服务读取
-        .route("/metrics", axum::routing::get(metrics::handler))
-        // 放在最后，前面所有接口（包括指标本身）的请求都会被计数
-        .layer(axum::middleware::from_fn_with_state(state.metrics.clone(), metrics::track));
+        .layer(axum::middleware::from_fn_with_state(state.clone(), auth::require_login));
     let app = Router::new().nest("/api/v1", api);
     let app = match web_dir {
         Some(dir) => app.fallback_service(web::service(&dir)),

@@ -7,7 +7,7 @@
 - [本地运行](#local_setup)：第一次在本机启动。
 - [首次回补](#backfill)、[日常同步](#daily_sync)、[重拉指定数据](#rerun)、[查看进度](#monitoring)、[处理失败任务](#failure_handling)、[修改配置](#config_changes)：同步相关的操作。
 - [用户与密码](#users)：添加用户、设管理员、停用，忘记密码。
-- [部署](#deployment)：构建镜像、Docker 部署、探活与告警、监控指标与慢查询、源码部署、一键升级、部署迁移、资源限制与升级助手加固、数据目录、手动升级、备份与恢复。
+- [部署](#deployment)：构建镜像、Docker 部署、探活与告警、源码部署、一键升级、部署迁移、资源限制与升级助手加固、数据目录、手动升级、备份与恢复。
 - [测试](#testing)：提交代码前。
 
 <a id="local_setup"></a>
@@ -161,25 +161,6 @@ git push origin v2026.10.18
 - 用「连续 3 次失败再报」：一键升级会停 niulai 一两分钟，单次失败是正常的；恢复也要等一次成功确认，不因为短暂恢复就撤销告警。
 - 同时监控 `/api/v1/ready`：进程活着但数据库连不上时 `/health` 仍是 200，只看它会把「网页打得开但什么都查不到」漏掉。
 - 探活只需要这一个地址，不需要账号；监控服务本身的配置不放在本仓库里。
-
-<a id="metrics"></a>
-### 监控指标
-
-把环境变量 `NIULAI_METRICS_TOKEN` 设成一个足够长的随机字符串（例如 `openssl rand -hex 24`），重启 niulai 后 `GET /api/v1/metrics` 返回 Prometheus 文本格式的指标；不设置这个变量时接口返回 404，等于关闭。请求要带 `Authorization: Bearer <令牌>`（Prometheus 的 `authorization.credentials`）或 `?token=<令牌>`，令牌不对返回 401。令牌在启动时读一次，改了要重启；它只用于这个接口，不是登录密码。
-
-指标只有进程和队列的聚合数字，不含证券、账户等业务数据：
-
-| 指标 | 含义 |
-| --- | --- |
-| `niulai_up`、`niulai_info`、`niulai_uptime_seconds` | 进程在运行、运行的版本、已运行的秒数 |
-| `niulai_http_requests_total`、`niulai_http_errors_total` | 处理过的 API 请求数、其中返回 5xx 的 |
-| `niulai_http_request_duration_seconds_sum` / `_count` | 请求累计耗时和次数，除一下就是平均耗时 |
-| `niulai_sync_pending_tasks` | 等待执行的任务数（含等待重试的）；长期不为 0 说明同步卡住了 |
-| `niulai_db_pool_connections`、`niulai_db_pool_idle` | 连接池的连接数和空闲数 |
-
-Prometheus 的抓取配置由使用方保存，不放在本仓库；例如 `scrape_configs: [{job_name: niulai, scheme: https, metrics_path: /api/v1/metrics, authorization: {credentials: <令牌>}, static_configs: [{targets: ["niulai.example.com"]}]}]`。没有 Prometheus 时用 `curl -H "Authorization: Bearer $NIULAI_METRICS_TOKEN" https://niulai.example.com/api/v1/metrics` 也能看。
-
-**慢查询：** SQLx 默认会把执行超过 1 秒的语句以 `WARN slow statement` 记到日志里，`elapsed_secs` 是耗时，`db.statement` 是完整 SQL。`docker compose logs niulai | grep "slow statement"` 可以找出慢查询；长时间同步、首次回补时的全市场读取偶尔超过 1 秒是正常的，反复出现或明显变慢才需要排查（缺少索引、数据量变大）。
 
 <a id="source_deploy"></a>
 ### 源码部署
