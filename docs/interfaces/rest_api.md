@@ -79,7 +79,7 @@
 | `POST /accounts/{id}/advice/{advice_id}/items/{key}/execute` | 已执行：按实际成交记一笔，持仓和现金更新，这份建议不重新生成 | 请求体 `{shares?, price?, fee?, trade_date?}`，默认按建议；同一条执行两次、这条不需要操作时返回 400 |
 | `POST` / `DELETE /accounts/{id}/advice/{advice_id}/items/{key}/skip` | 不做这一条 / 撤销「不做」 | 已执行的不能撤销 |
 | `GET /accounts/{id}/review` | 最近 180 天的建议之后 5、10、20 个交易日的涨跌和汇总 | 口径见 [建议回看](../domains/accounts.md#review) |
-| `POST /accounts/{id}/backtest` | 用这个账户的规则回测一段时间 | `range`：`3m`、`6m`、`1y`、`ytd`（今年以来，默认）、`2y`、`3y`；全市场计算，几十秒到一两分钟；口径见 [规则回测](../domains/accounts.md#rules_backtest) |
+| `POST /accounts/{id}/backtest` | 用这个账户的规则回测一段时间 | `start`、`end`（两头都包含）：开始日期默认今年 1 月 1 日，结束日期默认最新交易日、晚于它时取最新交易日；最长 5 年，开始不早于结束时返回 400；全市场计算，几十秒到一两分钟；口径见 [规则回测](../domains/accounts.md#rules_backtest) |
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
 | `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线 |
 | `GET /indices/{thscode}/members` | 指数成分 | `date` 默认今天；历史成分从开始采集那天起才有 |

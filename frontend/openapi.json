@@ -583,7 +583,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "用这个账户的规则回测一段时间，默认今年以来。全市场计算，要几十秒到一两分钟",
+        "summary": "用这个账户的规则回测一段时间（两头都包含），默认今年以来，最长 5 年。全市场计算，要几十秒到一两分钟",
         "operationId": "account_backtest",
         "parameters": [
           {
@@ -596,21 +596,29 @@
             }
           },
           {
-            "name": "range",
+            "name": "start",
             "in": "query",
-            "description": "回测区间：3m、6m、1y、ytd（今年以来，默认）、2y、3y",
+            "description": "开始日期，默认今年 1 月 1 日",
             "required": false,
             "schema": {
-              "type": "string",
-              "description": "回测区间：截止到最新交易日",
-              "enum": [
-                "3m",
-                "6m",
-                "1y",
-                "ytd",
-                "2y",
-                "3y"
-              ]
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "description": "结束日期，默认最新交易日；晚于最新交易日时取最新交易日",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
             }
           }
         ],
@@ -626,7 +634,7 @@
             }
           },
           "400": {
-            "description": "本地还没有日线",
+            "description": "区间不对，或本地还没有日线",
             "content": {
               "application/json": {
                 "schema": {

@@ -15,9 +15,10 @@ import {
   useMarkChecked,
   useUpdateAccount,
 } from "../api/generated/accounts/accounts";
-import { AccountBacktestRange, type AccountDetail, type TradeKind } from "../api/generated/model";
+import type { AccountDetail, TradeKind } from "../api/generated/model";
 import { AdviceView } from "../components/AdviceView";
 import { PositionsEditor } from "../components/PositionsEditor";
+import { type ChartRange, RangePicker, rangeQuery } from "../components/RangePicker";
 import { BacktestLine, type FullRules, RulesEditor } from "../components/RulesEditor";
 import { SecuritySearch } from "../components/SecuritySearch";
 import {
@@ -34,7 +35,7 @@ import {
 } from "../components/ui";
 import { useSearchState } from "../hooks/useSearchState";
 import { ACTIONS, TRADE_KINDS, TRADE_SOURCES, yuan } from "../lib/accounts";
-import { fmtDateTime, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
+import { BACKTEST_RANGES, fmtDateTime, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
 
 const TABS = [
   { value: "advice", label: "今日建议" },
@@ -454,15 +455,6 @@ function Records({ id }: { id: number }) {
   );
 }
 
-const BACKTEST_RANGES = [
-  { value: AccountBacktestRange["3m"], label: "近 3 个月" },
-  { value: AccountBacktestRange["6m"], label: "近 6 个月" },
-  { value: AccountBacktestRange["1y"], label: "近一年" },
-  { value: AccountBacktestRange.ytd, label: "今年以来" },
-  { value: AccountBacktestRange["2y"], label: "近两年" },
-  { value: AccountBacktestRange["3y"], label: "近 3 年" },
-];
-
 function Settings({ d }: { d: AccountDetail }) {
   const acc = d.summary.account;
   const id = acc.account_id;
@@ -493,7 +485,7 @@ function Settings({ d }: { d: AccountDetail }) {
     },
   });
   const backtest = useAccountBacktest();
-  const [range, setRange] = useState<AccountBacktestRange>(AccountBacktestRange.ytd);
+  const [range, setRange] = useState<ChartRange>({ range: "ytd", from: "", to: "" });
   return (
     <div className="flex flex-col gap-4">
       <Card title="名字和备注">
@@ -560,16 +552,17 @@ function Settings({ d }: { d: AccountDetail }) {
       </div>
       <Card title="用这个账户的规则回测">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          按保存后的规则，假设这段时间每天都照着建议做，账户会怎样。哪些策略算有效，每年只用之前 3
+          按保存后的规则，假设这段时间每天都照着建议做，账户会怎样。点快捷区间会把起止日期填进框里，也可以直接改日期（最长
+          5 年，结束日期最晚到最新交易日）。哪些策略算有效，每年只用之前 3
           年的数据判断。全市场计算，要几十秒到一两分钟。
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <Segmented value={range} options={BACKTEST_RANGES} onChange={setRange} />
+          <RangePicker value={range} options={BACKTEST_RANGES} onChange={(p) => setRange((r) => ({ ...r, ...p }))} />
           <button
             type="button"
             className={buttonClass("ghost")}
             disabled={backtest.isPending}
-            onClick={() => backtest.mutate({ accountId: id, params: { range } })}
+            onClick={() => backtest.mutate({ accountId: id, params: rangeQuery(range) })}
           >
             {backtest.isPending ? "计算中…" : "开始回测"}
           </button>

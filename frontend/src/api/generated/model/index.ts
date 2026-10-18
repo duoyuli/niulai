@@ -8,7 +8,6 @@
 
 export * from './account';
 export * from './accountBacktestParams';
-export * from './accountBacktestRange';
 export * from './accountDetail';
 export * from './accountPosition';
 export * from './accountSummary';

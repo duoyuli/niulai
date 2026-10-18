@@ -139,9 +139,20 @@ export const RANGES = [
   { value: "all", label: "全部" },
 ] as const;
 
-/** 区间对应的开始日期：「1m」是 1 个月，「3」是 3 年；「全部」和「自定义」在这里不限制 */
+/** 规则回测的时间区间：默认今年以来 */
+export const BACKTEST_RANGES = [
+  { value: "3m", label: "近 3 个月" },
+  { value: "6m", label: "近 6 个月" },
+  { value: "1", label: "近一年" },
+  { value: "ytd", label: "今年以来" },
+  { value: "2", label: "近两年" },
+  { value: "3", label: "近 3 年" },
+] as const;
+
+/** 区间对应的开始日期：「1m」是 1 个月，「3」是 3 年，「ytd」是今年 1 月 1 日；「全部」和「自定义」在这里不限制 */
 export function rangeStart(range: string, today = todayCn()): string | undefined {
   if (range === "all" || range === "custom") return undefined;
+  if (range === "ytd") return `${today.slice(0, 4)}-01-01`;
   if (range.endsWith("m")) return monthsBefore(today, Number(range.slice(0, -1)));
   return yearsBefore(today, Number(range));
 }

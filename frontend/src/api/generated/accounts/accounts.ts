@@ -1083,7 +1083,7 @@ export const useClearItem = <TError = ErrorBody,
 }
 
 /**
- * @summary 用这个账户的规则回测一段时间，默认今年以来。全市场计算，要几十秒到一两分钟
+ * @summary 用这个账户的规则回测一段时间（两头都包含），默认今年以来，最长 5 年。全市场计算，要几十秒到一两分钟
  */
 export const accountBacktest = async (accountId: number,
     params?: AccountBacktestParams, options?: Parameters<typeof apiFetch>[1]): Promise<RulesBacktest> => {
@@ -1136,7 +1136,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type AccountBacktestMutationVariables = {accountId: number;params?: AccountBacktestParams}
 
     /**
- * @summary 用这个账户的规则回测一段时间，默认今年以来。全市场计算，要几十秒到一两分钟
+ * @summary 用这个账户的规则回测一段时间（两头都包含），默认今年以来，最长 5 年。全市场计算，要几十秒到一两分钟
  */
 export const useAccountBacktest = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof accountBacktest>>, TError,AccountBacktestMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}

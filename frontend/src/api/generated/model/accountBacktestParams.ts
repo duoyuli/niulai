@@ -5,11 +5,16 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
-import type { AccountBacktestRange } from './accountBacktestRange';
 
 export type AccountBacktestParams = {
 /**
- * 回测区间：截止到最新交易日
+ * 开始日期，默认今年 1 月 1 日
+ * @nullable
  */
-range?: AccountBacktestRange;
+start?: string | null;
+/**
+ * 结束日期，默认最新交易日；晚于最新交易日时取最新交易日
+ * @nullable
+ */
+end?: string | null;
 };

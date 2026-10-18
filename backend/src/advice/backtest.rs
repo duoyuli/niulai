@@ -27,42 +27,20 @@ use crate::analysis::strategy::{Definition, SignalLib, Universe};
 /// 判断有效策略往前看几年；参考值的回测区间也是这么长
 pub const YEARS: i64 = 3;
 
-/// 回测区间：截止到最新交易日
-#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum BacktestRange {
-    /// 近 3 个月
-    #[serde(rename = "3m")]
-    Months3,
-    /// 近 6 个月
-    #[serde(rename = "6m")]
-    Months6,
-    /// 近一年
-    #[serde(rename = "1y")]
-    Year1,
-    /// 今年以来
-    #[default]
-    #[serde(rename = "ytd")]
-    YearToDate,
-    /// 近两年
-    #[serde(rename = "2y")]
-    Years2,
-    /// 近 3 年
-    #[serde(rename = "3y")]
-    Years3,
-}
+/// 回测区间最长几年
+pub const MAX_YEARS: i64 = 5;
 
-impl BacktestRange {
-    pub fn start(self, end: NaiveDate) -> NaiveDate {
-        let months = |n: u32| end.checked_sub_months(chrono::Months::new(n)).unwrap_or(end);
-        match self {
-            BacktestRange::Months3 => months(3),
-            BacktestRange::Months6 => months(6),
-            BacktestRange::Year1 => months(12),
-            BacktestRange::YearToDate => NaiveDate::from_ymd_opt(end.year(), 1, 1).unwrap_or(end),
-            BacktestRange::Years2 => months(24),
-            BacktestRange::Years3 => months(12 * YEARS as u32),
-        }
+/// 回测区间：开始日期为空时是结束日期那年的 1 月 1 日（今年以来），结束日期为空或晚于最新交易日时取最新交易日
+pub fn resolve_range(latest: NaiveDate, start: Option<NaiveDate>, end: Option<NaiveDate>) -> Result<(NaiveDate, NaiveDate), String> {
+    let end = end.map_or(latest, |e| e.min(latest));
+    let start = start.unwrap_or_else(|| NaiveDate::from_ymd_opt(end.year(), 1, 1).unwrap_or(end));
+    if start >= end {
+        return Err("开始日期要早于结束日期（结束日期最晚是最新交易日）".into());
     }
+    if end - start > chrono::Duration::days(365 * MAX_YEARS + 2) {
+        return Err(format!("回测区间最长 {MAX_YEARS} 年"));
+    }
+    Ok((start, end))
 }
 /// 买点之后看多少个交易日
 const HORIZON: usize = 20;
@@ -178,13 +156,12 @@ fn add(m: &mut (f64, u64), r: f64) {
 }
 
 // @project-doc docs/domains/accounts.md#rules_backtest
-pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], range: BacktestRange) -> anyhow::Result<Option<RulesBacktest>> {
+/// 回测 [start, end]（用 resolve_range 定好的区间）
+pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start: NaiveDate, end: NaiveDate) -> anyhow::Result<Option<RulesBacktest>> {
     let defs: Vec<&Definition> = all.iter().filter(|(id, _)| rules.uses(*id)).map(|(_, d)| d).take(MAX_STRATEGIES).collect();
     if defs.is_empty() {
         return Ok(None);
     }
-    let Some(end) = market::resolve_date(pool, None).await? else { return Ok(None) };
-    let start = range.start(end);
     let edge_from = start - chrono::Duration::days(365 * YEARS);
     let sec = market::securities(pool).await?;
     let base_def = Definition { universe: Universe::default(), all: vec![], any: vec![], exit: Default::default(), sort: Default::default(), limit: 50, lib: SignalLib::default() };
@@ -453,7 +430,9 @@ pub async fn refresh_presets(pool: &PgPool) -> anyhow::Result<()> {
     for preset in Preset::ALL {
         let rules = preset.rules();
         let started = std::time::Instant::now();
-        let Some(r) = run(pool, &rules, &defs, BacktestRange::Years3).await? else { continue };
+        let Some(latest) = market::resolve_date(pool, None).await? else { return Ok(()) };
+        let start = latest.checked_sub_months(chrono::Months::new(12 * YEARS as u32)).unwrap_or(latest);
+        let Some(r) = run(pool, &rules, &defs, start, latest).await? else { continue };
         sqlx::query(
             "INSERT INTO app.preset_stat (preset, rules_hash, end_date, result) VALUES ($1, $2, $3, $4)
              ON CONFLICT (preset) DO UPDATE SET rules_hash = EXCLUDED.rules_hash, end_date = EXCLUDED.end_date, result = EXCLUDED.result, computed_at = now()",
@@ -532,14 +511,13 @@ mod tests {
     }
 
     #[test]
-    fn ranges_end_at_latest_day() {
-        let end = NaiveDate::from_ymd_opt(2026, 10, 16).unwrap();
+    fn ranges_default_to_this_year_and_stop_at_latest_day() {
         let d = |y, m, dd| NaiveDate::from_ymd_opt(y, m, dd).unwrap();
-        assert_eq!(BacktestRange::default(), BacktestRange::YearToDate);
-        assert_eq!(BacktestRange::YearToDate.start(end), d(2026, 1, 1));
-        assert_eq!(BacktestRange::Months3.start(end), d(2026, 7, 16));
-        assert_eq!(BacktestRange::Year1.start(end), d(2025, 10, 16));
-        assert_eq!(BacktestRange::Years3.start(end), d(2023, 10, 16));
+        let latest = d(2026, 10, 16);
+        assert_eq!(resolve_range(latest, None, None), Ok((d(2026, 1, 1), latest)), "默认今年以来");
+        assert_eq!(resolve_range(latest, Some(d(2026, 7, 16)), Some(d(2026, 12, 31))), Ok((d(2026, 7, 16), latest)), "结束日期不晚于最新交易日");
+        assert!(resolve_range(latest, Some(d(2026, 10, 16)), None).is_err());
+        assert!(resolve_range(latest, Some(d(2020, 1, 1)), None).is_err(), "最长 5 年");
     }
 
     #[test]

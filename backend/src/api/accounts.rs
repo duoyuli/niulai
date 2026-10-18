@@ -584,19 +584,21 @@ async fn account_review(State(s): State<AppState>, me: CurrentUser, Path(id): Pa
 
 #[derive(Deserialize, IntoParams)]
 pub struct BacktestQuery {
-    /// 回测区间：3m、6m、1y、ytd（今年以来，默认）、2y、3y
-    #[serde(default)]
-    #[param(inline)]
-    pub range: backtest::BacktestRange,
+    /// 开始日期，默认今年 1 月 1 日
+    pub start: Option<NaiveDate>,
+    /// 结束日期，默认最新交易日；晚于最新交易日时取最新交易日
+    pub end: Option<NaiveDate>,
 }
 
-/// 用这个账户的规则回测一段时间，默认今年以来。全市场计算，要几十秒到一两分钟
+/// 用这个账户的规则回测一段时间（两头都包含），默认今年以来，最长 5 年。全市场计算，要几十秒到一两分钟
 #[utoipa::path(post, path = "/accounts/{account_id}/backtest", tag = "accounts", params(("account_id" = i64, Path), BacktestQuery),
     responses((status = 200, description = "成功", body = RulesBacktest),
-              (status = 400, description = "本地还没有日线", body = crate::error::ErrorBody),
+              (status = 400, description = "区间不对，或本地还没有日线", body = crate::error::ErrorBody),
               (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
 async fn account_backtest(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>, Query(q): Query<BacktestQuery>) -> ApiResult<Json<RulesBacktest>> {
     let acc = account::get(&s.pool, me.user_id, id).await?;
+    let latest = crate::analysis::market::resolve_date(&s.pool, None).await?.ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;
+    let (start, end) = backtest::resolve_range(latest, q.start, q.end).map_err(ApiError::BadRequest)?;
     let defs = screener::screening_strategies(&s.pool).await?;
-    backtest::run(&s.pool, &acc.rules, &defs, q.range).await?.map(Json).ok_or_else(|| ApiError::BadRequest("本地还没有足够的日线，或勾选的策略都没有参加巡检".into()))
+    backtest::run(&s.pool, &acc.rules, &defs, start, end).await?.map(Json).ok_or_else(|| ApiError::BadRequest("本地还没有足够的日线，或勾选的策略都没有参加巡检".into()))
 }
