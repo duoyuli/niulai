@@ -112,8 +112,8 @@ struct Sums {
 }
 
 impl Sums {
-    /// 第 year 年的有效策略：只看 year 之前 3 年里结束的
-    fn edges(&self, n: usize, year: i32) -> YearEdge {
+    /// 第 year 年的有效策略（超额大于 min_edge）：只看 year 之前 3 年里结束的
+    fn edges(&self, n: usize, year: i32, min_edge: f64) -> YearEdge {
         let window = (year - YEARS as i32)..year;
         let (bs, bn) = window.clone().filter_map(|y| self.base.get(&y)).fold((0.0, 0u64), |a, b| (a.0 + b.0, a.1 + b.1));
         let mut out = YearEdge { mask: 0, edge: vec![f64::NAN; n] };
@@ -126,7 +126,7 @@ impl Sums {
             if c >= MIN_SAMPLES {
                 let e = s / c as f64 - base;
                 out.edge[k] = e;
-                if e > 0.0 {
+                if e > min_edge {
                     out.mask |= 1 << k;
                 }
             }
@@ -241,7 +241,7 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)]) -> any
             }
         }
     }
-    let edges: HashMap<i32, YearEdge> = (calendar[0].year()..=calendar[calendar.len() - 1].year()).map(|y| (y, sums.edges(defs.len(), y))).collect();
+    let edges: HashMap<i32, YearEdge> = (calendar[0].year()..=calendar[calendar.len() - 1].year()).map(|y| (y, sums.edges(defs.len(), y, rules.min_edge_pct))).collect();
     let bench = crate::analysis::portfolio::benchmark(pool, calendar[0], *calendar.last().expect("日历不为空")).await?;
     let mut r = simulate(rules, &stocks, &signals, &calendar, &breadth, &edges, bench);
     r.summary.strategies = defs.len();
@@ -503,9 +503,10 @@ mod tests {
         }
         // 2024 年里的表现不影响 2024 年的判断
         s.by_year.insert((1, 2024), (1e9, 100));
-        let e = s.edges(2, 2024);
+        let e = s.edges(2, 2024, 0.0);
         assert_eq!(e.mask, 0b01);
+        assert_eq!(s.edges(2, 2024, 2.5).mask, 0, "门槛 2.5% 时策略 1 的 2% 不够");
         assert!((e.edge[0] - 2.0).abs() < 1e-9 && (e.edge[1] + 0.5).abs() < 1e-9);
-        assert_eq!(s.edges(2, 2021).mask, 0, "之前没有数据时没有有效策略");
+        assert_eq!(s.edges(2, 2021, 0.0).mask, 0, "之前没有数据时没有有效策略");
     }
 }

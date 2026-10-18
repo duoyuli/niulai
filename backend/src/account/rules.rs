@@ -26,7 +26,9 @@ pub enum WeakMarket {
 pub struct Rules {
     /// 参考哪些策略（策略编号）；为空表示全部参加巡检的策略
     pub strategies: Vec<i64>,
-    /// 至少几个有效策略（过去 3 年表现好于随便买）同时选中才买
+    /// 有效策略的门槛：过去 3 年买点之后 20 个交易日，平均比随便买至少多涨几个百分点
+    pub min_edge_pct: f64,
+    /// 至少几个有效策略同时选中才买
     pub min_picks: u32,
     /// 最多同时持有几只
     pub max_positions: u32,
@@ -60,6 +62,7 @@ impl Rules {
     /// 参数是否在合理范围内
     pub fn validate(&self) -> Result<(), String> {
         let range = |v: f64, lo: f64, hi: f64, what: &str| if (lo..=hi).contains(&v) { Ok(()) } else { Err(format!("{what}应在 {lo} 到 {hi} 之间")) };
+        range(self.min_edge_pct, 0.0, 10.0, "有效策略的门槛（%）")?;
         range(self.min_picks as f64, 1.0, 5.0, "至少几个有效策略同时选中")?;
         range(self.max_positions as f64, 1.0, 20.0, "最多持有只数")?;
         range(self.max_weight_pct, 5.0, 100.0, "单只上限（%）")?;
@@ -79,6 +82,11 @@ impl Rules {
     /// 这个策略是否参考
     pub fn uses(&self, strategy_id: i64) -> bool {
         self.strategies.is_empty() || self.strategies.contains(&strategy_id)
+    }
+
+    /// 超额（过去 3 年买点之后 20 日平均比随便买多涨的百分点）是否够得上有效策略；还没有统计的先算有效
+    pub fn effective(&self, excess: Option<f64>) -> bool {
+        excess.is_none_or(|e| e > self.min_edge_pct)
     }
 }
 
@@ -123,6 +131,7 @@ impl Preset {
     pub fn design(self) -> Vec<&'static str> {
         match self {
             Preset::Conservative => vec![
+                "只信过去表现明显好的策略：比随便买至少多涨 1 个百分点才算有效",
                 "选股门槛高：至少 2 个有效策略同时看好才买，宁可错过",
                 "分散：最多 5 只，单只不超过 20%，一只出问题影响有限",
                 "留 20% 现金，跌的时候有余地",
@@ -130,12 +139,14 @@ impl Preset {
                 "全市场偏弱时不买新股票；开盘比参考价高 3% 以上不追",
             ],
             Preset::Balanced => vec![
+                "比随便买多涨 0.3 个百分点以上的策略算有效",
                 "1 个有效策略看好就考虑买",
                 "最多 6 只，单只不超过 25%，留 10% 现金",
                 "止损 8%，收盘跌破 20 日均线就卖",
                 "全市场偏弱时用于买新股票的钱减半；开盘比参考价高 5% 以上不追",
             ],
             Preset::Aggressive => vec![
+                "只要比随便买好的策略都算有效，候选最多",
                 "1 个有效策略看好就买，几乎满仓",
                 "最多 8 只，单只可以到 30%",
                 "止损宽（10%），趋势看 60 日均线，给股票更多波动空间，但单笔亏损会更大",
@@ -148,6 +159,7 @@ impl Preset {
     pub fn rules(self) -> Rules {
         let base = Rules {
             strategies: vec![],
+            min_edge_pct: 0.3,
             min_picks: 1,
             max_positions: 6,
             max_weight_pct: 25.0,
@@ -161,6 +173,7 @@ impl Preset {
         };
         match self {
             Preset::Conservative => Rules {
+                min_edge_pct: 1.0,
                 min_picks: 2,
                 max_positions: 5,
                 max_weight_pct: 20.0,
@@ -172,6 +185,7 @@ impl Preset {
             },
             Preset::Balanced => base,
             Preset::Aggressive => Rules {
+                min_edge_pct: 0.0,
                 max_positions: 8,
                 max_weight_pct: 30.0,
                 min_cash_pct: 0.0,
@@ -199,7 +213,9 @@ mod tests {
         assert!(c.max_positions < b.max_positions && b.max_positions < a.max_positions);
         assert!(c.stop_loss_pct < b.stop_loss_pct && b.stop_loss_pct < a.stop_loss_pct);
         assert!(c.min_picks >= b.min_picks && b.min_picks >= a.min_picks);
+        assert!(c.min_edge_pct > b.min_edge_pct && b.min_edge_pct > a.min_edge_pct, "越保守，有效策略的门槛越高");
         assert_eq!(Rules::default(), b);
+        assert!(b.effective(None) && b.effective(Some(0.5)) && !b.effective(Some(0.3)));
     }
 
     #[test]

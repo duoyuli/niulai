@@ -275,8 +275,8 @@ pub fn generate(inp: &Input) -> Advice {
     let held: HashSet<&str> = inp.holdings.iter().map(|h| h.thscode.as_str()).collect();
     let stats: HashMap<i64, &StrategyIn> = inp.strategies.iter().map(|s| (s.strategy_id, s)).collect();
     let excess = |id: i64| stats.get(&id).and_then(|s| s.stat.as_ref()).and_then(|s| s.excess20_pct());
-    // 有效策略：过去 3 年买点之后 20 日的平均涨跌好于随便买；还没有统计的先算有效
-    let effective = |id: i64| stats.get(&id).is_none_or(|s| s.stat.as_ref().and_then(|x| x.excess20_pct()).is_none_or(|e| e > 0.0));
+    // 有效策略：过去 3 年买点之后 20 日平均比随便买多涨，超过账户的门槛；还没有统计的先算有效
+    let effective = |id: i64| p.effective(excess(id));
     let name_of = |id: i64| stats.get(&id).map_or_else(|| format!("策略 {id}"), |s| s.name.clone());
 
     let mut skipped: Vec<Skipped> = vec![];
@@ -295,7 +295,7 @@ pub fn generate(inp: &Input) -> Advice {
         let names = |l: &[&Pick]| l.iter().map(|k| format!("「{}」", name_of(k.strategy_id))).collect::<Vec<_>>().join("、");
         if kept.is_empty() {
             if !dropped.is_empty() {
-                skip(&mut skipped, c, format!("只被过去表现不如随便买的策略选中（{}）", names(&dropped)));
+                skip(&mut skipped, c, format!("只被不够有效门槛的策略选中（{}，门槛是比随便买多涨 {}%）", names(&dropped), p.min_edge_pct));
             }
             continue;
         }
@@ -404,7 +404,11 @@ pub fn generate(inp: &Input) -> Advice {
 
     let used: Vec<&StrategyIn> = inp.strategies.iter().filter(|s| p.uses(s.strategy_id)).collect();
     let good = used.iter().filter(|s| effective(s.strategy_id)).count();
-    let mut notes = vec![format!("参考 {} 个策略，其中 {good} 个过去 3 年买点之后的表现好于随便买（有效策略），只有它们选中的股票才考虑买入", used.len())];
+    let mut notes = vec![format!(
+        "参考 {} 个策略，其中 {good} 个过去 3 年买点之后 20 个交易日平均比随便买多涨 {}% 以上（有效策略），只有它们选中的股票才考虑买入",
+        used.len(),
+        p.min_edge_pct
+    )];
     let missing_cost = inp.holdings.iter().filter(|h| h.cost_price.is_none()).count();
     if missing_cost > 0 {
         notes.push(format!("{missing_cost} 只持仓没填成本价，不能按止损线判断，可以在持仓页补上"));
@@ -685,7 +689,7 @@ fn buy_item(
         cautions.push(note("market", "全市场偏弱，买入后更容易遇到下跌"));
     }
     for k in dropped {
-        cautions.push(note("stat", format!("{}也选中了它，但过去表现不如随便买，没有算进来", format_name(&name_of(k.strategy_id)))));
+        cautions.push(note("stat", format!("{}也选中了它，但不够有效门槛，没有算进来", format_name(&name_of(k.strategy_id)))));
     }
 
     let stop_price = close * (1.0 - p.stop_loss_pct / 100.0);
@@ -700,7 +704,8 @@ fn buy_item(
     }
     let scope = if p.strategies.is_empty() { "全部参加巡检的策略".to_string() } else { format!("勾选的 {} 个策略", p.strategies.len()) };
     let rule = format!(
-        "本账户的规则：参考{scope}中过去 3 年表现好于随便买的（有效策略），至少 {} 个同时选中才买；按「同时选中的有效策略数 → 它们的超额之和 → 成交额」排序；每只投入「可用的钱 ÷ 空余仓位」，不超过总资产的 {}%{}",
+        "本账户的规则：参考{scope}中过去 3 年比随便买多涨 {}% 以上的（有效策略），至少 {} 个同时选中才买；按「同时选中的有效策略数 → 它们的超额之和 → 成交额」排序；每只投入「可用的钱 ÷ 空余仓位」，不超过总资产的 {}%{}",
+        p.min_edge_pct,
         p.min_picks,
         p.max_weight_pct,
         if p.min_cash_pct > 0.0 { format!("，并保留 {}% 现金", p.min_cash_pct) } else { String::new() }
@@ -862,7 +867,7 @@ mod tests {
         assert!(buys[0].plan[1].contains("止损价 27.60 元"), "{}", buys[0].plan[1]);
         assert!(buys[0].evidence.iter().any(|n| n.kind == "stat" && n.text.contains("随便买")));
         let reasons: HashMap<&str, &str> = a.skipped.iter().map(|s| (s.thscode.as_str(), s.reason.as_str())).collect();
-        assert!(reasons["Z"].contains("过去表现不如随便买"), "{reasons:?}");
+        assert!(reasons["Z"].contains("不够有效门槛"), "{reasons:?}");
         assert!(reasons["W"].contains("钱不够买最少 100 股"), "{reasons:?}");
         assert_eq!(a.headline, "买入 2 只");
         assert!(a.after.cash < 100_000.0 && a.after.positions == 2);
@@ -889,7 +894,7 @@ mod tests {
     fn weak_market_pauses_conservative_and_halves_balanced() {
         let cands = || vec![cand("Y", 30.0, &[1, 2], 2e8)];
         let mut inp = input(Preset::Conservative, 100_000.0, vec![], cands());
-        inp.strategies.iter_mut().for_each(|s| s.stat = Some(stat(1.0)));
+        inp.strategies.iter_mut().for_each(|s| s.stat = Some(stat(1.5)));
         inp.market = Some(MarketIn { above_ma20_pct: 22.0, stocks: 5000 });
         let a = generate(&inp);
         assert_eq!(a.headline, "今天不用操作");

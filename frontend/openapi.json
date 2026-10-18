@@ -7508,10 +7508,16 @@
             "description": "至少留多少现金（占总资产的百分比）",
             "default": 10.0
           },
+          "min_edge_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "有效策略的门槛：过去 3 年买点之后 20 个交易日，平均比随便买至少多涨几个百分点",
+            "default": 0.3
+          },
           "min_picks": {
             "type": "integer",
             "format": "int32",
-            "description": "至少几个有效策略（过去 3 年表现好于随便买）同时选中才买",
+            "description": "至少几个有效策略同时选中才买",
             "default": 1,
             "minimum": 0
           },

@@ -1,8 +1,9 @@
 import { clsx } from "clsx";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { useLogout, useMe } from "../api/generated/auth/auth";
+import { useMe } from "../api/generated/auth/auth";
 import { useGetSetup } from "../api/generated/setup/setup";
 import { SecuritySearch } from "./SecuritySearch";
+import { UserMenu } from "./UserMenu";
 import { UpgradeBanner, VersionBadge } from "./VersionBadge";
 
 /** 主导航：今天看什么、我的账户（每天的调仓建议）、选股方法、我关注的股票。个股从页头搜索进入 */
@@ -13,19 +14,16 @@ const NAV = [
   { to: "/watchlist", label: "自选" },
 ];
 
-/** 不是每天用的，放在右侧。数据同步、数据源设置、用户管理只有管理员能用；普通用户从「指数」进指数板块 */
+/** 不是每天用的，放在右侧：说明，管理员的数据同步（普通用户是指数板块）。改密码、用户管理、数据源设置、退出收在用户名的菜单里 */
 const AUX = [
   { to: "/guide", label: "说明", title: "指标、信号、策略是什么，怎么用", who: "all" },
   { to: "/indices", label: "指数", title: "指数与板块", who: "member" },
   { to: "/sync", label: "数据", title: "数据同步与指数板块", who: "admin" },
-  { to: "/setup", label: "设置", title: "数据源设置：API Key", who: "admin" },
-  { to: "/users", label: "用户", title: "添加用户、重置密码、停用", who: "admin" },
 ] as const;
 
 export function Layout() {
   // 没有登录时 fetcher 收到 401 会转到登录页；登录后才检查 API Key
   const me = useMe({ query: { staleTime: Number.POSITIVE_INFINITY } });
-  const logout = useLogout({ mutation: { onSuccess: () => window.location.assign("/login") } });
   const admin = me.data?.role === "admin";
   // 首次登录引导：还没有配置 API Key 时，管理员的所有页面都先去配置
   const setup = useGetSetup({ query: { staleTime: 30_000, enabled: admin } });
@@ -82,31 +80,8 @@ export function Layout() {
               </NavLink>
             ))}
             {me.data && (
-              <div className="hidden items-center gap-2 border-l border-zinc-200 pl-3 sm:flex dark:border-zinc-700">
-                <NavLink
-                  to="/me"
-                  title="我的：改密码"
-                  className={({ isActive }) =>
-                    clsx(
-                      "flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-xs whitespace-nowrap transition",
-                      isActive
-                        ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
-                        : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
-                    )
-                  }
-                >
-                  <span className="flex size-5 items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent uppercase">
-                    {me.data.username.slice(0, 1)}
-                  </span>
-                  <span className="max-w-24 truncate">{me.data.username}</span>
-                </NavLink>
-                <button
-                  type="button"
-                  onClick={() => logout.mutate()}
-                  className="text-xs whitespace-nowrap text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
-                >
-                  退出
-                </button>
+              <div className="border-l border-zinc-200 pl-3 dark:border-zinc-700">
+                <UserMenu me={me.data} />
               </div>
             )}
           </div>

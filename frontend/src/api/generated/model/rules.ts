@@ -22,8 +22,10 @@ export interface Rules {
   max_weight_pct?: number;
   /** 至少留多少现金（占总资产的百分比） */
   min_cash_pct?: number;
+  /** 有效策略的门槛：过去 3 年买点之后 20 个交易日，平均比随便买至少多涨几个百分点 */
+  min_edge_pct?: number;
   /**
-     * 至少几个有效策略（过去 3 年表现好于随便买）同时选中才买
+     * 至少几个有效策略同时选中才买
      * @minimum 0
      */
   min_picks?: number;
