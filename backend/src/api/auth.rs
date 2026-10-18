@@ -30,6 +30,8 @@ const ADMIN_PREFIXES: &[&str] = &["/sync", "/datasets", "/setup", "/users", "/sy
 /// 其余写操作（策略、信号的增改删等）只有管理员能做：新增接口默认不对普通用户开放
 const MEMBER_WRITES: &[(Method, &str)] = &[
     (Method::PUT, "/auth/password"),
+    (Method::PUT, "/me/notify"),
+    (Method::POST, "/me/notify/test"),
     (Method::PUT, "/watchlist/*"),
     (Method::DELETE, "/watchlist/*"),
     (Method::POST, "/accounts"),

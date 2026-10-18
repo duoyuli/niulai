@@ -36,6 +36,7 @@
 | `NIULAI_ADMIN_USER` | 否 | `niulai` | 第一个管理员的用户名。只在第一次启动、第一个管理员还没有密码时用一次，之后在网页上管理用户，见 [登录与权限](rest_api.md#auth) |
 | `NIULAI_ADMIN_PASSWORD` | 否 | `niulai` | 第一个管理员的初始密码，同样只用一次；之后修改它没有效果，密码在网页「我的」页面改。用默认值时启动日志有警告，登录后页面顶部提醒修改 |
 | `NIULAI_UPGRADE_DIR` | 否 | 无；Docker 部署的 `compose.yml` 中是 `/upgrade` | 与 upgrader 容器共享的目录，为空时不能一键升级，见 [一键升级](../operations/runbook.md#one_click_upgrade) |
+| `NIULAI_PUBLIC_URL` | 否 | 无 | 网页的对外地址，例如 `https://niulai.example.com`；推送的运营建议里带上账户页的链接，为空时不带，见 [推送](../domains/accounts.md#notify) |
 | `NIULAI_UPDATE_REPO` | 否 | `duoyuli/niulai` | 到哪个 GitHub 仓库查新版本；设为空时不检查 |
 | `NIULAI_API_BIND` | 否 | `127.0.0.1:8080` | API 监听地址；Docker 镜像中默认 `0.0.0.0:8080` |
 | `NIULAI_DATASETS_PATH` | 否 | 依次查找 `config/datasets.yaml`、`backend/config/datasets.yaml` | 数据集注册表路径；Docker 镜像中是 `/app/config/datasets.yaml` |

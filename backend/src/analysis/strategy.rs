@@ -450,6 +450,11 @@ pub struct Evaluation {
 }
 
 impl Definition {
+    /// 只有默认股票池、没有条件的定义：「随便买」和基准用它判断某天某只股票算不算正常交易
+    pub fn any_stock() -> Self {
+        Definition { universe: Universe::default(), all: vec![], any: vec![], exit: Default::default(), sort: Default::default(), limit: 50, lib: SignalLib::default() }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.all.is_empty() && self.any.is_empty() {
             return Err("至少要有一个条件".into());

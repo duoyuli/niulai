@@ -1991,6 +1991,97 @@
         }
       }
     },
+    "/me/notify": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "本人的推送设置",
+        "operationId": "get_notify",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotifySettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "设置或清除群机器人地址",
+        "operationId": "set_notify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotifyInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotifySettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "不是企业微信、飞书、钉钉群机器人的 https 地址",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/notify/test": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "往保存的地址发一条试试",
+        "operationId": "test_notify",
+        "responses": {
+          "200": {
+            "description": "已发出",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotifySettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "还没有设置地址，或机器人返回了错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/ready": {
       "get": {
         "tags": [
@@ -3506,6 +3597,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/data": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "数据准备得怎么样：核心数据（个股日线）齐没齐、首次回补的进度。普通用户也能看，首页据此提示「数据准备中」",
+        "operationId": "data_status",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataStatus"
                 }
               }
             }
@@ -5252,6 +5364,41 @@
           }
         }
       },
+      "DataStatus": {
+        "type": "object",
+        "description": "普通用户也能看的数据状态：核心数据齐没齐、首次回补的进度",
+        "required": [
+          "core_ready",
+          "core_left",
+          "message"
+        ],
+        "properties": {
+          "backfill": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BackfillProgress",
+                "description": "全部数据的首次回补进度；没有在回补时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "core_left": {
+            "type": "integer",
+            "format": "int64",
+            "description": "核心数据还剩多少个任务"
+          },
+          "core_ready": {
+            "type": "boolean",
+            "description": "核心数据（个股日线、公司行动）已经齐了"
+          },
+          "message": {
+            "type": "string",
+            "description": "一句话说明"
+          }
+        }
+      },
       "DatasetProgress": {
         "type": "object",
         "required": [
@@ -6437,6 +6584,44 @@
           }
         }
       },
+      "NotifyInput": {
+        "type": "object",
+        "properties": {
+          "webhook": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "群机器人地址；为空或 null 表示不再推送"
+          }
+        }
+      },
+      "NotifySettings": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "哪一家：企业微信、飞书、钉钉"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最近一次推送失败的原因；成功后清空"
+          },
+          "webhook": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "群机器人地址；为空表示不推送"
+          }
+        }
+      },
       "Occurrence": {
         "type": "object",
         "required": [
@@ -7467,12 +7652,18 @@
         "required": [
           "items",
           "buys",
-          "sells"
+          "sells",
+          "buys_executed",
+          "sells_executed"
         ],
         "properties": {
           "buys": {
             "$ref": "#/components/schemas/ReviewGroup",
-            "description": "全部买入建议"
+            "description": "全部买入建议（连续几天重复的只算第一天）"
+          },
+          "buys_executed": {
+            "$ref": "#/components/schemas/ReviewGroup",
+            "description": "其中用户点了「已执行」的买入"
           },
           "items": {
             "type": "array",
@@ -7483,6 +7674,10 @@
           "sells": {
             "$ref": "#/components/schemas/ReviewGroup",
             "description": "全部卖出、减仓建议（之后跌了说明卖对了）"
+          },
+          "sells_executed": {
+            "$ref": "#/components/schemas/ReviewGroup",
+            "description": "其中用户点了「已执行」的卖出、减仓"
           }
         }
       },
@@ -9194,7 +9389,7 @@
               "boolean",
               "null"
             ],
-            "description": "买点之后 20 日平均好于随便买；还没统计时为空"
+            "description": "买点之后 20 日平均好于同一天随便买，而且超过误差的 2 倍（不是运气）；还没统计或买点太少时为空"
           },
           "name": {
             "type": "string"
@@ -9231,7 +9426,7 @@
               "null"
             ],
             "format": "double",
-            "description": "买点之后 20 个交易日的平均涨跌（%）"
+            "description": "买点之后 20 个交易日的平均涨跌（%，第二天开盘买、第 20 个交易日收盘算）"
           },
           "after20_up_ratio": {
             "type": [
@@ -9262,7 +9457,7 @@
               "null"
             ],
             "format": "double",
-            "description": "同期默认股票池里任意一天之后 20 个交易日的平均涨跌（%）"
+            "description": "同样那些天随便买的平均涨跌（%）：每个买点日默认股票池里全部股票的平均，按买点数加权"
           },
           "closed": {
             "type": "integer",
@@ -9273,6 +9468,23 @@
           "end": {
             "type": "string",
             "format": "date"
+          },
+          "excess_se_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "超额的标准误（百分点，按交易日分组）。超额不到它的 2 倍，多半是运气。旧的统计没有，重算后才有"
+          },
+          "signal_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "有买点的交易日数",
+            "minimum": 0
           },
           "signals": {
             "type": "integer",
@@ -10088,7 +10300,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/BackupStatus",
-                "description": "内置数据库的每日备份（升级助手做）；没有启用升级助手时为空"
+                "description": "内置数据库的每日备份（升级助手做）；没有启用升级助手、或不是管理员时为空"
               },
               {
                 "type": "null"

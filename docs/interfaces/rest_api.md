@@ -28,11 +28,14 @@
 | `POST /auth/logout` | 退出登录，清除 Cookie；返回 204 | — |
 | `GET /auth/me` | 当前用户：编号、用户名、角色（`admin` / `member`）、是否要提醒修改密码（`must_change_password`） | 没有登录时返回 401 |
 | `PUT /auth/password` | 改自己的密码，响应带新的登录 Cookie，其他浏览器上的登录失效 | 请求体 `{current_password, new_password}`，新密码至少 8 个字符；现在的密码不对时返回 400 |
+| `GET /me/notify`、`PUT /me/notify` | 自己的推送设置：群机器人地址、哪一家、上次推送失败的原因 | 请求体 `{webhook}`，为空表示不再推送；不是企业微信、飞书、钉钉的 https 地址时返回 400。规则见 [推送](../domains/accounts.md#notify) |
+| `POST /me/notify/test` | 往保存的地址发一条测试消息 | 没有地址或机器人返回错误时返回 400 |
 | `GET /users` | 全部用户（管理员），不含密码哈希 | — |
 | `POST /users` | 添加用户（管理员），返回 201 | 请求体 `{username, password?, role?}`：不填密码时生成一个，只在这次的 `generated_password` 中返回；不填角色时是 `member`；用户名已存在返回 409 |
 | `PUT /users/{user_id}` | 修改角色、停用或启用（管理员） | 请求体 `{role, disabled}`；不能修改自己，至少留一个可以登录的管理员，否则返回 400 |
 | `POST /users/{user_id}/password` | 重置别人的密码（管理员），这个用户之前的登录都失效 | 请求体 `{password?}`，不填时生成一个并在 `generated_password` 中返回；不能重置自己的 |
-| `GET /system/version` | 当前版本、可以升级到的最新版本（GitHub 上的标签，并且镜像已经能从 GHCR 拉取）、一键升级的状态（upgrader 是否在运行、进度、失败时的日志） | `refresh=true` 时不用 6 小时的缓存，立即查询；见 [一键升级](../operations/runbook.md#one_click_upgrade) |
+| `GET /system/data` | 数据准备得怎么样：核心数据（个股日线、公司行动）的首次回补还剩多少、全部回补的进度、一句话说明 | 普通用户也能看；首页据此提示「数据准备中」 |
+| `GET /system/version` | 当前版本、可以升级到的最新版本（GitHub 上的标签，并且镜像已经能从 GHCR 拉取）、一键升级的状态（upgrader 是否在运行、进度、失败时的日志）、每日备份的情况（最近一份、几份、失败原因、超过 36 小时没有成功时 `stale`） | `refresh=true` 时不用 6 小时的缓存，立即查询；见 [一键升级](../operations/runbook.md#one_click_upgrade) |
 | `POST /system/upgrade` | 一键升级：把版本号交给 upgrader 容器，返回 202 | 请求体 `{version}`，为空时升级到最新版本；只接受正式版本号（`YYYY.MM.DD`、`YYYY.MM.DD.N`）且高于当前版本；upgrader 没有运行或正在升级时返回 409 |
 | `GET /setup` | 首次登录引导的状态：API Key 是否已配置、来源、末尾 4 位、生成 Key 的网址、是否已规划回补 | 见 [首次登录引导](#setup) |
 | `PUT /setup/api-key` | 验证并保存 API Key，立即生效 | 请求体 `{api_key}`；见 [首次登录引导](#setup) |

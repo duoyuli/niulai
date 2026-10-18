@@ -77,7 +77,10 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
         // 够门槛的策略列在上面；不够门槛的、还在观察期的（没统计出来或买点太少）在分界线下面，灰显
         const qualifies = (s: StrategyQuality) => {
           const e = excessOf(s);
-          return e !== null && (s.stat?.signals ?? 0) >= MIN_SIGNALS && e > value.min_edge_pct;
+          const se = s.stat?.excess_se_pct;
+          return (
+            e !== null && se != null && (s.stat?.signals ?? 0) >= MIN_SIGNALS && e > value.min_edge_pct && e > 2 * se
+          );
         };
         const above = g.strategies.filter(qualifies);
         const below = g.strategies.filter((s) => !qualifies(s));
@@ -93,6 +96,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
         const row = (s: StrategyQuality) => {
           const e = excessOf(s);
           const ok = qualifies(s);
+          const se = s.stat?.excess_se_pct;
           return (
             <li key={s.strategy_id}>
               <label className="flex cursor-pointer items-center gap-2 py-0.5">
@@ -101,8 +105,11 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                   {s.name}
                   {!s.builtin && <span className="ml-1 text-xs text-zinc-400">自建</span>}
                 </span>
-                <span className={clsx("num w-16 text-right text-xs", upDownClass(e))}>
-                  {e === null ? "观察期" : fmtPctValue(e, 1)}
+                <span
+                  className={clsx("num w-24 text-right text-xs", upDownClass(e))}
+                  title={se != null && e !== null && e <= 2 * se ? "多涨的不到误差，说不清是不是运气" : undefined}
+                >
+                  {e === null || se == null ? "观察期" : `${fmtPctValue(e, 1)} ±${(2 * se).toFixed(1)}`}
                 </span>
                 <span className="num hidden w-20 text-right text-xs text-zinc-400 sm:inline">
                   {s.stat ? `${s.stat.signals} 次${s.stat.signals < MIN_SIGNALS ? "，太少" : ""}` : "统计中"}
@@ -123,16 +130,19 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                       <>
                         <span className="block font-medium">「随便买」是一个对照组</span>
                         <span className="mt-1 block">
-                          把过去 3 年里每一只正常交易的股票、每一个交易日都当成一次买入，看买入后 20
-                          个交易日平均涨多少，相当于闭着眼睛随便哪天买随便哪只。
+                          策略每出现一个买点，就看同一天所有正常交易的股票平均涨多少，相当于那天闭着眼睛随便买一只。和同一天比，大盘整体涨跌就抵消了。
                         </span>
                         <span className="mt-1 block">
-                          策略的数字 = 它的买点之后 20 个交易日的平均涨跌 − 随便买的平均涨跌。比如买点之后平均涨
-                          3%、随便买平均涨 1%，就是多涨 2 个百分点；负数说明照着它挑还不如闭眼买。
+                          策略的数字 = 它的买点之后的平均涨跌 − 同一天随便买的平均涨跌。比如买点之后平均涨
+                          3%、同一天随便买平均涨 1%，就是多涨 2 个百分点；负数说明照着它挑还不如闭眼买。
+                        </span>
+                        <span className="mt-1 block">
+                          数字后面的 ± 是误差：多涨的不到误差这么多，就说不清是策略好还是运气好，也不算有效。
                         </span>
                         <span className="mt-1 block text-zinc-500">
-                          正常交易指排除 ST、股价低于 2 元、成交额不到 5000 万、上市不满 60 个交易日的。统一看 20
-                          个交易日、不扣费用，是平均数，不代表以后；每周用最新数据重算。
+                          都按能做到的算：买点第二天开盘买入（一字涨停买不进的不算），拿 20 个交易日。正常交易指排除
+                          ST、股价低于 2 元、成交额不到 5000 万、上市不满 60
+                          个交易日的。不扣费用，是平均数，不代表以后；每周用最新数据重算。
                         </span>
                       </>
                     }
@@ -192,8 +202,8 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 {below.length > 0 && (
                   <details className="mt-2 border-t border-dashed border-zinc-300 pt-1 text-sm dark:border-zinc-700">
                     <summary className="cursor-pointer text-xs text-zinc-500">
-                      以下 {below.length} 个比随便买多涨不到 {value.min_edge_pct}%，或还在观察期（没统计出来、3
-                      年里买点不到 {MIN_SIGNALS} 次），暂时不用来选股
+                      以下 {below.length} 个比随便买多涨不到 {value.min_edge_pct}%，多涨的不到误差（±
+                      后面的数），或还在观察期（没统计出来、3 年里买点不到 {MIN_SIGNALS} 次），暂时不用来选股
                     </summary>
                     <ul className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">{below.map(row)}</ul>
                   </details>

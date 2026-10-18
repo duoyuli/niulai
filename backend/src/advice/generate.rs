@@ -116,7 +116,7 @@ pub struct Input {
     pub streaks: BTreeMap<String, u32>,
 }
 
-#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[serde(rename_all = "snake_case")]
 #[schema(as = AdviceAction)]
 pub enum Action {
@@ -280,9 +280,10 @@ pub fn generate(inp: &Input) -> Advice {
     let mut slots = p.max_positions as i64 - remaining as i64;
     let held: HashSet<&str> = inp.holdings.iter().map(|h| h.thscode.as_str()).collect();
     let stats: HashMap<i64, &StrategyIn> = inp.strategies.iter().map(|s| (s.strategy_id, s)).collect();
-    let excess = |id: i64| stats.get(&id).and_then(|s| s.stat.as_ref()).and_then(|s| s.edge_pct());
-    // 有效策略：过去 3 年买点之后 20 日平均比随便买多涨，超过账户的门槛；还没有统计、买点太少的在观察期，不算
-    let effective = |id: i64| p.effective(excess(id));
+    let edge = |id: i64| stats.get(&id).and_then(|s| s.stat.as_ref()).and_then(|s| s.edge());
+    let excess = |id: i64| edge(id).map(|(e, _)| e);
+    // 有效策略：过去 3 年买点之后 20 日平均比同一天随便买多涨，超过账户的门槛且不是运气；还没有统计、买点太少的在观察期，不算
+    let effective = |id: i64| p.effective(edge(id));
     let name_of = |id: i64| stats.get(&id).map_or_else(|| format!("策略 {id}"), |s| s.name.clone());
 
     let mut skipped: Vec<Skipped> = vec![];
@@ -813,7 +814,7 @@ mod tests {
     }
 
     fn stat(excess: f64) -> StrategyStat {
-        StrategyStat { start: day(), end: day(), signals: 1000, closed: 900, win_rate: Some(0.55), avg_return_pct: Some(1.2), avg_bars_held: Some(9.0), after20_avg_pct: Some(0.6 + excess), base20_avg_pct: Some(0.6), after20_up_ratio: Some(0.52) }
+        StrategyStat { start: day(), end: day(), signals: 1000, closed: 900, win_rate: Some(0.55), avg_return_pct: Some(1.2), avg_bars_held: Some(9.0), after20_avg_pct: Some(0.6 + excess), base20_avg_pct: Some(0.6), after20_up_ratio: Some(0.52), excess_se_pct: Some(0.1), signal_days: Some(400) }
     }
 
     fn input(preset: Preset, cash: f64, holdings: Vec<HoldingIn>, candidates: Vec<CandidateIn>) -> Input {

@@ -123,7 +123,8 @@ pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
     if !WEEKLY_RUNNING.load(Ordering::Acquire)
         && latest_bar.is_some()
         && stats::due(pool).await?
-        && crate::sync::scheduler::claim(pool, "strategy_stats", crate::time::today_cn(), "day").await?
+        // 作业名带统计口径的版本：口径变了（升级后）当天就重算，不用等到第二天
+        && crate::sync::scheduler::claim(pool, &format!("strategy_stats:{}", stats::STATS_VERSION), crate::time::today_cn(), "day").await?
     {
         WEEKLY_RUNNING.store(true, Ordering::Release);
         let pool = pool.clone();

@@ -31,7 +31,7 @@ const RETRY_AFTER: Duration = Duration::from_secs(30 * 60);
 const HEARTBEAT_FRESH_SECS: i64 = 30;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(version)).routes(routes!(upgrade))
+    OpenApiRouter::new().routes(routes!(version)).routes(routes!(upgrade)).routes(routes!(data_status))
 }
 
 /// 缓存的最新版本
@@ -61,7 +61,7 @@ pub struct VersionInfo {
     /// 两个版本之间改了什么（GitHub 对比页面）
     pub changes_url: Option<String>,
     pub upgrade: UpgradeStatus,
-    /// 内置数据库的每日备份（升级助手做）；没有启用升级助手时为空
+    /// 内置数据库的每日备份（升级助手做）；没有启用升级助手、或不是管理员时为空
     pub backup: Option<BackupStatus>,
 }
 
@@ -138,10 +138,16 @@ pub struct VersionQuery {
     pub refresh: bool,
 }
 
+/// 数据准备得怎么样：核心数据（个股日线）齐没齐、首次回补的进度。普通用户也能看，首页据此提示「数据准备中」
+#[utoipa::path(get, path = "/system/data", tag = "system", responses((status = 200, description = "成功", body = crate::sync::audit::DataStatus)))]
+async fn data_status(State(s): State<AppState>) -> ApiResult<Json<crate::sync::audit::DataStatus>> {
+    Ok(Json(crate::sync::audit::data_status(&s.pool).await?))
+}
+
 /// 当前版本、最新版本和一键升级的状态
 #[utoipa::path(get, path = "/system/version", tag = "system", params(VersionQuery),
     responses((status = 200, description = "成功", body = VersionInfo)))]
-async fn version(State(s): State<AppState>, Query(q): Query<VersionQuery>) -> Json<VersionInfo> {
+async fn version(State(s): State<AppState>, me: super::auth::CurrentUser, Query(q): Query<VersionQuery>) -> Json<VersionInfo> {
     let checked = latest(&s, q.refresh).await;
     let current = current_version();
     let latest = checked.as_ref().and_then(|c| c.latest.clone());
@@ -156,7 +162,8 @@ async fn version(State(s): State<AppState>, Query(q): Query<VersionQuery>) -> Js
         check_error: checked.and_then(|c| c.error),
         changes_url,
         upgrade: upgrade_status(s.engine.settings.upgrade_dir.as_deref()),
-        backup: s.engine.settings.upgrade_dir.as_deref().and_then(backup_status),
+        // 备份的文件名和失败原因只给管理员看
+        backup: if me.role == crate::auth::Role::Admin { s.engine.settings.upgrade_dir.as_deref().and_then(backup_status) } else { None },
     })
 }
 

@@ -25,6 +25,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  DataStatus,
   ErrorBody,
   Health,
   UpgradeInput,
@@ -244,6 +245,106 @@ export function useReady<TData = Awaited<ReturnType<typeof ready>>, TError = Err
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getReadyQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getDataStatusUrl = () => {
+
+
+
+
+  return `/api/v1/system/data`
+}
+
+/**
+ * @summary 数据准备得怎么样：核心数据（个股日线）齐没齐、首次回补的进度。普通用户也能看，首页据此提示「数据准备中」
+ */
+export const dataStatus = async ( options?: Parameters<typeof apiFetch>[1]): Promise<DataStatus> => {
+
+  return apiFetch<DataStatus>(getDataStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getDataStatusQueryKey = () => {
+    return [
+    `/api/v1/system/data`
+    ] as const;
+    }
+
+
+export const getDataStatusQueryOptions = <TData = Awaited<ReturnType<typeof dataStatus>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDataStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof dataStatus>>> = ({ signal }) => dataStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof dataStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type DataStatusQueryResult = NonNullable<Awaited<ReturnType<typeof dataStatus>>>
+export type DataStatusQueryError = unknown
+
+
+export function useDataStatus<TData = Awaited<ReturnType<typeof dataStatus>>, TError = unknown>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataStatus>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof dataStatus>>,
+          TError,
+          Awaited<ReturnType<typeof dataStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useDataStatus<TData = Awaited<ReturnType<typeof dataStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataStatus>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof dataStatus>>,
+          TError,
+          Awaited<ReturnType<typeof dataStatus>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useDataStatus<TData = Awaited<ReturnType<typeof dataStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 数据准备得怎么样：核心数据（个股日线）齐没齐、首次回补的进度。普通用户也能看，首页据此提示「数据准备中」
+ */
+
+export function useDataStatus<TData = Awaited<ReturnType<typeof dataStatus>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof dataStatus>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getDataStatusQueryOptions(options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

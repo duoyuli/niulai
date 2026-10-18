@@ -1,8 +1,10 @@
 import { clsx } from "clsx";
 import { Suspense } from "react";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { useListAccounts } from "../api/generated/accounts/accounts";
 import { useMe } from "../api/generated/auth/auth";
 import { useGetSetup } from "../api/generated/setup/setup";
+import { todayCn } from "../lib/format";
 import { SecuritySearch } from "./SecuritySearch";
 import { UserMenu } from "./UserMenu";
 import { Spinner } from "./ui";
@@ -59,6 +61,7 @@ export function Layout() {
                 }
               >
                 {n.label}
+                {n.to === "/accounts" && <PendingBadge />}
               </NavLink>
             ))}
           </nav>
@@ -112,5 +115,24 @@ export function Layout() {
         绘制。
       </footer>
     </div>
+  );
+}
+
+/** 「账户」后面的数字：运营建议里还没处理（已执行或不做）的条数，操作日已经过去的不算 */
+function PendingBadge() {
+  const q = useListAccounts({ query: { staleTime: 60_000 } });
+  const today = todayCn();
+  const n = (q.data ?? []).reduce(
+    (sum, a) => sum + (a.advice && a.advice.next_date >= today ? a.advice.pending : 0),
+    0,
+  );
+  if (n === 0) return null;
+  return (
+    <span
+      className="ml-1 inline-flex min-w-4 items-center justify-center rounded-full bg-up px-1 text-[10px] leading-4 text-white"
+      title={`运营建议里还有 ${n} 条没处理`}
+    >
+      {n}
+    </span>
   );
 }

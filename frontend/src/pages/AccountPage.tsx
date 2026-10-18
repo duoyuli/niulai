@@ -338,6 +338,22 @@ function Records({ id }: { id: number }) {
                   {fmtPctValue(r.sells.avg_20d_pct, 1)}
                 </span>
                 （{r.sells.samples} 条，跌了说明卖对了）。
+                {r.buys_executed.samples + r.sells_executed.samples > 0 && (
+                  <>
+                    其中你执行了的：买入之后平均{" "}
+                    <span className={clsx("num", upDownClass(r.buys_executed.avg_20d_pct))}>
+                      {fmtPctValue(r.buys_executed.avg_20d_pct, 1)}
+                    </span>
+                    （{r.buys_executed.samples} 条），卖出之后平均{" "}
+                    <span className={clsx("num", upDownClass(r.sells_executed.avg_20d_pct))}>
+                      {fmtPctValue(r.sells_executed.avg_20d_pct, 1)}
+                    </span>
+                    （{r.sells_executed.samples} 条）。
+                  </>
+                )}
+              </p>
+              <p className="text-xs text-zinc-500">
+                从操作日开盘算起（建议出来后最早能成交的价格）；同一只股票连续几天的同一个建议只算第一天。
               </p>
               {r.items.length > 0 && (
                 <Table>

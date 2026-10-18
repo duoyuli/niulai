@@ -33,6 +33,8 @@ pub struct Executor {
     queue: TaskQueue,
     fetcher: Fetcher,
     guard: TradeDateGuard,
+    /// 推送里账户页链接的前缀（`NIULAI_PUBLIC_URL`）
+    public_url: Option<String>,
 }
 
 /// 一个任务的执行结果（失败以 Err 返回）
@@ -47,8 +49,9 @@ enum Outcome {
 }
 
 impl Executor {
-    pub fn new(pool: PgPool, client: Arc<HithinkClient>, registry: Arc<Registry>, worker_id: String) -> Self {
+    pub fn new(pool: PgPool, client: Arc<HithinkClient>, registry: Arc<Registry>, worker_id: String, public_url: Option<String>) -> Self {
         Executor {
+            public_url,
             queue: TaskQueue::new(pool.clone(), worker_id),
             fetcher: Fetcher::new(pool.clone(), client.clone(), registry.backoff_s.clone()),
             guard: TradeDateGuard::new(pool.clone(), client.clone()),
@@ -130,6 +133,9 @@ impl Executor {
         postprocess::refresh_if_stale(&self.pool, &self.price_datasets()).await?;
         super::retention::prune_if_due(&self.pool).await?;
         // 调仓建议出错不影响同步
+        if let Err(e) = crate::notify::push_new_advice(&self.pool, self.public_url.as_deref()).await {
+            tracing::error!(error = %format!("{e:#}"), "推送运营建议失败");
+        }
         if let Err(e) = crate::analysis::prices::in_background(crate::advice::maintain(&self.pool)).await {
             tracing::error!(error = %format!("{e:#}"), "调仓建议的维护失败");
         }

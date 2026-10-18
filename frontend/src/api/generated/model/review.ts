@@ -9,9 +9,13 @@ import type { ReviewGroup } from './reviewGroup';
 import type { ReviewItem } from './reviewItem';
 
 export interface Review {
-  /** 全部买入建议 */
+  /** 全部买入建议（连续几天重复的只算第一天） */
   buys: ReviewGroup;
+  /** 其中用户点了「已执行」的买入 */
+  buys_executed: ReviewGroup;
   items: ReviewItem[];
   /** 全部卖出、减仓建议（之后跌了说明卖对了） */
   sells: ReviewGroup;
+  /** 其中用户点了「已执行」的卖出、减仓 */
+  sells_executed: ReviewGroup;
 }

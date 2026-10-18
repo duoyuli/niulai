@@ -22,7 +22,9 @@ use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef};
 use crate::analysis::market::{self, calendar_days_for};
 use crate::analysis::points;
 use crate::analysis::prices;
-use crate::analysis::strategy::{Definition, SignalLib, Universe};
+use crate::analysis::strategy::Definition;
+
+use super::stats::{DayAcc, MIN_SIGNALS, edge, forward_return};
 
 /// 判断有效策略往前看几年；参考值的回测区间也是这么长
 pub const YEARS: i64 = 3;
@@ -42,9 +44,6 @@ pub fn resolve_range(latest: NaiveDate, start: Option<NaiveDate>, end: Option<Na
     }
     Ok((start, end))
 }
-/// 买点之后看多少个交易日
-const HORIZON: usize = 20;
-/// 一个窗口里至少有多少次买点才判断这个策略有没有效
 /// 一次最多参考多少个策略（按位记录）
 pub const MAX_STRATEGIES: usize = 64;
 /// 本金（只影响金额，不影响收益率）
@@ -152,39 +151,36 @@ struct YearEdge {
     edge: Vec<f64>,
 }
 
-/// 按「20 天在哪一年结束」累计的买点之后涨跌，以及随便买的
-#[derive(Default)]
+/// 每个策略按买点日累计的涨跌（第二天开盘买、第 20 个交易日收盘算），以及同一天随便买的；和策略过去表现同一个口径（见 stats）
 struct Sums {
-    by_year: HashMap<(usize, i32), (f64, u64)>,
-    base: HashMap<i32, (f64, u64)>,
+    by_strategy: Vec<DayAcc>,
+    base: DayAcc,
 }
 
 impl Sums {
-    /// 第 year 年的有效策略（超额大于 min_edge）：只看 year 之前 3 年里结束的
-    fn edges(&self, n: usize, year: i32, min_edge: f64) -> YearEdge {
-        let window = (year - YEARS as i32)..year;
-        let (bs, bn) = window.clone().filter_map(|y| self.base.get(&y)).fold((0.0, 0u64), |a, b| (a.0 + b.0, a.1 + b.1));
+    fn new(n: usize) -> Self {
+        Sums { by_strategy: (0..n).map(|_| DayAcc::default()).collect(), base: DayAcc::default() }
+    }
+
+    /// 第 year 年的有效策略：只看 year 之前 3 年里的买点，并且买点之后的 20 个交易日在 year 开始之前已经走完
+    /// （买点日至少早 40 天），不用未来的数据；判断和每日建议相同（超过门槛、超过标准误的 2 倍、买点够多）
+    fn edges(&self, year: i32, rules: &Rules) -> YearEdge {
+        let n = self.by_strategy.len();
         let mut out = YearEdge { mask: 0, edge: vec![f64::NAN; n] };
-        if bn == 0 {
-            return out;
-        }
-        let base = bs / bn as f64;
-        for k in 0..n {
-            let (s, c) = window.clone().filter_map(|y| self.by_year.get(&(k, y))).fold((0.0, 0u64), |a, b| (a.0 + b.0, a.1 + b.1));
-            if c >= super::stats::MIN_SIGNALS {
-                let e = s / c as f64 - base;
-                out.edge[k] = e;
-                if e > min_edge {
-                    out.mask |= 1 << k;
-                }
+        let (Some(from), Some(jan1)) = (NaiveDate::from_ymd_opt(year - YEARS as i32, 1, 1), NaiveDate::from_ymd_opt(year, 1, 1)) else { return out };
+        let until = jan1 - chrono::Duration::days(40);
+        for (k, acc) in self.by_strategy.iter().enumerate() {
+            let Some(e) = edge(acc, &self.base, |d| d >= from && d < until) else { continue };
+            if e.n < MIN_SIGNALS {
+                continue;
+            }
+            out.edge[k] = e.excess;
+            if rules.effective(e.se.map(|se| (e.excess, se))) {
+                out.mask |= 1 << k;
             }
         }
         out
     }
-}
-
-fn add(m: &mut (f64, u64), r: f64) {
-    *m = (m.0 + r, m.1 + 1);
 }
 
 // @project-doc docs/domains/accounts.md#rules_backtest
@@ -199,22 +195,22 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
     let strategy_names: Vec<String> = used.iter().map(|(id, _)| names.get(id).cloned().unwrap_or_else(|| format!("策略 {id}"))).collect();
     let edge_from = start - chrono::Duration::days(365 * YEARS);
     let sec = market::securities(pool).await?;
-    let base_def = Definition { universe: Universe::default(), all: vec![], any: vec![], exit: Default::default(), sort: Default::default(), limit: 50, lib: SignalLib::default() };
+    let base_def = Definition::any_stock();
     let warmup = defs.iter().map(|d| d.warmup()).max().unwrap_or(30).max(rules.trend_ma) + 5;
     let mut raw: Vec<(Vec<NaiveDate>, Stock)> = vec![];
-    let mut sums = Sums::default();
+    let mut sums = Sums::new(defs.len());
+    let mut ew = crate::analysis::portfolio::EqualWeight::default();
     // 每天：收盘站上 20 日均线的股票数、当天有日线的股票数
     let mut breadth: HashMap<NaiveDate, (u32, u32)> = HashMap::new();
     prices::for_each_stock(pool, edge_from - chrono::Duration::days(calendar_days_for(warmup)), end, |code, bars| {
         let Some(meta) = sec.meta.get(code) else { return };
         let Some(first_edge) = bars.iter().position(|b| b.date >= edge_from) else { return };
         let f = Frame::new(bars, Some(meta));
-        let after = |s: usize| bars.get(s + HORIZON).map(|l| (l.date.year(), (l.q_close / bars[s].q_close - 1.0) * 100.0)).filter(|(_, r)| r.is_finite());
         for i in first_edge..bars.len() {
             if base_def.in_universe(&f, meta, i)
-                && let Some((y, r)) = after(i)
+                && let Some(r) = forward_return(bars, i)
             {
-                add(sums.base.entry(y).or_default(), r);
+                sums.base.add(bars[i].date, r);
             }
         }
         let first = bars.iter().position(|b| b.date >= start);
@@ -223,8 +219,8 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
         for (k, d) in defs.iter().enumerate() {
             for t in points::run(bars, &f, meta, d, first_edge).trades {
                 let Ok(s) = bars.binary_search_by_key(&t.signal_date, |b| b.date) else { continue };
-                if let Some((y, r)) = after(s) {
-                    add(sums.by_year.entry((k, y)).or_default(), r);
+                if let Some(r) = forward_return(bars, s) {
+                    sums.by_strategy[k].add(t.signal_date, r);
                 }
                 if let Some(f0) = first
                     && s >= f0
@@ -235,6 +231,7 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
             }
         }
         let Some(f0) = first else { return };
+        ew.add(&base_def, bars, &f, meta, f0);
         let ma20 = f.get(IndicatorRef::new(IndicatorId::Ma, Some(20)));
         let ma = f.get(IndicatorRef::new(IndicatorId::Ma, Some(rules.trend_ma)));
         let exits: Vec<Vec<bool>> = defs.iter().map(|d| d.exit_series(&f)).collect();
@@ -295,8 +292,8 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
             }
         }
     }
-    let edges: HashMap<i32, YearEdge> = (calendar[0].year()..=calendar[calendar.len() - 1].year()).map(|y| (y, sums.edges(defs.len(), y, rules.min_edge_pct))).collect();
-    let bench = crate::analysis::portfolio::benchmark(pool, calendar[0], *calendar.last().expect("日历不为空")).await?;
+    let edges: HashMap<i32, YearEdge> = (calendar[0].year()..=calendar[calendar.len() - 1].year()).map(|y| (y, sums.edges(y, rules))).collect();
+    let bench = ew.series(calendar[0], *calendar.last().expect("日历不为空"));
     let mut r = simulate(rules, &stocks, &signals, &calendar, &breadth, &edges, bench, &strategy_names);
     r.summary.strategies = defs.len();
     Ok(Some(r))
@@ -650,18 +647,27 @@ mod tests {
 
     #[test]
     fn edges_only_use_earlier_years() {
-        let mut s = Sums::default();
+        let d = |y, m, day| NaiveDate::from_ymd_opt(y, m, day).unwrap();
+        let mut s = Sums::new(2);
+        let rules = |min_edge_pct| Rules { min_edge_pct, ..Rules::default() };
+        // 2021–2023 年每个月一天：随便买涨 1%，策略 0 每个买点涨 3%（每天略有不同），策略 1 涨 0.5%
         for y in [2021, 2022, 2023] {
-            s.base.insert(y, (100.0, 100));
-            s.by_year.insert((0, y), (300.0, 100));
-            s.by_year.insert((1, y), (50.0, 100));
+            for m in 1..=12 {
+                let day = d(y, m, 10);
+                s.base.add(day, 1.0);
+                for i in 0..3 {
+                    s.by_strategy[0].add(day, 3.0 + f64::from(i + m) * 0.01);
+                    s.by_strategy[1].add(day, 0.5 + f64::from(i) * 0.01);
+                }
+            }
         }
-        // 2024 年里的表现不影响 2024 年的判断
-        s.by_year.insert((1, 2024), (1e9, 100));
-        let e = s.edges(2, 2024, 0.0);
+        // 2024 年里的表现不影响 2024 年的判断；2023 年 12 月的买点 20 天还没走完，也不用
+        s.base.add(d(2024, 3, 1), 1.0);
+        s.by_strategy[1].add(d(2024, 3, 1), 1e9);
+        let e = s.edges(2024, &rules(0.0));
         assert_eq!(e.mask, 0b01);
-        assert_eq!(s.edges(2, 2024, 2.5).mask, 0, "门槛 2.5% 时策略 1 的 2% 不够");
-        assert!((e.edge[0] - 2.0).abs() < 1e-9 && (e.edge[1] + 0.5).abs() < 1e-9);
-        assert_eq!(s.edges(2, 2021, 0.0).mask, 0, "之前没有数据时没有有效策略");
+        assert_eq!(s.edges(2024, &rules(2.5)).mask, 0, "门槛 2.5% 时策略 0 的约 2% 不够");
+        assert!((e.edge[0] - 2.075).abs() < 0.01 && (e.edge[1] + 0.49).abs() < 0.01, "{:?}", e.edge);
+        assert_eq!(s.edges(2021, &rules(0.0)).mask, 0, "之前没有数据时没有有效策略");
     }
 }

@@ -24,7 +24,7 @@ export function UserMenu({ me }: { me: AuthStatus }) {
     };
   }, [open]);
   const items = [
-    { to: "/me", label: "修改密码" },
+    { to: "/me", label: "密码与推送" },
     ...(admin
       ? [
           { to: "/users", label: "用户管理" },

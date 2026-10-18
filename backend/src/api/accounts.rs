@@ -63,7 +63,7 @@ pub struct StrategyQuality {
     pub builtin: bool,
     /// 过去 3 年的表现；还没统计时为空
     pub stat: Option<StrategyStat>,
-    /// 买点之后 20 日平均好于随便买；还没统计时为空
+    /// 买点之后 20 日平均好于同一天随便买，而且超过误差的 2 倍（不是运气）；还没统计或买点太少时为空
     pub effective: Option<bool>,
 }
 
@@ -97,7 +97,7 @@ async fn rules_guide(State(s): State<AppState>) -> ApiResult<Json<RulesGuide>> {
         .into_iter()
         .map(|(strategy_id, name, builtin)| {
             let stat = stats.get(&strategy_id).cloned();
-            let effective = stat.as_ref().and_then(StrategyStat::excess20_pct).map(|e| e > 0.0);
+            let effective = stat.as_ref().filter(|s| s.edge().is_some()).map(StrategyStat::convincing);
             StrategyQuality { strategy_id, name, builtin, stat, effective }
         })
         .collect();
@@ -436,8 +436,10 @@ pub struct AdviceQuery {
 async fn advice_response(s: &AppState, id: i64, date: Option<NaiveDate>) -> ApiResult<AdviceResponse> {
     let advice = advice::load(&s.pool, id, date).await?;
     let latest_bar = crate::analysis::market::resolve_date(&s.pool, None).await?;
+    let core_left = crate::sync::audit::core_backfill_left(&s.pool).await?;
     let waiting = match (&advice, inputs::latest_screen_date(&s.pool).await?) {
         (Some(_), _) => None,
+        (None, _) if core_left > 0 => Some(crate::sync::audit::data_status(&s.pool).await?.message),
         (None, None) => Some("内置策略还没有巡检结果：数据同步、巡检完成后自动生成（新部署的系统要等首次同步）".into()),
         (None, Some(_)) => Some("正在生成，稍等一分钟后刷新".into()),
     };

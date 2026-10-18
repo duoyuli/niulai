@@ -157,6 +157,8 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
     let mut stocks: Vec<Stock> = vec![];
     let mut cands: Vec<Candidate> = vec![];
     let mut calendar: BTreeSet<NaiveDate> = BTreeSet::new();
+    let mut ew = EqualWeight::default();
+    let any_stock = Definition::any_stock();
     prices::for_each_stock(pool, p.start - chrono::Duration::days(calendar_days_for(warmup)), p.end, |code, bars| {
         let Some(meta) = sec.meta.get(code) else { return };
         let Some(first) = bars.iter().position(|b| b.date >= p.start) else { return };
@@ -164,6 +166,7 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
             calendar.insert(b.date);
         }
         let f = Frame::new(bars, Some(meta));
+        ew.add(&any_stock, bars, &f, meta, first);
         let last = bars.len() - 1;
         let stock = stocks.len();
         let mut any = false;
@@ -206,7 +209,7 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
         });
     }
 
-    let bench = benchmark(pool, p.start, p.end).await?;
+    let bench = ew.series(p.start, p.end);
     struct Held {
         cand: usize,
         units: f64,
@@ -329,26 +332,45 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
     Ok(Some(PortfolioOutcome { summary, equity, trades }))
 }
 
-/// 基准：沪深 300，没有时用上证指数。返回名称和「每天收盘 ÷ 区间第一天收盘」
-pub(crate) async fn benchmark(pool: &PgPool, start: NaiveDate, end: NaiveDate) -> sqlx::Result<Option<(String, HashMap<NaiveDate, f64>)>> {
-    for (code, name) in [("000300.SH", "沪深 300"), ("000001.SH", "上证指数")] {
-        let rows: Vec<(NaiveDate, f64)> = sqlx::query_as(
-            "SELECT trade_date, close::float8 FROM mkt.index_bar_1d WHERE thscode = $1 AND trade_date >= $2 AND trade_date <= $3 ORDER BY trade_date",
-        )
-        .bind(code)
-        .bind(start)
-        .bind(end)
-        .fetch_all(pool)
-        .await?;
-        // 指数日线从 2022 年起才有：开头缺太多时不用
-        if let Some(first) = rows.first()
-            && (first.0 - start).num_days() <= 10
-        {
-            let base = first.1;
-            return Ok(Some((name.to_string(), rows.into_iter().map(|(d, c)| (d, c / base)).collect())));
+/// 基准的名字
+pub(crate) const EQUAL_WEIGHT_NAME: &str = "全市场等权（含分红）";
+
+/// 基准：全市场等权指数，含分红。每天把前一天收盘时默认股票池里的全部股票等额买入（和策略统计里的「随便买」同一个股票池），
+/// 按前复权收盘价算当天的平均涨跌，再连乘。前复权价含分红送转，和回测的净值同一个口径；
+/// 沪深 300 这类价格指数不含分红，3 年会少算好几个百分点，回测就显得跑赢了。不依赖指数日线，任何区间都有
+#[derive(Default)]
+pub(crate) struct EqualWeight(HashMap<NaiveDate, (f64, u32)>);
+
+impl EqualWeight {
+    /// 一只股票从第 from 根日线起每天的涨跌（前一天收盘时在默认股票池里才算）
+    pub fn add(&mut self, pool: &Definition, bars: &[DailyBar], f: &Frame, meta: &super::indicators::StockMeta, from: usize) {
+        for i in from.max(1)..bars.len() {
+            if !pool.in_universe(f, meta, i - 1) {
+                continue;
+            }
+            let r = bars[i].q_close / bars[i - 1].q_close - 1.0;
+            if r.is_finite() {
+                let e = self.0.entry(bars[i].date).or_default();
+                e.0 += r;
+                e.1 += 1;
+            }
         }
     }
-    Ok(None)
+
+    /// [start, end] 内的净值，第一天为 1
+    pub fn series(&self, start: NaiveDate, end: NaiveDate) -> Option<(String, HashMap<NaiveDate, f64>)> {
+        let mut days: Vec<(&NaiveDate, &(f64, u32))> = self.0.iter().filter(|(d, _)| **d >= start && **d <= end).collect();
+        days.sort_by_key(|(d, _)| **d);
+        let (first, _) = days.first()?;
+        let mut level = 1.0;
+        let mut out = HashMap::with_capacity(days.len());
+        out.insert(**first, level);
+        for (d, (sum, n)) in &days[1..] {
+            level *= 1.0 + sum / f64::from(*n);
+            out.insert(**d, level);
+        }
+        Some((EQUAL_WEIGHT_NAME.to_string(), out))
+    }
 }
 
 #[cfg(test)]

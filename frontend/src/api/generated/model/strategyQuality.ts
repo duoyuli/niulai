@@ -13,7 +13,7 @@ import type { StrategyStat } from './strategyStat';
 export interface StrategyQuality {
   builtin: boolean;
   /**
-     * 买点之后 20 日平均好于随便买；还没统计时为空
+     * 买点之后 20 日平均好于同一天随便买，而且超过误差的 2 倍（不是运气）；还没统计或买点太少时为空
      * @nullable
      */
   effective?: boolean | null;

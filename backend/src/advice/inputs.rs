@@ -57,6 +57,10 @@ pub async fn next_trading_day(pool: &PgPool, d: NaiveDate) -> sqlx::Result<Naive
 
 /// 还没有内置策略的巡检结果时为空
 pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
+    // 核心数据的首次回补还没完成：日线不全，算出来的建议不可信，先不生成
+    if crate::sync::audit::core_backfill_left(pool).await? > 0 {
+        return Ok(None);
+    }
     let Some(trade_date) = latest_screen_date(pool).await? else { return Ok(None) };
     let next_date = next_trading_day(pool, trade_date).await?;
     let market = market::overview(pool, Some(trade_date)).await?.map(|o| MarketIn { above_ma20_pct: o.above_ma20 * 100.0, stocks: o.stocks });
@@ -184,8 +188,9 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
 
     // 候选：参考的策略今天的买点，按股票合并；先按和生成时相同的优先级预选，只细看前面的
     let ids: Vec<i64> = sh.screening.iter().map(|(id, _)| *id).filter(|id| rules.uses(*id)).collect();
-    let excess = |id: i64| sh.stats.get(&id).and_then(StrategyStat::edge_pct);
-    let effective = |id: i64| rules.effective(excess(id));
+    let edge = |id: i64| sh.stats.get(&id).and_then(StrategyStat::edge);
+    let excess = |id: i64| edge(id).map(|(e, _)| e);
+    let effective = |id: i64| rules.effective(edge(id));
     let mut by_code: HashMap<&str, (Vec<Pick>, f64)> = HashMap::new();
     for (id, code, reasons, amount) in &sh.hits {
         if ids.contains(id) {

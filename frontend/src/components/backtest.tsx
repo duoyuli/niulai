@@ -293,9 +293,9 @@ export function PortfolioView({
           <>
             ；同期{bench}是 <b className={upDownClass(m.benchmark_return)}>{fmtPercent(m.benchmark_return)}</b>。
             {beat >= 0 ? (
-              <span className="text-up">跑赢指数 {fmtPercent(beat)}。</span>
+              <span className="text-up">跑赢 {fmtPercent(beat)}。</span>
             ) : (
-              <span className="text-down">跑输指数 {fmtPercent(-beat)}。</span>
+              <span className="text-down">跑输 {fmtPercent(-beat)}。</span>
             )}
           </>
         ) : (
@@ -332,7 +332,9 @@ export function PortfolioView({
           log={log}
           onLog={onLog}
           note={
-            bench ? `蓝线是策略，灰线是同样的钱买${bench}（不计分红）。` : "本地没有区间开头的指数日线，不显示基准。"
+            bench
+              ? `蓝线是策略，灰线是同样的钱每天平均分散买入全部正常交易的股票（含分红，相当于天天随便买）。`
+              : "这段时间没有足够的日线，不显示基准。"
           }
         />
       </div>

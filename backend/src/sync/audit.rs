@@ -262,6 +262,50 @@ pub async fn failures(pool: &PgPool, registry: &Registry) -> anyhow::Result<Vec<
         .collect())
 }
 
+/// 核心数据：写入个股日线和公司行动的数据集（启动时由注册表算出）。首页的大盘统计、巡检和运营建议都靠它们
+pub static CORE_DATASETS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// 核心数据的首次回补还剩多少个任务；0 表示核心数据已经齐了。回补期间日线只有一部分股票、一部分年份，
+/// 这时生成的运营建议和大盘统计不可信，所以运营建议等它完成再生成（见 `advice::inputs::shared`）
+pub async fn core_backfill_left(pool: &PgPool) -> anyhow::Result<i64> {
+    let Some(ids) = CORE_DATASETS.get() else { return Ok(0) };
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM ops.task t JOIN ops.run r USING (run_id)
+         WHERE r.kind = 'backfill' AND r.status = 'running' AND t.dataset_id = ANY($1) AND t.status IN ('pending', 'running', 'failed')",
+    )
+    .bind(ids)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// 普通用户也能看的数据状态：核心数据齐没齐、首次回补的进度
+#[derive(Serialize, ToSchema, Debug)]
+pub struct DataStatus {
+    /// 核心数据（个股日线、公司行动）已经齐了
+    pub core_ready: bool,
+    /// 核心数据还剩多少个任务
+    pub core_left: i64,
+    /// 全部数据的首次回补进度；没有在回补时为空
+    pub backfill: Option<BackfillProgress>,
+    /// 一句话说明
+    pub message: String,
+}
+
+pub async fn data_status(pool: &PgPool) -> anyhow::Result<DataStatus> {
+    let core_left = core_backfill_left(pool).await?;
+    let backfill = backfill(pool).await?;
+    let per_hour: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.api_call WHERE called_at > now() - interval '1 hour'").fetch_one(pool).await?;
+    let message = if core_left > 0 {
+        let eta = if per_hour > 0 { format!("，按现在的速度大约还要 {:.1} 小时", core_left as f64 / per_hour as f64) } else { String::new() };
+        format!("正在准备核心数据（全市场的历史日线），还有 {core_left} 批{eta}。准备好之前，首页的大盘统计只包括已经下载的股票，运营建议先不生成")
+    } else if let Some(b) = &backfill {
+        format!("核心数据已就绪；其他数据还在补（{} / {}），不影响运营建议", b.done, b.total)
+    } else {
+        "数据已就绪".to_string()
+    };
+    Ok(DataStatus { core_ready: core_left == 0, core_left, backfill, message })
+}
+
 async fn backfill(pool: &PgPool) -> anyhow::Result<Option<BackfillProgress>> {
     let (total, done): (Option<i64>, Option<i64>) = sqlx::query_as(
         "SELECT sum(tasks_total)::bigint, sum(tasks_done + tasks_failed)::bigint FROM ops.run WHERE kind = 'backfill' AND status = 'running'",
@@ -369,6 +413,9 @@ pub async fn auto_repair(engine: &Engine, today: NaiveDate) -> anyhow::Result<()
     Ok(())
 }
 
+/// 同一个任务最多被兜底补偿重新排队几次
+const MAX_REPAIRS: i16 = 3;
+
 /// 补偿：能重新取的缺口规划补偿运行；重试用尽的临时失败重新排队
 pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
     let (_, gaps, missing_bars) = gaps(engine).await?;
@@ -400,19 +447,22 @@ pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
 
     summary.cleared = clear_stale(engine).await?;
 
-    // 重试用尽的临时失败（供应商暂时不可用），之后也没有成功过：再试一次
+    // 重试用尽的临时失败（供应商暂时不可用），之后也没有成功过：再试一次。每个任务最多补偿 MAX_REPAIRS 次，
+    // 供应商一直给不了的分区不会每天被重排、把所属的运行重新打开
     let mut tx = engine.pool.begin().await?;
     let retried = sqlx::query(
         // 同一个分区可能有多个失败的任务：只重新排队最新的一个，而且这个分区没有未完成的任务（每个分区同时只能有一个）
         // 重新排队的任务放到补偿层（50 层，保留 P0–P3 的 10–40），不和每日数据抢先后
-        "UPDATE ops.task t SET status = 'pending', attempts = 0, not_before = now(), finished_at = NULL, priority = 50 + t.priority % 50
+        "UPDATE ops.task t SET status = 'pending', attempts = 0, not_before = now(), finished_at = NULL, priority = 50 + t.priority % 50, repairs = t.repairs + 1
          WHERE t.task_id IN (
            SELECT max(x.task_id) FROM ops.task x
            WHERE x.status = 'dead' AND x.last_error LIKE '可重试错误%'
              AND NOT EXISTS (SELECT 1 FROM ops.task o WHERE o.dataset_id = x.dataset_id AND o.part_key = x.part_key
                                AND (o.status IN ('pending', 'running', 'failed') OR (o.task_id > x.task_id AND o.status IN ('done', 'empty'))))
-           GROUP BY x.dataset_id, x.part_key)",
+           GROUP BY x.dataset_id, x.part_key)
+           AND t.repairs < $1",
     )
+    .bind(MAX_REPAIRS)
     .execute(&mut *tx)
     .await?
     .rows_affected();

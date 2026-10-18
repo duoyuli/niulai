@@ -49,6 +49,9 @@ pub struct Settings {
     /// 与 upgrader 容器共享的目录（Docker 部署中是 /upgrade）；为空时不能一键升级
     #[serde(default)]
     pub upgrade_dir: Option<PathBuf>,
+    /// 网页的对外地址，例如 https://niulai.example.com；推送的运营建议里带上账户页的链接。为空时不带链接
+    #[serde(default)]
+    pub public_url: Option<String>,
     /// 到哪个 GitHub 仓库查新版本；设为空字符串时不检查
     #[serde(default = "default_update_repo")]
     pub update_repo: String,

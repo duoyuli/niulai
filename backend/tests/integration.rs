@@ -151,6 +151,7 @@ async fn adjustment_and_api_end_to_end() {
         admin_user: "admin".into(),
         admin_password: "secret-pass".into(),
         upgrade_dir: None,
+        public_url: None,
         update_repo: String::new(),
     };
     let limiter = RateLimiter::new(1);
@@ -382,6 +383,7 @@ fn bare_settings(vendor: &str, api_key: Option<&str>) -> Settings {
         admin_user: "admin".into(),
         admin_password: "secret-pass".into(),
         upgrade_dir: None,
+        public_url: None,
         update_repo: String::new(),
     }
 }

@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { useMarketOverview, useSectors } from "../api/generated/market/market";
 import type { Overview, ScreenResults, StrategyItem, WatchItem } from "../api/generated/model";
 import { getResultsQueryOptions, useListStrategies } from "../api/generated/strategy/strategy";
+import { useDataStatus } from "../api/generated/system/system";
 import { useListWatchlist } from "../api/generated/watchlist/watchlist";
 import { SignalChip } from "../components/SignalChip";
 import { Card, Empty, ErrorState, QueryView, Spinner } from "../components/ui";
@@ -17,6 +18,7 @@ export function TodayPage() {
   const overview = useMarketOverview();
   return (
     <>
+      <DataPreparing />
       <TodayAccounts />
       <div>
         <h1 className="text-xl font-semibold">
@@ -41,6 +43,17 @@ export function TodayPage() {
       <Picks />
       <Watch />
     </>
+  );
+}
+
+/** 核心数据（全市场历史日线）还在首次下载时提醒：这时的大盘统计不全，运营建议也先不生成 */
+function DataPreparing() {
+  const q = useDataStatus({ query: { refetchInterval: (x) => (x.state.data?.core_ready === false ? 60_000 : false) } });
+  if (!q.data || q.data.core_ready) return null;
+  return (
+    <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+      {q.data.message}
+    </p>
   );
 }
 

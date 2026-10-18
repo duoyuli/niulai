@@ -8,7 +8,7 @@
 
 export interface StrategyStat {
   /**
-     * 买点之后 20 个交易日的平均涨跌（%）
+     * 买点之后 20 个交易日的平均涨跌（%，第二天开盘买、第 20 个交易日收盘算）
      * @nullable
      */
   after20_avg_pct?: number | null;
@@ -25,7 +25,7 @@ export interface StrategyStat {
      */
   avg_return_pct?: number | null;
   /**
-     * 同期默认股票池里任意一天之后 20 个交易日的平均涨跌（%）
+     * 同样那些天随便买的平均涨跌（%）：每个买点日默认股票池里全部股票的平均，按买点数加权
      * @nullable
      */
   base20_avg_pct?: number | null;
@@ -35,6 +35,17 @@ export interface StrategyStat {
      */
   closed: number;
   end: string;
+  /**
+     * 超额的标准误（百分点，按交易日分组）。超额不到它的 2 倍，多半是运气。旧的统计没有，重算后才有
+     * @nullable
+     */
+  excess_se_pct?: number | null;
+  /**
+     * 有买点的交易日数
+     * @minimum 0
+     * @nullable
+     */
+  signal_days?: number | null;
   /**
      * 买点次数
      * @minimum 0

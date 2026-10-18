@@ -46,6 +46,7 @@ impl Engine {
     pub async fn new(settings: Settings, pool: PgPool) -> anyhow::Result<Arc<Self>> {
         let registry = Registry::load(&settings.datasets_file()?)?;
         registry::sync_to_db(&pool, &registry).await?;
+        let _ = audit::CORE_DATASETS.set(registry.writing_to(&spec::PRICE_TABLES).iter().map(|d| d.id.clone()).collect());
         crate::analysis::screener::sync_builtin_strategies(&pool).await?;
         crate::auth::init_first_admin(&pool, &settings).await?;
         let limiter = RateLimiter::new(settings.rate_limit_rps);
@@ -63,7 +64,7 @@ impl Engine {
     }
 
     pub fn executor(&self, worker_id: String) -> Arc<executor::Executor> {
-        Arc::new(executor::Executor::new(self.pool.clone(), self.client.clone(), self.registry.clone(), worker_id))
+        Arc::new(executor::Executor::new(self.pool.clone(), self.client.clone(), self.registry.clone(), worker_id, self.settings.public_url.clone()))
     }
 
     // @project-doc docs/architecture/sync_pipeline.md#rate_limit
