@@ -84,6 +84,8 @@ struct Wave<'a> {
     datasets: Vec<String>,
     pending: Vec<Vec<String>>,
     root_run: Option<i64>,
+    /// 接着哪个运行规划：和新运行在同一个事务里清空它的 pending_waves，保证下一个波次只规划一次
+    prev_run: Option<i64>,
     only: &'a [String],
     trigger: Option<&'a str>,
     windows: &'a [Window],
@@ -123,10 +125,12 @@ impl<'a> Planner<'a> {
         }
         let datasets = waves.remove(0);
         let trade_date = opts.trade_date.unwrap_or_else(today_cn);
-        self.plan_wave(Wave { kind, trade_date, datasets, pending: waves, root_run: None, only: &opts.only_thscodes, trigger: opts.trigger.as_deref(), windows: &opts.windows }).await
+        let wave = Wave { kind, trade_date, datasets, pending: waves, root_run: None, prev_run: None, only: &opts.only_thscodes, trigger: opts.trigger.as_deref(), windows: &opts.windows };
+        self.plan_wave(wave).await?.context("没有前一个运行时总会创建运行")
     }
 
-    /// 某个波次结束后，规划下一个波次（如果有）。返回新的 run_id。
+    /// 某个波次结束后，规划下一个波次（如果有）。返回新的 run_id；已经被别人接上时返回 None。
+    /// 可以重复调用：结束后处理中途失败、进程退出时，执行器的定期维护会对还没接上的运行再调一次（[`run::unchained`]）
     pub async fn continue_chain(&self, finished_run: i64) -> anyhow::Result<Option<i64>> {
         let row: Option<(String, NaiveDate, Value)> = sqlx::query_as("SELECT kind, trade_date, params FROM ops.run WHERE run_id = $1")
             .bind(finished_run)
@@ -142,13 +146,13 @@ impl<'a> Planner<'a> {
         let root = params.get("root_run").and_then(Value::as_i64).unwrap_or(finished_run);
         let only: Vec<String> = serde_json::from_value(list("only_thscodes")).unwrap_or_default();
         let trigger = params.get("trigger").and_then(Value::as_str);
-        let (run_id, _) = self.plan_wave(Wave { kind: kind.parse()?, trade_date, datasets, pending, root_run: Some(root), only: &only, trigger, windows: &[] }).await?;
-        Ok(Some(run_id))
+        let wave = Wave { kind: kind.parse()?, trade_date, datasets, pending, root_run: Some(root), prev_run: Some(finished_run), only: &only, trigger, windows: &[] };
+        Ok(self.plan_wave(wave).await?.map(|(run_id, _)| run_id))
     }
 
     /// 先算出全部任务种子，再在一个事务里创建运行和任务：执行者看到运行时，它的任务已经齐全，
     /// 不会出现前几个数据集的任务做完、后面的还没写入，运行就被判定结束的情况。
-    async fn plan_wave(&self, wave: Wave<'_>) -> anyhow::Result<(i64, Vec<(String, usize)>)> {
+    async fn plan_wave(&self, wave: Wave<'_>) -> anyhow::Result<Option<(i64, Vec<(String, usize)>)>> {
         let specs: Vec<&DatasetSpec> = wave.datasets.iter().filter_map(|id| self.registry.get(id)).collect();
         let ctx = PlanContext { pool: self.pool, client: self.client, today: today_cn(), kind: wave.kind, only: wave.only, windows: wave.windows };
         let mut planned = Vec::with_capacity(specs.len());
@@ -164,6 +168,11 @@ impl<'a> Planner<'a> {
         }
 
         let mut tx = self.pool.begin().await?;
+        if let Some(prev) = wave.prev_run
+            && !run::take_pending_waves(&mut tx, prev).await?
+        {
+            return Ok(None);
+        }
         let new_run = run::NewRun {
             kind: wave.kind,
             trade_date: wave.trade_date,
@@ -195,7 +204,7 @@ impl<'a> Planner<'a> {
             // 本波次没有任务，运行已直接结束：继续规划下一个波次
             Box::pin(self.continue_chain(run_id)).await?;
         }
-        Ok((run_id, summary))
+        Ok(Some((run_id, summary)))
     }
 }
 

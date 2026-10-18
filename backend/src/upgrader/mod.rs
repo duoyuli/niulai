@@ -396,33 +396,44 @@ impl Upgrade<'_> {
         self.docker.rename(&old_id, &parked).await?;
         let new_id = match self.docker.create(&name, &body).await {
             Ok(id) => id,
-            Err(e) => {
-                self.restore(&old_id, &name, None).await;
-                return Err(e);
-            }
+            Err(e) => return Err(self.restore(&old_id, &name, None, wait, e).await),
         };
         if let Err(e) = self.docker.start(&new_id).await {
-            self.restore(&old_id, &name, Some(&new_id)).await;
-            return Err(e);
+            return Err(self.restore(&old_id, &name, Some(&new_id), wait, e).await);
         }
         if !wait {
             return Ok(());
         }
         if let Err(e) = self.wait_healthy(&new_id, tick).await {
-            self.restore(&old_id, &name, Some(&new_id)).await;
-            return Err(e);
+            return Err(self.restore(&old_id, &name, Some(&new_id), wait, e).await);
         }
         self.docker.remove(&old_id).await?;
         Ok(())
     }
 
-    async fn restore(&self, old_id: &str, name: &str, new_id: Option<&str>) {
+    /// 换回旧容器，返回带上换回结果的错误。wait 时旧容器之前停过，要等它重新 healthy 才算换回成功：
+    /// 新版本的数据库迁移已经执行时，旧版本有可能起不来，这时如实报告，不说「已换回」
+    async fn restore(&self, old_id: &str, name: &str, new_id: Option<&str>, wait: bool, err: anyhow::Error) -> anyhow::Error {
         if let Some(n) = new_id {
             let _ = self.docker.remove(n).await;
         }
         let _ = self.docker.rename(old_id, name).await;
-        let _ = self.docker.start(old_id).await;
-        self.files.log(&format!("已换回原来的容器 {name}"));
+        let started = self.docker.start(old_id).await;
+        let back = match started {
+            Err(e) => Err(e),
+            Ok(()) if wait => self.wait_healthy(old_id, &|_| {}).await,
+            Ok(()) => Ok(()),
+        };
+        match back {
+            Ok(()) => {
+                self.files.log(&format!("已换回原来的容器 {name}"));
+                err.context(format!("已换回原来的版本（{name}）"))
+            }
+            Err(e) => {
+                self.files.log(&format!("换回原来的容器 {name} 后它没能正常运行：{e:#}"));
+                err.context(format!("换回的原版本（{name}）也没能正常运行：{e:#}。请按运维手册从升级前的备份恢复"))
+            }
+        }
     }
 
     async fn wait_healthy(&self, id: &str, tick: &dyn Fn(u64)) -> anyhow::Result<()> {

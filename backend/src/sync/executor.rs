@@ -113,7 +113,7 @@ impl Executor {
         }
     }
 
-    /// 回收租约过期的任务，结束已经没有未完成任务、却没人结束的运行，在回补期间定期重算复权因子，每天清理一次过期的任务和日志
+    /// 回收租约过期的任务，结束已经没有未完成任务、却没人结束的运行，补上没接上的波次，在回补期间定期重算复权因子，每天清理一次过期的任务和日志
     async fn maintain(&self) -> anyhow::Result<()> {
         let n = self.queue.requeue_stale().await?;
         if n > 0 {
@@ -121,6 +121,11 @@ impl Executor {
         }
         for run_id in run::stalled(&self.pool).await? {
             self.after_task(run_id).await?;
+        }
+        for run_id in run::unchained(&self.pool).await? {
+            if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry).continue_chain(run_id).await? {
+                tracing::warn!(run_id, next, "运行结束后没有接上下一个波次，已补上");
+            }
         }
         postprocess::refresh_if_stale(&self.pool, &self.price_datasets()).await?;
         super::retention::prune_if_due(&self.pool).await?;
@@ -243,10 +248,14 @@ impl Executor {
     }
 
     // @project-doc docs/architecture/sync_pipeline.md#postprocess
-    /// 运行的所有任务都结束后，执行后续计算并规划下一个波次。只有结束运行的那个执行者会走到这里。
+    /// 运行的所有任务都结束后，先规划下一个波次，再执行后续计算。只有结束运行的那个执行者会走到这里。
+    /// 先接续：后续计算失败或进程中途退出，也不会让后面的波次停掉；万一接续本身失败，定期维护会重试（[`run::unchained`]）
     async fn after_task(&self, run_id: i64) -> anyhow::Result<()> {
         let Some(status) = run::try_complete(&self.pool, run_id).await? else { return Ok(()) };
         tracing::info!(run_id, %status, "运行结束，开始后处理");
+        if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry).continue_chain(run_id).await? {
+            tracing::info!(run_id, next, "已规划下一个波次");
+        }
         // 行情有变化时，按最新交易日执行每日巡检，再为每个账户生成调仓建议；失败不影响同步
         if postprocess::after_run(&self.pool, run_id, &self.price_datasets()).await? {
             match crate::analysis::screener::run_and_store(&self.pool, None, None).await {
@@ -257,9 +266,6 @@ impl Executor {
                 }
                 Err(e) => tracing::error!(run_id, error = %format!("{e:#}"), "每日巡检失败"),
             }
-        }
-        if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry).continue_chain(run_id).await? {
-            tracing::info!(run_id, next, "已规划下一个波次");
         }
         Ok(())
     }

@@ -64,7 +64,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 | 1 | `security`、`security_batch`、`security_window`、`report_period`（依赖证券范围）；按本地交易日历展开的 `trading_day`（排在交易日历之后：第一次同步时日历还是空的，那时规划会把节假日当成交易日） |
 | 来源层级 + 1 | `from_dataset`（来源数据集也有 from_dataset 时继续往上算，最多 8 层） |
 
-规划时只创建第一个波次的运行，其余波次写入该运行的 `params.pending_waves`。一个波次的全部任务结束后，执行器规划下一个波次，新运行的 `params.root_run` 指向第一个波次。某个波次规划出 0 个任务时，立即结束该运行并规划下一个波次。
+规划时只创建第一个波次的运行，其余波次写入该运行的 `params.pending_waves`。一个波次的全部任务结束后，执行器先规划下一个波次，再做 [运行结束后的计算](#postprocess)，新运行的 `params.root_run` 指向第一个波次。接续时在创建新运行的同一个事务里清空前一个运行的 `pending_waves`（条件 UPDATE），所以下一个波次只会规划一次。结束 2 分钟以上、`pending_waves` 仍不为空的运行（接续时出错或进程退出）由执行循环每分钟的维护补上。某个波次规划出 0 个任务时，立即结束该运行并规划下一个波次。
 
 规划一个波次时，先算出所有数据集的任务，再在一个事务里创建运行、写入全部任务和任务总数。所以执行者看到一个运行时，它的任务已经齐全；否则前几个数据集的任务做完、后面的还在规划时，运行会被误判为已结束，下一个波次会提前开始。某个数据集规划失败（例如 universe 查询出错）时只记录错误，不影响同一波次的其他数据集。
 
@@ -93,7 +93,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 交易日校验判定数据尚未就绪时，任务回到 `pending`，`not_before` 推迟 10 分钟，`attempts` 不增加，一直等到数据就绪。判定「已经错过」时记为 `dead`（错误信息以「已错过」开头），在同步页和完整性核对中显示。
 
-执行者用一个短事务认领任务（实现在 `queue.rs`）：按 `priority, task_id` 取第一条 `pending` 或 `failed` 且 `not_before` 已到的任务，用 `FOR UPDATE SKIP LOCKED` 锁定，同时把 `attempts` 加 1。HTTP 调用在认领事务提交之后执行。完成、失败的更新都带 `locked_by = 当前执行者` 条件，超时被回收的旧执行者无法覆盖新结果。任务的 `priority` 按急迫程度分层，同一层再加上数据集的 P0 10、P1 20、P2 30、P3 40：
+执行者用一个短事务认领任务（实现在 `queue.rs`）：按 `priority, task_id`（部分索引 `task_claim_idx` 的顺序，积压再多也只读开头几行）取第一条 `pending` 或 `failed` 且 `not_before` 已到的任务，用 `FOR UPDATE SKIP LOCKED` 锁定，同时把 `attempts` 加 1。HTTP 调用在认领事务提交之后执行。完成、失败的更新都带 `locked_by = 当前执行者` 条件，超时被回收的旧执行者无法覆盖新结果。任务的 `priority` 按急迫程度分层，同一层再加上数据集的 P0 10、P1 20、P2 30、P3 40：
 
 | 层 | 任务 |
 | --- | --- |
@@ -135,10 +135,10 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 运行结束时，如果影响复权价的数据集有变化（`sink` 中有 `mkt.stock_bar_1d` 或 `mkt.corp_action` 的数据集，见 `spec.rs` 的 `PRICE_TABLES`）（成功任务的 `changed` 合计大于 0），依次执行：
 1. 把行情中出现过的日期补进 `ref.trading_day`（来源记为 `derived`）。供应商日历只有最近一年。
-2. `CALL mkt.rebuild_adj_segment(run_id)`：全量重算复权分段，包括等比复权因子和同花顺减法复权的系数，约 2 秒。
+2. `CALL mkt.rebuild_adj_segment(run_id)`：全量重算复权分段，包括等比复权因子和同花顺减法复权的系数，几秒（本机全市场约 5 秒）。
 3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的进程内缓存（市场概况、信号的过去表现）失效。
 
-重算完成后，用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，再为每个账户生成 [调仓建议](../domains/accounts.md#generation)；失败只写日志，不影响运行的状态。执行循环每分钟的维护里也补齐缺的建议，并在后台每周重算策略过去表现和参考值回测（`advice::maintain`）。之后规划下一个波次（如果有）。复权的计算规则见 [复权](../domains/price_adjustment.md)。
+重算完成后，用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，再为每个账户生成 [调仓建议](../domains/accounts.md#generation)；失败只写日志，不影响运行的状态。执行循环每分钟的维护里也补齐缺的建议，并在后台每周重算策略过去表现和参考值回测（`advice::maintain`）。下一个波次在这些计算之前就已规划，计算失败不会让后面的波次停掉。复权的计算规则见 [复权](../domains/price_adjustment.md)。
 
 新的一天的日线不用重算就有复权价（落在最后一个分段里）。但一个回补运行可能要执行一两天，期间补回来的历史日线和公司行动会改变分段，只在运行结束时重算的话，这段时间的复权价是旧的。所以执行循环的维护（每分钟一次）还会检查：自上次重算以来有价格类任务写入了变化，并且距上次重算超过 5 分钟，就重算一次。上次重算的时刻记在 `ops.scheduler` 的 `adj_rebuild` 作业上，用条件 UPDATE 抢占；运行结束时的重算也会刷新这个时刻。重算不阻塞查询，见 [等比复权因子](../domains/price_adjustment.md#equal_ratio_factor)。
 
@@ -161,6 +161,8 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 1. **每日：** 上海时间已到每日时间、当天是周一到周五，并成功抢占 `ops.scheduler` 中的 `daily` 作业（条件 UPDATE 把 `last_fired` 推进到今天，多个进程并存时也只有一个成功）。再现取交易日历并写入 `ref.trading_day`，今天是交易日才规划。日历取不到时退回本地记录；本地日历还没有覆盖到今天时按交易日处理，快照的交易日校验会兜底。运行的交易日是今天。
 2. **每周：** 算出不晚于现在的最近一个每周时刻，`weekly` 作业的 `fired_at` 早于这个时刻就抢占并触发。所以服务在那个时刻停机，启动后立即补上；改了每周时间，下一个时刻起按新时间。第一次（还没有 `weekly` 这一行）只记下现在、不触发：刚部署的系统正在做首次回补。触发时再按自然月抢占 `monthly` 作业，抢到就把每月的数据集一起规划。运行的交易日是最近一个交易日，按天积累的数据（例如指数成分）记在这一天。
+
+抢占之后的步骤（取交易日历、规划）出错时，把这些作业的水位恢复成抢占之前，下一次检查重试，不会因为一次数据库抖动丢掉这一天或这一周的同步；补发也一样。
 
 每次运行在 `params.trigger` 记下谁发起的，同步记录据此显示来源：`daily`、`catch_up`（补发每日同步）、`weekly`、`weekly+monthly`、`manual`（网页上发起）、`setup`（首次补历史）、`cli`（命令行）、`repair`（兜底补偿）、`data_check`（数据核检重取缺口）。没有这个字段时按 `kind` 显示。
 

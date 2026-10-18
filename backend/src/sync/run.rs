@@ -108,6 +108,33 @@ pub async fn try_complete(pool: &PgPool, run_id: i64) -> anyhow::Result<Option<S
     .await?)
 }
 
+/// 接上下一个波次之前，清空已结束运行的 pending_waves。条件 UPDATE 只有一个调用者能成功（其余的等行锁、再判断时不满足），
+/// 和新运行在同一个事务里，所以下一个波次不会规划两次，也不会清空了却没规划
+pub async fn take_pending_waves(conn: &mut PgConnection, run_id: i64) -> anyhow::Result<bool> {
+    let n = sqlx::query(
+        "UPDATE ops.run SET params = jsonb_set(params, '{pending_waves}', '[]'::jsonb)
+         WHERE run_id = $1 AND jsonb_array_length(coalesce(params->'pending_waves', '[]'::jsonb)) > 0",
+    )
+    .bind(run_id)
+    .execute(conn)
+    .await?
+    .rows_affected();
+    Ok(n > 0)
+}
+
+/// 已经结束、还有后续波次却没接上的运行：结束后的处理中途失败或进程退出时会留下。
+/// 结束 2 分钟以上才算，避免和正在接续的执行者抢（抢了也只会有一个成功）
+pub async fn unchained(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT run_id FROM ops.run
+         WHERE status IN ('succeeded', 'partial') AND finished_at < now() - interval '2 minutes'
+           AND jsonb_array_length(coalesce(params->'pending_waves', '[]'::jsonb)) > 0
+         ORDER BY run_id",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
 /// 状态仍是 running、但已经没有未完成任务的运行。
 /// 例如最后一个任务被超时回收后直接标为 dead：这时没有执行者处理过它，运行不会自己结束。
 pub async fn stalled(pool: &PgPool) -> anyhow::Result<Vec<i64>> {

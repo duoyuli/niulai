@@ -170,6 +170,39 @@ pub fn due_weekly(schedule: Schedule, today: NaiveDate, monthly: bool) -> bool {
     }
 }
 
+/// 抢占前作业的水位。抢到之后规划失败时恢复它，下一次检查会重试，不会因为一次数据库抖动丢掉这个周期
+struct Mark(Vec<(String, NaiveDate, Option<i64>, DateTime<Utc>)>, Vec<String>);
+
+async fn mark(pool: &PgPool, jobs: &[&str]) -> anyhow::Result<Mark> {
+    let jobs: Vec<String> = jobs.iter().map(|j| j.to_string()).collect();
+    let rows = sqlx::query_as("SELECT job, last_fired, run_id, fired_at FROM ops.scheduler WHERE job = ANY($1)").bind(&jobs).fetch_all(pool).await?;
+    Ok(Mark(rows, jobs))
+}
+
+impl Mark {
+    async fn restore(self, pool: &PgPool) {
+        let res = async {
+            let mut tx = pool.begin().await?;
+            sqlx::query("DELETE FROM ops.scheduler WHERE job = ANY($1)").bind(&self.1).execute(&mut *tx).await?;
+            for (job, last_fired, run_id, fired_at) in &self.0 {
+                sqlx::query("INSERT INTO ops.scheduler (job, last_fired, run_id, fired_at) VALUES ($1, $2, $3, $4)")
+                    .bind(job)
+                    .bind(last_fired)
+                    .bind(run_id)
+                    .bind(fired_at)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await?;
+            anyhow::Ok(())
+        }
+        .await;
+        if let Err(e) = res {
+            tracing::error!(jobs = ?self.1, error = %format!("{e:#}"), "恢复调度水位失败，这个周期的同步可能要手动发起");
+        }
+    }
+}
+
 /// 每个周期只有一个调用者能把 last_fired 推进到新周期，返回 true 的那个负责触发
 pub(crate) async fn claim(pool: &PgPool, job: &str, today: NaiveDate, period: &str) -> anyhow::Result<bool> {
     let sql = format!(
@@ -217,9 +250,21 @@ async fn tick(engine: &Engine) -> anyhow::Result<()> {
 
 /// 每日收盘后：交易日到点触发一次
 async fn daily_tick(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
-    if today.weekday().number_from_monday() > 5 || !claim(&engine.pool, "daily", today, "day").await? {
+    if today.weekday().number_from_monday() > 5 {
         return Ok(());
     }
+    let before = mark(&engine.pool, &["daily"]).await?;
+    if !claim(&engine.pool, "daily", today, "day").await? {
+        return Ok(());
+    }
+    let res = fire_daily(engine, today).await;
+    if res.is_err() {
+        before.restore(&engine.pool).await;
+    }
+    res
+}
+
+async fn fire_daily(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
     if !is_trading_day(engine, today).await? {
         tracing::info!(%today, "非交易日，跳过");
         return Ok(());
@@ -236,10 +281,18 @@ async fn daily_tick(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
 /// 每周：到了每周的时刻、这个时刻还没触发过就触发，不论是不是交易日。服务停机错过时，启动后立即补上
 async fn weekly_tick(engine: &Engine, times: &ScheduleTimes, now: NaiveDateTime) -> anyhow::Result<()> {
     let slot = last_weekly_slot(now, times.weekday()?, times.weekly_at()?);
+    let before = mark(&engine.pool, &["weekly", "monthly"]).await?;
     if !claim_slot(&engine.pool, "weekly", slot).await? {
         return Ok(());
     }
-    let today = now.date();
+    let res = fire_weekly(engine, now.date()).await;
+    if res.is_err() {
+        before.restore(&engine.pool).await;
+    }
+    res
+}
+
+async fn fire_weekly(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
     let monthly = claim(&engine.pool, "monthly", today, "month").await?;
     // 运行的交易日取最近一个交易日：按天积累的数据（例如指数成分）记在这一天
     let trade_date: Option<NaiveDate> =
@@ -265,12 +318,22 @@ async fn catch_up(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
     let Some(prev) = prev else { return Ok(()) };
     // 系统还没开始每日同步（例如刚部署、还在首次回补）时不补
     let last: Option<NaiveDate> = sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'daily'").fetch_optional(&engine.pool).await?;
-    if last.is_none_or(|l| l >= prev) || !claim(&engine.pool, "daily", prev, "day").await? {
+    if last.is_none_or(|l| l >= prev) {
+        return Ok(());
+    }
+    let before = mark(&engine.pool, &["daily"]).await?;
+    if !claim(&engine.pool, "daily", prev, "day").await? {
         return Ok(());
     }
     let due: Vec<&DatasetSpec> = engine.registry.datasets.iter().filter(|d| d.enabled && due_daily(d.schedule, prev)).collect();
     let opts = planner::PlanOptions { trade_date: Some(prev), trigger: Some("catch_up".into()), ..Default::default() };
-    let (run_id, summary) = engine.planner().plan_run(RunKind::Incremental, &due, opts).await?;
+    let (run_id, summary) = match engine.planner().plan_run(RunKind::Incremental, &due, opts).await {
+        Ok(r) => r,
+        Err(e) => {
+            before.restore(&engine.pool).await;
+            return Err(e);
+        }
+    };
     let tasks: usize = summary.iter().map(|(_, n)| n).sum();
     tracing::warn!(run_id, trade_date = %prev, last_fired = ?last, tasks, "上一个交易日的每日同步没有发起过，已补发");
     Ok(())

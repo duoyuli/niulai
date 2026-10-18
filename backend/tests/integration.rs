@@ -1353,3 +1353,28 @@ async fn accounts_positions_and_daily_advice() {
     assert_eq!(st(&r), StatusCode::NO_CONTENT);
     db.drop().await;
 }
+
+#[tokio::test]
+async fn finished_run_continues_its_chain_once() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO ops.run (kind, status, finished_at, params) VALUES ('incremental', 'succeeded', now() - interval '1 hour', '{\"pending_waves\": [[\"a_share.calendar\"]]}')
+         RETURNING run_id",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    // 结束了却没接上下一个波次：维护能找出来
+    assert_eq!(niulai::sync::run::unchained(&db.pool).await.unwrap(), vec![run_id]);
+    // 只有第一个接续者能清空 pending_waves
+    let mut tx = db.pool.begin().await.unwrap();
+    assert!(niulai::sync::run::take_pending_waves(&mut tx, run_id).await.unwrap());
+    tx.commit().await.unwrap();
+    let mut tx = db.pool.begin().await.unwrap();
+    assert!(!niulai::sync::run::take_pending_waves(&mut tx, run_id).await.unwrap());
+    tx.rollback().await.unwrap();
+    assert!(niulai::sync::run::unchained(&db.pool).await.unwrap().is_empty());
+}
