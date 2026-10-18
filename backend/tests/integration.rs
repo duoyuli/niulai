@@ -1309,6 +1309,34 @@ async fn accounts_positions_and_daily_advice() {
     let (_, v) = call_as(&app, Some(&mama), "DELETE", &format!("{base}/advice/{a2}/items/{key}/skip"), None).await;
     assert!(v["advice"]["states"].get(&key).is_none());
 
+    // 旧版本保存的模板复制品（省略了默认值，字面上和模板不同、含义相同）：再次同步时合并进内置策略
+    let (key, def): (String, Value) = sqlx::query_as("SELECT builtin_key, definition FROM app.strategy WHERE builtin_key IS NOT NULL ORDER BY strategy_id LIMIT 1")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    let mut old = def.clone();
+    for c in old["all"].as_array_mut().unwrap() {
+        c.as_object_mut().unwrap().remove("within_days");
+        c.as_object_mut().unwrap().remove("streak_days");
+    }
+    assert_ne!(old, def);
+    let copy: i64 = sqlx::query_scalar("INSERT INTO app.strategy (name, definition, template) VALUES ('旧复制品', $1, $2) RETURNING strategy_id")
+        .bind(&old)
+        .bind(&key)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE app.position SET strategy_id = $2 WHERE account_id = $1").bind(acc).bind(copy).execute(&db.pool).await.unwrap();
+    niulai::analysis::screener::sync_builtin_strategies(&db.pool).await.unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app.strategy WHERE builtin_key = $1 OR template = $1").bind(&key).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(n, 1, "重复的复制品被合并");
+    let pointed: Option<String> = sqlx::query_scalar("SELECT s.builtin_key FROM app.position p JOIN app.strategy s USING (strategy_id) WHERE p.account_id = $1")
+        .bind(acc)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(pointed.as_deref(), Some(key.as_str()), "持仓的买入依据改指向保留的内置策略");
+
     // 删除账户
     let (r, _) = call_as(&app, Some(&mama), "DELETE", &base, None).await;
     assert_eq!(st(&r), StatusCode::NO_CONTENT);

@@ -24,7 +24,7 @@ export function BacktestLine({ b }: { b: RulesBacktest }) {
   const s = b.summary;
   return (
     <p className="text-xs text-zinc-500">
-      过去 3 年回测：
+      {s.start} 至 {s.end} 回测：
       <span className={clsx("num font-medium", upDownClass(s.total_return))}>{fmtPercent(s.total_return, 1)}</span>
       {s.annual_return !== null && s.annual_return !== undefined && <>（年化 {fmtPercent(s.annual_return, 1)}）</>}
       ，最大回撤 <span className="num">{fmtPercent(-s.max_drawdown, 1)}</span>
@@ -140,15 +140,29 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                     参考的策略（右边是比随便买多涨多少）：勾上的才参考，其中够门槛的才用来选股。
                     {picked === null ? "现在是全部参考，以后新增的策略也自动参考。" : `现在勾了 ${picked.length} 个。`}
                   </span>
-                  {picked !== null && (
+                  <span className="flex shrink-0 gap-3">
                     <button
                       type="button"
-                      className="shrink-0 text-accent hover:underline"
+                      className="text-accent hover:underline"
+                      title="全部参考，以后新增的策略也自动参考"
                       onClick={() => set({ strategies: null })}
                     >
-                      全部参考
+                      全选
                     </button>
-                  )}
+                    <button
+                      type="button"
+                      className="text-accent hover:underline"
+                      onClick={() =>
+                        set({
+                          strategies: g.strategies
+                            .map((x) => x.strategy_id)
+                            .filter((id) => picked !== null && !picked.includes(id)),
+                        })
+                      }
+                    >
+                      反选
+                    </button>
+                  </span>
                 </div>
                 {picked !== null && picked.length === 0 && (
                   <p className="mt-1 text-sm text-red-600">至少勾选一个策略，否则没有候选股</p>

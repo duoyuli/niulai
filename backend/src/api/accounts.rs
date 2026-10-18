@@ -582,13 +582,21 @@ async fn account_review(State(s): State<AppState>, me: CurrentUser, Path(id): Pa
     Ok(Json(review::review(&s.pool, id).await?))
 }
 
-/// 用这个账户的规则回测过去 3 年。全市场计算，要一两分钟
-#[utoipa::path(post, path = "/accounts/{account_id}/backtest", tag = "accounts", params(("account_id" = i64, Path)),
+#[derive(Deserialize, IntoParams)]
+pub struct BacktestQuery {
+    /// 回测区间：3m、6m、1y、ytd（今年以来，默认）、2y、3y
+    #[serde(default)]
+    #[param(inline)]
+    pub range: backtest::BacktestRange,
+}
+
+/// 用这个账户的规则回测一段时间，默认今年以来。全市场计算，要几十秒到一两分钟
+#[utoipa::path(post, path = "/accounts/{account_id}/backtest", tag = "accounts", params(("account_id" = i64, Path), BacktestQuery),
     responses((status = 200, description = "成功", body = RulesBacktest),
               (status = 400, description = "本地还没有日线", body = crate::error::ErrorBody),
               (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
-async fn account_backtest(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>) -> ApiResult<Json<RulesBacktest>> {
+async fn account_backtest(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>, Query(q): Query<BacktestQuery>) -> ApiResult<Json<RulesBacktest>> {
     let acc = account::get(&s.pool, me.user_id, id).await?;
     let defs = screener::screening_strategies(&s.pool).await?;
-    backtest::run(&s.pool, &acc.rules, &defs).await?.map(Json).ok_or_else(|| ApiError::BadRequest("本地还没有足够的日线，或勾选的策略都没有参加巡检".into()))
+    backtest::run(&s.pool, &acc.rules, &defs, q.range).await?.map(Json).ok_or_else(|| ApiError::BadRequest("本地还没有足够的日线，或勾选的策略都没有参加巡检".into()))
 }

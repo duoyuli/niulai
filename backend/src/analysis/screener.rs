@@ -302,45 +302,31 @@ pub async fn load_strategy(pool: &PgPool, id: i64) -> anyhow::Result<Option<Defi
 }
 
 /// 内置策略：每个模板一行（`builtin_key` 是模板的 key），启动时按模板内容同步，只读、总是参加巡检。
-/// 账户的调仓建议默认参考全部参加巡检的策略，内置策略保证总有一批不会被改坏的。还没有内置行时，先接管内容和模板完全一样的普通策略
-/// （以前第一次启动时由模板复制出来、没有改过的），避免同一个策略出现两份；改过的保持为普通策略。
-/// 模板删掉后，对应的行变回普通策略，巡检记录保留
+/// 账户的调仓建议默认参考全部参加巡检的策略，内置策略保证总有一批不会被改坏的。
+///
+/// 以前第一次启动时会把模板复制成普通策略。和模板含义相同的复制品（定义按当前格式重新写出后和模板一样；
+/// 旧版本保存时省略了默认值，字面上不同）不应和内置策略并存，否则同一个策略会被算两次：
+/// 保留最早的一份（巡检历史最长）作为内置策略，其余的合并进来——持仓上的买入依据、账户勾选的策略改指向保留的那份，再删除。
+/// 改过的复制品保持为普通策略。模板删掉后，对应的行变回普通策略，巡检记录保留
 pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {
     let list = super::strategy::templates();
     let keys: Vec<&str> = list.iter().map(|t| t.key).collect();
     let mut tx = pool.begin().await?;
     for t in &list {
         let def = serde_json::to_value(&t.definition)?;
-        let updated = sqlx::query(
-            "UPDATE app.strategy SET name = $2, description = $3, definition = $4, template = $1, screening = true, updated_at = now()
-             WHERE builtin_key = $1 AND (name, description, definition, screening) IS DISTINCT FROM ($2, $3, $4, true)",
+        // 和模板含义相同的行（内置的，以及没改过的复制品），按编号从小到大
+        let rows: Vec<(i64, Option<String>, serde_json::Value)> = sqlx::query_as(
+            "SELECT strategy_id, builtin_key, definition FROM app.strategy WHERE builtin_key = $1 OR (builtin_key IS NULL AND template = $1) ORDER BY strategy_id",
         )
         .bind(t.key)
-        .bind(t.name)
-        .bind(t.description)
-        .bind(&def)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE builtin_key = $1)").bind(t.key).fetch_one(&mut *tx).await?;
-        if exists {
-            if updated > 0 {
-                tracing::info!(key = t.key, "内置策略已按模板更新");
-            }
-            continue;
-        }
-        let adopted = sqlx::query(
-            "UPDATE app.strategy SET builtin_key = $1, name = $2, description = $3, screening = true, updated_at = now()
-             WHERE strategy_id = (SELECT min(strategy_id) FROM app.strategy WHERE builtin_key IS NULL AND template = $1 AND definition = $4)",
-        )
-        .bind(t.key)
-        .bind(t.name)
-        .bind(t.description)
-        .bind(&def)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if adopted == 0 {
+        .fetch_all(&mut *tx)
+        .await?;
+        let same: Vec<i64> = rows
+            .iter()
+            .filter(|(_, b, v)| b.is_some() || serde_json::from_value::<Definition>(v.clone()).ok().and_then(|d| serde_json::to_value(&d).ok()).as_ref() == Some(&def))
+            .map(|(id, _, _)| *id)
+            .collect();
+        let Some(&keep) = same.first() else {
             sqlx::query("INSERT INTO app.strategy (name, description, definition, template, builtin_key) VALUES ($1, $2, $3, $4, $4)")
                 .bind(t.name)
                 .bind(t.description)
@@ -348,7 +334,34 @@ pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {
                 .bind(t.key)
                 .execute(&mut *tx)
                 .await?;
+            continue;
+        };
+        for &dup in &same[1..] {
+            sqlx::query("UPDATE app.position SET strategy_id = $2 WHERE strategy_id = $1").bind(dup).bind(keep).execute(&mut *tx).await?;
+            sqlx::query(
+                "UPDATE app.account SET rules = jsonb_set(rules, '{strategies}',
+                   (SELECT jsonb_agg(DISTINCT CASE WHEN x::bigint = $1 THEN $2 ELSE x::bigint END) FROM jsonb_array_elements_text(rules->'strategies') x))
+                 WHERE jsonb_typeof(rules->'strategies') = 'array' AND rules->'strategies' @> jsonb_build_array($1)",
+            )
+            .bind(dup)
+            .bind(keep)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("DELETE FROM app.strategy WHERE strategy_id = $1").bind(dup).execute(&mut *tx).await?;
+            tracing::info!(key = t.key, keep, merged = dup, "合并了和模板相同的重复策略");
         }
+        // 先清掉可能占着这个 key 的行（被合并删掉的已经不在了），再把保留的那份设为内置并按模板更新
+        sqlx::query(
+            "UPDATE app.strategy SET builtin_key = $1, name = $2, description = $3, definition = $4, template = $1, screening = true, updated_at = now()
+             WHERE strategy_id = $5 AND (builtin_key, name, description, definition, screening) IS DISTINCT FROM ($1, $2, $3, $4, true)",
+        )
+        .bind(t.key)
+        .bind(t.name)
+        .bind(t.description)
+        .bind(&def)
+        .bind(keep)
+        .execute(&mut *tx)
+        .await?;
     }
     sqlx::query("UPDATE app.strategy SET builtin_key = NULL WHERE builtin_key IS NOT NULL AND NOT (builtin_key = ANY($1))").bind(&keys).execute(&mut *tx).await?;
     tx.commit().await?;

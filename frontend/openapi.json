@@ -583,7 +583,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "用这个账户的规则回测过去 3 年。全市场计算，要一两分钟",
+        "summary": "用这个账户的规则回测一段时间，默认今年以来。全市场计算，要几十秒到一两分钟",
         "operationId": "account_backtest",
         "parameters": [
           {
@@ -593,6 +593,24 @@
             "schema": {
               "type": "integer",
               "format": "int64"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "description": "回测区间：3m、6m、1y、ytd（今年以来，默认）、2y、3y",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "回测区间：截止到最新交易日",
+              "enum": [
+                "3m",
+                "6m",
+                "1y",
+                "ytd",
+                "2y",
+                "3y"
+              ]
             }
           }
         ],

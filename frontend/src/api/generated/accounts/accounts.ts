@@ -25,6 +25,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AccountBacktestParams,
   AccountDetail,
   AccountSummary,
   AccountTrade,
@@ -1065,20 +1066,29 @@ export const useClearItem = <TError = ErrorBody,
       > => {
       return useMutation(getClearItemMutationOptions(options), queryClient);
     }
-    export const getAccountBacktestUrl = (accountId: number,) => {
+    export const getAccountBacktestUrl = (accountId: number,
+    params?: AccountBacktestParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/accounts/${accountId}/backtest`
+  return stringifiedParams.length > 0 ? `/api/v1/accounts/${accountId}/backtest?${stringifiedParams}` : `/api/v1/accounts/${accountId}/backtest`
 }
 
 /**
- * @summary 用这个账户的规则回测过去 3 年。全市场计算，要一两分钟
+ * @summary 用这个账户的规则回测一段时间，默认今年以来。全市场计算，要几十秒到一两分钟
  */
-export const accountBacktest = async (accountId: number, options?: Parameters<typeof apiFetch>[1]): Promise<RulesBacktest> => {
+export const accountBacktest = async (accountId: number,
+    params?: AccountBacktestParams, options?: Parameters<typeof apiFetch>[1]): Promise<RulesBacktest> => {
 
-  return apiFetch<RulesBacktest>(getAccountBacktestUrl(accountId),
+  return apiFetch<RulesBacktest>(getAccountBacktestUrl(accountId,params),
   {
     ...options,
     method: 'POST'
@@ -1108,9 +1118,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof accountBacktest>>, AccountBacktestMutationVariables> = (props) => {
-          const {accountId} = props ?? {};
+          const {accountId,params} = props ?? {};
 
-          return  accountBacktest(accountId,requestOptions)
+          return  accountBacktest(accountId,params,requestOptions)
         }
 
 
@@ -1123,10 +1133,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type AccountBacktestMutationResult = NonNullable<Awaited<ReturnType<typeof accountBacktest>>>
 
     export type AccountBacktestMutationError = ErrorBody
-    export type AccountBacktestMutationVariables = {accountId: number}
+    export type AccountBacktestMutationVariables = {accountId: number;params?: AccountBacktestParams}
 
     /**
- * @summary 用这个账户的规则回测过去 3 年。全市场计算，要一两分钟
+ * @summary 用这个账户的规则回测一段时间，默认今年以来。全市场计算，要几十秒到一两分钟
  */
 export const useAccountBacktest = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof accountBacktest>>, TError,AccountBacktestMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
