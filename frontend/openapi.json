@@ -2168,6 +2168,43 @@
         }
       }
     },
+    "/market/hot": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "今日热点：权威涨停、跌停、炸板池和当天的封板率。",
+        "description": "涨跌停池由供应商整理，按周同步，最近几天可能还没更新；`available` 为 false 时\n`note` 用白话说明原因，页面据此显示空态。",
+        "operationId": "market_hot",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "description": "交易日，默认最新；取不晚于它的、本地有日线的最近一天",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；这一天的涨跌停数据还没同步时 available 为 false，note 说明原因",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HotMarket"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/market/overview": {
       "get": {
         "tags": [
@@ -6469,6 +6506,282 @@
             ],
             "format": "double",
             "description": "上涨的比例（0.55 表示 55%）"
+          }
+        }
+      },
+      "HotLimitUpGroup": {
+        "type": "object",
+        "required": [
+          "board_num",
+          "label",
+          "count",
+          "stocks"
+        ],
+        "properties": {
+          "board_num": {
+            "type": "integer",
+            "format": "int32",
+            "description": "连板高度，1 表示首板"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "这一档一共多少只（不只是下面列出的那些）"
+          },
+          "label": {
+            "type": "string",
+            "description": "「首板」「2 板」「3 板」……"
+          },
+          "stocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HotLimitUpStock"
+            }
+          }
+        }
+      },
+      "HotLimitUpStock": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "name",
+          "is_st"
+        ],
+        "properties": {
+          "continue_day_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "供应商的连板说明，例如「首板」「2 连板」"
+          },
+          "is_st": {
+            "type": "boolean",
+            "description": "是否 ST 股"
+          },
+          "last_price": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最新价（字符串，保留供应商给的精度）"
+          },
+          "limit_up_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "涨停原因，例如「低空经济+无人机物流+海上油气」"
+          },
+          "limit_up_time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "首次涨停时间，例如「10:55」"
+          },
+          "name": {
+            "type": "string"
+          },
+          "seal_money": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "收盘时的封单额（元，字符串）"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "HotMarket": {
+        "type": "object",
+        "required": [
+          "available",
+          "limit_up_total",
+          "limit_up_groups",
+          "max_board",
+          "limit_down_total",
+          "limit_down_stocks",
+          "broken_total",
+          "broken_stocks"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "这一天的权威涨跌停数据（涨停、跌停、炸板池）是否已经同步"
+          },
+          "broken_stocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HotStock"
+            },
+            "description": "炸板股，最多列 50 只"
+          },
+          "broken_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "炸板家数（盘中涨停、收盘没封住）"
+          },
+          "limit_down_stocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HotStock"
+            },
+            "description": "跌停股，最多列 50 只"
+          },
+          "limit_down_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "跌停家数"
+          },
+          "limit_up_groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HotLimitUpGroup"
+            },
+            "description": "按连板高度分组，从高到低；1 表示首板"
+          },
+          "limit_up_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "涨停家数（不只是下面列出的那些）"
+          },
+          "max_board": {
+            "type": "integer",
+            "format": "int32",
+            "description": "最高连板数，没有涨停时为 0"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "没有数据时的一句白话说明，例如「今天的涨停数据还没同步，稍后再看」"
+          },
+          "stats": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HotStats",
+                "description": "当天的封板率等统计，没同步时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trade_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "数据对应的交易日；本地还没有任何行情数据时为空"
+          }
+        }
+      },
+      "HotStats": {
+        "type": "object",
+        "properties": {
+          "limit_up_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "收盘涨停家数"
+          },
+          "open_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "盘中涨停后打开、收盘没封住的家数"
+          },
+          "seal_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "封板率：收盘还封在涨停的占当天触及涨停的比例（0.55 表示 55%）"
+          },
+          "touched_limit_up_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "盘中触及过涨停的家数"
+          }
+        }
+      },
+      "HotStock": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "name"
+        ],
+        "properties": {
+          "first_limit_time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "首次跌停时间，只有跌停股有"
+          },
+          "last_limit_time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最后一次跌停时间，只有跌停股有"
+          },
+          "last_price": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最新价（字符串，保留供应商给的精度）"
+          },
+          "name": {
+            "type": "string"
+          },
+          "open_times": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "炸板次数，只有炸板股有"
+          },
+          "price_change_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "当天涨跌幅（%）"
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "turnover": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "成交额（元，字符串）"
+          },
+          "turnover_ratio_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "换手率（%）"
           }
         }
       },
