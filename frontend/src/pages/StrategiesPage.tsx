@@ -22,7 +22,7 @@ export function StrategiesPage() {
       <StrategyNav />
       <PageHeader
         title="策略"
-        desc="策略 = 买入条件 + 卖出规则，例如「5 日均线上穿 20 日均线时买，跌破 20 日均线或亏损 8% 时卖」。每天收盘数据同步完后在全市场算一遍，给出今日买点、今日卖点和持有中的股票；也可以看它过去几年的表现。条件由信号和指标组成，在上面的「信号」「指标」里能看到每一个是什么。"
+        desc="策略 = 买入条件 + 卖出规则，例如「5 日均线上穿 20 日均线时买，跌破 20 日均线或亏损 8% 时卖」。每天收盘数据同步完后在全市场算一遍，给出最新买点、最新卖点和持有中的股票；也可以看它过去几年的表现。条件由信号和指标组成，在上面的「信号」「指标」里能看到每一个是什么。"
         extra={
           admin && (
             <div className="flex items-center gap-2">
@@ -81,7 +81,7 @@ function StrategyCard({ s }: { s: StrategyItem }) {
         <span className="font-medium">{s.name}</span>
         <span className="flex shrink-0 gap-1">
           {s.builtin && <Badge tone="ok">内置</Badge>}
-          {!s.show_on_today && <Badge>不在今日</Badge>}
+          {!s.show_on_today && <Badge>不在首页</Badge>}
           {s.screening ? <Badge tone="info">每日巡检</Badge> : <Badge>已暂停</Badge>}
         </span>
       </div>

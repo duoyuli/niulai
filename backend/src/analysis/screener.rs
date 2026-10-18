@@ -15,7 +15,7 @@ use super::points::{self, Today};
 use super::prices;
 use super::strategy::Definition;
 
-/// 入选的一只股票：今日买点，或预览时今天满足买入条件
+/// 入选的一只股票：最新买点，或预览时今天满足买入条件
 #[derive(Serialize, ToSchema, Clone, Debug)]
 pub struct Hit {
     pub thscode: String,
@@ -32,7 +32,7 @@ pub struct Hit {
     pub reasons: Vec<String>,
 }
 
-/// 今日卖点或持有中的一只股票
+/// 最新卖点或持有中的一只股票
 #[derive(Serialize, ToSchema, Clone, Debug)]
 pub struct PositionHit {
     pub thscode: String,
@@ -52,11 +52,11 @@ pub struct PositionHit {
 }
 
 pub struct StrategyResult {
-    /// 今日买点数（预览时是今天满足买入条件的股票数），截断前
+    /// 最新买点数（预览时是今天满足买入条件的股票数），截断前
     pub matched: usize,
     /// 按排序截取后的买点
     pub hits: Vec<Hit>,
-    /// 今日卖点；预览时为空
+    /// 最新卖点；预览时为空
     pub sells: Vec<PositionHit>,
     /// 持有中；预览时为空
     pub holdings: Vec<PositionHit>,
@@ -75,7 +75,7 @@ pub const POINT_DAYS: usize = 250;
 /// 每个策略最多保存多少只持有中的股票
 const MAX_HOLDINGS: usize = 300;
 
-/// 怎么选：预览只看今天是否满足买入条件；巡检按买卖点给出今日买点、卖点和持有中
+/// 怎么选：预览只看今天是否满足买入条件；巡检按买卖点给出最新买点、卖点和持有中
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Preview,

@@ -182,9 +182,9 @@ export function useOverlays({
           });
       }
       if (lastDate && data?.today === "buy")
-        markers.push({ date: lastDate, position: "below", shape: "circle", color: UP, text: "今日买点" });
+        markers.push({ date: lastDate, position: "below", shape: "circle", color: UP, text: "最新买点" });
       if (lastDate && data?.today === "sell")
-        markers.push({ date: lastDate, position: "above", shape: "circle", color: DOWN, text: "今日卖点" });
+        markers.push({ date: lastDate, position: "above", shape: "circle", color: DOWN, text: "最新卖点" });
       const closed = trades.filter((t) => t.exit_date);
       const wins = closed.filter((t) => t.return_pct > 0).length;
       const now =

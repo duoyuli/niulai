@@ -38,16 +38,16 @@
 <a id="pages"></a>
 ## 页面与接口
 
-界面按用户要做的事组织：主导航只有「今日」「策略」「自选」，个股从页头搜索进入，回测是策略页和个股页的标签页，信号和指标在「策略」下面，数据同步、指数板块和「说明」在页头右侧。理由见 [ADR：界面按任务组织](../decisions/ui_by_task.md)。每页先给一句白话结论，再给少量关键数字，明细和规则说明折叠。
+界面按用户要做的事组织：主导航只有「首页」「策略」「自选」，个股从页头搜索进入，回测是策略页和个股页的标签页，信号和指标在「策略」下面，数据同步、指数板块和「说明」在页头右侧。理由见 [ADR：界面按任务组织](../decisions/ui_by_task.md)。每页先给一句白话结论，再给少量关键数字，明细和规则说明折叠。
 
 | 路径 | 页面 | 接口 |
 | --- | --- | --- |
-| `/` | 今日：我的账户（每个账户一行：总资产、当日盈亏、「10-19（周一）运营建议：……」）、标题写明数据截至哪天收盘（「10-16（周五）收盘」）、大盘概况、近 5 日最强行业、「在今日展示」的策略最近一次巡检的买点（新入选在前）和卖点、自选股的最近信号 | `GET /accounts`、`/market/overview`、`/market/sectors`、`/strategies`、`/strategies/{id}/results`、`/watchlist` |
-| `/accounts` | 我的账户：每个账户一张卡片（总资产、今日盈亏、现金、持仓只数、明天要做什么、核对提醒） | `GET /accounts` |
+| `/` | 首页：我的账户（每个账户一行：总资产、当日盈亏、「10-19（周一）运营建议：……」）、标题写明数据截至哪天收盘（「10-16（周五）收盘」）、大盘概况、近 5 日最强行业、「在首页展示」的策略最近一次巡检的买点（新入选在前）和卖点、自选股的最近信号 | `GET /accounts`、`/market/overview`、`/market/sectors`、`/strategies`、`/strategies/{id}/results`、`/watchlist` |
+| `/accounts` | 我的账户：每个账户一张卡片（总资产、当日盈亏、现金、持仓只数、下个交易日的运营建议、核对提醒） | `GET /accounts` |
 | `/accounts/new` | 新建账户，两步：名字；现金和持仓（`PositionsEditor`，可粘贴，可跳过）。规则用默认值，不在主流程里选 | `POST /accounts`、`POST /accounts/{id}/positions/parse`、`PUT /accounts/{id}/positions` |
 | `/accounts/:id` | 一个账户，四个标签：运营（`AdviceView`：标题「10-19（周一）运营建议：结论」，副标题「根据 10-16 收盘的数据，生成下一个交易日的运营建议」；因规则选不出股票时黄色提示怎么调并链到设置；卖出表：卖多少、参考价、为什么卖，一字跌停卖不出下一份建议继续提示；买入表：买多少、参考价、最高买入价（开盘高于它就放弃）、止损价、约多少钱；每行「已执行」可改实际成交、「不做」可撤销、「为什么」展开理由、需要注意、怎么做；继续拿的持仓；照着做完之后；交易日收盘出现买点、但没选上的）；持仓（现价、市值占比、盈亏、止损价和趋势均线，记一笔、校准）；记录（建议准不准、每天的建议、流水）；设置（名字和备注；选股和风控规则 `RulesEditor`：左边是有效门槛、参考的策略（按比随便买多涨多少排序；够门槛的在上面，不够门槛的折叠在一条分界线下面、灰显，分界线上说明一次；勾上的才参考，「全选」包括以后新增的，「反选」；全部取消时提示并不能保存；自建的策略标「自建」）和风控参数；右边「建议参考」是三类账户怎么设计和回测，只是建议，每组下有一个不显眼的「照这个填」；费率；用自己的规则回测（起止日期框加快捷区间，结果下面是每一笔交易：买入、卖出、为什么卖、持有天数、收益，可筛选赚钱、亏钱、还持有）；删除要输入账户名） | `GET /accounts/{id}` 及其下的 `advice`、`trades`、`review` 等 |
 | `/strategies` | 策略：每个策略最近一次的买点、卖点、持有中数量，内置策略标「内置」；立即巡检、新建（管理员） | `GET /strategies`、`POST /screening/run` |
-| `/strategies/:id` | 策略详情：规则的白话；「今日买卖点」按交易日看买点、卖点（原因）、持有中；「过去表现如何」点「开始回测」做全市场组合回测 | `GET` / `PUT` / `DELETE /strategies/{id}`、`/results`、`POST /screening/run`、`GET /backtest/portfolio` |
+| `/strategies/:id` | 策略详情：规则的白话；「最新买卖点」按交易日看买点、卖点（原因）、持有中；「过去表现如何」点「开始回测」做全市场组合回测 | `GET` / `PUT` / `DELETE /strategies/{id}`、`/results`、`POST /screening/run`、`GET /backtest/portfolio` |
 | `/strategies/new`、`/:id/edit` | 策略编辑器：从模板或空白开始，股票池、买入条件、排序、卖出规则，可预览；`?signal=<key>` 先放好一个信号 | `GET /strategies/catalog`、`/signals`、`POST /strategies/preview`、`POST` / `PUT /strategies` |
 | `/signals`、`/signals/:key` | 信号列表（我的信号和按分组的内置信号）；详情：怎么判断、怎么看、画在 K 线上、过去表现、今天出现的股票、被哪些策略用 | `GET /signals`、`/signals/{key}`、`POST /signals/today`、`/signals/stats`、`/securities/{thscode}/signal-days`、`GET /securities/{thscode}/indicator` |
 | `/signals/new`、`/:key/edit` | 信号编辑器：名称、偏多偏空、全部或任一满足、条件；「试一试」不保存就看结果。`?from=<key>` 复制，`?cond=<条件 JSON>` 从常用写法开始 | `GET /strategies/catalog`、`POST /signals`、`PUT /signals/my/{id}`、`POST /signals/today`、`/signals/stats` |

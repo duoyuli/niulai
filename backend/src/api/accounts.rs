@@ -118,7 +118,7 @@ async fn rules_guide(State(s): State<AppState>) -> ApiResult<Json<RulesGuide>> {
     Ok(Json(RulesGuide { presets, strategies }))
 }
 
-/// 一份建议的摘要（账户列表和今日页用）
+/// 一份建议的摘要（账户列表和首页用）
 #[derive(Serialize, ToSchema)]
 pub struct AdviceBrief {
     pub trade_date: NaiveDate,
@@ -137,7 +137,7 @@ pub struct AccountSummary {
     pub positions: usize,
     pub market_value: f64,
     pub total_assets: f64,
-    /// 按最近一个交易日的涨跌估算的今日盈亏
+    /// 按最近一个交易日的涨跌估算的当日盈亏
     pub day_pnl: f64,
     pub advice: Option<AdviceBrief>,
     /// 持仓很久没变动、又有没执行的建议时，提醒核对

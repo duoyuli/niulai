@@ -133,7 +133,7 @@ function Done({ backfill }: { backfill: boolean }) {
             查看同步进度
           </Link>
           <Link to="/" className={buttonClass("ghost")}>
-            去今日
+            去首页
           </Link>
         </div>
       </Card>

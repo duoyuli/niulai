@@ -10,7 +10,7 @@ import type { StoredHit } from './storedHit';
 export interface ScreenResults {
   /** 有巡检结果的交易日（最近 60 个，新的在前） */
   dates: string[];
-  /** 今日买点：今天满足买入条件、之前空仓，明天开盘买入 */
+  /** 最新买点：今天满足买入条件、之前空仓，明天开盘买入 */
   hits: StoredHit[];
   /** 持有中：按最近一年的买卖点推算 */
   holdings: StoredHit[];
@@ -20,7 +20,7 @@ export interface ScreenResults {
   ran_at?: string | null;
   /** @nullable */
   scanned?: number | null;
-  /** 今日卖点：持有中触发了卖出规则，明天开盘卖出；reasons 是原因 */
+  /** 最新卖点：持有中触发了卖出规则，明天开盘卖出；reasons 是原因 */
   sells: StoredHit[];
   /**
      * 没有巡检过时为空

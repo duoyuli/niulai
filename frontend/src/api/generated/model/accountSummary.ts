@@ -16,7 +16,7 @@ export interface AccountSummary {
      * @nullable
      */
   check_hint?: string | null;
-  /** 按最近一个交易日的涨跌估算的今日盈亏 */
+  /** 按最近一个交易日的涨跌估算的当日盈亏 */
   day_pnl: number;
   market_value: number;
   /** @minimum 0 */

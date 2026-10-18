@@ -3094,7 +3094,7 @@
         "tags": [
           "strategy"
         ],
-        "summary": "修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在今日展示」",
+        "summary": "修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在首页展示」",
         "operationId": "update_strategy",
         "parameters": [
           {
@@ -3149,7 +3149,7 @@
             }
           },
           "409": {
-            "description": "内置策略只能改是否在今日展示",
+            "description": "内置策略只能改是否在首页展示",
             "content": {
               "application/json": {
                 "schema": {
@@ -4065,7 +4065,7 @@
           "day_pnl": {
             "type": "number",
             "format": "double",
-            "description": "按最近一个交易日的涨跌估算的今日盈亏"
+            "description": "按最近一个交易日的涨跌估算的当日盈亏"
           },
           "market_value": {
             "type": "number",
@@ -4303,7 +4303,7 @@
       },
       "AdviceBrief": {
         "type": "object",
-        "description": "一份建议的摘要（账户列表和今日页用）",
+        "description": "一份建议的摘要（账户列表和首页用）",
         "required": [
           "trade_date",
           "next_date",
@@ -5764,7 +5764,7 @@
       },
       "Hit": {
         "type": "object",
-        "description": "入选的一只股票：今日买点，或预览时今天满足买入条件",
+        "description": "入选的一只股票：最新买点，或预览时今天满足买入条件",
         "required": [
           "thscode",
           "name",
@@ -6210,7 +6210,7 @@
           "matched": {
             "type": "integer",
             "format": "int32",
-            "description": "今日买点数（截断前）"
+            "description": "最新买点数（截断前）"
           },
           "new_hits": {
             "type": "integer",
@@ -6220,7 +6220,7 @@
           "sells": {
             "type": "integer",
             "format": "int64",
-            "description": "今日卖点数"
+            "description": "最新卖点数"
           },
           "trade_date": {
             "type": "string",
@@ -8013,7 +8013,7 @@
             "items": {
               "$ref": "#/components/schemas/StoredHit"
             },
-            "description": "今日买点：今天满足买入条件、之前空仓，明天开盘买入"
+            "description": "最新买点：今天满足买入条件、之前空仓，明天开盘买入"
           },
           "holdings": {
             "type": "array",
@@ -8048,7 +8048,7 @@
             "items": {
               "$ref": "#/components/schemas/StoredHit"
             },
-            "description": "今日卖点：持有中触发了卖出规则，明天开盘卖出；reasons 是原因"
+            "description": "最新卖点：持有中触发了卖出规则，明天开盘卖出；reasons 是原因"
           },
           "trade_date": {
             "type": [
@@ -8973,7 +8973,7 @@
           },
           "show_on_today": {
             "type": "boolean",
-            "description": "是否在「今日」页展示，默认 true。只为测试建的策略可以关掉"
+            "description": "是否在首页展示，默认 true。只为测试建的策略可以关掉"
           },
           "template": {
             "type": [
@@ -9031,7 +9031,7 @@
           },
           "show_on_today": {
             "type": "boolean",
-            "description": "是否在「今日」页展示选出的股票"
+            "description": "是否在首页展示选出的股票"
           },
           "strategy_id": {
             "type": "integer",

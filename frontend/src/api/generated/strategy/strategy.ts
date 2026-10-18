@@ -622,7 +622,7 @@ export const getUpdateStrategyUrl = (strategyId: number,) => {
 }
 
 /**
- * @summary 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在今日展示」
+ * @summary 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在首页展示」
  */
 export const updateStrategy = async (strategyId: number,
     strategyInput: StrategyInput, options?: Parameters<typeof apiFetch>[1]): Promise<StrategyItem> => {
@@ -689,7 +689,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type UpdateStrategyMutationVariables = {strategyId: number;data: StrategyInput}
 
     /**
- * @summary 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在今日展示」
+ * @summary 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在首页展示」
  */
 export const useUpdateStrategy = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStrategy>>, TError,UpdateStrategyMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}

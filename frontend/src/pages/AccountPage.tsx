@@ -63,7 +63,7 @@ export function AccountPage() {
             <div className="flex flex-wrap gap-6">
               <Stat label="总资产" value={yuan(d.summary.total_assets)} />
               <Stat
-                label="今日盈亏"
+                label="当日盈亏"
                 value={<span className={upDownClass(d.summary.day_pnl)}>{yuan(d.summary.day_pnl)}</span>}
               />
               <Stat label="现金" value={yuan(d.summary.account.cash)} />

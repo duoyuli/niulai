@@ -47,7 +47,7 @@
 | `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, show_on_today, template}`，`screening`、`show_on_today` 默认 true；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |
 | `GET` / `PUT` / `DELETE /strategies/{id}` | 读取、修改（请求体同新建）、删除策略；删除返回 204 | 不存在时返回 404；内置策略（`builtin` 为 true）只能改 `show_on_today`，修改其他内容或删除返回 409 |
 | `POST /strategies/preview` | 试算：不保存，在某个交易日上看哪些股票满足买入条件 | 请求体 `{definition, date}`，`date` 默认最新交易日 |
-| `GET /strategies/{id}/results` | 某次巡检的结果：今日买点（命中条件、是否新入选）、今日卖点（原因）、持有中（买入日、买入价、买入以来涨跌），以及有结果的交易日 | `date` 默认最近一次巡检；规则见 [买卖点](../domains/strategies.md#points) |
+| `GET /strategies/{id}/results` | 某次巡检的结果：最新买点（命中条件、是否新入选）、最新卖点（原因）、持有中（买入日、买入价、买入以来涨跌），以及有结果的交易日 | `date` 默认最近一次巡检；规则见 [买卖点](../domains/strategies.md#points) |
 | `POST /screening/run` | 立即巡检 | `strategy_id` 默认全部开启巡检的策略、`date` 默认最新交易日 |
 | `GET /signals` | 全部信号：内置的和自定义的，含定义、白话、用到的指标、被哪些策略用到 | 内置信号的 `key` 是名称（例如 `ma_cross_up`），自定义的是 `my-<编号>` |
 | `GET /signals/{key}` | 一个信号 | 不存在时返回 404 |
@@ -66,7 +66,7 @@
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |
 | `GET /rules/guide` | 设置规则时的辅助：三组参考值（适合什么样的账户、怎么设计、规则、过去 3 年回测），全部参加巡检的策略和它们的过去表现、是否有效 | 见 [选股和风控规则](../domains/accounts.md#rules) |
-| `GET /accounts` | 当前用户的账户：总资产、今日盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的 |
+| `GET /accounts` | 当前用户的账户：总资产、当日盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的 |
 | `POST /accounts` | 新建账户（规则用稳健型的参考值），返回 201 和详情，并生成第一份建议 | 请求体 `{name, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
 | `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比、盈亏、止损价、趋势均线）；修改名字、规则 `rules`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [选股和风控规则](../domains/accounts.md#rules)，之后重新生成建议 |
 | `POST /accounts/{id}/positions/parse` | 识别粘贴的持仓文字，只返回预览 | 请求体 `{text}`，最多 20,000 字；规则见 [持仓](../domains/accounts.md#positions) |

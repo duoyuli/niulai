@@ -38,7 +38,7 @@ import { fmtBig, fmtDateTime, fmtInt, fmtPctValue, fmtPrice, RANGES, rangeStart,
 import { holdingsText, MAX_HOLDINGS } from "../lib/strategy";
 
 const TABS = [
-  { value: "picks", label: "今日买卖点" },
+  { value: "picks", label: "最新买卖点" },
   { value: "history", label: "过去表现如何", hint: "假设过去每天都按这个策略买入、按卖出规则卖出，看看整体能赚多少" },
 ] as const;
 
@@ -85,7 +85,7 @@ export function StrategyPage() {
             {st.name}
             {st.screening ? <Badge tone="info">每日巡检</Badge> : <Badge>已暂停巡检</Badge>}
             {st.builtin && <Badge tone="ok">内置</Badge>}
-            {!st.show_on_today && <Badge>不在今日展示</Badge>}
+            {!st.show_on_today && <Badge>不在首页展示</Badge>}
           </h1>
           <Conditions e={st.explained} />
         </div>
@@ -101,7 +101,7 @@ export function StrategyPage() {
               disabled={update.isPending}
               onClick={() => save({ show_on_today: !st.show_on_today })}
             >
-              {st.show_on_today ? "不在今日展示" : "在今日展示"}
+              {st.show_on_today ? "不在首页展示" : "在首页展示"}
             </button>
           </div>
         )}
@@ -122,10 +122,10 @@ export function StrategyPage() {
               type="button"
               className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
               disabled={update.isPending}
-              title="只是试试的策略可以不在「今日」页出现，照常巡检"
+              title="只是试试的策略可以不在首页出现，照常巡检"
               onClick={() => save({ show_on_today: !st.show_on_today })}
             >
-              {st.show_on_today ? "不在今日展示" : "在今日展示"}
+              {st.show_on_today ? "不在首页展示" : "在首页展示"}
             </button>
             <button
               type="button"
@@ -311,7 +311,7 @@ function Hits({ r, st }: { r: ScreenResults; st: StrategyItem }) {
     <div className="flex flex-col gap-6">
       <section>
         <h3 className="flex flex-wrap items-baseline gap-2 font-medium">
-          <span className="text-up">今日买点</span>
+          <span className="text-up">最新买点</span>
           <span className="text-sm font-normal text-zinc-500">
             全市场 {fmtInt(r.scanned)} 只中有 <b className="text-zinc-800 dark:text-zinc-200">{fmtInt(r.matched)}</b>{" "}
             只满足买入条件
@@ -369,7 +369,7 @@ function Hits({ r, st }: { r: ScreenResults; st: StrategyItem }) {
         )}
       </section>
       <PositionTable
-        title="今日卖点"
+        title="最新卖点"
         tone="text-down"
         desc="按最近一年的买卖点推算，之前买入、今天触发了卖出规则的股票，按规则下一个交易日开盘卖出。"
         empty="今天没有要卖出的"

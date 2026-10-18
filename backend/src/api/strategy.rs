@@ -75,13 +75,13 @@ fn explain(d: &Definition) -> Explained {
 #[derive(Serialize, ToSchema)]
 pub struct LatestRun {
     pub trade_date: NaiveDate,
-    /// 今日买点数（截断前）
+    /// 最新买点数（截断前）
     pub matched: i32,
     /// 保存的买点数
     pub hits: i64,
     /// 其中上一次巡检没有出现的
     pub new_hits: i64,
-    /// 今日卖点数
+    /// 最新卖点数
     pub sells: i64,
     /// 持有中的股票数
     pub holdings: i64,
@@ -94,7 +94,7 @@ pub struct StrategyItem {
     pub description: String,
     /// 是否参加每日巡检
     pub screening: bool,
-    /// 是否在「今日」页展示选出的股票
+    /// 是否在首页展示选出的股票
     pub show_on_today: bool,
     pub template: Option<String>,
     /// 内置策略：由模板生成，只读、不能删除、总是参加巡检，账户的调仓建议会参考它；想改就复制一份
@@ -155,7 +155,7 @@ pub struct StrategyInput {
     /// 是否参加每日巡检，默认 true
     #[serde(default = "yes")]
     pub screening: bool,
-    /// 是否在「今日」页展示，默认 true。只为测试建的策略可以关掉
+    /// 是否在首页展示，默认 true。只为测试建的策略可以关掉
     #[serde(default = "yes")]
     pub show_on_today: bool,
     /// 由哪个模板创建（只作记录）
@@ -204,12 +204,12 @@ async fn get_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResu
     load_items(&s, Some(id)).await?.pop().map(Json).ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))
 }
 
-/// 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在今日展示」
+/// 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在首页展示」
 #[utoipa::path(put, path = "/strategies/{strategy_id}", tag = "strategy", params(("strategy_id" = i64, Path)), request_body = StrategyInput,
     responses((status = 200, description = "已保存", body = StrategyItem),
               (status = 400, description = "定义不合法", body = crate::error::ErrorBody),
               (status = 404, description = "不存在", body = crate::error::ErrorBody),
-              (status = 409, description = "内置策略只能改是否在今日展示", body = crate::error::ErrorBody)))]
+              (status = 409, description = "内置策略只能改是否在首页展示", body = crate::error::ErrorBody)))]
 async fn update_strategy(State(s): State<AppState>, Path(id): Path<i64>, Json(input): Json<StrategyInput>) -> ApiResult<Json<StrategyItem>> {
     check(&s, &input).await?;
     let current = load_items(&s, Some(id)).await?.pop().ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))?;
@@ -246,7 +246,7 @@ async fn delete_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiR
     if n == 0 {
         let builtin: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)").bind(id).fetch_one(&s.pool).await?;
         if builtin {
-            return Err(ApiError::Conflict("内置策略不能删除，可以关掉「在今日展示」".into()));
+            return Err(ApiError::Conflict("内置策略不能删除，可以关掉「在首页展示」".into()));
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -313,9 +313,9 @@ pub struct ScreenResults {
     pub scanned: Option<i32>,
     pub matched: Option<i32>,
     pub ran_at: Option<DateTime<Utc>>,
-    /// 今日买点：今天满足买入条件、之前空仓，明天开盘买入
+    /// 最新买点：今天满足买入条件、之前空仓，明天开盘买入
     pub hits: Vec<StoredHit>,
-    /// 今日卖点：持有中触发了卖出规则，明天开盘卖出；reasons 是原因
+    /// 最新卖点：持有中触发了卖出规则，明天开盘卖出；reasons 是原因
     pub sells: Vec<StoredHit>,
     /// 持有中：按最近一年的买卖点推算
     pub holdings: Vec<StoredHit>,

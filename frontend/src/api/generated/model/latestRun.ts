@@ -11,11 +11,11 @@ export interface LatestRun {
   hits: number;
   /** 持有中的股票数 */
   holdings: number;
-  /** 今日买点数（截断前） */
+  /** 最新买点数（截断前） */
   matched: number;
   /** 其中上一次巡检没有出现的 */
   new_hits: number;
-  /** 今日卖点数 */
+  /** 最新卖点数 */
   sells: number;
   trade_date: string;
 }

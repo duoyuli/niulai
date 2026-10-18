@@ -19,7 +19,7 @@ export interface StrategyItem {
   name: string;
   /** 是否参加每日巡检 */
   screening: boolean;
-  /** 是否在「今日」页展示选出的股票 */
+  /** 是否在首页展示选出的股票 */
   show_on_today: boolean;
   strategy_id: number;
   /** @nullable */

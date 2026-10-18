@@ -86,7 +86,7 @@ export function AccountsPage() {
   );
 }
 
-/** 今日页上的「我的账户」：每个账户一行 */
+/** 首页上的「我的账户」：每个账户一行 */
 export function TodayAccounts() {
   const list = useListAccounts();
   return (

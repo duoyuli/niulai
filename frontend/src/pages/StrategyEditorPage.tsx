@@ -219,14 +219,14 @@ function Editor({
           </label>
           <label
             className="flex items-center gap-2 pb-1.5 text-sm"
-            title="只是试试的策略可以不勾，它照常巡检，但不出现在「今日」页"
+            title="只是试试的策略可以不勾，它照常巡检，但不出现在首页"
           >
             <input
               type="checkbox"
               checked={draft.show_on_today ?? true}
               onChange={(e) => setDraft({ ...draft, show_on_today: e.target.checked })}
             />
-            在「今日」展示
+            在首页展示
           </label>
         </div>
       </Card>
@@ -237,7 +237,7 @@ function Editor({
 
       <Card title="② 买入条件：满足时就是买点">
         <p className="-mt-1 mb-4 text-xs text-zinc-500">
-          收盘后判断，满足的股票出现在「今日买点」，下一个交易日开盘买入。已经持有的股票再次满足不算新的买点。
+          收盘后判断，满足的股票出现在「最新买点」，下一个交易日开盘买入。已经持有的股票再次满足不算新的买点。
         </p>
         <div className="flex flex-col gap-5">
           <ConditionList
@@ -288,7 +288,7 @@ function Editor({
         <details open>
           <summary className="cursor-pointer text-sm font-semibold select-none">④ 卖出规则：买入后什么时候卖</summary>
           <p className="mt-2 text-xs text-zinc-500">
-            买入后满足下面任意一条，就是卖点，下一个交易日开盘卖出。每日巡检按它算出「今日卖点」和「持有中」，回测也按它卖出；一条都不设时，买入后一直持有。
+            买入后满足下面任意一条，就是卖点，下一个交易日开盘卖出。每日巡检按它算出「最新卖点」和「持有中」，回测也按它卖出；一条都不设时，买入后一直持有。
           </p>
           <div className="mt-4 flex flex-col gap-5">
             <div className="flex flex-wrap items-end gap-4">

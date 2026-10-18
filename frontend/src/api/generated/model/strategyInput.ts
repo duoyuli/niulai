@@ -13,7 +13,7 @@ export interface StrategyInput {
   name: string;
   /** 是否参加每日巡检，默认 true */
   screening?: boolean;
-  /** 是否在「今日」页展示，默认 true。只为测试建的策略可以关掉 */
+  /** 是否在首页展示，默认 true。只为测试建的策略可以关掉 */
   show_on_today?: boolean;
   /**
      * 由哪个模板创建（只作记录）

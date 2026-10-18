@@ -8,7 +8,7 @@ import { UpgradeBanner, VersionBadge } from "./VersionBadge";
 
 /** 主导航：今天看什么、我的账户（每天的调仓建议）、选股方法、我关注的股票。个股从页头搜索进入 */
 const NAV = [
-  { to: "/", label: "今日", end: true },
+  { to: "/", label: "首页", end: true },
   { to: "/accounts", label: "账户" },
   { to: "/strategies", label: "策略" },
   { to: "/watchlist", label: "自选" },

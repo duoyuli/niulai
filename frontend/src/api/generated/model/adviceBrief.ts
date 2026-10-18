@@ -7,7 +7,7 @@
  */
 
 /**
- * 一份建议的摘要（账户列表和今日页用）
+ * 一份建议的摘要（账户列表和首页用）
  */
 export interface AdviceBrief {
   /** @minimum 0 */

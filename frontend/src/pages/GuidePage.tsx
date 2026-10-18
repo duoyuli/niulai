@@ -20,7 +20,7 @@ export function GuidePage() {
           <span className="text-amber-600 dark:text-amber-400">橙色中性</span>，本身不说明方向。可以自己定义。
         </Concept>
         <Concept n="4" title="策略" to="/strategies" link="看策略" example="例：金叉时买，跌破 20 日线时卖">
-          买入条件 + 卖出规则。每天收盘后在全市场算一遍，给出今日买点、今日卖点和持有中。
+          买入条件 + 卖出规则。每天收盘后在全市场算一遍，给出最新买点、最新卖点和持有中。
         </Concept>
       </div>
       <Card title="买点和卖点怎么算">
