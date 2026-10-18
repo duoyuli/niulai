@@ -1,8 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useEffect, useRef, useState } from "react";
-import type { UpgradeStatus, UpgradeStep, VersionInfo } from "../api/generated/model";
+import type { BackupStatus, UpgradeStatus, UpgradeStep, VersionInfo } from "../api/generated/model";
 import { getVersionQueryKey, useUpgrade, useVersion, version } from "../api/generated/system/system";
+import { fmtAgo } from "../lib/format";
 import { buttonClass, errorText } from "./ui";
 
 /** 页头 logo 后面的版本号：有新版本时亮红点，点开可以一键升级（Docker 部署启用了 upgrader 时）。
@@ -133,6 +134,7 @@ function Panel({
         </dd>
       </dl>
       {v.check_error && <p className="text-xs text-amber-600">{v.check_error}</p>}
+      {v.backup && <BackupLine b={v.backup} />}
 
       {u.state === "failed" && (
         <div className="rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-300">
@@ -260,5 +262,38 @@ function UpgradeProgress({ u, target }: { u: UpgradeStatus; target?: string | nu
         </p>
       )}
     </div>
+  );
+}
+
+const backupTime = (b: BackupStatus) => (b.latest ? new Date(b.latest.at * 1000).toISOString() : null);
+
+/** 版本号弹窗里的一行：最近一次每日备份 */
+function BackupLine({ b }: { b: BackupStatus }) {
+  return (
+    <div className={clsx("text-xs", b.stale || b.error ? "text-amber-700 dark:text-amber-400" : "text-zinc-500")}>
+      <p>
+        数据库每日备份：
+        {b.latest
+          ? `最近一次 ${fmtAgo(backupTime(b))}（${(b.latest.size / 2 ** 20).toFixed(0)} MB），共保留 ${b.count} 份`
+          : "还没有"}
+      </p>
+      {b.error && <p className="mt-0.5">上次失败：{b.error}</p>}
+      {b.latest && (
+        <p className="mt-0.5 text-zinc-400">在部署目录的 backups/ 下；建议再复制一份到别的机器，见运维手册「备份」</p>
+      )}
+    </div>
+  );
+}
+
+/** 管理员页头下的提醒：超过 36 小时没有成功的每日备份 */
+export function BackupAlert() {
+  const q = useVersion(undefined, { query: { staleTime: 60_000 } });
+  const b = q.data?.backup;
+  if (!b || !(b.stale || b.error)) return null;
+  return (
+    <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+      数据库{b.latest ? `已经 ${fmtAgo(backupTime(b)).replace("前", "")}没有成功备份` : "还没有每日备份"}
+      {b.error ? `，上次失败：${b.error}` : ""}。点页头的版本号看详情，或执行 docker compose logs upgrader。
+    </p>
   );
 }

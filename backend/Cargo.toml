@@ -13,7 +13,7 @@ path = "src/bin/niulai.rs"
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 axum = "0.8.9"
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6.11", features = ["trace", "timeout", "request-id", "fs", "set-header"] }
+tower-http = { version = "0.6.11", features = ["trace", "timeout", "request-id", "fs", "set-header", "compression-gzip"] }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "json", "chrono", "rust_decimal"] }
 utoipa = { version = "6", features = ["axum_extras", "chrono", "decimal"] }
 utoipa-axum = "0.3"

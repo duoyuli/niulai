@@ -12,7 +12,7 @@
 ## 决策
 
 1. 去掉 Redis：删除 `redis` 依赖和 `REDIS_URL` 配置，限速只用进程内的 1 秒滑动窗口。
-2. 同一时刻只允许一个进程执行同步任务。执行循环启动前，用一个独立的数据库连接取得会话级咨询锁 `pg_try_advisory_lock(hashtext('niulai.executor'))`（`Engine::lock_executor`）。取不到时：`niulai serve` 启动失败，`niulai work` 直接退出，都提示已有进程在执行。连接关闭（进程退出）时锁自动释放。
+2. 同一时刻只允许一个进程执行同步任务。执行循环启动前，用一个独立的数据库连接取得会话级咨询锁 `pg_try_advisory_lock(hashtext('niulai.executor'))`（`Engine::lock_executor`）。取不到时 `niulai work` 直接退出并提示已有进程在执行；`niulai serve` 起初也是启动失败，2026-10-18 起改为先只提供 API、定期再试，并定期确认持锁的连接还在（见 [限速与单一执行进程](../architecture/sync_pipeline.md#rate_limit)）。连接关闭（进程退出）时锁自动释放。
 3. 只提供 API 的进程（`niulai serve --no-worker`）不受限制，可以另外启动。
 
 ## 取舍

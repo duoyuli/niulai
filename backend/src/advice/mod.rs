@@ -128,11 +128,11 @@ pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
         WEEKLY_RUNNING.store(true, Ordering::Release);
         let pool = pool.clone();
         tokio::spawn(async move {
-            let r = async {
+            let r = crate::analysis::prices::in_background(async {
                 stats::refresh(&pool).await?;
                 backtest::refresh_presets(&pool).await?;
                 refresh_all(&pool, true).await
-            }
+            })
             .await;
             if let Err(e) = r {
                 tracing::error!(error = %format!("{e:#}"), "策略表现或参考值回测失败，明天再试");

@@ -19,7 +19,7 @@
 2. `niulai serve`：启动时执行迁移。预期日志出现「niulai 服务已启动」，`curl http://127.0.0.1:8080/api/v1/ready` 返回 `{"status":"ready"}`。
 3. 前端（在 `frontend/` 下）：`pnpm install`，`pnpm dev`，打开 <http://localhost:5173/>。`/api` 转发到 `127.0.0.1:8080`，后端在别处时用 `NIULAI_API_URL=http://主机:端口 pnpm dev`。后端接口变更后按 [接口客户端](../architecture/frontend.md#api_client) 重新生成。
 
-`niulai serve` 在一个进程里运行 API、任务执行和调度，`--no-api`、`--no-worker`、`--no-scheduler` 关闭其中一部分。同一时刻只能有一个进程执行任务：`serve` 运行时再执行 `niulai work` 会报错退出。
+`niulai serve` 在一个进程里运行 API、任务执行和调度，`--no-api`、`--no-worker`、`--no-scheduler` 关闭其中一部分。同一时刻只能有一个进程执行任务：`serve` 运行时再执行 `niulai work` 会报错退出；反过来，`work` 运行时启动的 `serve` 先只提供 API，`work` 退出后自动接手执行任务。
 
 <a id="backfill"></a>
 ## 首次回补
@@ -173,7 +173,7 @@ niulai 每 6 小时查一次 GitHub 上的版本标签（`NIULAI_UPDATE_REPO`，
 upgrader 收到请求后依次执行，每一步的状态和说明写在 `status` 的 `steps` 中，页面顶部和版本号弹窗显示进度条和步骤：
 1. **下载新版本**，显示百分比和 MB。失败且本机没有这个镜像时什么都不改。
 2. **更新升级助手**：用新镜像重建自己，进度写在 `handoff` 交给新的 upgrader 继续。新版本的部署迁移只有新版本知道，所以先换掉自己；换不成时由当前的继续。
-3. **备份数据库**：用内置数据库时在 postgres 容器中 `pg_dump` 到 `backups/niulai-before-<版本>-<时间>.dump`。失败时不升级。
+3. **备份数据库**：用内置数据库时在 postgres 容器中 `pg_dump` 并校验，写到 `backups/niulai-before-<版本>-<时间>.dump`（保留最近 3 份，见 [备份与恢复](#backup_restore)）。失败时不升级。
 4. **部署迁移**：做完新版本带来的、还没做过的 [部署迁移](#deploy_migrations)。失败时恢复原样，不升级。
 5. **启动新版本**：`.env` 的 `NIULAI_IMAGE` 改成新版本，停止旧容器（最多 2 分钟），按它的配置用新镜像建新容器，最多等 5 分钟变成 `healthy`（页面显示已等多久），成功后删掉旧容器；失败时换回旧容器并改回 `.env`。新版本可能已经执行了数据库迁移，旧版本起不来时用第 3 步的备份恢复。
 
@@ -232,7 +232,16 @@ docker compose up -d
 <a id="backup_restore"></a>
 ### 备份与恢复
 
-在部署目录执行（源码部署对 `DATABASE_URL` 指向的库执行同样的 `pg_dump`、`psql`、`pg_restore`）。
+**自动备份：** 启用了一键升级（upgrader）、用内置数据库时，升级助手每天上海时间 3:30 之后备份一次（服务那时没在运行就在启动后补做；超过 30 小时没有备份时不等到点），写到部署目录的 `backups/niulai-daily-<时间>.dump`，保留最近 7 份；升级前的备份 `niulai-before-<版本>-<时间>.dump` 保留最近 3 份（每份大约是数据目录的十分之一，留意磁盘空间）。每份都在 postgres 容器中先导出、用 `pg_restore --list` 读一遍，读得通才写进 `backups/`，所以那里只有完整的备份。失败一小时后重试。版本号弹窗显示最近一次备份；超过 36 小时没有成功时，管理员的每个页面顶部都有提醒。实现在 `backend/src/upgrader/backup.rs`。
+
+**异地副本：** 备份和数据库在同一块磁盘上，防不了坏盘、误删部署目录、重装系统。在宿主机上用 crontab 把 `backups/` 同步到另一台机器或对象存储，例如：
+
+```bash
+# 每天 5 点把 backups/ 同步到对象存储（先用 rclone config 配置好名为 remote 的存储）
+0 5 * * * rclone sync /opt/niulai/backups remote:niulai-backups --include 'niulai-*.dump'
+```
+
+**手动备份与恢复：** 在部署目录执行（源码部署对 `DATABASE_URL` 指向的库执行同样的 `pg_dump`、`psql`、`pg_restore`；源码部署没有自动备份，用 crontab 定时执行下面的备份命令）。
 
 ```bash
 # 备份（自定义格式，已压缩）
@@ -246,7 +255,7 @@ docker compose exec -T postgres pg_restore -U niulai -d niulai --no-owner < back
 docker compose start niulai
 ```
 
-建议每天用 crontab 备份一次，并定期把 `backups/` 拷到别的机器：备份和数据库在同一块磁盘上，防不了坏盘。不要用 `pg_restore --clean`：`raw.record`、`ops.api_call` 是分区表，会失败。迁到另一台服务器时，在新服务器完成 Docker 部署的第 1 至 3 步，不配置 Key，直接恢复；备份里有 Key 和回补记录，不会重复回补。
+恢复之前可以先恢复到一个临时库（`CREATE DATABASE niulai_check`，`pg_restore -d niulai_check`）看看数据对不对，再恢复到 `niulai`。不要用 `pg_restore --clean`：`raw.record`、`ops.api_call` 是分区表，会失败。迁到另一台服务器时，在新服务器完成 Docker 部署的第 1 至 3 步，不配置 Key，直接恢复；备份里有 Key 和回补记录，不会重复回补。
 
 <a id="testing"></a>
 ## 测试

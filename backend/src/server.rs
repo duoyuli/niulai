@@ -2,9 +2,10 @@
 //!
 //! 三部分共用同一个同步引擎和数据库连接池。收到 Ctrl+C / SIGTERM 后：API 停止接受新请求，
 //! 执行循环不再认领新任务、等正在执行的任务结束，调度器停止，然后进程退出。
-//! 同一时刻只有一个进程执行同步任务（`Engine::lock_executor`）；`--no-worker` 的进程可以另外启动，只提供 API。
+//! 同一时刻只有一个进程执行同步任务（`Engine::lock_executor`）：取不到时先只提供 API，定期再试；`--no-worker` 的进程可以另外启动，只提供 API。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::watch;
 use tokio::task::{JoinError, JoinSet};
@@ -29,15 +30,9 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
     let (stop_tx, stop_rx) = watch::channel(false);
     let mut set: JoinSet<Component> = JoinSet::new();
 
-    // 持有到函数返回：进程退出前一直独占任务执行
-    let _executor_lock = if opts.worker { Some(engine.lock_executor().await?) } else { None };
     if opts.worker {
-        let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".into());
-        for slot in 0..engine.settings.worker_concurrency {
-            let ex = engine.executor(format!("{host}-{}-{slot}", std::process::id()));
-            let stop = stop_rx.clone();
-            set.spawn(async move { ("执行循环", ex.run_loop(slot, stop, false).await) });
-        }
+        let (e, stop) = (engine.clone(), stop_rx.clone());
+        set.spawn(async move { ("执行循环", run_workers(e, stop).await) });
     }
     if opts.scheduler {
         let (e, stop) = (engine.clone(), stop_rx.clone());
@@ -79,15 +74,79 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
         tracing::error!(error = %why, "服务组件意外退出，停止整个服务等待重启");
     }
     stop_tx.send(true).ok();
-    while let Some(done) = set.join_next().await {
-        if let Err(e) = describe_result(done) {
-            tracing::error!(error = %e, "服务组件异常退出");
+    // 在 Docker 的 stop_grace_period（2 分钟）之前收尾：超过期限的组件直接取消，不等被 SIGKILL。
+    // 被取消的任务停在 running，租约过期后由下一个进程回收
+    let drain = async {
+        while let Some(done) = set.join_next().await {
+            if let Err(e) = describe_result(done) {
+                tracing::error!(error = %e, "服务组件异常退出");
+            }
         }
+    };
+    if tokio::time::timeout(SHUTDOWN_DEADLINE, drain).await.is_err() {
+        tracing::warn!(seconds = SHUTDOWN_DEADLINE.as_secs(), "停机等待超时，取消还没结束的组件");
+        set.abort_all();
     }
     match failure {
         Some(why) => anyhow::bail!("服务组件意外退出：{why}"),
         None => Ok(()),
     }
+}
+
+/// 收到停止信号后最多等多久
+const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(100);
+
+/// 执行循环：先取得执行同步任务的独占权，取不到（另一个进程占着，或宿主机崩溃后数据库还没发现旧连接断开）时
+/// API 照常提供，每 30 秒再试，不让整个进程反复重启。取到后启动各执行槽，并每 30 秒确认持锁的连接还活着；
+/// 连接断了就停止认领，等在途任务结束后按故障退出，由 Docker 重启后重新取锁
+async fn run_workers(engine: Arc<Engine>, mut stop: watch::Receiver<bool>) -> anyhow::Result<()> {
+    let mut lock = loop {
+        if *stop.borrow() {
+            return Ok(());
+        }
+        match engine.try_lock_executor().await {
+            Ok(Some(lock)) => break lock,
+            Ok(None) => tracing::warn!("另一个 niulai 进程正在执行同步任务，本进程先只提供 API，30 秒后再试"),
+            Err(e) => tracing::warn!(error = %format!("{e:#}"), "取执行同步任务的独占权失败，30 秒后再试"),
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(30)) => {}
+            _ = stop.changed() => {}
+        }
+    };
+    let (slots_stop, slots_rx) = watch::channel(false);
+    let mut slots = JoinSet::new();
+    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".into());
+    for slot in 0..engine.settings.worker_concurrency {
+        let ex = engine.executor(format!("{host}-{}-{slot}", std::process::id()));
+        let stop = slots_rx.clone();
+        slots.spawn(async move { ex.run_loop(slot, stop, false).await });
+    }
+    let mut tick = tokio::time::interval(Duration::from_secs(30));
+    let result = loop {
+        tokio::select! {
+            changed = stop.changed() => {
+                if changed.is_err() || *stop.borrow() {
+                    break Ok(());
+                }
+            }
+            _ = tick.tick() => {
+                if let Err(e) = lock.alive().await {
+                    break Err(e.context("持有执行独占权的数据库连接断了"));
+                }
+            }
+            Some(done) = slots.join_next() => {
+                break Err(match done {
+                    Ok(Ok(())) => anyhow::anyhow!("一个执行槽提前结束"),
+                    Ok(Err(e)) => e.context("一个执行槽出错退出"),
+                    Err(e) => anyhow::anyhow!("一个执行槽 panic：{e}"),
+                });
+            }
+        }
+    };
+    slots_stop.send(true).ok();
+    while slots.join_next().await.is_some() {}
+    result
 }
 
 /// 收到停止信号之前退出的组件：不论有没有出错，都说明它不该停

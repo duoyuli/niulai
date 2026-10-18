@@ -70,13 +70,18 @@ impl Engine {
     /// 取得执行同步任务的独占权，直到返回值被丢弃。限速在进程内（见 vendor::ratelimit），
     /// 两个进程同时执行任务会让请求数翻倍，所以 `serve` 的执行循环和 `niulai work` 同一时刻只能有一个在运行
     pub async fn lock_executor(&self) -> anyhow::Result<ExecutorLock> {
+        match self.try_lock_executor().await? {
+            Some(lock) => Ok(lock),
+            None => anyhow::bail!("另一个 niulai 进程（serve 或 work）正在执行同步任务，同一时刻只能有一个。先停止它，或用 `niulai serve --no-worker`"),
+        }
+    }
+
+    /// 同 [`Engine::lock_executor`]，被别的进程占着时返回 None
+    pub async fn try_lock_executor(&self) -> anyhow::Result<Option<ExecutorLock>> {
         // 会话级 advisory lock 跟着连接走：用一个脱离连接池的独立连接持有，连接关闭（进程退出）时自动释放
         let mut conn = self.pool.acquire().await?.detach();
         let got: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('niulai.executor'))").fetch_one(&mut conn).await?;
-        if !got {
-            anyhow::bail!("另一个 niulai 进程（serve 或 work）正在执行同步任务，同一时刻只能有一个。先停止它，或用 `niulai serve --no-worker`");
-        }
-        Ok(ExecutorLock(conn))
+        Ok(got.then_some(ExecutorLock(conn)))
     }
 
     pub fn planner(&self) -> planner::Planner<'_> {
@@ -93,4 +98,15 @@ impl Engine {
 }
 
 /// 执行同步任务的独占权，见 `Engine::lock_executor`
-pub struct ExecutorLock(#[allow(dead_code)] PgConnection);
+pub struct ExecutorLock(PgConnection);
+
+impl ExecutorLock {
+    /// 确认持锁的连接还在。连接断了（数据库重启、网络中断）锁已经被数据库释放，别的进程可能接手，
+    /// 这时要停止执行任务，否则两个进程同时请求，限速翻倍
+    pub async fn alive(&mut self) -> anyhow::Result<()> {
+        tokio::time::timeout(Duration::from_secs(10), sqlx::query("SELECT 1").execute(&mut self.0))
+            .await
+            .map_err(|_| anyhow::anyhow!("10 秒没有响应"))??;
+        Ok(())
+    }
+}

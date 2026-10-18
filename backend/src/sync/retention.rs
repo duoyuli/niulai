@@ -4,7 +4,8 @@
 //! 同步页、完整性核对的查询会越来越慢。只删不再有用的行：
 //! - 结束超过 `TASK_KEEP_DAYS` 天的成功、没有数据、跳过的任务，但每个数据集最近一个成功的任务保留（「最近同步」从它来）；
 //! - 结束超过 `TASK_KEEP_DAYS` 天、之后同一分区已经成功过的失败任务（已经解决了）；还没解决的失败一直保留，直到补上；
-//! - 超过 `API_CALL_KEEP_DAYS` 天的调用日志。
+//! - 超过 `API_CALL_KEEP_DAYS` 天的调用日志；
+//! - 被重新生成取代超过 `ADVICE_KEEP_DAYS` 天、没有处理记录的调仓建议（改一次持仓或设置就会取代一份，会越积越多）。
 //!
 //! 进行中的运行里的任务不删。完整性核对只看最近 20 个交易日，数据核检只看发现缺口之后的任务，都在保留期内。
 
@@ -14,6 +15,8 @@ use sqlx::PgPool;
 pub const TASK_KEEP_DAYS: i32 = 60;
 /// 调用日志保留多少天
 pub const API_CALL_KEEP_DAYS: i32 = 30;
+/// 被取代的调仓建议保留多少天
+pub const ADVICE_KEEP_DAYS: i32 = 30;
 /// 每批删多少行：分批删，不长时间锁表
 const BATCH: i64 = 20_000;
 
@@ -21,6 +24,7 @@ const BATCH: i64 = 20_000;
 pub struct Pruned {
     pub tasks: u64,
     pub api_calls: u64,
+    pub advice: u64,
 }
 
 /// 每天一次（抢占 `ops.scheduler` 的 `prune` 作业，多个进程并存时也只做一次）
@@ -29,7 +33,7 @@ pub async fn prune_if_due(pool: &PgPool) -> anyhow::Result<()> {
         return Ok(());
     }
     let p = prune(pool).await?;
-    tracing::info!(tasks = p.tasks, api_calls = p.api_calls, "已清理过期的任务和调用日志");
+    tracing::info!(tasks = p.tasks, api_calls = p.api_calls, advice = p.advice, "已清理过期的任务、调用日志和被取代的建议");
     Ok(())
 }
 
@@ -63,6 +67,16 @@ pub async fn prune(pool: &PgPool) -> anyhow::Result<Pruned> {
         pool,
         "DELETE FROM ops.api_call WHERE call_id IN (SELECT call_id FROM ops.api_call WHERE called_at < now() - make_interval(days => $1) LIMIT $2)",
         API_CALL_KEEP_DAYS,
+    )
+    .await?;
+    out.advice += batched(
+        pool,
+        "DELETE FROM app.advice WHERE advice_id IN (
+           SELECT a.advice_id FROM app.advice a
+           WHERE a.superseded_by IS NOT NULL AND a.created_at < now() - make_interval(days => $1)
+             AND NOT EXISTS (SELECT 1 FROM app.advice_item_state s WHERE s.advice_id = a.advice_id)
+           LIMIT $2)",
+        ADVICE_KEEP_DAYS,
     )
     .await?;
     Ok(out)

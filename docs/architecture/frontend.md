@@ -94,7 +94,8 @@
 设置 `NIULAI_WEB_DIR`（指向 `frontend/dist`）后，`niulai serve` 同时提供页面，实现在 `backend/src/api/web.rs`：
 
 - `/api/v1/*` 是接口；其他未匹配的 `/api/` 路径返回 JSON 404。
-- 其他路径先找静态文件，找不到时返回 `index.html` 由前端路由处理，所以刷新 `/securities/600519.SH` 也能打开。
+- 其他路径先找静态文件，找不到时返回 `index.html` 由前端路由处理，所以刷新 `/securities/600519.SH` 也能打开。`/assets/` 下找不到的文件返回 404，不回退到页面。
+- 页面和接口的响应按浏览器的 `Accept-Encoding` 用 gzip 压缩。
 - `/assets/*` 带内容哈希，`Cache-Control: public, max-age=31536000, immutable`；其他文件（含 `index.html`）是 `no-cache`，发布后立即生效。
 
 Docker 镜像在构建时执行 `pnpm build`，产物在 `/app/web`，镜像中默认 `NIULAI_WEB_DIR=/app/web`。本地开发用 Vite 开发服务器（`pnpm dev`），`/api` 转发到 `http://127.0.0.1:8080`（`NIULAI_API_URL` 可改）。

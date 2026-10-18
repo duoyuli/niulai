@@ -30,6 +30,8 @@ export * from './authStatus';
 export * from './backfillProgress';
 export * from './backtestCosts';
 export * from './backtestResult';
+export * from './backupFile';
+export * from './backupStatus';
 export * from './bar';
 export * from './barSeries';
 export * from './bTreeMap';

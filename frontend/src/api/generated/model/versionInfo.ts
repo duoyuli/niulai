@@ -5,9 +5,11 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { BackupStatus } from './backupStatus';
 import type { UpgradeStatus } from './upgradeStatus';
 
 export interface VersionInfo {
+  backup?: BackupStatus | null;
   /**
      * 两个版本之间改了什么（GitHub 对比页面）
      * @nullable

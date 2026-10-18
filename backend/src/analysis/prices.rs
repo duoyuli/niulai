@@ -66,17 +66,29 @@ pub async fn recent_bars_until(pool: &PgPool, code: &str, end: NaiveDate, n: i64
 /// 不限制的话几个页面同时打开就会占满数据库连接和 CPU，拖慢接口和同步任务；多出来的排队等待
 pub const MARKET_SCANS: usize = 2;
 static SCAN_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MARKET_SCANS);
+/// 后台计算（每日巡检、调仓建议、每周的策略统计和参考值回测）另有一个槽位：页面上同时开几个回测，也不会让它们排不上
+static BACKGROUND_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+tokio::task_local! {
+    static BACKGROUND: ();
+}
+
+/// 在后台计算的槽位里执行 f 中的全市场计算（见 [`BACKGROUND_SLOT`]）
+pub async fn in_background<F: std::future::Future>(f: F) -> F::Output {
+    BACKGROUND.scope((), f).await
+}
 
 // @project-doc docs/architecture/sync_pipeline.md#rate_limit
 /// 全市场在 (lo, hi] 内的日线，按股票代码顺序逐只交给 f，同一时刻只有一只股票的数据在内存中。
 /// 每日巡检、市场概况、信号的过去表现和组合回测都用它：几年的全市场日线有几百万行，一次性读入会占用大量内存。
-/// 同时最多 [`MARKET_SCANS`] 个；f 里的计算交给 [`run_cpu`]，不占住异步线程
+/// 同时最多 [`MARKET_SCANS`] 个（后台计算另有一个，见 [`in_background`]）；f 里的计算交给 [`run_cpu`]，不占住异步线程
 pub async fn for_each_stock<F>(pool: &PgPool, lo: NaiveDate, hi: NaiveDate, mut f: F) -> sqlx::Result<()>
 where
     F: FnMut(&str, &[DailyBar]),
 {
     use futures_util::TryStreamExt;
-    let _slot = SCAN_SLOTS.acquire().await.expect("信号量不会被关闭");
+    let slots = if BACKGROUND.try_with(|_| ()).is_ok() { &BACKGROUND_SLOT } else { &SCAN_SLOTS };
+    let _slot = slots.acquire().await.expect("信号量不会被关闭");
     let mut tx = pool.begin().await?;
     // 一次性的大查询：JIT 编译的耗时比它省下的多；排序放在内存里，不落盘
     sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;

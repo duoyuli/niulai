@@ -227,7 +227,9 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 <a id="rate_limit"></a>
 ## 限速与单一执行进程
 
-供应商 API Key 有全局请求频率上限，多开进程不会更快，所以同一时刻只允许一个进程执行同步任务：`niulai serve` 的执行循环或 `niulai work` 启动前，用一个独立的数据库连接取得咨询锁 `pg_try_advisory_lock(hashtext('niulai.executor'))`，取不到就报错退出；进程退出、连接关闭时锁自动释放。`niulai serve --no-worker` 不取锁，可以另外启动。
+供应商 API Key 有全局请求频率上限，多开进程不会更快，所以同一时刻只允许一个进程执行同步任务：`niulai serve` 的执行循环或 `niulai work` 启动前，用一个独立的数据库连接取得咨询锁 `pg_try_advisory_lock(hashtext('niulai.executor'))`，取不到时 `niulai work` 报错退出，`niulai serve` 先只提供 API、每 30 秒再试（宿主机崩溃后，数据库可能要过一阵才发现旧连接断了），不让整个进程反复重启。进程退出、连接关闭时锁自动释放。持锁期间每 30 秒在这个连接上执行一次 `SELECT 1`：连接断了（数据库重启、网络中断）锁已经被释放，别的进程可能接手，于是停止认领、等在途任务结束后按故障退出，由 Docker 重启后重新取锁。`niulai serve --no-worker` 不取锁，可以另外启动。
+
+全市场计算（巡检、市场概况、信号统计、回测）同时最多 2 个，多出来的排队；后台的巡检、调仓建议和每周统计另有一个槽位（`prices::in_background`），页面上同时开几个回测也不会让它们排不上。
 
 限速在进程内：每次请求前检查最近 1 秒内的请求数，达到 `NIULAI_RATE_LIMIT_RPS`（默认 2）时等到最早那次请求满 1 秒。`niulai plan`、`niulai daily` 规划时偶尔请求几次接口，不取锁，会与执行循环短暂叠加。为什么不用 Redis 跨进程限速，见 [ADR：限速在进程内](../decisions/in_process_rate_limit.md)。
 
@@ -244,6 +246,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 - 结束超过 60 天、之后同一分区已经成功过的失败任务（问题已经解决）。还没解决的失败一直保留，兜底补偿和同步页还要用。
 - 结束超过 60 天的成功、没有数据、跳过的任务；进行中的运行里的任务不删，每个数据集最近一个成功的任务保留（「最近同步」从它来）。
-- 超过 30 天的调用日志。
+- 超过 30 天的调用日志（按 `called_at` 索引删）。
+- 被重新生成取代超过 30 天、没有处理记录的调仓建议（`app.advice` 中 `superseded_by` 不为空的行）。
 
 [完整性核对](#audit) 只看最近 20 个交易日，[数据核检](#data_check) 只看发现缺口之后的任务，都在保留期内，不受影响。按分区查任务用索引 `ops.task (dataset_id, part_key, task_id)`。

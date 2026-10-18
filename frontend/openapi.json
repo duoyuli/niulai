@@ -4738,6 +4738,65 @@
           }
         }
       },
+      "BackupFile": {
+        "type": "object",
+        "required": [
+          "file",
+          "size",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "做备份的时间（Unix 秒）"
+          },
+          "file": {
+            "type": "string",
+            "description": "部署目录下的路径，例如 backups/niulai-daily-20261018-033000.dump"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "字节数",
+            "minimum": 0
+          }
+        }
+      },
+      "BackupStatus": {
+        "type": "object",
+        "description": "每日备份的情况，来自升级助手写的 `backup` 文件",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "一共保留了几份",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最近一次失败的原因；成功后清空"
+          },
+          "latest": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BackupFile",
+                "description": "最近一份每日备份；还没有时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "最近一份超过 36 小时，或还没有备份：需要管理员看一下"
+          }
+        }
+      },
       "Bar": {
         "type": "object",
         "description": "日线。价格以字符串返回：未复权为原始十进制；复权价保留 6 位小数",
@@ -10025,6 +10084,17 @@
           "upgrade"
         ],
         "properties": {
+          "backup": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BackupStatus",
+                "description": "内置数据库的每日备份（升级助手做）；没有启用升级助手时为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "changes_url": {
             "type": [
               "string",

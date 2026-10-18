@@ -1,6 +1,6 @@
 //! 版本检测和一键升级（只用于 Docker 部署）。
 //! niulai 自己不能操作 Docker：升级由 compose.yml 中的 upgrader 容器执行，双方通过共享目录 `NIULAI_UPGRADE_DIR` 交换文件：
-//! niulai 写 `request`（要升级到的版本号），upgrader 写 `heartbeat`（还在运行）、`status`（进度）和 `log`。
+//! niulai 写 `request`（要升级到的版本号），upgrader 写 `heartbeat`（还在运行）、`status`（进度）、`log` 和 `backup`（每日备份的情况）。
 //! 规则见 docs/operations/runbook.md#one_click_upgrade。
 
 use std::path::Path;
@@ -61,6 +61,33 @@ pub struct VersionInfo {
     /// 两个版本之间改了什么（GitHub 对比页面）
     pub changes_url: Option<String>,
     pub upgrade: UpgradeStatus,
+    /// 内置数据库的每日备份（升级助手做）；没有启用升级助手时为空
+    pub backup: Option<BackupStatus>,
+}
+
+/// 每日备份的情况，来自升级助手写的 `backup` 文件
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq)]
+pub struct BackupStatus {
+    /// 最近一份每日备份；还没有时为空
+    pub latest: Option<BackupFile>,
+    /// 一共保留了几份
+    #[serde(default)]
+    pub count: u32,
+    /// 最近一次失败的原因；成功后清空
+    pub error: Option<String>,
+    /// 最近一份超过 36 小时，或还没有备份：需要管理员看一下
+    #[serde(default)]
+    pub stale: bool,
+}
+
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq)]
+pub struct BackupFile {
+    /// 部署目录下的路径，例如 backups/niulai-daily-20261018-033000.dump
+    pub file: String,
+    /// 字节数
+    pub size: u64,
+    /// 做备份的时间（Unix 秒）
+    pub at: i64,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
@@ -129,7 +156,18 @@ async fn version(State(s): State<AppState>, Query(q): Query<VersionQuery>) -> Js
         check_error: checked.and_then(|c| c.error),
         changes_url,
         upgrade: upgrade_status(s.engine.settings.upgrade_dir.as_deref()),
+        backup: s.engine.settings.upgrade_dir.as_deref().and_then(backup_status),
     })
+}
+
+/// 超过这么久没有成功的备份，就提醒管理员
+const BACKUP_STALE_SECS: i64 = 36 * 3600;
+
+fn backup_status(dir: &Path) -> Option<BackupStatus> {
+    let mut b: BackupStatus = serde_json::from_str(&std::fs::read_to_string(dir.join("backup")).ok()?).ok()?;
+    let now = chrono::Utc::now().timestamp();
+    b.stale = b.latest.as_ref().is_none_or(|l| now - l.at > BACKUP_STALE_SECS);
+    Some(b)
 }
 
 #[derive(Deserialize, ToSchema)]

@@ -2,6 +2,7 @@
 //! 它通过 Docker 的控制接口升级同一个 Compose 项目中的 niulai 容器；niulai 本身没有这个权限，
 //! 只能在共享目录中写一个版本号。双方交换的文件见 `api::system`，规则见 docs/operations/runbook.md#one_click_upgrade。
 
+mod backup;
 pub mod docker;
 mod migrate;
 
@@ -63,7 +64,24 @@ pub async fn run(opts: Options) -> anyhow::Result<()> {
             Err(e) => p.finish_err(&format!("{e:#}")),
         }
     }
+    // 每日备份：只备份内置数据库；状态先写一次，页面马上能看到已有的备份
+    let backups = opts.deploy_dir.join("backups");
+    let backup_status = opts.upgrade_dir.join("backup");
+    backup::write_status(&backups, &backup_status, None);
+    let mut daily = backup::Daily::default();
+    let mut last_check: Option<std::time::Instant> = None;
     loop {
+        if last_check.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
+            last_check = Some(std::time::Instant::now());
+            match up.find("niulai").await {
+                Ok(n) if builtin_db(&n) => match up.find("postgres").await {
+                    Ok(pg) => daily.tick(&docker, pg["Id"].as_str().unwrap_or_default(), &backups, &backup_status).await,
+                    Err(e) => tracing::warn!(error = %format!("{e:#}"), "找不到内置数据库容器，跳过每日备份"),
+                },
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %format!("{e:#}"), "找不到 niulai 容器，跳过每日备份"),
+            }
+        }
         if let Some(v) = files.take_request() {
             if valid_version(&v) {
                 up.begin(&v).await;
@@ -363,17 +381,14 @@ impl Upgrade<'_> {
         self.docker.inspect_container(first["Id"].as_str().unwrap_or_default()).await
     }
 
-    /// 备份内置数据库到部署目录的 backups/，返回文件名
+    /// 备份内置数据库到部署目录的 backups/，返回文件名。升级前的备份保留最近几份
     async fn backup(&self, label: &str) -> anyhow::Result<String> {
         let pg = self.find("postgres").await?;
         let dir = self.deploy.join("backups");
         std::fs::create_dir_all(&dir)?;
-        let file = dir.join(format!("niulai-before-{label}-{}.dump", crate::time::now_cn().format("%Y%m%d-%H%M%S")));
-        let (code, stderr) = self.docker.exec_to_file(pg["Id"].as_str().unwrap_or_default(), &["pg_dump", "-U", "niulai", "-Fc", "niulai"], &file).await?;
-        if code != 0 {
-            let _ = std::fs::remove_file(&file);
-            bail!("pg_dump 退出码 {code}：{}", stderr.trim());
-        }
+        let file = dir.join(format!("{}{label}-{}.dump", backup::UPGRADE_PREFIX, crate::time::now_cn().format("%Y%m%d-%H%M%S")));
+        backup::dump(self.docker, pg["Id"].as_str().unwrap_or_default(), &file).await?;
+        backup::keep_upgrade_backups(&dir);
         let name = format!("backups/{}", file.file_name().unwrap_or_default().to_string_lossy());
         self.files.log(&format!("已备份到 {name}"));
         Ok(name)
