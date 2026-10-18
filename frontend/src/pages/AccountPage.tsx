@@ -5,7 +5,6 @@ import { Link, useNavigate, useParams } from "react-router";
 import {
   getGetAccountQueryKey,
   getListAccountsQueryKey,
-  getListTradesQueryKey,
   useAccountBacktest,
   useAccountReview,
   useAddTrade,
@@ -14,10 +13,9 @@ import {
   useGetAccount,
   useListTrades,
   useMarkChecked,
-  useUndoTrade,
   useUpdateAccount,
 } from "../api/generated/accounts/accounts";
-import type { AccountDetail, AccountTrade, TradeKind } from "../api/generated/model";
+import type { AccountDetail, TradeKind } from "../api/generated/model";
 import { AdviceView } from "../components/AdviceView";
 import { BacktestTrades } from "../components/BacktestTrades";
 import { PositionsEditor } from "../components/PositionsEditor";
@@ -69,17 +67,6 @@ export function AccountPage() {
                 value={<span className={upDownClass(d.summary.day_pnl)}>{yuan(d.summary.day_pnl)}</span>}
               />
               <Stat label="现金" value={yuan(d.summary.account.cash)} />
-              <Stat
-                label="已实现盈亏"
-                value={
-                  d.summary.realized_pnl === null || d.summary.realized_pnl === undefined ? (
-                    <span className="text-xs font-normal text-zinc-500">算不出（有卖出没填成本）</span>
-                  ) : (
-                    <span className={upDownClass(d.summary.realized_pnl)}>{yuan(d.summary.realized_pnl)}</span>
-                  )
-                }
-                sub="已经卖掉的赚亏"
-              />
               <Stat label="持仓" value={`${d.summary.positions} 只`} />
             </div>
           </div>
@@ -209,9 +196,6 @@ function Positions({ d }: { d: AccountDetail }) {
           </tbody>
         </Table>
       )}
-      <p className="mt-2 text-xs text-zinc-500">
-        上面的「盈亏」是还拿在手里的股票按现价算的浮动盈亏。已经卖掉的赚亏看页面顶部的「已实现盈亏」：按卖出时的平均成本算，买卖费用都扣掉了。
-      </p>
     </Card>
   );
 }
@@ -326,29 +310,10 @@ function TradeForm({ d, onDone }: { d: AccountDetail; onDone: () => void }) {
 }
 
 function Records({ id }: { id: number }) {
-  const qc = useQueryClient();
   const history = useAdviceHistory(id);
   const review = useAccountReview(id);
   const trades = useListTrades(id);
   const [day, setDay] = useState<string | null>(null);
-  const [undoError, setUndoError] = useState<string | null>(null);
-  const undo = useUndoTrade({
-    mutation: {
-      onSuccess: (r) => {
-        qc.setQueryData(getGetAccountQueryKey(id), r);
-        qc.invalidateQueries({ queryKey: getListAccountsQueryKey() });
-        qc.invalidateQueries({ queryKey: getListTradesQueryKey(id) });
-        qc.invalidateQueries();
-        setUndoError(null);
-      },
-      onError: (e) => setUndoError(errorText(e)),
-    },
-  });
-  // 只有手动记的买入、卖出、转入、转出能撤销；按建议执行、分红送转、校准的流水用校准改
-  const canUndo = (t: AccountTrade) =>
-    t.source === "user" &&
-    !t.reversed_at &&
-    (t.kind === "buy" || t.kind === "sell" || t.kind === "cash_in" || t.kind === "cash_out");
   return (
     <div className="flex flex-col gap-4">
       {day && (
@@ -463,74 +428,41 @@ function Records({ id }: { id: number }) {
         </QueryView>
       </Card>
       <Card title="流水（持仓和现金的每一次变动）">
-        <p className="mb-2 text-xs text-zinc-500">
-          手动记错的买入、卖出、转入、转出可以点「撤销」：这笔流水会标成已撤销，现金和持仓按剩下的流水重新算一遍，已实现盈亏也跟着变。按建议执行、分红送转、校准的流水不能单独撤销，用「校准持仓和现金」改。
-        </p>
         <QueryView query={trades}>
           {(list) => (
-            <>
-              <Table>
-                <thead>
-                  <tr>
-                    <th>日期</th>
-                    <th>类型</th>
-                    <th>股票</th>
-                    <th>股数</th>
-                    <th>价格</th>
-                    <th>现金变化</th>
-                    <th>已实现盈亏</th>
-                    <th>说明</th>
-                    <th>操作</th>
+            <Table>
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>类型</th>
+                  <th>股票</th>
+                  <th>股数</th>
+                  <th>价格</th>
+                  <th>现金变化</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((t) => (
+                  <tr key={t.trade_id}>
+                    <td className="num text-xs">{t.trade_date}</td>
+                    <td>
+                      {TRADE_KINDS[t.kind]}
+                      <span className="ml-1 text-xs text-zinc-400">{TRADE_SOURCES[t.source]}</span>
+                    </td>
+                    <td>{t.name ?? t.thscode ?? ""}</td>
+                    <td className="num">{t.shares ?? ""}</td>
+                    <td className="num">{t.price ? fmtPrice(t.price) : ""}</td>
+                    <td className={clsx("num", upDownClass(t.amount === 0 ? null : t.amount))}>
+                      {t.amount === 0 ? "" : yuan(t.amount, 2)}
+                    </td>
+                    <td className="max-w-80 text-xs text-zinc-500" title={fmtDateTime(t.created_at)}>
+                      {t.note}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {list.map((t) => (
-                    <tr key={t.trade_id} className={t.reversed_at ? "opacity-50" : undefined}>
-                      <td className="num text-xs">{t.trade_date}</td>
-                      <td>
-                        {TRADE_KINDS[t.kind]}
-                        <span className="ml-1 text-xs text-zinc-400">{TRADE_SOURCES[t.source]}</span>
-                      </td>
-                      <td>{t.name ?? t.thscode ?? ""}</td>
-                      <td className="num">{t.shares ?? ""}</td>
-                      <td className="num">{t.price ? fmtPrice(t.price) : ""}</td>
-                      <td className={clsx("num", upDownClass(t.amount === 0 ? null : t.amount))}>
-                        {t.amount === 0 ? "" : yuan(t.amount, 2)}
-                      </td>
-                      <td className={clsx("num", upDownClass(t.realized_pnl))}>
-                        {t.realized_pnl === null || t.realized_pnl === undefined ? "" : yuan(t.realized_pnl, 2)}
-                      </td>
-                      <td className="max-w-80 text-xs text-zinc-500" title={fmtDateTime(t.created_at)}>
-                        {t.note}
-                        {t.reversed_at && <span className="ml-1 text-red-600">已撤销</span>}
-                      </td>
-                      <td className="text-xs">
-                        {canUndo(t) && (
-                          <button
-                            type="button"
-                            className="text-red-600 hover:underline disabled:opacity-40"
-                            disabled={undo.isPending}
-                            onClick={() => {
-                              const what = t.thscode ? `${t.name ?? t.thscode} 的持仓和成本` : "现金";
-                              const ok = window.confirm(
-                                `撤销这笔${TRADE_KINDS[t.kind]}？\n会把这笔流水标成已撤销，${what}按剩下的流水重新算一遍，已实现盈亏也会跟着变。`,
-                              );
-                              if (ok) {
-                                setUndoError(null);
-                                undo.mutate({ accountId: id, tradeId: t.trade_id });
-                              }
-                            }}
-                          >
-                            撤销
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-              {undoError && <p className="mt-2 text-sm text-red-600">{undoError}</p>}
-            </>
+                ))}
+              </tbody>
+            </Table>
           )}
         </QueryView>
       </Card>

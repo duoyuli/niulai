@@ -35,7 +35,6 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(parse_positions))
         .routes(routes!(calibrate))
         .routes(routes!(list_trades, add_trade))
-        .routes(routes!(undo_trade))
         .routes(routes!(current_advice))
         .routes(routes!(refresh_advice))
         .routes(routes!(advice_history))
@@ -49,7 +48,7 @@ impl From<AccountError> for ApiError {
     fn from(e: AccountError) -> Self {
         match e {
             AccountError::Invalid(m) => ApiError::BadRequest(m),
-            AccountError::NotFound | AccountError::TradeNotFound => ApiError::NotFound(e.to_string()),
+            AccountError::NotFound => ApiError::NotFound(e.to_string()),
             AccountError::Taken(_) => ApiError::Conflict(e.to_string()),
             AccountError::Internal(e) => ApiError::Internal(e),
         }
@@ -140,8 +139,6 @@ pub struct AccountSummary {
     pub total_assets: f64,
     /// 按最近一个交易日的涨跌估算的当日盈亏
     pub day_pnl: f64,
-    /// 已实现盈亏（元）：已经卖出的部分，按卖出时的平均成本算，含买卖费用；有卖出没填成本价时为空
-    pub realized_pnl: Option<f64>,
     pub advice: Option<AdviceBrief>,
     /// 持仓很久没变动、又有没执行的建议时，提醒核对
     pub check_hint: Option<String>,
@@ -223,7 +220,6 @@ async fn check_hint(s: &AppState, acc: &Account) -> ApiResult<Option<String>> {
 
 async fn summary(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
     let positions = account::positions(&s.pool, acc.account_id).await?;
-    let realized = account::realized(&s.pool, acc.account_id).await?;
     let (mut mv, mut day) = (0.0, 0.0);
     for p in &positions {
         if let (_, Some((_, close, ch))) = quote(s, &p.thscode, 2).await? {
@@ -239,7 +235,6 @@ async fn summary(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
         market_value: mv,
         total_assets: acc.cash + mv,
         day_pnl: day,
-        realized_pnl: realized.total,
         advice: brief(s, acc.account_id).await?,
         check_hint: check_hint(s, &acc).await?,
         account: acc,
@@ -419,18 +414,6 @@ async fn list_trades(State(s): State<AppState>, me: CurrentUser, Path(id): Path<
               (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
 async fn add_trade(State(s): State<AppState>, me: CurrentUser, Path(id): Path<i64>, Json(input): Json<TradeInput>) -> ApiResult<Json<AccountDetail>> {
     account::record(&s.pool, me.user_id, id, &input, TradeSource::User, None).await?;
-    regenerate(&s, &me, id).await;
-    Ok(Json(detail(&s, &me, id).await?))
-}
-
-/// 撤销一条手动记的流水（红冲）：现金和持仓、成本、已实现盈亏重新算一遍。按建议执行、自动记账、校准的流水不能单独撤销
-#[utoipa::path(delete, path = "/accounts/{account_id}/trades/{trade_id}", tag = "accounts",
-    params(("account_id" = i64, Path), ("trade_id" = i64, Path, description = "流水编号")),
-    responses((status = 200, description = "已撤销，返回重算后的账户", body = AccountDetail),
-              (status = 400, description = "不是手动流水、已经撤销过，或撤销后现金、持仓会变成负数", body = crate::error::ErrorBody),
-              (status = 404, description = "账户或流水不存在", body = crate::error::ErrorBody)))]
-async fn undo_trade(State(s): State<AppState>, me: CurrentUser, Path((id, trade_id)): Path<(i64, i64)>) -> ApiResult<Json<AccountDetail>> {
-    account::undo_trade(&s.pool, me.user_id, id, trade_id).await?;
     regenerate(&s, &me, id).await;
     Ok(Json(detail(&s, &me, id).await?))
 }

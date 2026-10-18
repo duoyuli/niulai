@@ -21,10 +21,5 @@ export interface AccountSummary {
   market_value: number;
   /** @minimum 0 */
   positions: number;
-  /**
-     * 已实现盈亏（元）：已经卖出的部分，按卖出时的平均成本算，含买卖费用；有卖出没填成本价时为空
-     * @nullable
-     */
-  realized_pnl?: number | null;
   total_assets: number;
 }
