@@ -8,11 +8,12 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::account::history::{self, HistoryReturn};
 use crate::account::lots::{self, Fees, round2};
 use crate::account::rules::{Rules, WeakMarket};
 
 /// 生成规则的版本：规则改了就加一，历史建议记着当时的版本
-pub const RULES_VERSION: i32 = 2;
+pub const RULES_VERSION: i32 = 3;
 /// 「没选上的候选」最多列几只
 const MAX_SKIPPED: usize = 8;
 
@@ -70,6 +71,18 @@ pub struct Pick {
     pub strategy_id: i64,
     /// 命中条件的白话
     pub reasons: Vec<String>,
+    #[serde(default)]
+    pub history: Vec<HistoryReturn>,
+}
+
+impl Pick {
+    pub fn eligible(&self, rules: &Rules, date: NaiveDate) -> bool {
+        rules.uses(self.strategy_id)
+            && rules
+                .history_check
+                .as_ref()
+                .is_none_or(|check| history::passes(check, &self.history, date))
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -108,6 +121,9 @@ pub struct Input {
     pub market: Option<MarketIn>,
     pub holdings: Vec<HoldingIn>,
     pub candidates: Vec<CandidateIn>,
+    /// 组装输入时在候选上限之前因回看被排除的股票数。
+    #[serde(default)]
+    pub history_rejected: usize,
     /// 参考的策略（全部参加巡检的，或账户勾选的）
     pub strategies: Vec<StrategyIn>,
     /// 之前连续几份建议都给出了同一条卖出或减仓、且没有执行：键是 item key
@@ -328,6 +344,7 @@ pub fn generate(inp: &Input) -> Advice {
     // (候选, 采纳的策略, 被排除的策略)
     let mut ranked: Vec<(&CandidateIn, Vec<&Pick>)> = vec![];
     let mut too_few_picks = false;
+    let mut history_rejected = inp.history_rejected;
     for c in &inp.candidates {
         if held.contains(c.thscode.as_str()) || sold.contains(c.thscode.as_str()) {
             continue;
@@ -336,7 +353,17 @@ pub fn generate(inp: &Input) -> Advice {
             skip(&mut skipped, c, "ST 股不买".into());
             continue;
         }
-        let kept: Vec<&Pick> = c.picks.iter().filter(|k| p.uses(k.strategy_id)).collect();
+        let kept: Vec<&Pick> = c
+            .picks
+            .iter()
+            .filter(|k| k.eligible(p, inp.trade_date))
+            .collect();
+        if p.history_check.is_some()
+            && kept.len() < p.min_picks as usize
+            && c.picks.iter().filter(|k| p.uses(k.strategy_id)).count() >= p.min_picks as usize
+        {
+            history_rejected += 1;
+        }
         let names = |l: &[&Pick]| {
             l.iter()
                 .map(|k| format!("「{}」", name_of(k.strategy_id)))
@@ -489,6 +516,10 @@ pub fn generate(inp: &Input) -> Advice {
         .collect();
     let settings_hint = if n_buy > 0 || pause {
         None
+    } else if ranked.is_empty() && history_rejected > 0 {
+        Some(
+            "候选没有通过买入前回看，或通过的策略数不足。可在「设置」查看所选周期和收益门槛".into(),
+        )
     } else if ranked.is_empty() && too_few_picks {
         Some(format!(
             "有候选股票，但没有一只同时被 {} 个勾选的策略看好。可以在「设置」里调低「至少几个勾选的策略同时看好」",
@@ -533,6 +564,11 @@ pub fn generate(inp: &Input) -> Advice {
         "参考 {} 个勾选的策略；同时命中的策略越多，排序越靠前",
         used.len()
     )];
+    if history_rejected > 0 {
+        notes.push(format!(
+            "有 {history_rejected} 只股票因买入前回看未通过，或通过的策略数不足而不买"
+        ));
+    }
     let missing_cost = inp
         .holdings
         .iter()
@@ -856,7 +892,25 @@ fn buy_item(
     } else {
         "选中".to_string()
     };
-    let headline = format!("{}{together}，排第 {rank}", names.join(" + "));
+    let headline = if let Some(check) = &p.history_check {
+        let windows = check
+            .windows
+            .iter()
+            .map(|w| w.label())
+            .collect::<Vec<_>>()
+            .join("、");
+        let conclusion = if check.min_return_pct == 0.0 {
+            "都赚钱".to_string()
+        } else {
+            format!("总收益都大于 {}%", check.min_return_pct)
+        };
+        format!(
+            "通过买入前回看：{}在这只股票上过去{windows}{conclusion}",
+            names.join("、")
+        )
+    } else {
+        format!("{}{together}，排第 {rank}", names.join(" + "))
+    };
 
     let mut evidence: Vec<Note> = kept
         .iter()
@@ -871,6 +925,32 @@ fn buy_item(
             )
         })
         .collect();
+    if let Some(check) = &p.history_check {
+        for pick in kept {
+            for r in pick
+                .history
+                .iter()
+                .filter(|r| check.windows.contains(&r.window))
+            {
+                if let Some(value) = r.return_pct {
+                    evidence.push(note(
+                        "history",
+                        format!(
+                            "「{}」过去 {}（{} 至 {}）总收益 {value:.2}%",
+                            name_of(pick.strategy_id),
+                            r.window.label(),
+                            r.start,
+                            r.end
+                        ),
+                    ));
+                }
+            }
+        }
+        evidence.push(note(
+            "history",
+            "回看按本金 10 万元、默认费率计算，含期末持仓市值；历史收益不代表未来收益",
+        ));
+    }
     if !s.trend_text.is_empty() {
         evidence.push(note("diagnosis", format!("趋势：{}", s.trend_text)));
     }
@@ -1037,6 +1117,7 @@ mod tests {
                 .map(|id| Pick {
                     strategy_id: *id,
                     reasons: vec!["当天出现「放量突破」".into()],
+                    history: vec![],
                 })
                 .collect(),
             snap: Snapshot {
@@ -1059,7 +1140,10 @@ mod tests {
         Input {
             trade_date: day(),
             next_date: day().succ_opt().unwrap(),
-            rules: preset.rules(),
+            rules: crate::account::rules::Rules {
+                history_check: None,
+                ..preset.rules()
+            },
             fees: Fees {
                 commission_rate: 0.00025,
                 min_commission: 5.0,
@@ -1071,6 +1155,7 @@ mod tests {
             }),
             holdings,
             candidates,
+            history_rejected: 0,
             strategies: vec![
                 StrategyIn {
                     strategy_id: 1,
@@ -1283,6 +1368,30 @@ mod tests {
             "可用的 90,000 元减半，6 个空位每只 7,500 元，买 200 股"
         );
         assert!(b.cautions.iter().any(|n| n.text.contains("减半")));
+    }
+
+    #[test]
+    fn history_check_counts_only_passing_strategy_picks() {
+        let mut inp = input(
+            Preset::Balanced,
+            100_000.0,
+            vec![],
+            vec![cand("Y", 30.0, &[1, 2], 2e8)],
+        );
+        inp.rules.history_check = Some(crate::account::rules::HistoryCheck {
+            windows: vec![crate::account::rules::HistoryWindow::OneYear],
+            min_return_pct: 0.0,
+        });
+        inp.rules.min_picks = 2;
+        inp.candidates[0].picks[0].history = vec![HistoryReturn {
+            window: crate::account::rules::HistoryWindow::OneYear,
+            start: crate::account::rules::HistoryWindow::OneYear.start(day()),
+            end: day(),
+            return_pct: Some(1.0),
+        }];
+        let advice = generate(&inp);
+        assert!(advice.items.iter().all(|i| i.action != Action::Buy));
+        assert!(advice.notes.iter().any(|n| n.contains("买入前回看")));
     }
 
     #[test]

@@ -18,11 +18,10 @@ const NAV = [
   { to: "/watchlist", label: "自选" },
 ];
 
-/** 不是每天用的，放在右侧：说明，管理员的数据同步（普通用户是指数板块）。改密码、用户管理、数据源设置、退出收在用户名的菜单里 */
+/** 不是每天用的，放在右侧：说明和数据。个人与管理员功能收在用户名的菜单里 */
 const AUX = [
   { to: "/guide", label: "说明", title: "指标、信号、策略是什么，怎么用", who: "all" },
-  { to: "/indices", label: "指数", title: "指数与板块", who: "member" },
-  { to: "/sync", label: "数据", title: "数据同步与指数板块", who: "admin" },
+  { to: "/sync", label: "数据", title: "数据同步与指数板块", who: "all" },
 ] as const;
 
 export function Layout() {
@@ -67,7 +66,7 @@ export function Layout() {
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-3">
             <SecuritySearch onPick={(code) => nav(`/securities/${code}`)} width="w-28 sm:w-56" />
-            {AUX.filter((a) => a.who === "all" || a.who === (admin ? "admin" : "member")).map((a) => (
+            {AUX.map((a) => (
               <NavLink
                 key={a.to}
                 to={a.to}
@@ -75,7 +74,7 @@ export function Layout() {
                 className={({ isActive }) =>
                   clsx(
                     "hidden text-xs whitespace-nowrap sm:inline",
-                    isActive || (a.to === "/sync" && admin && pathname.startsWith("/indices"))
+                    isActive || (a.to === "/sync" && pathname.startsWith("/indices"))
                       ? "text-zinc-900 dark:text-zinc-100"
                       : "text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100",
                   )

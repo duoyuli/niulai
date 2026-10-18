@@ -1,4 +1,4 @@
-//! 账户的选股和风控规则：参考哪些策略（默认全部参加巡检的策略）、至少几个策略同时选中才买、最多持几只、
+//! 账户的选股和风控规则：参考哪些策略（新账户保存创建时的策略快照）、至少几个策略同时选中才买、最多持几只、
 //! 单只最多占多少、留多少现金、止损线、趋势卖出看哪条均线、弱市怎么办、追高上限。
 //! 规则不绑定具体策略：候选股按同一套优先级排序（见 advice::generate）。
 //!
@@ -20,16 +20,89 @@ pub enum WeakMarket {
     Normal,
 }
 
-/// 一个账户的全部规则。缺的字段按稳健的参考值补齐
+/// 买入前回看的周期。
+#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryWindow {
+    ThreeMonths,
+    SixMonths,
+    OneYear,
+    ThreeYears,
+    FiveYears,
+}
+
+impl HistoryWindow {
+    pub const ALL: [Self; 5] = [
+        Self::ThreeMonths,
+        Self::SixMonths,
+        Self::OneYear,
+        Self::ThreeYears,
+        Self::FiveYears,
+    ];
+
+    pub fn months(self) -> u32 {
+        match self {
+            Self::ThreeMonths => 3,
+            Self::SixMonths => 6,
+            Self::OneYear => 12,
+            Self::ThreeYears => 36,
+            Self::FiveYears => 60,
+        }
+    }
+
+    pub fn start(self, end: chrono::NaiveDate) -> chrono::NaiveDate {
+        end.checked_sub_months(chrono::Months::new(self.months()))
+            .unwrap_or(chrono::NaiveDate::MIN)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ThreeMonths => "3 个月",
+            Self::SixMonths => "6 个月",
+            Self::OneYear => "1 年",
+            Self::ThreeYears => "3 年",
+            Self::FiveYears => "5 年",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq)]
+pub struct HistoryCheck {
+    pub windows: Vec<HistoryWindow>,
+    /// 总收益必须严格大于此百分比，0 表示赚钱；不是收益率小数。
+    #[serde(default)]
+    pub min_return_pct: f64,
+}
+
+impl HistoryCheck {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.windows.is_empty() || self.windows.len() > HistoryWindow::ALL.len() {
+            return Err("买入前回看至少选择一个周期，最多五个".into());
+        }
+        let mut seen = std::collections::HashSet::new();
+        if self.windows.iter().any(|w| !seen.insert(*w)) {
+            return Err("买入前回看的周期不能重复".into());
+        }
+        if !self.min_return_pct.is_finite() || self.min_return_pct < 0.0 {
+            return Err("买入前回看的收益门槛必须是大于或等于 0 的有限数值".into());
+        }
+        Ok(())
+    }
+}
+
+/// 一个账户的全部规则。缺的字段按均衡型参考值补齐，回看缺省为关闭。
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Rules {
-    /// 只参考这些策略（策略编号）；为空（null）表示全部参加巡检的策略，以后新增的也自动参考
+    /// 只参考这些策略（策略编号）；旧数据为 null 时兼容为当前全部参加巡检的策略，新账户保存当前策略快照
     pub strategies: Option<Vec<i64>>,
     /// 历史兼容字段：旧版本保存的有效门槛仍能读取，但当前建议流程不使用它
     pub min_edge_pct: f64,
     /// 至少几个勾选的策略同时选中才买
     pub min_picks: u32,
+    /// 买入前回看；旧账户缺少此字段时关闭。
+    #[serde(default)]
+    pub history_check: Option<HistoryCheck>,
     /// 最多同时持有几只
     pub max_positions: u32,
     /// 单只最多占总资产的百分比
@@ -84,6 +157,9 @@ impl Rules {
             Some(l) if l.len() > 64 => return Err("最多勾选 64 个策略".into()),
             _ => {}
         }
+        if let Some(check) = &self.history_check {
+            check.validate()?;
+        }
         Ok(())
     }
 
@@ -93,7 +169,6 @@ impl Rules {
             .as_ref()
             .is_none_or(|l| l.contains(&strategy_id))
     }
-
 }
 
 /// 三组参考值：只是辅助，套用后还可以改
@@ -118,9 +193,9 @@ impl Preset {
 
     pub fn name(self) -> &'static str {
         match self {
-            Preset::Conservative => "保守型",
-            Preset::Balanced => "稳健型",
-            Preset::Aggressive => "进取型",
+            Preset::Conservative => "稳健型",
+            Preset::Balanced => "均衡型",
+            Preset::Aggressive => "积极型",
         }
     }
 
@@ -138,6 +213,7 @@ impl Preset {
         match self {
             Preset::Conservative => vec![
                 "至少 2 个勾选的策略同时看好才买，宁可错过",
+                "买入前回看：每个策略在这只股票上过去 1 年、3 年的总收益都大于 0",
                 "分散：最多 5 只，单只不超过 20%，一只出问题影响有限",
                 "留 20% 现金，跌的时候有余地",
                 "止损紧（6%），收盘跌破 20 日均线就走，不扛单",
@@ -165,6 +241,7 @@ impl Preset {
             strategies: None,
             min_edge_pct: 0.0,
             min_picks: 1,
+            history_check: None,
             max_positions: 6,
             max_weight_pct: 25.0,
             min_cash_pct: 10.0,
@@ -178,6 +255,10 @@ impl Preset {
         match self {
             Preset::Conservative => Rules {
                 min_picks: 2,
+                history_check: Some(HistoryCheck {
+                    windows: vec![HistoryWindow::OneYear, HistoryWindow::ThreeYears],
+                    min_return_pct: 0.0,
+                }),
                 max_positions: 5,
                 max_weight_pct: 20.0,
                 min_cash_pct: 20.0,

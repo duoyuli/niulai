@@ -47,6 +47,7 @@ export const NOTE_KINDS: Record<string, string> = {
   diagnosis: "诊断",
   strategy: "策略",
   stat: "过去表现",
+  history: "买入前回看",
   market: "市场",
   risk: "风险",
 };

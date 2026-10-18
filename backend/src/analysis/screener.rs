@@ -94,8 +94,7 @@ pub async fn screen(
         return Ok(None);
     };
     let sec = market::securities(pool).await?;
-    // 强势板块过滤：每个策略预先算好允许的股票（只作用于买点）
-    let mut sector_sets: Vec<Option<HashSet<String>>> = vec![];
+    let mut sector_sets = Vec::with_capacity(defs.len());
     for d in defs {
         sector_sets.push(match &d.universe.sector {
             Some(s) => Some(
@@ -111,10 +110,8 @@ pub async fn screen(
     };
     let warmup = defs.iter().map(|d| d.warmup()).max().unwrap_or(30) + 5 + window;
     let lo = date - chrono::Duration::days(calendar_days_for(warmup));
-    // 权威涨跌停池：整个窗口加载一次，全市场共用
     let limits = super::limit_pool::LimitPool::load(pool, lo, date).await?;
-    let mut found: Vec<StrategyResult> = defs
-        .iter()
+    let mut found: Vec<StrategyResult> = (0..defs.len())
         .map(|_| StrategyResult {
             matched: 0,
             hits: vec![],
@@ -124,12 +121,14 @@ pub async fn screen(
         .collect();
     let mut scanned = 0usize;
     prices::for_each_stock(pool, lo, date, |code, bars| {
-        let Some(last) = bars.last() else { return };
+        let Some(last) = bars.last() else {
+            return;
+        };
         let Some(meta) = sec.meta.get(code) else {
             return;
         };
         if last.date != date {
-            return; // 当天停牌
+            return;
         }
         scanned += 1;
         let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
@@ -138,8 +137,8 @@ pub async fn screen(
         let name = || sec.names.get(code).cloned().unwrap_or_default();
         let change_pct = f.at(IndicatorRef::new(IndicatorId::ChangePct, None), i);
         for (k, d) in defs.iter().enumerate() {
-            let sector_ok = sector_sets[k].as_ref().is_none_or(|s| s.contains(code));
-            let buy_hit = |reasons| Hit {
+            let sector_ok = sector_sets[k].as_ref().is_none_or(|set| set.contains(code));
+            let hit = |reasons| Hit {
                 thscode: code.to_string(),
                 name: name(),
                 close: last.close,
@@ -152,14 +151,14 @@ pub async fn screen(
                 if sector_ok && d.in_universe(&f, meta, i) {
                     let e = d.eval(&f, i);
                     if e.matched {
-                        found[k].hits.push(buy_hit(e.reasons));
+                        found[k].hits.push(hit(e.reasons));
                     }
                 }
                 continue;
             }
-            let p = points::run(bars, &f, meta, d, bars.len().saturating_sub(POINT_DAYS));
+            let points = points::run(bars, &f, meta, d, bars.len().saturating_sub(POINT_DAYS));
             let position = |reason: Option<String>| {
-                p.trades.last().map(|t| PositionHit {
+                points.trades.last().map(|t| PositionHit {
                     thscode: code.to_string(),
                     name: name(),
                     close: last.close,
@@ -171,51 +170,52 @@ pub async fn screen(
                     reason,
                 })
             };
-            match p.today {
-                Today::Buy if sector_ok => found[k].hits.push(buy_hit(d.eval(&f, i).reasons)),
-                Today::Sell { text, .. } => found[k].sells.extend(position(Some(text))),
-                Today::Holding => found[k].holdings.extend(position(None)),
+            match points.today {
+                Today::Buy if sector_ok => found[k].hits.push(hit(d.eval(&f, i).reasons)),
+                Today::Sell { text, .. } => {
+                    if let Some(p) = position(Some(text)) {
+                        found[k].sells.push(p);
+                    }
+                }
+                Today::Holding => {
+                    if let Some(p) = position(None) {
+                        found[k].holdings.push(p);
+                    }
+                }
                 _ => {}
             }
         }
     })
     .await?;
-    let results = defs
-        .iter()
-        .zip(found)
-        .map(|(d, mut r)| {
-            r.matched = r.hits.len();
-            // 排序值缺失（NaN）的排在最后
-            r.hits.sort_by(|a, b| {
-                let (x, y) = (a.sort_value, b.sort_value);
-                match (x.is_nan(), y.is_nan()) {
-                    (true, true) => std::cmp::Ordering::Equal,
-                    (true, false) => std::cmp::Ordering::Greater,
-                    (false, true) => std::cmp::Ordering::Less,
-                    _ if d.sort.desc => y.total_cmp(&x),
-                    _ => x.total_cmp(&y),
-                }
-            });
-            r.hits.truncate(d.limit as usize);
-            r.sells
-                .sort_by(|a, b| a.return_pct.total_cmp(&b.return_pct));
-            r.holdings
-                .sort_by(|a, b| b.return_pct.total_cmp(&a.return_pct));
-            r.holdings.truncate(MAX_HOLDINGS);
-            r
-        })
-        .collect();
+    for (d, result) in defs.iter().zip(found.iter_mut()) {
+        result.matched = result.hits.len();
+        result.hits.sort_by(|a, b| {
+            if d.sort.desc {
+                b.sort_value.total_cmp(&a.sort_value)
+            } else {
+                a.sort_value.total_cmp(&b.sort_value)
+            }
+        });
+        result.hits.truncate(d.limit as usize);
+        result
+            .sells
+            .sort_by(|a, b| a.return_pct.total_cmp(&b.return_pct));
+        result
+            .holdings
+            .sort_by(|a, b| b.return_pct.total_cmp(&a.return_pct));
+        result.holdings.truncate(MAX_HOLDINGS);
+    }
     Ok(Some(Outcome {
         trade_date: date,
         scanned,
-        results,
+        results: found,
     }))
 }
 
 /// 开启巡检的全部策略
 pub async fn screening_strategies(pool: &PgPool) -> anyhow::Result<Vec<(i64, Definition)>> {
     let rows: Vec<(i64, serde_json::Value)> = sqlx::query_as(
-        "SELECT strategy_id, definition FROM app.strategy WHERE screening ORDER BY strategy_id",
+        "SELECT strategy_id, definition FROM app.strategy WHERE screening ORDER BY sort_order, strategy_id",
     )
     .fetch_all(pool)
     .await?;
@@ -405,7 +405,8 @@ pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {
             .map(|(id, _, _)| *id)
             .collect();
         let Some(&keep) = same.first() else {
-            sqlx::query("INSERT INTO app.strategy (name, description, definition, template, builtin_key) VALUES ($1, $2, $3, $4, $4)")
+            sqlx::query("INSERT INTO app.strategy (name, description, definition, template, builtin_key, sort_order)
+                         VALUES ($1, $2, $3, $4, $4, COALESCE((SELECT max(sort_order) + 1 FROM app.strategy), 0))")
                 .bind(t.name)
                 .bind(t.description)
                 .bind(&def)

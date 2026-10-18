@@ -157,17 +157,31 @@ pub async fn stale_planning(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
         "SELECT run_id FROM ops.run
          WHERE status = 'running'
            AND coalesce((params->>'planning')::boolean, false)
-           AND started_at < now() - interval '10 minutes'
+           AND coalesce((params->>'planning_heartbeat')::timestamptz, started_at) < now() - interval '10 minutes'
          ORDER BY run_id",
     )
     .fetch_all(pool)
     .await?)
 }
 
+/// 规划仍在执行时刷新心跳；维护按心跳判断是否真的中断。
+pub async fn touch_planning(pool: &PgPool, run_id: i64) -> anyhow::Result<bool> {
+    Ok(sqlx::query(
+        "UPDATE ops.run
+         SET params = jsonb_set(params, '{planning_heartbeat}', to_jsonb(now()), true)
+         WHERE run_id = $1 AND status = 'running' AND coalesce((params->>'planning')::boolean, false)",
+    )
+    .bind(run_id)
+    .execute(pool)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
 /// 标记中断的后台规划，去掉 planning 让运行不再卡住。
 pub async fn fail_planning(pool: &PgPool, run_id: i64) -> anyhow::Result<bool> {
     Ok(sqlx::query(
-        "UPDATE ops.run SET status = 'failed', error = '规划中断（服务重启），请重新发起', finished_at = now(), params = params - 'planning'
+        "UPDATE ops.run SET status = 'failed', error = '规划中断（服务重启），请重新发起', finished_at = now(), params = params - 'planning' - 'planning_heartbeat'
          WHERE run_id = $1 AND status = 'running' AND coalesce((params->>'planning')::boolean, false)",
     )
     .bind(run_id)

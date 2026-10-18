@@ -64,7 +64,7 @@ impl Engine {
     }
 
     pub fn executor(&self, worker_id: String) -> Arc<executor::Executor> {
-        Arc::new(executor::Executor::new(self.pool.clone(), self.client.clone(), self.registry.clone(), worker_id, self.settings.public_url.clone()))
+        Arc::new(executor::Executor::new(self.pool.clone(), self.client.clone(), self.registry.clone(), worker_id))
     }
 
     // @project-doc docs/architecture/sync_pipeline.md#rate_limit

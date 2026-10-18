@@ -1,4 +1,4 @@
-//! 回测接口：均线交叉（单只股票）、选股策略（单只股票）、选股策略（全市场组合）。
+//! 回测接口：选股策略（单只股票）和选股策略（全市场组合）。
 //! 回测不保存结果，每次按参数重新计算。规则见 docs/domains/backtest.md。
 
 use axum::Json;
@@ -10,7 +10,6 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
-use super::market::windows;
 use crate::analysis::backtest::{self, Costs, EquityPoint, Risk, Signals, Summary, Trade};
 use crate::analysis::indicators::Frame;
 use crate::analysis::limit_pool::LimitPool;
@@ -21,31 +20,8 @@ use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(ma_cross_backtest))
         .routes(routes!(strategy_backtest))
         .routes(routes!(portfolio_backtest))
-}
-
-#[derive(Deserialize, IntoParams)]
-pub struct BacktestQuery {
-    /// 例：600519.SH
-    pub thscode: String,
-    /// 快线周期，默认 15
-    pub fast: Option<i32>,
-    /// 慢线周期，默认 30
-    pub slow: Option<i32>,
-    /// 回测开始日，默认最早一根日线
-    pub start: Option<NaiveDate>,
-    /// 回测结束日，默认最新一根日线
-    pub end: Option<NaiveDate>,
-    /// 初始资金（元），默认 100000
-    pub capital: Option<f64>,
-    /// 佣金费率，默认 0.00025（万 2.5），最大 0.01
-    pub commission_rate: Option<f64>,
-    /// 单笔最低佣金（元），默认 5
-    pub min_commission: Option<f64>,
-    /// 卖出印花税率，默认 0.0005，最大 0.01
-    pub stamp_tax_rate: Option<f64>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -55,19 +31,6 @@ pub struct BacktestCosts {
     pub stamp_tax_rate: f64,
 }
 
-#[derive(Serialize, ToSchema)]
-pub struct BacktestResult {
-    pub thscode: String,
-    pub name: String,
-    pub fast: i32,
-    pub slow: i32,
-    pub costs: BacktestCosts,
-    pub summary: Summary,
-    /// 按买入时间排序；最后一笔可能期末仍持有（exit_date 为空）
-    pub trades: Vec<Trade>,
-    /// 每个交易日一个点
-    pub equity: Vec<EquityPoint>,
-}
 
 fn rate(v: Option<f64>, default: f64, name: &str) -> ApiResult<f64> {
     let v = v.unwrap_or(default);
@@ -144,51 +107,6 @@ async fn strategy(s: &AppState, id: i64) -> ApiResult<(String, Definition)> {
         name,
         d.with_lib(crate::analysis::signal_lib::load(&s.pool).await?),
     ))
-}
-
-/// 均线交叉策略回测：金叉后下一个交易日开盘满仓买入，死叉后下一个交易日开盘全部卖出
-#[utoipa::path(get, path = "/backtest/ma-cross", tag = "backtest", params(BacktestQuery),
-    responses((status = 200, description = "成功", body = BacktestResult),
-              (status = 400, description = "参数不合法，或区间内没有日线", body = crate::error::ErrorBody),
-              (status = 404, description = "证券不存在", body = crate::error::ErrorBody)))]
-async fn ma_cross_backtest(
-    State(s): State<AppState>,
-    Query(q): Query<BacktestQuery>,
-) -> ApiResult<Json<BacktestResult>> {
-    let (fast, slow) = windows(q.fast, q.slow)?;
-    let costs = costs(q.commission_rate, q.min_commission, q.stamp_tax_rate)?;
-    let capital = capital(q.capital)?;
-    check_range(q.start, q.end)?;
-    let name = security_name(&s, &q.thscode).await?;
-    let bars = prices::stock_bars(&s.pool, &q.thscode, q.end).await?;
-    let events = prices::corp_events(&s.pool, &q.thscode, q.end).await?;
-    let (entry, exit) = backtest::ma_cross_signals(&bars, fast, slow);
-    let params = backtest::Params {
-        start: q.start,
-        capital,
-        costs,
-        risk: Risk::default(),
-    };
-    let out = backtest::run(
-        &bars,
-        &events,
-        &Signals {
-            entry: &entry,
-            exit: &exit,
-        },
-        &params,
-    )
-    .ok_or_else(|| ApiError::BadRequest("所选区间内没有日线".into()))?;
-    Ok(Json(BacktestResult {
-        thscode: q.thscode,
-        name,
-        fast: fast as i32,
-        slow: slow as i32,
-        costs: costs_echo(&costs),
-        summary: out.summary,
-        trades: out.trades,
-        equity: out.equity,
-    }))
 }
 
 #[derive(Deserialize, IntoParams)]

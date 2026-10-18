@@ -10,7 +10,6 @@ use chrono::NaiveDate;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::ma::{CrossSignal, ma_cross};
 use super::prices::{CorpEvent, DailyBar};
 
 /// 每手股数
@@ -75,15 +74,6 @@ pub enum ExitReason {
     TakeProfit,
     /// 持有满最长天数
     MaxHold,
-}
-
-/// 由均线交叉得到买卖信号：金叉买、死叉卖
-pub fn ma_cross_signals(bars: &[DailyBar], fast: usize, slow: usize) -> (Vec<bool>, Vec<bool>) {
-    let closes: Vec<f64> = bars.iter().map(|b| b.q_close).collect();
-    let rows = ma_cross(&closes, fast, slow);
-    let entry = rows.iter().map(|r| r.is_some_and(|r| r.signal == Some(CrossSignal::Golden))).collect();
-    let exit = rows.iter().map(|r| r.is_some_and(|r| r.signal == Some(CrossSignal::Death))).collect();
-    (entry, exit)
 }
 
 #[derive(Serialize, ToSchema, Debug)]
@@ -382,6 +372,7 @@ fn close_trade(bars: &[DailyBar], o: &Position, exit_idx: usize, exit: Option<(f
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::ma::{CrossSignal, ma_cross};
 
     /// 按收盘价序列生成 K 线：开盘价等于收盘价，最高、最低各差 0.1（不是一字板），前复权价等于未复权价
     fn bars(closes: &[f64]) -> Vec<DailyBar> {
@@ -397,9 +388,17 @@ mod tests {
         Params { start: None, capital: 10_000.0, costs: Costs { commission_rate: 0.0, min_commission: 0.0, stamp_tax_rate: 0.0 }, risk: Risk::default() }
     }
 
+    fn cross_signal_flags(bars: &[DailyBar], fast: usize, slow: usize) -> (Vec<bool>, Vec<bool>) {
+        let closes: Vec<f64> = bars.iter().map(|b| b.q_close).collect();
+        let rows = ma_cross(&closes, fast, slow);
+        let entry = rows.iter().map(|r| r.is_some_and(|r| r.signal == Some(CrossSignal::Golden))).collect();
+        let exit = rows.iter().map(|r| r.is_some_and(|r| r.signal == Some(CrossSignal::Death))).collect();
+        (entry, exit)
+    }
+
     /// 2 日均线与 3 日均线交叉的回测
     fn run_ma(b: &[DailyBar], events: &[CorpEvent], p: &Params) -> Outcome {
-        let (entry, exit) = ma_cross_signals(b, 2, 3);
+        let (entry, exit) = cross_signal_flags(b, 2, 3);
         run(b, events, &Signals { entry: &entry, exit: &exit }, p).unwrap()
     }
 

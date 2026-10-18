@@ -34,7 +34,8 @@ import type {
   ScreenResults,
   ScreeningSummary,
   StrategyInput,
-  StrategyItem
+  StrategyItem,
+  StrategyOrderInput
 } from '../model';
 
 import { apiFetch } from '../../fetcher';
@@ -426,7 +427,94 @@ export function useCatalog<TData = Awaited<ReturnType<typeof catalog>>, TError =
 
 
 
-export const getPreviewUrl = () => {
+export const getReorderStrategiesUrl = () => {
+
+
+
+
+  return `/api/v1/strategies/order`
+}
+
+/**
+ * @summary 保存策略页顺序（管理员）
+ */
+export const reorderStrategies = async (strategyOrderInput: StrategyOrderInput, options?: Parameters<typeof apiFetch>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return apiFetch<void>(getReorderStrategiesUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(strategyOrderInput)
+  }
+);}
+
+
+
+
+
+export const getReorderStrategiesMutationKey = () => ['reorderStrategies'] as const;
+
+export const getReorderStrategiesMutationOptions = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reorderStrategies>>, TError,ReorderStrategiesMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reorderStrategies>>, TError,ReorderStrategiesMutationVariables, TContext> => {
+
+const mutationKey = getReorderStrategiesMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reorderStrategies>>, ReorderStrategiesMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  reorderStrategies(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReorderStrategiesMutationResult = NonNullable<Awaited<ReturnType<typeof reorderStrategies>>>
+    export type ReorderStrategiesMutationBody = StrategyOrderInput
+    export type ReorderStrategiesMutationError = ErrorBody
+    export type ReorderStrategiesMutationVariables = {data: StrategyOrderInput}
+
+    /**
+ * @summary 保存策略页顺序（管理员）
+ */
+export const useReorderStrategies = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reorderStrategies>>, TError,ReorderStrategiesMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof reorderStrategies>>,
+        TError,
+        ReorderStrategiesMutationVariables,
+        TContext
+      > => {
+      return useMutation(getReorderStrategiesMutationOptions(options), queryClient);
+    }
+    export const getPreviewUrl = () => {
 
 
 

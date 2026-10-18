@@ -1402,162 +1402,6 @@
         }
       }
     },
-    "/backtest/ma-cross": {
-      "get": {
-        "tags": [
-          "backtest"
-        ],
-        "summary": "均线交叉策略回测：金叉后下一个交易日开盘满仓买入，死叉后下一个交易日开盘全部卖出",
-        "operationId": "ma_cross_backtest",
-        "parameters": [
-          {
-            "name": "thscode",
-            "in": "query",
-            "description": "例：600519.SH",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "fast",
-            "in": "query",
-            "description": "快线周期，默认 15",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            }
-          },
-          {
-            "name": "slow",
-            "in": "query",
-            "description": "慢线周期，默认 30",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int32"
-            }
-          },
-          {
-            "name": "start",
-            "in": "query",
-            "description": "回测开始日，默认最早一根日线",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "format": "date"
-            }
-          },
-          {
-            "name": "end",
-            "in": "query",
-            "description": "回测结束日，默认最新一根日线",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "format": "date"
-            }
-          },
-          {
-            "name": "capital",
-            "in": "query",
-            "description": "初始资金（元），默认 100000",
-            "required": false,
-            "schema": {
-              "type": [
-                "number",
-                "null"
-              ],
-              "format": "double"
-            }
-          },
-          {
-            "name": "commission_rate",
-            "in": "query",
-            "description": "佣金费率，默认 0.00025（万 2.5），最大 0.01",
-            "required": false,
-            "schema": {
-              "type": [
-                "number",
-                "null"
-              ],
-              "format": "double"
-            }
-          },
-          {
-            "name": "min_commission",
-            "in": "query",
-            "description": "单笔最低佣金（元），默认 5",
-            "required": false,
-            "schema": {
-              "type": [
-                "number",
-                "null"
-              ],
-              "format": "double"
-            }
-          },
-          {
-            "name": "stamp_tax_rate",
-            "in": "query",
-            "description": "卖出印花税率，默认 0.0005，最大 0.01",
-            "required": false,
-            "schema": {
-              "type": [
-                "number",
-                "null"
-              ],
-              "format": "double"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "成功",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BacktestResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "参数不合法，或区间内没有日线",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "证券不存在",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/backtest/portfolio": {
       "get": {
         "tags": [
@@ -2314,97 +2158,6 @@
           },
           "400": {
             "description": "参数不合法",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/me/notify": {
-      "get": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "本人的推送设置",
-        "operationId": "get_notify",
-        "responses": {
-          "200": {
-            "description": "成功",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotifySettings"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "设置或清除群机器人地址",
-        "operationId": "set_notify",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NotifyInput"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "已保存",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotifySettings"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "不是企业微信、飞书、钉钉群机器人的 https 地址",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/me/notify/test": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "往保存的地址发一条试试",
-        "operationId": "test_notify",
-        "responses": {
-          "200": {
-            "description": "已发出",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotifySettings"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "还没有设置地址，或机器人返回了错误",
             "content": {
               "application/json": {
                 "schema": {
@@ -3488,6 +3241,40 @@
         }
       }
     },
+    "/strategies/order": {
+      "put": {
+        "tags": [
+          "strategy"
+        ],
+        "summary": "保存策略页顺序（管理员）",
+        "operationId": "reorder_strategies",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrategyOrderInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "顺序已保存"
+          },
+          "400": {
+            "description": "必须提供全部策略且不能重复",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/strategies/preview": {
       "post": {
         "tags": [
@@ -3855,7 +3642,7 @@
         "tags": [
           "sync"
         ],
-        "summary": "发起一次同步运行。只负责规划任务，由 `niulai serve` 的执行循环执行。",
+        "summary": "发起一次同步运行。先返回运行编号，任务规划在后台完成，避免首次大回补占住 HTTP 请求。",
         "operationId": "create_run",
         "requestBody": {
           "content": {
@@ -5251,55 +5038,6 @@
           }
         }
       },
-      "BacktestResult": {
-        "type": "object",
-        "required": [
-          "thscode",
-          "name",
-          "fast",
-          "slow",
-          "costs",
-          "summary",
-          "trades",
-          "equity"
-        ],
-        "properties": {
-          "costs": {
-            "$ref": "#/components/schemas/BacktestCosts"
-          },
-          "equity": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EquityPoint"
-            },
-            "description": "每个交易日一个点"
-          },
-          "fast": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "name": {
-            "type": "string"
-          },
-          "slow": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "summary": {
-            "$ref": "#/components/schemas/Summary"
-          },
-          "thscode": {
-            "type": "string"
-          },
-          "trades": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Trade"
-            },
-            "description": "按买入时间排序；最后一笔可能期末仍持有（exit_date 为空）"
-          }
-        }
-      },
       "BackupFile": {
         "type": "object",
         "required": [
@@ -6576,6 +6314,36 @@
           }
         }
       },
+      "HistoryCheck": {
+        "type": "object",
+        "required": [
+          "windows"
+        ],
+        "properties": {
+          "min_return_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "总收益必须严格大于此百分比，0 表示赚钱；不是收益率小数。"
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryWindow"
+            }
+          }
+        }
+      },
+      "HistoryWindow": {
+        "type": "string",
+        "description": "买入前回看的周期。",
+        "enum": [
+          "three_months",
+          "six_months",
+          "one_year",
+          "three_years",
+          "five_years"
+        ]
+      },
       "Hit": {
         "type": "object",
         "description": "入选的一只股票：最新买点，或预览时今天满足买入条件",
@@ -7465,44 +7233,6 @@
           },
           "username": {
             "type": "string"
-          }
-        }
-      },
-      "NotifyInput": {
-        "type": "object",
-        "properties": {
-          "webhook": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "群机器人地址；为空或 null 表示不再推送"
-          }
-        }
-      },
-      "NotifySettings": {
-        "type": "object",
-        "properties": {
-          "channel": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "哪一家：企业微信、飞书、钉钉"
-          },
-          "last_error": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "最近一次推送失败的原因；成功后清空"
-          },
-          "webhook": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "群机器人地址；为空表示不推送"
           }
         }
       },
@@ -8707,13 +8437,25 @@
       },
       "Rules": {
         "type": "object",
-        "description": "一个账户的全部规则。缺的字段按稳健的参考值补齐",
+        "description": "一个账户的全部规则。缺的字段按均衡型参考值补齐，回看缺省为关闭。",
         "properties": {
           "chase_limit_pct": {
             "type": "number",
             "format": "double",
             "description": "第二天开盘比参考价高多少（%）就不买",
             "default": 5.0
+          },
+          "history_check": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistoryCheck",
+                "description": "买入前回看；旧账户缺少此字段时关闭。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "max_positions": {
             "type": "integer",
@@ -8767,7 +8509,7 @@
               "type": "integer",
               "format": "int64"
             },
-            "description": "只参考这些策略（策略编号）；为空（null）表示全部参加巡检的策略，以后新增的也自动参考",
+            "description": "只参考这些策略（策略编号）；旧数据为 null 时兼容为当前全部参加巡检的策略，新账户保存当前策略快照",
             "default": null
           },
           "trend_ma": {
@@ -10254,6 +9996,22 @@
           "strategy_id": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "StrategyOrderInput": {
+        "type": "object",
+        "required": [
+          "strategy_ids"
+        ],
+        "properties": {
+          "strategy_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "当前策略页的完整顺序，从上到下排列"
           }
         }
       },

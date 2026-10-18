@@ -6,6 +6,7 @@
 
 pub mod corp;
 pub mod equity;
+pub mod history;
 pub mod ledger;
 pub mod lots;
 pub mod paste;
@@ -291,13 +292,17 @@ pub async fn create(pool: &PgPool, user_id: i64, input: &NewAccount) -> Result<A
     if n >= MAX_ACCOUNTS {
         return invalid(format!("每人最多 {MAX_ACCOUNTS} 个账户"));
     }
+    let strategy_ids: Vec<i64> = sqlx::query_scalar("SELECT strategy_id FROM app.strategy WHERE screening ORDER BY sort_order, strategy_id")
+        .fetch_all(&mut *tx)
+        .await?;
+    let rules = Rules { strategies: Some(strategy_ids), ..Rules::default() };
     let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO app.account (user_id, name, rules, cash, note) VALUES ($1, $2, $3, round($4::float8::numeric, 2), $5)
          ON CONFLICT (user_id, lower(name)) DO NOTHING RETURNING account_id",
     )
     .bind(user_id)
     .bind(&name)
-    .bind(serde_json::to_value(Rules::default()).map_err(anyhow::Error::from)?)
+    .bind(serde_json::to_value(rules).map_err(anyhow::Error::from)?)
     .bind(cash)
     .bind(input.note.trim())
     .fetch_optional(&mut *tx)

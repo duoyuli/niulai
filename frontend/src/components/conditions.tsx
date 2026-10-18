@@ -132,7 +132,7 @@ export function ConditionList({
             <button
               type="button"
               className={buttonClass("ghost")}
-              title="用一个已有的信号，例如「均线金叉」「放量」"
+              title="用一个已有的信号，例如「均线交叉」「放量」"
               onClick={() => add(newSignalCondition(first))}
             >
               + 信号

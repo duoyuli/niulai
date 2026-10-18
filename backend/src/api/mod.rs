@@ -4,7 +4,6 @@ pub mod accounts;
 pub mod auth;
 pub mod market;
 pub mod metrics;
-pub mod notify;
 pub mod setup;
 pub mod signal;
 pub mod strategy;
@@ -121,7 +120,6 @@ fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(health))
         .routes(routes!(ready))
         .merge(auth::routes())
-        .merge(notify::routes())
         .merge(users::routes())
         .merge(system::routes())
         .merge(setup::routes())

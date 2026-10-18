@@ -44,7 +44,7 @@ import { groupChains } from "../lib/runs";
 import { ChainProgress } from "./RunDetailPage";
 
 // @project-doc docs/architecture/frontend.md#pages
-/** 数据同步：状态、同步计划（什么时候自动同步什么）、同步记录和手动同步，然后是要处理的问题、数据核检，最后按分类看每类数据 */
+/** 数据同步：状态、同步计划（什么时候自动同步什么）、数据核检、同步记录和手动同步，然后是要处理的问题，最后按分类看每类数据 */
 export function SyncPage() {
   const health = useSyncHealth({ query: { refetchInterval: 15_000, staleTime: 0 } });
   const datasets = useListDatasets({ query: { refetchInterval: 30_000, staleTime: 0 } });
@@ -77,11 +77,11 @@ export function SyncPage() {
       {manual && datasets.data && <ManualSync datasets={datasets.data} onDone={() => setManual(false)} />}
       {health.isPending ? <Spinner /> : health.data && <Status h={health.data} />}
       <QueryView query={schedule}>{(s) => <Plans s={s} titles={titles} />}</QueryView>
+      <DataCheck />
       <Card title="同步记录" extra={<span className="text-xs text-zinc-400">每 10 秒刷新，点一行看详情</span>}>
         <QueryView query={runs}>{(rows) => <History rows={rows} />}</QueryView>
       </Card>
       {health.data && (health.data.gaps.length > 0 || health.data.failures.length > 0) && <Problems h={health.data} />}
-      <DataCheck />
       <Card
         title="数据"
         extra={<span className="text-xs text-zinc-400">按分类，每类数据是什么、属于哪个同步计划、现在怎么样</span>}

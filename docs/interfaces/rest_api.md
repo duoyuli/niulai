@@ -29,8 +29,6 @@
 | `POST /auth/logout` | 退出登录，清除 Cookie；返回 204 | — |
 | `GET /auth/me` | 当前用户：编号、用户名、角色（`admin` / `member`）、是否要提醒修改密码（`must_change_password`） | 没有登录时返回 401 |
 | `PUT /auth/password` | 改自己的密码，响应带新的登录 Cookie，其他浏览器上的登录失效 | 请求体 `{current_password, new_password}`，新密码至少 8 个字符；现在的密码不对时返回 400 |
-| `GET /me/notify`、`PUT /me/notify` | 自己的推送设置：群机器人地址、哪一家、上次推送失败的原因 | 请求体 `{webhook}`，为空表示不再推送；不是企业微信、飞书、钉钉的 https 地址时返回 400。规则见 [推送](../domains/accounts.md#notify) |
-| `POST /me/notify/test` | 往保存的地址发一条测试消息 | 没有地址或机器人返回错误时返回 400 |
 | `GET /users` | 全部用户（管理员），不含密码哈希 | — |
 | `POST /users` | 添加用户（管理员），返回 201 | 请求体 `{username, password?, role?}`：不填密码时生成一个，只在这次的 `generated_password` 中返回；不填角色时是 `member`；用户名已存在返回 409 |
 | `PUT /users/{user_id}` | 修改角色、停用或启用（管理员） | 请求体 `{role, disabled}`；不能修改自己，至少留一个可以登录的管理员，否则返回 400 |
@@ -44,13 +42,13 @@
 | `GET /securities/{thscode}` | 证券详情：简称历史、本地日线的范围和根数 | 不存在时返回 404 |
 | `GET /securities/{thscode}/fundamentals` | 个股基本面：最近估值历史，以及最近一期利润表、资产负债表、现金流量表和财务指标；报表同时返回披露日期 | `limit` 默认 90、最大 365 |
 | `GET /securities/{thscode}/bars` | 个股日线 | `adjust`（见 [复权参数](#adjust_param)）、`start`、`end`；`limit` 默认 500、最大 10,000，返回范围内**最近**的 N 根，按日期升序 |
-| `GET /backtest/ma-cross` | 单只股票的均线交叉策略回测：汇总指标、交易记录、每日账户总值 | `thscode`（必填）、`fast`、`slow`、`start`、`end`、`capital` 默认 100,000；`commission_rate`、`min_commission`、`stamp_tax_rate` 默认万 2.5、5 元、千分之 0.5；规则见 [回测](../domains/backtest.md) |
 | `GET /backtest/strategy` | 单只股票的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
 | `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金和成本同上；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
 | `GET /strategies/catalog` | 指标、内置信号（含白话说明）、模板目录和默认股票池，前端据此生成条件编辑器 | — |
 | `GET /strategies` | 全部策略，含白话说明（`explained`）和最近一次巡检的数量 | — |
 | `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, show_on_today, template}`，`screening`、`show_on_today` 默认 true；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |
 | `GET` / `PUT` / `DELETE /strategies/{id}` | 读取、修改（请求体同新建）、删除策略；删除返回 204 | 不存在时返回 404；内置策略（`builtin` 为 true）只能改 `show_on_today`，修改其他内容或删除返回 409 |
+| `PUT /strategies/order` | 保存策略页显示顺序（管理员） | 请求体 `{strategy_ids}`，必须包含全部策略且不能重复；返回 204 |
 | `POST /strategies/preview` | 试算：不保存，在某个交易日上看哪些股票满足买入条件 | 请求体 `{definition, date}`，`date` 默认最新交易日 |
 | `GET /strategies/{id}/results` | 某次巡检的结果：最新买点（命中条件、是否新入选）、最新卖点（原因）、持有中（买入日、买入价、买入以来涨跌），以及有结果的交易日 | `date` 默认最近一次巡检；规则见 [买卖点](../domains/strategies.md#points) |
 | `POST /screening/run` | 立即巡检 | `strategy_id` 默认全部开启巡检的策略、`date` 默认最新交易日 |

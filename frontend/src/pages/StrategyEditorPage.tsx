@@ -39,7 +39,10 @@ import { ExplainedView } from "./StrategyPage";
 
 /** 编辑中的策略：定义的每个部分都补齐，控件不用处理缺省 */
 type Draft = Omit<StrategyInput, "definition"> & {
-  definition: Required<Omit<Definition, "exit" | "universe">> & { universe: Universe; exit: Required<ExitRule> };
+  definition: Required<Omit<Definition, "exit" | "universe">> & {
+    universe: Universe;
+    exit: Required<ExitRule>;
+  };
 };
 
 const DEFAULT_EXIT: Required<ExitRule> = { any: [], stop_loss_pct: 8, take_profit_pct: null, max_hold_days: 20 };

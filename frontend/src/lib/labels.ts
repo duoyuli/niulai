@@ -119,4 +119,42 @@ export const PRIORITIES: Record<string, string> = {
   P3: "P3 可选",
 };
 
+/** 财务指标接口返回的 index_id 中文名。供应商不同版本会给成长指标加 calculate_ 前缀，统一映射到同一个展示名。 */
+export const FINANCIAL_INDICATOR_NAMES: Record<string, string> = {
+  total_assets_growth_ratio: "总资产增长率",
+  net_profit_yoy_growth_ratio: "净利润同比增长率",
+  calculate_net_profit_yoy_growth_ratio: "净利润同比增长率",
+  operating_income_yoy_growth_ratio: "营业收入同比增长率",
+  calculate_operating_income_yoy_growth_ratio: "营业收入同比增长率",
+  operating_profit_yoy_growth_ratio: "营业利润同比增长率",
+  calculate_operating_profit_yoy_growth_ratio: "营业利润同比增长率",
+  calculate_parent_holder_net_profit_yoy_growth_ratio: "归母净利润同比增长率",
+  fixed_asset_invest_expansion_ratio: "固定资产投资扩张率",
+  sale_gross_margin: "销售毛利率",
+  sale_net_interest_ratio: "销售净利率",
+  total_assets_net_ratio: "总资产收益率",
+  index_deduct_weighted_avg_roe: "扣非净资产收益率",
+  index_weighted_avg_roe: "净资产收益率",
+  current_ratio: "流动比率",
+  quick_ratio: "速动比率",
+  assets_debt_ratio: "资产负债率",
+  cash_ratio: "现金比率",
+  earned_interest_multiple: "已获利息倍数",
+  long_term_debt_equity_ratio: "长期负债权益比率",
+  total_assets_turnover_ratio: "总资产周转率",
+  inventory_turnover_ratio: "存货周转率",
+  current_assets_turnover_ratio: "流动资产周转率",
+  receive_account_turnover_ratio: "应收账款周转率",
+  cash_operating_index: "现金营运指数",
+  operating_cash_flow_net_divide_income: "销售现金比率",
+  net_profit_cash_content: "净利润现金含量",
+  operating_cash_net_yoy_growth_ratio: "现金流量净额增长率",
+  cash_meet_invest_ratio: "现金满足投资比率",
+};
+
+/** 把供应商字段转换为页面可读的名称；未知字段不把英文 ID 直接展示给用户。 */
+export function financialIndicatorName(name: string): string {
+  return FINANCIAL_INDICATOR_NAMES[name] ?? (/[\u3400-\u9fff]/u.test(name) ? name : "其他财务指标");
+}
+
 export type Tone = "ok" | "warn" | "bad" | "info" | "muted";

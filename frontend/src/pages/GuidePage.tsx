@@ -14,12 +14,12 @@ export function GuidePage() {
         <Concept n="2" title="条件" example="例：收盘价上穿 60 日均线">
           指标和一个数或另一个指标比较：高于、不低于、低于、不高于、上穿、下穿；再加上时间范围：当天、最近几天内出现过、连续几天。
         </Concept>
-        <Concept n="3" title="信号" to="/signals" link="看全部信号" example="例：均线金叉、放量、创新高">
+        <Concept n="3" title="信号" to="/signals" link="看全部信号" example="例：均线交叉、放量、创新高">
           起了名字的条件，一条或几条组合。<span className="text-up">红色偏多</span>，常被看作走强；
           <span className="text-down">绿色偏空</span>，常被看作走弱；
           <span className="text-amber-600 dark:text-amber-400">橙色中性</span>，本身不说明方向。可以自己定义。
         </Concept>
-        <Concept n="4" title="策略" to="/strategies" link="看策略" example="例：金叉时买，跌破 20 日线时卖">
+        <Concept n="4" title="策略" to="/strategies" link="看策略" example="例：均线交叉时买，跌破 20 日线时卖">
           买入条件 + 卖出规则。每天收盘后在全市场算一遍，给出最新买点、最新卖点和持有中。
         </Concept>
       </div>

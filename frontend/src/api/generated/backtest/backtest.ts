@@ -21,9 +21,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
-  BacktestResult,
   ErrorBody,
-  MaCrossBacktestParams,
   PortfolioBacktestParams,
   PortfolioResult,
   StrategyBacktestParams,
@@ -51,113 +49,6 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
-
-export const getMaCrossBacktestUrl = (params: MaCrossBacktestParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/v1/backtest/ma-cross?${stringifiedParams}` : `/api/v1/backtest/ma-cross`
-}
-
-/**
- * @summary 均线交叉策略回测：金叉后下一个交易日开盘满仓买入，死叉后下一个交易日开盘全部卖出
- */
-export const maCrossBacktest = async (params: MaCrossBacktestParams, options?: Parameters<typeof apiFetch>[1]): Promise<BacktestResult> => {
-
-  return apiFetch<BacktestResult>(getMaCrossBacktestUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getMaCrossBacktestQueryKey = (params?: MaCrossBacktestParams,) => {
-    return [
-    `/api/v1/backtest/ma-cross`, ...(params ? [params] : [])
-    ] as const;
-    }
-
-
-export const getMaCrossBacktestQueryOptions = <TData = Awaited<ReturnType<typeof maCrossBacktest>>, TError = ErrorBody>(params: MaCrossBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof maCrossBacktest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getMaCrossBacktestQueryKey(params);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof maCrossBacktest>>> = ({ signal }) => maCrossBacktest(params, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof maCrossBacktest>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
-}
-
-export type MaCrossBacktestQueryResult = NonNullable<Awaited<ReturnType<typeof maCrossBacktest>>>
-export type MaCrossBacktestQueryError = ErrorBody
-
-
-export function useMaCrossBacktest<TData = Awaited<ReturnType<typeof maCrossBacktest>>, TError = ErrorBody>(
- params: MaCrossBacktestParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof maCrossBacktest>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof maCrossBacktest>>,
-          TError,
-          Awaited<ReturnType<typeof maCrossBacktest>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof apiFetch>}
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useMaCrossBacktest<TData = Awaited<ReturnType<typeof maCrossBacktest>>, TError = ErrorBody>(
- params: MaCrossBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof maCrossBacktest>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof maCrossBacktest>>,
-          TError,
-          Awaited<ReturnType<typeof maCrossBacktest>>
-        > , 'initialData'
-      >, request?: SecondParameter<typeof apiFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useMaCrossBacktest<TData = Awaited<ReturnType<typeof maCrossBacktest>>, TError = ErrorBody>(
- params: MaCrossBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof maCrossBacktest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-/**
- * @summary 均线交叉策略回测：金叉后下一个交易日开盘满仓买入，死叉后下一个交易日开盘全部卖出
- */
-
-export function useMaCrossBacktest<TData = Awaited<ReturnType<typeof maCrossBacktest>>, TError = ErrorBody>(
- params: MaCrossBacktestParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof maCrossBacktest>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
- , queryClient?: QueryClient
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
-
-  const queryOptions = getMaCrossBacktestQueryOptions(params,options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  return withQueryKey(query, queryOptions.queryKey);
-}
-
-
-
-
-
 
 export const getPortfolioBacktestUrl = (params: PortfolioBacktestParams,) => {
   const normalizedParams = new URLSearchParams();

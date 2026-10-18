@@ -3,7 +3,7 @@ import { NavLink } from "react-router";
 
 const TABS = [
   { to: "/strategies", label: "策略", hint: "买入条件 + 卖出规则，每天收盘后给出买点和卖点" },
-  { to: "/signals", label: "信号", hint: "起了名字的条件，例如「均线金叉」「放量」；可以自己定义" },
+  { to: "/signals", label: "信号", hint: "起了名字的条件，例如「均线交叉」「放量」；可以自己定义" },
   { to: "/indicators", label: "指标", hint: "每天算出的一个数，例如均线、RSI；信号和策略都由它们组成" },
 ];
 

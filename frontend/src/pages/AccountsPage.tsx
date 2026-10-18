@@ -6,6 +6,8 @@ import { buttonClass, Card, Empty, PageHeader, QueryView, Spinner } from "../com
 import { yuan } from "../lib/accounts";
 import { dayLabel, upDownClass } from "../lib/format";
 
+const HOME_ACCOUNT_LIMIT = 3;
+
 /** 建议的一句话，带颜色：要操作的突出显示 */
 export function AdviceLine({ a }: { a: AccountSummary }) {
   const b = a.advice;
@@ -108,21 +110,30 @@ export function TodayAccounts() {
           ，每天收到按你的持仓生成的调仓建议。
         </p>
       ) : (
-        <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
-          {list.data.map((a) => (
-            <li key={a.account.account_id}>
-              <Link
-                to={`/accounts/${a.account.account_id}`}
-                className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm hover:opacity-80"
-              >
-                <span className="w-32 truncate font-medium">{a.account.name}</span>
-                <span className="num w-28 text-zinc-500">{yuan(a.total_assets)}</span>
-                <span className={clsx("num w-24", upDownClass(a.day_pnl))}>{yuan(a.day_pnl)}</span>
-                <AdviceLine a={a} />
+        <>
+          <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
+            {list.data.slice(0, HOME_ACCOUNT_LIMIT).map((a) => (
+              <li key={a.account.account_id}>
+                <Link
+                  to={`/accounts/${a.account.account_id}`}
+                  className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm hover:opacity-80"
+                >
+                  <span className="w-32 truncate font-medium">{a.account.name}</span>
+                  <span className="num w-28 text-zinc-500">{yuan(a.total_assets)}</span>
+                  <span className={clsx("num w-24", upDownClass(a.day_pnl))}>{yuan(a.day_pnl)}</span>
+                  <AdviceLine a={a} />
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {list.data.length > HOME_ACCOUNT_LIMIT && (
+            <div className="mt-2 border-t border-zinc-100 pt-2 text-center dark:border-zinc-800">
+              <Link to="/accounts" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+                查看更多账户（还有 {list.data.length - HOME_ACCOUNT_LIMIT} 个）→
               </Link>
-            </li>
-          ))}
-        </ul>
+            </div>
+          )}
+        </>
       )}
     </Card>
   );

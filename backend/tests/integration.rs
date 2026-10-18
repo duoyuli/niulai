@@ -151,13 +151,13 @@ async fn adjustment_and_api_end_to_end() {
         admin_user: "admin".into(),
         admin_password: "secret-pass".into(),
         upgrade_dir: None,
-        public_url: None,
         update_repo: String::new(),
     };
     let limiter = RateLimiter::new(1);
     let client = HithinkClient::new("http://127.0.0.1:1", Some("test"), Duration::from_secs(1), limiter).unwrap();
     // 直接组装引擎（不经过 Engine::new），要自己设置第一个管理员
     niulai::auth::init_first_admin(&db.pool, &settings).await.unwrap();
+    niulai::analysis::screener::sync_builtin_strategies(&db.pool).await.unwrap();
     let engine = Arc::new(Engine { settings, pool: db.pool.clone(), client: Arc::new(client), registry: Arc::new(reg) });
     let app = logged_in(niulai::api::router(engine.clone())).await;
 
@@ -219,14 +219,26 @@ async fn adjustment_and_api_end_to_end() {
     let (_, body) = get("/api/v1/watchlist").await;
     assert_eq!(body["items"].as_array().unwrap().len(), 0);
 
-    // 回测：每个交易日一个账户总值；参数不合法时 400
-    let (st, bt) = get("/api/v1/backtest/ma-cross?thscode=600519.SH&fast=2&slow=3").await;
+    // 回测：均线交叉作为内置策略；每个交易日一个账户总值
+    let (_, strategies) = get("/api/v1/strategies").await;
+    let ma_strategy = strategies
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["template"] == "ma_cross_15_30")
+        .expect("均线交叉内置策略")["strategy_id"]
+        .as_i64()
+        .unwrap();
+    let strategy_uri = format!("/api/v1/backtest/strategy?thscode=600519.SH&strategy_id={ma_strategy}");
+    let (st, bt) = get(&strategy_uri).await;
     assert_eq!(st, StatusCode::OK, "{bt}");
     assert_eq!(bt["equity"].as_array().unwrap().len(), 4);
     assert_eq!(bt["summary"]["capital"], 100000.0);
-    let (st, _) = get("/api/v1/backtest/ma-cross?thscode=600519.SH&commission_rate=0.5").await;
+    let bad_cost_uri = format!("/api/v1/backtest/strategy?thscode=600519.SH&strategy_id={ma_strategy}&commission_rate=0.5");
+    let (st, _) = get(&bad_cost_uri).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
-    let (st, _) = get("/api/v1/backtest/ma-cross?thscode=NOPE.SH").await;
+    let missing_uri = format!("/api/v1/backtest/strategy?thscode=NOPE.SH&strategy_id={ma_strategy}");
+    let (st, _) = get(&missing_uri).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 
     let (st, body) = get("/api/v1/openapi.json").await;
@@ -383,7 +395,6 @@ fn bare_settings(vendor: &str, api_key: Option<&str>) -> Settings {
         admin_user: "admin".into(),
         admin_password: "secret-pass".into(),
         upgrade_dir: None,
-        public_url: None,
         update_repo: String::new(),
     }
 }
@@ -728,6 +739,15 @@ async fn interrupted_planning_run_is_failed_by_maintenance_rule() {
     assert_eq!(state.0, "failed");
     assert_eq!(state.1.as_deref(), Some("规划中断（服务重启），请重新发起"));
     assert_eq!(state.2.get("planning"), None);
+    let live_id: i64 = sqlx::query_scalar(
+        "INSERT INTO ops.run (kind, status, params, started_at) VALUES ('backfill', 'running', '{\"planning\": true}'::jsonb, now() - interval '11 minutes') RETURNING run_id",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(niulai::sync::run::touch_planning(&db.pool, live_id).await.unwrap());
+    assert!(!niulai::sync::run::stale_planning(&db.pool).await.unwrap().contains(&live_id));
+    sqlx::query("DELETE FROM ops.run WHERE run_id = $1").bind(live_id).execute(&db.pool).await.unwrap();
     db.drop().await;
 }
 
@@ -1235,6 +1255,12 @@ async fn accounts_positions_and_daily_advice() {
     let (_, list) = call_as(&app, Some(&admin), "GET", "/api/v1/strategies", None).await;
     let builtin: Vec<&Value> = list.as_array().unwrap().iter().filter(|s| s["builtin"] == true).collect();
     assert_eq!(builtin.len(), niulai::analysis::strategy::templates().len());
+    let mut order: Vec<i64> = list.as_array().unwrap().iter().map(|s| s["strategy_id"].as_i64().unwrap()).collect();
+    order.reverse();
+    let (r, _) = call_as(&app, Some(&admin), "PUT", "/api/v1/strategies/order", Some(json!({"strategy_ids": order}))).await;
+    assert_eq!(st(&r), StatusCode::NO_CONTENT);
+    let (_, reordered) = call_as(&app, Some(&admin), "GET", "/api/v1/strategies", None).await;
+    assert_eq!(reordered[0]["strategy_id"], order[0]);
     let b = builtin[0];
     let id = b["strategy_id"].as_i64().unwrap();
     let (r, _) = call_as(&app, Some(&admin), "DELETE", &format!("/api/v1/strategies/{id}"), None).await;
@@ -1269,7 +1295,28 @@ async fn accounts_positions_and_daily_advice() {
     assert_eq!(st(&r), StatusCode::CREATED, "{v}");
     let acc = v["summary"]["account"]["account_id"].as_i64().unwrap();
     assert_eq!(v["summary"]["account"]["rules"]["stop_loss_pct"], 8.0, "新账户用稳健型的参考值");
+    assert_eq!(
+        v["summary"]["account"]["rules"]["strategies"].as_array().unwrap().len(),
+        guide["strategies"].as_array().unwrap().len(),
+        "新账户保存创建时的策略快照",
+    );
     let base = format!("/api/v1/accounts/{acc}");
+    let (r, created_later) = call_as(
+        &app,
+        Some(&admin),
+        "POST",
+        "/api/v1/strategies",
+        Some(json!({"name": "账户创建后新增", "definition": builtin[0]["definition"].clone()})),
+    )
+    .await;
+    assert_eq!(st(&r), StatusCode::CREATED, "{created_later}");
+    let later_id = created_later["strategy_id"].as_i64().unwrap();
+    let (_, after_later) = call_as(&app, Some(&mama), "GET", &base, None).await;
+    assert!(!after_later["summary"]["account"]["rules"]["strategies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|id| id.as_i64() == Some(later_id)), "新策略不能自动加入已有账户");
     let rules = |stop: f64| json!({"name": "华泰主账户", "fees": {"commission_rate": 0.00025, "min_commission": 5}, "rules": {"stop_loss_pct": stop}});
     let (r, _) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(50.0))).await;
     assert_eq!(st(&r), StatusCode::BAD_REQUEST, "止损线超出范围");

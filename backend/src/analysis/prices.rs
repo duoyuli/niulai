@@ -47,6 +47,14 @@ pub async fn stock_bars(pool: &PgPool, code: &str, end: Option<NaiveDate>) -> sq
 }
 
 /// 一只股票最近 n 根日线，按日期升序
+pub async fn stock_bars_between(pool: &PgPool, code: &str, start: NaiveDate, end: NaiveDate) -> sqlx::Result<Vec<DailyBar>> {
+    // 审计：只拼接本文件的列名和 JOIN 常量，证券代码和日期均绑定。
+    let sql = format!("SELECT {BAR_COLUMNS} FROM {BAR_JOIN} WHERE b.thscode = $1 AND b.trade_date BETWEEN $2 AND $3 ORDER BY b.trade_date");
+    let rows: Vec<BarRow> = sqlx::query_as(AssertSqlSafe(sql)).bind(code).bind(start).bind(end).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(bar).collect())
+}
+
+/// 一只股票最近 n 根日线，按日期升序
 pub async fn recent_bars(pool: &PgPool, code: &str, n: i64) -> sqlx::Result<Vec<DailyBar>> {
     // 审计：只拼接了本文件中的常量
     let sql = format!("SELECT * FROM (SELECT {BAR_COLUMNS} FROM {BAR_JOIN} WHERE b.thscode = $1 ORDER BY b.trade_date DESC LIMIT $2) t ORDER BY 1");
@@ -172,4 +180,28 @@ pub async fn corp_events(pool: &PgPool, code: &str, end: Option<NaiveDate>) -> s
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(|(ex_date, cash_div, bonus_ratio)| CorpEvent { ex_date, cash_div, bonus_ratio }).collect())
+}
+
+/// 一段时间内全部股票的公司行动，按代码和除权日分组。
+/// 全市场回测使用，避免在逐股票扫描时为每只股票重复发 SQL。
+pub async fn corp_events_for_window(
+    pool: &PgPool,
+    lo: NaiveDate,
+    hi: NaiveDate,
+) -> sqlx::Result<HashMap<String, Vec<CorpEvent>>> {
+    let rows: Vec<(String, NaiveDate, f64, f64)> = sqlx::query_as(
+        "SELECT thscode, ex_date, cash_div::float8, bonus_ratio::float8
+         FROM mkt.adj_event_effective
+         WHERE ex_date > $1 AND ex_date <= $2
+         ORDER BY thscode, ex_date",
+    )
+    .bind(lo)
+    .bind(hi)
+    .fetch_all(pool)
+    .await?;
+    let mut out: HashMap<String, Vec<CorpEvent>> = HashMap::new();
+    for (code, ex_date, cash_div, bonus_ratio) in rows {
+        out.entry(code).or_default().push(CorpEvent { ex_date, cash_div, bonus_ratio });
+    }
+    Ok(out)
 }

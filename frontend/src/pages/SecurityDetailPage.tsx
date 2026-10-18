@@ -1,14 +1,13 @@
 import { keepPreviousData } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useParams } from "react-router";
-import { useMaCrossBacktest, useStrategyBacktest } from "../api/generated/backtest/backtest";
+import { useStrategyBacktest } from "../api/generated/backtest/backtest";
 import { useGetSecurity, useSecurityBars, useSecurityFundamentals } from "../api/generated/market/market";
 import { useListSignals } from "../api/generated/signal/signal";
 import { useCatalog, useListStrategies } from "../api/generated/strategy/strategy";
 import { COST_DEFAULTS, CostFields, costParams, Loaded, Result, RulesNote } from "../components/backtest";
 import { DiagnosisCard } from "../components/DiagnosisCard";
 import { SINGLE_STOCK_ESTIMATE, SINGLE_STOCK_ESTIMATE_BASIS } from "../components/longTask";
-import { MaControls } from "../components/MaControls";
 import { OverlayPicker, useOverlayParam, useOverlays } from "../components/overlays";
 import { PriceChart } from "../components/PriceChart";
 import { RangePicker, rangeQuery } from "../components/RangePicker";
@@ -16,7 +15,7 @@ import { Badge, Card, Empty, ErrorState, Field, inputClass, Segmented, Spinner, 
 import { WatchButton } from "../components/WatchButton";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtBig, fmtInt, fmtPercent, fmtPrice, RANGES, rangeStart, toNumber, upDownClass } from "../lib/format";
-import { ADJUSTS, type Adjust, BOARDS } from "../lib/labels";
+import { ADJUSTS, type Adjust, BOARDS, financialIndicatorName } from "../lib/labels";
 
 const TABS = [
   { value: "chart", label: "走势与诊断" },
@@ -173,8 +172,8 @@ function FundamentalsCard({ thscode }: { thscode: string }) {
                 <div className="mt-2 flex flex-col gap-1">
                   {group.metrics.map((m) => (
                     <div key={m.name} className="flex justify-between gap-2 text-xs">
-                      <span className="truncate" title={m.name}>
-                        {indicatorName(m.name)}
+                      <span className="truncate" title={financialIndicatorName(m.name)}>
+                        {financialIndicatorName(m.name)}
                       </span>
                       <span className="num">{m.value.toFixed(2)}</span>
                     </div>
@@ -240,26 +239,7 @@ function abilityName(name: string) {
         string,
         string
       >
-    )[name] ?? name
-  );
-}
-
-function indicatorName(name: string) {
-  return (
-    (
-      {
-        current_ratio: "流动比率",
-        quick_ratio: "速动比率",
-        cash_ratio: "现金比率",
-        sale_gross_margin: "销售毛利率",
-        sale_net_interest_ratio: "销售净利率",
-        index_weighted_avg_roe: "加权 ROE",
-        index_deduct_weighted_avg_roe: "扣非 ROE",
-        assets_debt_ratio: "资产负债率",
-        total_assets_growth_ratio: "资产增长率",
-        total_assets_turnover_ratio: "总资产周转率",
-      } as Record<string, string>
-    )[name] ?? name
+    )[name] ?? "其他能力"
   );
 }
 
@@ -338,16 +318,15 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
   );
 }
 
-/** 在这只股票上回测：均线交叉，或任意一个已保存的策略 */
+/** 在这只股票上回测：默认使用均线交叉策略，也可以选择任意一个已保存的策略 */
 function StockBacktest({ thscode }: { thscode: string }) {
-  const [s, set] = useSearchState({ method: "ma", fast: "15", slow: "30", years: "10", ...COST_DEFAULTS, log: "" });
+  const [s, set] = useSearchState({ method: "", years: "10", ...COST_DEFAULTS, log: "" });
   const strategies = useListStrategies();
-  const fast = Number(s.fast) || 15;
-  const slow = Number(s.slow) || 30;
-  const strategyId = s.method === "ma" ? 0 : Number(s.method) || 0;
+  const defaultStrategy = strategies.data?.find((x) => x.template === "ma_cross_15_30");
+  const strategyId = Number(s.method) || defaultStrategy?.strategy_id || 0;
+  const selectedMethod = Number(s.method) > 0 ? s.method : defaultStrategy ? String(defaultStrategy.strategy_id) : "";
   const common = { thscode, start: rangeStart(s.years), ...costParams(s) };
   const opts = { placeholderData: keepPreviousData, retry: false } as const;
-  const ma = useMaCrossBacktest({ ...common, fast, slow }, { query: { enabled: strategyId === 0, ...opts } });
   const st = useStrategyBacktest(
     { ...common, strategy_id: strategyId },
     { query: { enabled: strategyId > 0, ...opts } },
@@ -358,23 +337,25 @@ function StockBacktest({ thscode }: { thscode: string }) {
     <>
       <Card>
         <div className="flex flex-wrap items-end gap-4">
-          <Field label="买卖方法">
-            <select className={`${inputClass} w-56`} value={s.method} onChange={(e) => set({ method: e.target.value })}>
-              <option value="ma">均线交叉：金叉买、死叉卖</option>
-              {(strategies.data ?? []).length > 0 && (
-                <optgroup label="按策略">
-                  {strategies.data?.map((x) => (
-                    <option key={x.strategy_id} value={x.strategy_id}>
-                      {x.name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
+          <Field label="策略">
+            <select
+              className={`${inputClass} w-56`}
+              value={selectedMethod}
+              onChange={(e) => set({ method: e.target.value })}
+              disabled={!strategies.data}
+            >
+              {!strategies.data && <option value="">加载中…</option>}
+              {(strategies.data ?? []).length > 0 &&
+                strategies.data?.map((x) => (
+                  <option key={x.strategy_id} value={x.strategy_id}>
+                    {x.name}
+                  </option>
+                ))}
             </select>
+            <p className="mt-1 max-w-sm text-xs text-zinc-500">
+              默认使用「均线交叉」（15 日 / 30 日）；它现在和其他策略一样，可用于个股回测和策略页面。
+            </p>
           </Field>
-          {strategyId === 0 && (
-            <MaControls fast={fast} slow={slow} onChange={(f, sl) => set({ fast: String(f), slow: String(sl) })} />
-          )}
           <div className="flex flex-col gap-1 text-xs text-zinc-500">
             <span>看过去多久</span>
             <Segmented value={s.years} options={RANGES} onChange={(years) => set({ years })} />
@@ -385,20 +366,7 @@ function StockBacktest({ thscode }: { thscode: string }) {
           </span>
         </div>
       </Card>
-      {strategyId === 0 ? (
-        <Loaded query={ma} pending="正在计算（这只股票通常几十毫秒）">
-          {(d) => (
-            <Result
-              label={`${d.fast} 日 / ${d.slow} 日均线交叉`}
-              summary={d.summary}
-              equity={d.equity}
-              trades={d.trades}
-              log={log}
-              onLog={onLog}
-            />
-          )}
-        </Loaded>
-      ) : (
+      {strategyId > 0 ? (
         <Loaded query={st} pending="正在计算（这只股票通常几十毫秒）">
           {(d) => (
             <Result
@@ -411,12 +379,14 @@ function StockBacktest({ thscode }: { thscode: string }) {
             />
           )}
         </Loaded>
+      ) : (
+        <Card>
+          <Spinner label="正在加载策略…" />
+        </Card>
       )}
       <RulesNote
         items={[
-          strategyId === 0
-            ? "收盘后才知道当天是否金叉或死叉，所以在下一个交易日开盘时按开盘价买入或卖出。"
-            : "收盘后才知道当天是否符合策略，所以在下一个交易日开盘时买入；卖出规则（卖出信号、止损、止盈、持有到期）满足任意一条后，下一个交易日开盘卖出。",
+          "收盘后才知道当天是否符合策略，所以在下一个交易日开盘时买入；卖出规则（卖出信号、止损、止盈、持有到期）满足任意一条后，下一个交易日开盘卖出。",
           "只做多，买入时用全部可用资金、按每手 100 股买；卖出时全部卖出。剩余不够一手的钱留作现金。",
           "开盘就一字涨停买不进、一字跌停卖不出时，顺延到下一个交易日。",
           "信号按等比前复权价判断；买卖和市值按交易所实际价格计算。现金分红（税前）计入现金、不再买入，送转股按比例增加股数，不参与配股。",

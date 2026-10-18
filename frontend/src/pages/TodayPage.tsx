@@ -10,22 +10,24 @@ import { SignalChip } from "../components/SignalChip";
 import { Card, Empty, ErrorState, HelpTip, QueryView, Spinner } from "../components/ui";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { dayLabel, fmtInt, fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
-import { holdingsText } from "../lib/strategy";
 import { TodayAccounts } from "./AccountsPage";
 
-/** 每天收盘后打开看的一页：我的账户下个交易日要做什么 → 最近一天收盘大盘怎么样 → 策略选出了什么 → 我关注的股票有什么变化 */
+const HOME_WATCHLIST_LIMIT = 6;
+
+/** 每天收盘后打开看的一页：先看账户和自选，再看最近一天收盘大盘、策略和热点。 */
 export function TodayPage() {
   const overview = useMarketOverview();
   return (
     <>
       <DataPreparing />
       <TodayAccounts />
+      <Watch />
       <div>
         <h1 className="text-xl font-semibold">
           {overview.data ? `${dayLabel(overview.data.trade_date)}收盘` : "最近收盘"}
         </h1>
         <p className="mt-0.5 text-xs text-zinc-500">
-          数据都截至这天收盘；下面的买点、卖点按规则在下一个交易日开盘执行。
+          数据都截至这天收盘；下面的策略买点按规则在下一个交易日开盘执行，账户的具体操作建议以「我的账户」为准。
         </p>
       </div>
       <div className="grid gap-4 lg:grid-cols-5">
@@ -42,7 +44,6 @@ export function TodayPage() {
       </div>
       <Hotspots />
       <Picks />
-      <Watch />
     </>
   );
 }
@@ -225,7 +226,7 @@ function Sectors() {
   );
 }
 
-/** 每个开启巡检的策略最近一次巡检的买点和卖点，新出现的买点排在前面 */
+/** 每个开启巡检的策略最近一次巡检的买点，新出现的买点排在前面 */
 function Picks() {
   const admin = useIsAdmin();
   const list = useListStrategies();
@@ -234,7 +235,7 @@ function Picks() {
   const results = useQueries({ queries: active.map((s) => getResultsQueryOptions(s.strategy_id)) });
   return (
     <Card
-      title="策略的买点和卖点"
+      title="策略筛选出的买点"
       extra={
         <Link to="/strategies" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
           管理策略 →
@@ -266,7 +267,6 @@ function Picks() {
 function PickRow({ s, r }: { s: StrategyItem; r?: ScreenResults }) {
   const latest = s.latest;
   const hits = r ? [...r.hits].sort((a, b) => Number(b.is_new) - Number(a.is_new) || a.rank - b.rank).slice(0, 6) : [];
-  const sells = r?.sells.slice(0, 4) ?? [];
   const chip =
     "inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-0.5 text-sm hover:border-accent/60 dark:border-zinc-700";
   return (
@@ -277,15 +277,7 @@ function PickRow({ s, r }: { s: StrategyItem; r?: ScreenResults }) {
         title={s.description}
       >
         <span className="font-medium">{s.name}</span>
-        <span className="text-xs text-zinc-500">
-          {latest ? (
-            <>
-              买点 {fmtInt(latest.matched)} · 卖点 {fmtInt(latest.sells)} · 持有 {holdingsText(latest.holdings)}
-            </>
-          ) : (
-            "还没有巡检"
-          )}
-        </span>
+        <span className="text-xs text-zinc-500">{latest ? <>买点 {fmtInt(latest.matched)}</> : "还没有巡检"}</span>
       </Link>
       <div className="flex min-w-0 flex-col gap-1.5">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -309,29 +301,6 @@ function PickRow({ s, r }: { s: StrategyItem; r?: ScreenResults }) {
             </Link>
           )}
         </div>
-        {sells.length > 0 && (
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span className="text-xs text-down">卖</span>
-            {sells.map((h) => (
-              <Link
-                key={h.thscode}
-                to={`/securities/${h.thscode}?overlay=strategy:${s.strategy_id}`}
-                title={`卖出原因：${h.reasons.join("；")}`}
-                className={chip}
-              >
-                {h.name}
-                <span className={`num text-xs ${upDownClass(h.return_pct)}`} title="买入以来">
-                  {fmtPctValue(h.return_pct, 1)}
-                </span>
-              </Link>
-            ))}
-            {latest && latest.sells > sells.length && (
-              <Link to={`/strategies/${s.strategy_id}`} className="text-xs text-zinc-500 hover:underline">
-                全部 {fmtInt(latest.sells)} 只 →
-              </Link>
-            )}
-          </div>
-        )}
       </div>
     </li>
   );
@@ -354,7 +323,16 @@ function Watch() {
           d.items.length === 0 ? (
             <Empty>还没有收藏的股票。在页头搜索股票，打开后点 ☆ 收藏。</Empty>
           ) : (
-            <WatchRows items={d.items} />
+            <>
+              <WatchRows items={d.items} />
+              {d.items.length > HOME_WATCHLIST_LIMIT && (
+                <div className="mt-2 border-t border-zinc-100 pt-2 text-center dark:border-zinc-800">
+                  <Link to="/watchlist" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+                    查看更多自选（还有 {d.items.length - HOME_WATCHLIST_LIMIT} 只）→
+                  </Link>
+                </div>
+              )}
+            </>
           )
         }
       </QueryView>
@@ -363,7 +341,9 @@ function Watch() {
 }
 
 function WatchRows({ items }: { items: WatchItem[] }) {
-  const sorted = [...items].sort((a, b) => b.recent_signals.length - a.recent_signals.length);
+  const sorted = [...items]
+    .sort((a, b) => b.recent_signals.length - a.recent_signals.length)
+    .slice(0, HOME_WATCHLIST_LIMIT);
   return (
     <ul className="grid gap-x-6 sm:grid-cols-2">
       {sorted.map((x) => (

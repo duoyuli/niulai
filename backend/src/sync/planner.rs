@@ -172,6 +172,17 @@ impl<'a> Planner<'a> {
     /// 在后台展开已创建的 planning 运行；失败时把运行标为 failed，页面仍可展示原因。
     pub async fn run_planning_job(&self, job: PlanningJob) -> anyhow::Result<()> {
         let PlanningJob { run_id, kind, trade_date, datasets, pending, only, trigger } = job;
+        let heartbeat_pool = self.pool.clone();
+        let heartbeat = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                match run::touch_planning(&heartbeat_pool, run_id).await {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(error) => tracing::warn!(run_id, error = %error, "刷新规划心跳失败"),
+                }
+            }
+        });
         let windows: Vec<Window> = vec![];
         let wave = Wave {
             kind,
@@ -184,8 +195,10 @@ impl<'a> Planner<'a> {
             trigger: trigger.as_deref(),
             windows: &windows,
         };
-        if let Err(e) = self.plan_wave_existing(wave, run_id).await {
-            sqlx::query("UPDATE ops.run SET status = 'failed', error = $2, finished_at = now(), params = params - 'planning' WHERE run_id = $1")
+        let result = self.plan_wave_existing(wave, run_id).await;
+        heartbeat.abort();
+        if let Err(e) = result {
+            sqlx::query("UPDATE ops.run SET status = 'failed', error = $2, finished_at = now(), params = params - 'planning' - 'planning_heartbeat' WHERE run_id = $1")
                 .bind(run_id)
                 .bind(format!("规划失败：{e:#}"))
                 .execute(self.pool)
@@ -248,7 +261,7 @@ impl<'a> Planner<'a> {
             return Ok(None);
         }
         let run_id = if let Some(run_id) = existing_run {
-            let changed = sqlx::query("UPDATE ops.run SET params = params - 'planning' WHERE run_id = $1 AND status = 'running'")
+            let changed = sqlx::query("UPDATE ops.run SET params = params - 'planning' - 'planning_heartbeat' WHERE run_id = $1 AND status = 'running'")
                 .bind(run_id)
                 .execute(&mut *tx)
                 .await?

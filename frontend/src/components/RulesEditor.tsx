@@ -1,6 +1,6 @@
 import { clsx } from "clsx";
 import { useRulesGuide } from "../api/generated/accounts/accounts";
-import type { Rules, RulesBacktest, StrategyQuality, WeakMarket } from "../api/generated/model";
+import type { HistoryWindow, Rules, RulesBacktest, StrategyQuality, WeakMarket } from "../api/generated/model";
 import { WEAK_MARKET } from "../lib/accounts";
 import { fmtPercent, upDownClass } from "../lib/format";
 import { Field, inputClass, QueryView } from "./ui";
@@ -8,10 +8,27 @@ import { Field, inputClass, QueryView } from "./ui";
 /** 后端总是返回完整的规则（缺的字段按稳健型补齐） */
 export type FullRules = Required<Rules>;
 
+const HISTORY_WINDOWS: { value: HistoryWindow; label: string; months: number }[] = [
+  { value: "three_months", label: "3 个月", months: 3 },
+  { value: "six_months", label: "6 个月", months: 6 },
+  { value: "one_year", label: "1 年", months: 12 },
+  { value: "three_years", label: "3 年", months: 36 },
+  { value: "five_years", label: "5 年", months: 60 },
+];
+
 /** 规则写成几句白话 */
 export function rulesText(p: FullRules): string[] {
   return [
     `参考${p.strategies ? `勾选的 ${p.strategies.length} 个策略` : "全部策略"}：至少 ${p.min_picks} 个勾选的策略同时看好才买`,
+    ...(p.history_check
+      ? [
+          `买入前回看：每个策略在这只股票上过去 ${HISTORY_WINDOWS.filter((w) =>
+            p.history_check?.windows.includes(w.value),
+          )
+            .map((w) => w.label)
+            .join("、")}的总收益都大于 ${p.history_check.min_return_pct ?? 0}%，才计入同时看好的策略数`,
+        ]
+      : []),
     `最多同时持有 ${p.max_positions} 只，单只最多占总资产的 ${p.max_weight_pct}%${p.min_cash_pct > 0 ? `，至少留 ${p.min_cash_pct}% 现金` : ""}`,
     `比成本价亏 ${p.stop_loss_pct}% 就卖（止损），收盘跌破 ${p.trend_ma} 日均线也卖`,
     `全市场站上 20 日均线的股票不到 ${p.weak_threshold_pct}% 时算弱市：${WEAK_MARKET[p.weak_market]}`,
@@ -65,7 +82,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
   return (
     <QueryView query={guide}>
       {(g) => {
-        // 勾选只表示参考它；null 表示全部（以后新增的也自动参考）
+        // null 只为读取旧数据兼容；保存新的勾选时写入当前策略快照，后续新增策略不会自动加入
         const picked = value.strategies;
         const checked = (s: StrategyQuality) => picked === null || picked.includes(s.strategy_id);
         const toggle = (s: StrategyQuality) => {
@@ -105,14 +122,16 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 <div className="mt-3 flex items-baseline justify-between gap-2 text-xs text-zinc-500">
                   <span>
                     参考的策略：
-                    {picked === null ? "现在是全部参考，以后新增的策略也自动参考。" : `现在勾了 ${picked.length} 个。`}
+                    {picked === null
+                      ? `当前全部 ${g.strategies.length} 个（保存后固定）`
+                      : `现在勾了 ${picked.length} 个。`}
                   </span>
                   <span className="flex shrink-0 gap-3">
                     <button
                       type="button"
                       className="text-accent hover:underline"
-                      title="全部参考，以后新增的策略也自动参考"
-                      onClick={() => set({ strategies: null })}
+                      title="勾选当前全部策略；以后新增的策略不会自动加入"
+                      onClick={() => set({ strategies: g.strategies.map((x) => x.strategy_id) })}
                     >
                       全选
                     </button>
@@ -135,6 +154,76 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                   <p className="mt-1 text-sm text-red-600">至少勾选一个策略，否则没有候选股</p>
                 )}
                 <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">{g.strategies.map(row)}</ul>
+              </section>
+
+              <section>
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={!!value.history_check}
+                    onChange={(e) =>
+                      set({
+                        history_check: e.target.checked
+                          ? { windows: ["one_year", "three_years"], min_return_pct: 0 }
+                          : null,
+                      })
+                    }
+                  />
+                  买入前回看
+                </label>
+                <p className="mt-1 text-xs text-zinc-500">
+                  只买勾选的策略在这只股票上，过去所选周期按它的买卖点操作都赚钱的股票。通过回看的策略才计入「同时看好」，不影响持仓的卖出规则。
+                </p>
+                {value.history_check && (
+                  <div className="mt-3 space-y-3">
+                    <div className="flex flex-wrap gap-4 text-sm">
+                      {HISTORY_WINDOWS.map((w) => (
+                        <label key={w.value} className="flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={value.history_check?.windows.includes(w.value) ?? false}
+                            onChange={() => {
+                              const check = value.history_check;
+                              if (!check) return;
+                              set({
+                                history_check: {
+                                  ...check,
+                                  windows: check.windows.includes(w.value)
+                                    ? check.windows.filter((x) => x !== w.value)
+                                    : [...check.windows, w.value],
+                                },
+                              });
+                            }}
+                          />
+                          {w.label}
+                        </label>
+                      ))}
+                    </div>
+                    {value.history_check.windows.length === 0 && (
+                      <p className="text-sm text-red-600">至少选择一个回看周期。</p>
+                    )}
+                    <Field label="各周期总收益必须大于（%）">
+                      <input
+                        className={inputClass}
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={value.history_check.min_return_pct ?? 0}
+                        onChange={(e) => {
+                          if (value.history_check)
+                            set({ history_check: { ...value.history_check, min_return_pct: num(e.target.value) } });
+                        }}
+                      />
+                    </Field>
+                    <p className="text-xs text-zinc-500">
+                      上市不满{" "}
+                      {HISTORY_WINDOWS.filter((w) => value.history_check?.windows.includes(w.value)).at(-1)?.label ??
+                        "所选最长周期"}
+                      的股票不会买入；日线或指标预热数据不足也不会买入。回看统一按本金 10
+                      万元、默认费率计算，含期末持仓市值，历史收益不代表未来收益。
+                    </p>
+                  </div>
+                )}
               </section>
 
               <section>
@@ -201,7 +290,12 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                   <button
                     type="button"
                     className="self-start text-xs text-zinc-500 underline decoration-dotted hover:text-zinc-900 dark:hover:text-zinc-100"
-                    onClick={() => onChange({ ...(p.rules as FullRules), strategies: null })}
+                    onClick={() =>
+                      onChange({
+                        ...(p.rules as FullRules),
+                        strategies: value.strategies ?? g.strategies.map((x) => x.strategy_id),
+                      })
+                    }
                   >
                     照这个填
                   </button>

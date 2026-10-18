@@ -96,7 +96,7 @@ pub struct RulesGuide {
 #[utoipa::path(get, path = "/rules/guide", tag = "accounts", responses((status = 200, description = "成功", body = RulesGuide)))]
 async fn rules_guide(State(s): State<AppState>) -> ApiResult<Json<RulesGuide>> {
     let list: Vec<(i64, String, bool)> =
-        sqlx::query_as("SELECT strategy_id, name, builtin_key IS NOT NULL FROM app.strategy WHERE screening ORDER BY strategy_id").fetch_all(&s.pool).await?;
+        sqlx::query_as("SELECT strategy_id, name, builtin_key IS NOT NULL FROM app.strategy WHERE screening ORDER BY sort_order, strategy_id").fetch_all(&s.pool).await?;
     let mut strategies: Vec<StrategyQuality> = list
         .into_iter()
         .map(|(strategy_id, name, builtin)| StrategyQuality {

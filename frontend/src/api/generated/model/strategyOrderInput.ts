@@ -6,10 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface NotifyInput {
-  /**
-     * 群机器人地址；为空或 null 表示不再推送
-     * @nullable
-     */
-  webhook?: string | null;
+export interface StrategyOrderInput {
+  /** 当前策略页的完整顺序，从上到下排列 */
+  strategy_ids: number[];
 }

@@ -21,13 +21,17 @@ export type Overlay = string;
 const UP = "#d93a3a";
 const DOWN = "#16a05d";
 const PALETTE = ["#0ea5e9", "#a855f7", "#f97316", "#14b8a6", "#e11d48", "#84cc16"];
+const DEFAULT_INDICATOR_COLORS: Record<string, string> = {
+  "ind:ma:15": "#0284c7",
+  "ind:ma:30": "#ea580c",
+};
 
 export function parseOverlays(v: string): Overlay[] {
   return v ? [...new Set(v.split(",").filter(Boolean))] : [];
 }
 
-/** 个股 K 线默认叠加的指标：20 日和 60 日均线，和其他叠加项一样可以去掉 */
-export const DEFAULT_OVERLAYS = "ind:ma:20,ind:ma:60";
+/** 个股 K 线默认叠加的指标：15 日和 30 日均线，和其他叠加项一样可以去掉 */
+export const DEFAULT_OVERLAYS = "ind:ma:15,ind:ma:30";
 
 /** 个股页地址里的 overlay 参数：K 线卡片和诊断卡片共用（诊断里点信号或策略，就画到 K 线上）。
  * 全部去掉时记为 -，否则会回到默认值 */
@@ -113,7 +117,7 @@ export function useOverlays({
     overlays.forEach((o, i) => {
       const [kind, a = "", b] = o.split(":");
       const r = results[i];
-      const color = PALETTE[i % PALETTE.length] ?? "#0ea5e9";
+      const color = DEFAULT_INDICATOR_COLORS[o] ?? PALETTE[i % PALETTE.length] ?? "#0ea5e9";
       const base = { overlay: o, color, loading: !!r?.isPending, error: r?.error ?? undefined };
       if (kind === "ind") {
         const info = catalog ? findIndicator(catalog, a) : undefined;
@@ -358,10 +362,13 @@ function OverlayMenu({
         : groupBy((catalog?.indicators ?? []).filter((x) => !["close", "open", "high", "low"].includes(x.id))).map(
             ([g, list]) => [
               g,
-              list.map((x) => ({
-                value: `ind:${x.id}${x.n_default ? `:${x.n_default}` : ""}`,
-                label: indicatorName(x),
-              })),
+              list.flatMap((x) => {
+                const periods = x.id === "ma" ? [15, 20, 30, 60] : x.n_default ? [x.n_default] : [null];
+                return periods.map((n) => ({
+                  value: `ind:${x.id}${n ? `:${n}` : ""}`,
+                  label: indicatorName(x, n),
+                }));
+              }),
             ],
           );
   const shown = groups

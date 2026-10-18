@@ -21,7 +21,7 @@ export function SignalsPage() {
       <StrategyNav />
       <PageHeader
         title="信号"
-        desc="信号就是起了名字的条件，例如「5 日均线上穿 20 日均线」叫「均线金叉」。点进去能看到它到底怎么判断、画在 K 线上是什么样、过去出现后涨跌如何、被哪些策略用到。内置信号不满意，管理员可以复制一份改。"
+        desc="信号就是起了名字的条件，例如「5 日均线上穿 20 日均线」叫「均线交叉」。点进去能看到它到底怎么判断、画在 K 线上是什么样、过去出现后涨跌如何、被哪些策略用到。内置信号不满意，管理员可以复制一份改。"
         extra={
           admin && (
             <Link to="/signals/new" className={buttonClass()}>
@@ -33,7 +33,7 @@ export function SignalsPage() {
       <div className="grid gap-3 text-sm sm:grid-cols-2">
         <p className="rounded-lg bg-zinc-100 px-3 py-2 text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-400">
           <b className="text-zinc-800 dark:text-zinc-200">事件</b>
-          ：某一天发生，例如「金叉」只在穿过去的那一天成立，适合当买点、卖点。
+          ：某一天发生，例如「均线交叉」只在穿过去的那一天成立，适合当买点、卖点。
         </p>
         <p className="rounded-lg bg-zinc-100 px-3 py-2 text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-400">
           <b className="text-zinc-800 dark:text-zinc-200">状态</b>

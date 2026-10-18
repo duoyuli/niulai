@@ -740,7 +740,7 @@ export const getCreateRunUrl = () => {
 }
 
 /**
- * @summary 发起一次同步运行。只负责规划任务，由 `niulai serve` 的执行循环执行。
+ * @summary 发起一次同步运行。先返回运行编号，任务规划在后台完成，避免首次大回补占住 HTTP 请求。
  */
 export const createRun = async (createRunBody: CreateRun, options?: Parameters<typeof apiFetch>[1]): Promise<CreatedRun> => {
 
@@ -806,7 +806,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type CreateRunMutationVariables = {data: CreateRun}
 
     /**
- * @summary 发起一次同步运行。只负责规划任务，由 `niulai serve` 的执行循环执行。
+ * @summary 发起一次同步运行。先返回运行编号，任务规划在后台完成，避免首次大回补占住 HTTP 请求。
  */
 export const useCreateRun = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createRun>>, TError,CreateRunMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}

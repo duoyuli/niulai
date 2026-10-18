@@ -133,8 +133,8 @@ use SignalKind::{Event, State};
 use Tone::{Bearish, Bullish, Neutral};
 
 pub const CATALOG: &[SignalInfo] = &[
-    SignalInfo { id: S::MaCrossUp, name: "{fast} 日均线上穿 {slow} 日均线", group: "均线", tone: Bullish, kind: Event, description: "金叉：短期均线从下往上穿过长期均线，常被看作走势转强", usage: "最常用的转强信号。周期越短越灵敏，假信号也越多；股价横盘时金叉死叉会来回出现，最好结合成交量或更长的均线一起看。", params: MA_PAIR },
-    SignalInfo { id: S::MaCrossDown, name: "{fast} 日均线下穿 {slow} 日均线", group: "均线", tone: Bearish, kind: Event, description: "死叉：短期均线从上往下穿过长期均线，常被看作走势转弱", usage: "常用的转弱信号，很多人把它当作卖出提示。和金叉一样，横盘时容易反复出现。", params: MA_PAIR },
+    SignalInfo { id: S::MaCrossUp, name: "{fast} 日均线上穿 {slow} 日均线", group: "均线", tone: Bullish, kind: Event, description: "上穿：短期均线从下往上穿过长期均线，常被看作走势转强", usage: "最常用的转强信号。周期越短越灵敏，假信号也越多；股价横盘时均线交叉会来回出现，最好结合成交量或更长的均线一起看。", params: MA_PAIR },
+    SignalInfo { id: S::MaCrossDown, name: "{fast} 日均线下穿 {slow} 日均线", group: "均线", tone: Bearish, kind: Event, description: "下穿：短期均线从上往下穿过长期均线，常被看作走势转弱", usage: "常用的转弱信号，很多人把它当作卖出提示。和均线交叉一样，横盘时容易反复出现。", params: MA_PAIR },
     SignalInfo { id: S::MaBullish, name: "均线多头排列（{short} > {mid} > {long}）", group: "均线", tone: Bullish, kind: State, description: "短期均线在上、长期均线在下，处在上升趋势中", usage: "短、中、长期走势一致向上，是趋势最清楚的状态之一。出现时往往已经涨了一段，适合顺着趋势做，而不是抄底。", params: MA_TRIPLE },
     SignalInfo { id: S::MaBearish, name: "均线空头排列（{short} < {mid} < {long}）", group: "均线", tone: Bearish, kind: State, description: "短期均线在下、长期均线在上，处在下降趋势中", usage: "下降趋势最清楚的状态。处在空头排列的股票，反弹常常到均线附近就受阻。", params: MA_TRIPLE },
     SignalInfo { id: S::PriceCrossAboveMa, name: "收盘站上 {n} 日均线", group: "均线", tone: Bullish, kind: Event, description: "前一天收在均线下方，当天收在上方", usage: "比均线交叉出现得早，但也更容易是假突破，之后几天能不能站稳更重要。20 日均线常被看作中短期强弱的分界线。", params: MA_ONE },
@@ -157,7 +157,7 @@ pub const CATALOG: &[SignalInfo] = &[
     SignalInfo { id: S::CciBreakDown, name: "CCI 下穿 −100", group: "超买超卖", tone: Bearish, kind: Event, description: "CCI(14) 从 −100 以上跌到下方，价格明显弱于近期平均", usage: "进入弱势。", params: NONE },
     SignalInfo { id: S::DiCrossUp, name: "+DI 上穿 −DI", group: "趋势强度", tone: Bullish, kind: Event, description: "DMI 的上升力量（+DI）超过下降力量（−DI），多方开始占优", usage: "DMI 的买入信号。ADX 同时较高（例如 20 以上）时更可靠；ADX 很低说明在盘整，交叉容易来回出现。", params: NONE },
     SignalInfo { id: S::DiCrossDown, name: "−DI 上穿 +DI", group: "趋势强度", tone: Bearish, kind: Event, description: "DMI 的下降力量（−DI）超过上升力量（+DI），空方开始占优", usage: "DMI 的卖出信号。", params: NONE },
-    SignalInfo { id: S::AdxStrong, name: "趋势明确（ADX 高于 {level}）", group: "趋势强度", tone: Neutral, kind: State, description: "ADX(14) 高于 {level}：正在走一段明确的趋势，可能是涨也可能是跌", usage: "本身不说明方向，常用来过滤：均线金叉、突破这类趋势信号只在趋势明确时才用，盘整时不用。方向看 +DI 是否在 −DI 上方。", params: &[p("level", "强度线", 25.0, 10.0, 60.0, false)] },
+    SignalInfo { id: S::AdxStrong, name: "趋势明确（ADX 高于 {level}）", group: "趋势强度", tone: Neutral, kind: State, description: "ADX(14) 高于 {level}：正在走一段明确的趋势，可能是涨也可能是跌", usage: "本身不说明方向，常用来过滤：均线交叉、突破这类趋势信号只在趋势明确时才用，盘整时不用。方向看 +DI 是否在 −DI 上方。", params: &[p("level", "强度线", 25.0, 10.0, 60.0, false)] },
     SignalInfo { id: S::SupertrendUp, name: "Supertrend 翻多", group: "趋势强度", tone: Bullish, kind: Event, description: "收盘价上穿 Supertrend 线（10 日 ATR、3 倍），线从股价上方翻到下方", usage: "趋势由跌转涨的信号，TradingView 上最常用的趋势指标之一。翻多后可以把这条线当作跟随的止损线。", params: NONE },
     SignalInfo { id: S::SupertrendDown, name: "Supertrend 翻空", group: "趋势强度", tone: Bearish, kind: Event, description: "收盘价下穿 Supertrend 线，线从股价下方翻到上方", usage: "趋势由涨转跌，常用作趋势跟随策略的卖出条件。", params: NONE },
     SignalInfo { id: S::MacdBottomDivergence, name: "MACD 底背离", group: "背离", tone: Bullish, kind: Event, description: "股价的低点一个比一个低，但 MACD 快线（DIF）的低点却抬高了，且在零轴下方", usage: "下跌的力量在减弱，最经典的抄底信号之一。要等低点确认（之后 3 天没有更低）才出现，所以比低点晚 3 天。背离之后还可能再背离，最好等价格站稳再动手。", params: NONE },

@@ -141,7 +141,7 @@ pub enum Op {
     Lt,
     #[serde(rename = "<=")]
     Le,
-    /// 上穿：前一天在下方（或相等），当天在上方；与均线金叉同一套容差规则
+    /// 上穿：前一天在下方（或相等），当天在上方；与均线交叉同一套容差规则
     #[serde(rename = "crosses_above")]
     CrossesAbove,
     /// 下穿
@@ -871,9 +871,28 @@ pub fn templates() -> Vec<Template> {
     let amount = by(I::Amount, None, true);
     vec![
         Template {
+            key: "ma_cross_15_30",
+            name: "均线交叉（15 日 / 30 日）",
+            description: "15 日均线上穿 30 日均线买入，下穿时卖出；这是个股快捷回测的默认方法",
+            definition: Definition {
+                universe: Universe::default(),
+                all: vec![cmp_ind(I::Ma, Some(15), Op::CrossesAbove, I::Ma, Some(30))],
+                any: vec![],
+                exit: ExitRule {
+                    any: vec![cmp_ind(I::Ma, Some(15), Op::CrossesBelow, I::Ma, Some(30))],
+                    stop_loss_pct: None,
+                    take_profit_pct: None,
+                    max_hold_days: None,
+                },
+                sort: amount.clone(),
+                limit: 50,
+                lib: SignalLib::default(),
+            },
+        },
+        Template {
             key: "ma_golden",
-            name: "均线金叉",
-            description: "5 日均线刚上穿 20 日均线，短期走势开始转强",
+            name: "均线交叉（5 日 / 20 日）",
+            description: "5 日均线上穿 20 日均线，短期走势开始转强",
             definition: def(
                 vec![sig(S::MaCrossUp, &[("fast", 5.0), ("slow", 20.0)], 1)],
                 amount.clone(),
@@ -1000,8 +1019,8 @@ pub fn templates() -> Vec<Template> {
         },
         Template {
             key: "adx_ma_golden",
-            name: "趋势确认的均线金叉",
-            description: "5 日均线上穿 20 日均线，同时 ADX 高于 20、+DI 在 −DI 上方：只做趋势明确时的金叉，过滤横盘中的假金叉",
+            name: "趋势确认的均线交叉（5 日 / 20 日）",
+            description: "5 日均线上穿 20 日均线，同时 ADX 高于 20、+DI 在 −DI 上方：只做趋势明确时的均线交叉，过滤横盘中的假信号",
             definition: def(
                 vec![
                     sig(S::MaCrossUp, &[("fast", 5.0), ("slow", 20.0)], 1),
@@ -1049,6 +1068,22 @@ mod tests {
                 t.key
             );
         }
+    }
+
+    #[test]
+    fn default_ma_cross_template_uses_fifteen_and_thirty_days() {
+        let t = templates().into_iter().find(|t| t.key == "ma_cross_15_30").expect("均线交叉模板");
+        let v = serde_json::to_value(t.definition).unwrap();
+        assert_eq!(v["all"][0]["kind"], "compare");
+        assert_eq!(v["all"][0]["left"], serde_json::json!({"id": "ma", "n": 15}));
+        assert_eq!(v["all"][0]["op"], "crosses_above");
+        assert_eq!(v["all"][0]["right"], serde_json::json!({"id": "ma", "n": 30}));
+        assert_eq!(v["exit"]["any"][0]["kind"], "compare");
+        assert_eq!(v["exit"]["any"][0]["left"], serde_json::json!({"id": "ma", "n": 15}));
+        assert_eq!(v["exit"]["any"][0]["op"], "crosses_below");
+        assert_eq!(v["exit"]["any"][0]["right"], serde_json::json!({"id": "ma", "n": 30}));
+        assert!(v["exit"]["stop_loss_pct"].is_null());
+        assert!(v["exit"]["max_hold_days"].is_null());
     }
 
     #[test]

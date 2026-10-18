@@ -5,14 +5,16 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { HistoryCheck } from './historyCheck';
 import type { WeakMarket } from './weakMarket';
 
 /**
- * 一个账户的全部规则。缺的字段按稳健的参考值补齐
+ * 一个账户的全部规则。缺的字段按均衡型参考值补齐，回看缺省为关闭。
  */
 export interface Rules {
   /** 第二天开盘比参考价高多少（%）就不买 */
   chase_limit_pct?: number;
+  history_check?: HistoryCheck | null;
   /**
      * 最多同时持有几只
      * @minimum 0
@@ -34,7 +36,7 @@ export interface Rules {
   /** 止损线：比成本价亏多少（%）就卖 */
   stop_loss_pct?: number;
   /**
-     * 只参考这些策略（策略编号）；为空（null）表示全部参加巡检的策略，以后新增的也自动参考
+     * 只参考这些策略（策略编号）；旧数据为 null 时兼容为当前全部参加巡检的策略，新账户保存当前策略快照
      * @nullable
      */
   strategies?: number[] | null;

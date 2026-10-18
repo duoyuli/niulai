@@ -16,7 +16,6 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod error;
-pub mod notify;
 pub mod server;
 pub mod setup;
 pub mod sync;

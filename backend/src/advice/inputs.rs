@@ -10,6 +10,8 @@ use super::generate::{
     CandidateIn, HoldingIn, Input, MarketIn, Pick, Snapshot, StrategyIn, StrategyRef,
 };
 use crate::account::{self, Account};
+use crate::account::history::{HistoryReturn, HistorySeries};
+use crate::account::rules::{HistoryWindow, Rules};
 use crate::analysis::diagnosis::{self, Verdict};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef, StockMeta};
 use crate::analysis::limit_pool::LimitPool;
@@ -39,6 +41,7 @@ pub struct Shared {
     /// 当天的买点：(策略, 股票, 命中条件, 成交额)
     hits: Vec<(i64, String, Vec<String>, f64)>,
     delisted: HashMap<String, bool>,
+    history: HashMap<(i64, String), Vec<HistoryReturn>>,
 }
 
 /// 参加巡检的策略最近一次巡检的交易日：建议跟着它走
@@ -89,7 +92,7 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
             .into_iter()
             .collect();
     let screening: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT strategy_id, name FROM app.strategy WHERE screening ORDER BY strategy_id",
+        "SELECT strategy_id, name FROM app.strategy WHERE screening ORDER BY sort_order, strategy_id",
     )
     .fetch_all(pool)
     .await?;
@@ -102,10 +105,37 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
     .bind(&ids)
     .fetch_all(pool)
     .await?;
-    let hits = rows
+    let hits: Vec<_> = rows
         .into_iter()
         .map(|(id, code, r, amount)| (id, code, r.0, amount.unwrap_or(0.0)))
         .collect();
+    // 只有启用回看的账户所选策略的候选需要长历史；同一股票只读取一次。
+    let account_rules: Vec<sqlx::types::Json<Rules>> = sqlx::query_scalar("SELECT rules FROM app.account")
+        .fetch_all(pool).await?;
+    let defs = screener::screening_strategies(pool).await?;
+    let checked: Vec<_> = defs.iter().filter(|(id, _)| account_rules.iter().any(|r| r.history_check.is_some() && r.uses(*id))).collect();
+    let mut history = HashMap::new();
+    if !checked.is_empty() {
+        let warmup = checked.iter().map(|(_, d)| d.warmup()).max().unwrap_or(30) + 5;
+        let start = HistoryWindow::FiveYears.start(trade_date) - chrono::Duration::days(market::calendar_days_for(warmup));
+        let history_limits = LimitPool::load(pool, start, trade_date).await?;
+        let codes: std::collections::BTreeSet<_> = hits.iter().filter(|(id, _, _, _)| checked.iter().any(|(sid, _)| sid == id)).map(|(_, code, _, _)| code).collect();
+        for code in codes {
+            let Some(meta) = sec.meta.get(code) else { continue };
+            let bars = prices::stock_bars_between(pool, code, start, trade_date).await?;
+            let events = prices::corp_events(pool, code, Some(trade_date)).await?;
+            let st = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
+            prices::run_cpu(|| {
+                let frame = Frame::with_authority_and_st_history(&bars, Some(meta), &history_limits, code, st);
+                for (id, def) in &checked {
+                    if hits.iter().any(|(sid, c, _, _)| sid == id && c == code) {
+                        let series = HistorySeries::new(&bars, &frame, meta, def);
+                        history.insert((*id, code.clone()), series.evaluate(&bars, &events, &HistoryWindow::ALL, trade_date));
+                    }
+                }
+            });
+        }
+    }
     let delisted: HashMap<String, bool> = sqlx::query_as::<_, (String, bool)>(
         "SELECT thscode, delisted_on IS NOT NULL FROM ref.security",
     )
@@ -123,6 +153,7 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
         limits,
         hits,
         delisted,
+        history,
     }))
 }
 
@@ -297,6 +328,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             e.0.push(Pick {
                 strategy_id: *id,
                 reasons: reasons.clone(),
+                history: sh.history.get(&(*id, code.clone())).cloned().unwrap_or_default(),
             });
         }
     }
@@ -304,6 +336,17 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         .into_iter()
         .map(|(c, (picks, a))| (c, picks, a))
         .collect();
+    let mut history_rejected = 0;
+    pre.retain_mut(|(code, picks, _)| {
+        if positions.iter().any(|p| p.thscode == *code) { return false; }
+        let before = picks.len();
+        picks.retain(|p| p.eligible(&rules, sh.trade_date));
+        let enough = picks.len() >= rules.min_picks as usize;
+        if !enough && before >= rules.min_picks as usize && picks.len() < before {
+            history_rejected += 1;
+        }
+        enough
+    });
     pre.sort_by(|a, b| {
         b.1.len()
             .cmp(&a.1.len())
@@ -351,6 +394,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         market: sh.market,
         holdings,
         candidates,
+        history_rejected,
         strategies,
         streaks: streaks(pool, acc.account_id, sh.trade_date).await?,
     })

@@ -5,6 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -21,6 +22,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(catalog))
         .routes(routes!(list_strategies, create_strategy))
+        .routes(routes!(reorder_strategies))
         .routes(routes!(get_strategy, update_strategy, delete_strategy))
         .routes(routes!(preview))
         .routes(routes!(results))
@@ -106,12 +108,13 @@ pub struct StrategyItem {
     pub updated_at: DateTime<Utc>,
 }
 
-type StrategyRow = (i64, String, String, bool, bool, Option<String>, bool, serde_json::Value, DateTime<Utc>);
+type StrategyRow = (i64, String, String, bool, bool, Option<String>, bool, serde_json::Value, DateTime<Utc>, i32);
 
 async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem>> {
     let rows: Vec<StrategyRow> = sqlx::query_as(
-        "SELECT strategy_id, name, description, screening, show_on_today, template, builtin_key IS NOT NULL, definition, updated_at FROM app.strategy
-         WHERE ($1::bigint IS NULL OR strategy_id = $1) ORDER BY builtin_key IS NULL, strategy_id",
+        "SELECT strategy_id, name, description, screening, show_on_today, template, builtin_key IS NOT NULL, definition, updated_at, sort_order FROM app.strategy
+         WHERE ($1::bigint IS NULL OR strategy_id = $1)
+         ORDER BY sort_order, strategy_id",
     )
     .bind(id)
     .fetch_all(&s.pool)
@@ -129,7 +132,7 @@ async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem
     .await?;
     let lib = signal_lib::load(&s.pool).await?;
     let mut out = vec![];
-    for (strategy_id, name, description, screening, show_on_today, template, builtin, v, updated_at) in rows {
+    for (strategy_id, name, description, screening, show_on_today, template, builtin, v, updated_at, _sort_order) in rows {
         let definition: Definition = serde_json::from_value::<Definition>(v).map_err(|e| ApiError::Internal(e.into()))?.with_lib(lib.clone());
         let latest = latest
             .iter()
@@ -144,6 +147,37 @@ async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem
 #[utoipa::path(get, path = "/strategies", tag = "strategy", responses((status = 200, description = "成功", body = [StrategyItem])))]
 async fn list_strategies(State(s): State<AppState>) -> ApiResult<Json<Vec<StrategyItem>>> {
     Ok(Json(load_items(&s, None).await?))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct StrategyOrderInput {
+    /// 当前策略页的完整顺序，从上到下排列
+    pub strategy_ids: Vec<i64>,
+}
+
+/// 保存策略页顺序（管理员）
+#[utoipa::path(put, path = "/strategies/order", tag = "strategy", request_body = StrategyOrderInput,
+    responses((status = 204, description = "顺序已保存"),
+              (status = 400, description = "必须提供全部策略且不能重复", body = crate::error::ErrorBody)))]
+async fn reorder_strategies(State(s): State<AppState>, Json(input): Json<StrategyOrderInput>) -> ApiResult<StatusCode> {
+    let all: Vec<i64> = sqlx::query_scalar("SELECT strategy_id FROM app.strategy")
+        .fetch_all(&s.pool)
+        .await?;
+    let want: HashSet<i64> = input.strategy_ids.iter().copied().collect();
+    let have: HashSet<i64> = all.iter().copied().collect();
+    if want.len() != input.strategy_ids.len() || want != have {
+        return Err(ApiError::BadRequest("策略顺序必须包含全部策略，且不能重复".into()));
+    }
+    let mut tx = s.pool.begin().await?;
+    for (order, strategy_id) in input.strategy_ids.iter().enumerate() {
+        sqlx::query("UPDATE app.strategy SET sort_order = $2 WHERE strategy_id = $1")
+            .bind(strategy_id)
+            .bind(order as i32)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -183,7 +217,9 @@ async fn check(s: &AppState, input: &StrategyInput) -> ApiResult<()> {
 async fn create_strategy(State(s): State<AppState>, Json(input): Json<StrategyInput>) -> ApiResult<(StatusCode, Json<StrategyItem>)> {
     check(&s, &input).await?;
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO app.strategy (name, description, definition, screening, template, show_on_today) VALUES ($1, $2, $3, $4, $5, $6) RETURNING strategy_id",
+        "INSERT INTO app.strategy (name, description, definition, screening, template, show_on_today, sort_order)
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT max(sort_order) + 1 FROM app.strategy), 0))
+         RETURNING strategy_id",
     )
     .bind(input.name.trim())
     .bind(input.description.trim())

@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import type { IndicatorEntry } from "../api/generated/model";
 import { useListIndicators } from "../api/generated/signal/signal";
 import { SampleChart } from "../components/SampleChart";
@@ -6,6 +6,8 @@ import { StrategyNav } from "../components/StrategyNav";
 import { Badge, Card, Empty, PageHeader, QueryView } from "../components/ui";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { groupBy, indicatorName } from "../lib/strategy";
+
+const MA_PERIODS = [15, 20, 30, 60] as const;
 
 const UNIT_TEXT: Record<string, string> = {
   price: "单位是元（等比前复权价）",
@@ -32,22 +34,24 @@ export function IndicatorsPage() {
             {groupBy(items).map(([g, xs]) => (
               <Card key={g} title={g}>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {xs.map((i) => (
-                    <Link
-                      key={i.id}
-                      to={`/indicators/${i.id}`}
-                      className="flex flex-col gap-1 rounded-lg border border-zinc-200 p-3 transition hover:border-accent/60 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50"
-                    >
-                      <span className="font-medium">{indicatorName(i)}</span>
-                      <span className="line-clamp-2 text-xs text-zinc-500">
-                        {i.description.replaceAll("{n}", String(i.n_default ?? ""))}
-                      </span>
-                      <span className="mt-auto flex flex-wrap gap-1 pt-1">
-                        {i.signals.length > 0 && <Badge>{i.signals.length} 个信号用到</Badge>}
-                        {i.strategies.length > 0 && <Badge tone="info">{i.strategies.length} 个策略用到</Badge>}
-                      </span>
-                    </Link>
-                  ))}
+                  {xs
+                    .flatMap((i) => (i.id === "ma" ? MA_PERIODS.map((n) => ({ i, n })) : [{ i, n: i.n_default }]))
+                    .map(({ i, n }) => (
+                      <Link
+                        key={`${i.id}:${n ?? ""}`}
+                        to={`/indicators/${i.id}${n ? `?n=${n}` : ""}`}
+                        className="flex flex-col gap-1 rounded-lg border border-zinc-200 p-3 transition hover:border-accent/60 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50"
+                      >
+                        <span className="font-medium">{indicatorName(i, n)}</span>
+                        <span className="line-clamp-2 text-xs text-zinc-500">
+                          {i.description.replaceAll("{n}", String(n ?? ""))}
+                        </span>
+                        <span className="mt-auto flex flex-wrap gap-1 pt-1">
+                          {i.signals.length > 0 && <Badge>{i.signals.length} 个信号用到</Badge>}
+                          {i.strategies.length > 0 && <Badge tone="info">{i.strategies.length} 个策略用到</Badge>}
+                        </span>
+                      </Link>
+                    ))}
                 </div>
               </Card>
             ))}
@@ -60,21 +64,23 @@ export function IndicatorsPage() {
 
 export function IndicatorDetailPage() {
   const { id = "" } = useParams();
+  const [query] = useSearchParams();
   const list = useListIndicators({ query: { staleTime: 60_000 } });
   return (
     <QueryView query={list}>
       {(items) => {
         const i = items.find((x) => x.id === id);
-        return i ? <IndicatorDetail i={i} /> : <Empty>没有这个指标</Empty>;
+        const n = i?.n_default !== null && i?.n_default !== undefined ? Number(query.get("n")) || i.n_default : null;
+        return i ? <IndicatorDetail i={i} n={n} /> : <Empty>没有这个指标</Empty>;
       }}
     </QueryView>
   );
 }
 
-function IndicatorDetail({ i }: { i: IndicatorEntry }) {
+function IndicatorDetail({ i, n }: { i: IndicatorEntry; n: number | null }) {
   const admin = useIsAdmin();
-  const hasN = i.n_default !== null && i.n_default !== undefined;
-  const n = String(i.n_default ?? "");
+  const hasN = n !== null;
+  const nText = String(n ?? "");
   // 开高低收本身就是 K 线，不用再画一条
   const drawable = !["open", "high", "low", "close"].includes(i.id);
   return (
@@ -84,25 +90,25 @@ function IndicatorDetail({ i }: { i: IndicatorEntry }) {
         <Link to="/indicators" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
           ← 全部指标
         </Link>
-        <h1 className="mt-1 text-xl font-semibold">{indicatorName(i)}</h1>
+        <h1 className="mt-1 text-xl font-semibold">{indicatorName(i, n)}</h1>
         <p className="mt-1 text-xs text-zinc-500">
           {i.group} · {UNIT_TEXT[i.unit] ?? i.unit}
-          {hasN && ` · 周期默认 ${i.n_default}，可设 ${i.n_min} 到 ${i.n_max}`}
+          {hasN && ` · 当前周期 ${n}，目录默认 ${i.n_default}，可设 ${i.n_min} 到 ${i.n_max}`}
         </p>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="是什么、怎么看">
-          <p className="text-sm">{i.description.replaceAll("{n}", n)}。</p>
+          <p className="text-sm">{i.description.replaceAll("{n}", nText)}。</p>
           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{i.usage}</p>
         </Card>
         <Card title="怎么算">
-          <p className="text-sm whitespace-pre-line">{i.formula.replaceAll("{n}", n)}</p>
+          <p className="text-sm whitespace-pre-line">{i.formula.replaceAll("{n}", nText)}</p>
           <p className="mt-2 text-xs text-zinc-500">
             价格都用等比前复权价，分红送转不会让指标突然跳一下。数据不够算的头几天没有值，条件判断为「不满足」。
           </p>
         </Card>
       </div>
-      {drawable && <SampleChart title="画在 K 线上" overlays={[`ind:${i.id}${hasN ? `:${i.n_default}` : ""}`]} />}
+      {drawable && <SampleChart title="画在 K 线上" overlays={[`ind:${i.id}${hasN ? `:${n}` : ""}`]} />}
       <Card title={admin ? "常用写法：点一下拿去新建信号" : "常用写法"}>
         {i.examples.length === 0 ? (
           <p className="text-sm text-zinc-400">这个指标一般不单独用，常和别的指标比较，或作为排序依据。</p>

@@ -23,14 +23,10 @@ export function UserMenu({ me }: { me: AuthStatus }) {
       document.removeEventListener("keydown", close);
     };
   }, [open]);
-  const items = [
-    { to: "/me", label: "密码与推送" },
-    ...(admin
-      ? [
-          { to: "/users", label: "用户管理" },
-          { to: "/setup", label: "数据源设置" },
-        ]
-      : []),
+  const personalItems = [{ to: "/me", label: "密码设置" }];
+  const adminItems = [
+    { to: "/users", label: "用户管理" },
+    { to: "/setup", label: "数据源设置" },
   ];
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 鼠标悬停只是方便展开，点击按钮同样可以
@@ -64,7 +60,8 @@ export function UserMenu({ me }: { me: AuthStatus }) {
               <p className="truncate font-medium">{me.username}</p>
               <p className="text-xs text-zinc-500">{admin ? "管理员" : "普通用户"}</p>
             </div>
-            {items.map((i) => (
+            <p className="px-3 pt-2 pb-1 text-[11px] font-medium tracking-wide text-zinc-400">个人</p>
+            {personalItems.map((i) => (
               <Link
                 key={i.to}
                 to={i.to}
@@ -75,6 +72,23 @@ export function UserMenu({ me }: { me: AuthStatus }) {
                 {i.label}
               </Link>
             ))}
+            {admin && (
+              <>
+                <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+                <p className="px-3 pt-2 pb-1 text-[11px] font-medium tracking-wide text-zinc-400">管理员</p>
+                {adminItems.map((i) => (
+                  <Link
+                    key={i.to}
+                    to={i.to}
+                    role="menuitem"
+                    onClick={() => setOpen(false)}
+                    className="block px-3 py-1.5 text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  >
+                    {i.label}
+                  </Link>
+                ))}
+              </>
+            )}
             <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
             <button
               type="button"
