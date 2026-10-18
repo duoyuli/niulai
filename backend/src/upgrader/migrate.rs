@@ -14,7 +14,12 @@ use super::{Progress, STOP_TIMEOUT_SECS, Upgrade, builtin_db, create_body_for, s
 /// 已经做过的部署迁移
 const STATE_FILE: &str = ".niulai-migrations";
 
-/// 部署迁移，按顺序执行
+/// 部署迁移，按顺序执行。
+///
+/// 只做「改部署文件或挂载、能安全回退、改之前能认出用户没有动过」的迁移，例如数据目录。
+/// 资源上限和容器的安全选项不在这里做：升级助手重建容器时沿用原容器的启动参数（见 `create_body`），
+/// 只改 compose.yml 不会让运行中的容器生效，要用户执行 `docker compose up -d` 重建；内存上限还取决于服务器大小，
+/// 猜错会让数据库被强制杀掉。手动步骤见 docs/operations/runbook.md#resource_limits。
 const MIGRATIONS: &[(&str, &str)] = &[(DATA_DIR, "数据库数据从 Docker 卷移到部署目录 data/postgres")];
 
 const DATA_DIR: &str = "2026-10-17-postgres-data-dir";
