@@ -90,11 +90,8 @@ services:
       - ./:/deploy             # 改写 .env 中的 NIULAI_IMAGE，备份写到 backups/
       - upgrade:/upgrade
     restart: unless-stopped
-    # 升级助手平时只轮询文件、用不了多少内存，但备份要把几百 MB 的 dump 经 Docker 控制接口写到挂载目录：
-    # 写盘时的脏页会计入这个容器的内存上限，128 MB 时会在备份中途被 OOM 杀掉（2026-10-18 发布 v2026.10.18.9
-    # 时实测，见 docs/operations/runbook.md#resource_limits）。程序每写 32 MB 会 sync 一次，把脏页压在这个数以下；
-    # 上限仍留 1 GB，覆盖数据继续变大和旧版本升级助手（还没有 sync）的情况。
-    mem_limit: 1024m
+    # 升级助手平时只轮询文件，128 MB 内存、0.5 个 CPU 够用；备份和复制数据由数据库容器完成
+    mem_limit: 128m
     cpus: 0.5
     # 健康检查看心跳文件：程序每 3 秒写一次 /upgrade/heartbeat，30 秒没有更新说明卡住了或已经退出
     healthcheck:
