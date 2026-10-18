@@ -24,7 +24,7 @@
 | --- | --- | --- |
 | `GET /health` | 存活检查 | — |
 | `GET /ready` | 就绪检查，能连上数据库时返回 200 | — |
-| `GET /metrics` | Prometheus 文本格式的监控指标（进程、请求、队列、连接池）；默认关闭 | 设置 `NIULAI_METRICS_TOKEN` 后启用，请求要带 `Authorization: Bearer <令牌>` 或 `?token=<令牌>`，不带时返回 404；见 [监控指标](../operations/runbook.md#metrics) |
+| `GET /metrics` | Prometheus 文本格式的监控指标（进程、请求、队列、连接池）；默认关闭 | 设置 `NIULAI_METRICS_TOKEN` 后启用，请求要带 `Authorization: Bearer <令牌>`（不接受写在网址里）；没有设置时返回 404，令牌不对返回 401；见 [监控指标](../operations/runbook.md#metrics) |
 | `POST /auth/login` | 登录，成功时设置登录 Cookie | 请求体 `{username, password}`，用户名不区分大小写；连续输错 5 次后返回 429；见 [登录与权限](#auth) |
 | `POST /auth/logout` | 退出登录，清除 Cookie；返回 204 | — |
 | `GET /auth/me` | 当前用户：编号、用户名、角色（`admin` / `member`）、是否要提醒修改密码（`must_change_password`） | 没有登录时返回 401 |

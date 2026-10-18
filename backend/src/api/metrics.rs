@@ -1,22 +1,21 @@
 //! 监控指标：`GET /api/v1/metrics`，Prometheus 文本格式。
 //!
 //! 接口不经过登录中间件，改为校验 `NIULAI_METRICS_TOKEN`：没有设置这个环境变量时返回 404（默认关闭），
-//! 设置了就要求请求头 `Authorization: Bearer <token>`（或查询参数 `?token=`）。这样外部监控服务不用登录。
+//! 设置了就要求请求头 `Authorization: Bearer <token>`。这样外部监控服务不用登录。
+//! 不接受写在网址里的令牌：请求日志会原样记下网址，令牌就泄露到日志里了。
 //! 指标只包含进程和队列的聚合数字，没有证券、账户等业务数据。规则见 docs/operations/runbook.md#metrics。
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Query, Request, State};
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
 
 use super::AppState;
 use crate::telemetry::uptime;
-use crate::time::now_cn;
 
 /// 请求计数和累计耗时，由中间件在每次请求结束时更新
 #[derive(Default)]
@@ -57,12 +56,6 @@ pub async fn track(State(metrics): State<Arc<Metrics>>, req: Request, next: Next
     resp
 }
 
-#[derive(Deserialize)]
-pub struct MetricsQuery {
-    /// 令牌；也可以用 `Authorization: Bearer <token>` 请求头
-    pub token: Option<String>,
-}
-
 /// 读一次环境变量就记住：部署期间不会变
 fn expected_token() -> Option<&'static str> {
     static TOKEN: OnceLock<Option<String>> = OnceLock::new();
@@ -80,21 +73,17 @@ fn token_matches(expected: &str, given: &str) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// 请求带的令牌：优先 `Authorization: Bearer`，其次 `?token=`
-fn given_token(headers: &HeaderMap, query: &MetricsQuery) -> Option<String> {
-    if let Some(v) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok())
-        && let Some(t) = v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer "))
-    {
-        return Some(t.trim().to_string());
-    }
-    query.token.as_ref().map(|t| t.trim().to_string())
+/// 请求头 `Authorization: Bearer <token>` 里的令牌
+fn given_token(headers: &HeaderMap) -> Option<String> {
+    let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")).map(|t| t.trim().to_string())
 }
 
-pub async fn handler(State(s): State<AppState>, headers: HeaderMap, Query(q): Query<MetricsQuery>) -> Response {
+pub async fn handler(State(s): State<AppState>, headers: HeaderMap) -> Response {
     let Some(expected) = expected_token() else {
         return (StatusCode::NOT_FOUND, "没有启用监控指标：在环境变量里设置 NIULAI_METRICS_TOKEN 后可用\n").into_response();
     };
-    let ok = given_token(&headers, &q).is_some_and(|t| token_matches(expected, &t));
+    let ok = given_token(&headers).is_some_and(|t| token_matches(expected, &t));
     if !ok {
         return (StatusCode::UNAUTHORIZED, "监控指标的令牌不对\n").into_response();
     }
@@ -129,7 +118,7 @@ pub fn format(metrics: &Metrics, version: &str, uptime: Duration, pending: i64, 
     out.push_str("# HELP niulai_db_pool_idle 其中空闲的连接数\n# TYPE niulai_db_pool_idle gauge\n");
     out.push_str(&format!("niulai_db_pool_idle {}\n", db_idle as u32));
     out.push_str("# HELP niulai_scrape_time_seconds 生成这些指标的 Unix 时间\n# TYPE niulai_scrape_time_seconds gauge\n");
-    out.push_str(&format!("niulai_scrape_time_seconds {}\n", now_cn().and_utc().timestamp()));
+    out.push_str(&format!("niulai_scrape_time_seconds {}\n", chrono::Utc::now().timestamp()));
     out
 }
 

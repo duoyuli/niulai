@@ -165,7 +165,7 @@ git push origin v2026.10.18
 <a id="metrics"></a>
 ### 监控指标
 
-把环境变量 `NIULAI_METRICS_TOKEN` 设成一个足够长的随机字符串（例如 `openssl rand -hex 24`），重启 niulai 后 `GET /api/v1/metrics` 返回 Prometheus 文本格式的指标；不设置这个变量时接口返回 404，等于关闭。请求要带 `Authorization: Bearer <令牌>`（Prometheus 的 `authorization.credentials`）或 `?token=<令牌>`，令牌不对返回 401。令牌在启动时读一次，改了要重启；它只用于这个接口，不是登录密码。
+把环境变量 `NIULAI_METRICS_TOKEN` 设成一个足够长的随机字符串（例如 `openssl rand -hex 24`），重启 niulai 后 `GET /api/v1/metrics` 返回 Prometheus 文本格式的指标；不设置这个变量时接口返回 404，等于关闭。请求要带 `Authorization: Bearer <令牌>`（Prometheus 的 `authorization.credentials`），令牌不对返回 401。不接受写在网址里的 `?token=`：请求日志会原样记下网址。令牌在启动时读一次，改了要重启；它只用于这个接口，不是登录密码。
 
 指标只有进程和队列的聚合数字，不含证券、账户等业务数据：
 

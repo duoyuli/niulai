@@ -138,7 +138,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 2. `CALL mkt.rebuild_adj_segment(run_id)`：全量重算复权分段，包括等比复权因子和同花顺减法复权的系数。本机全市场实测约 2 秒（1,500 万根日线、6 万段分段；第一次执行或磁盘忙时会更久），在数据库事务中完成，查询在提交前看到旧结果，不被阻塞。
 3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的进程内缓存（市场概况、信号的过去表现）失效。
 
-另外，运行结束时先按本次运行中三个权威涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`）任务的变化条数，决定是否更新 `ops.derived_version` 的 `limit_pool` 行。这三个池只写 `raw.record`、没有类型化表，不在 `PRICE_TABLES` 里，所以单独判断；**即使行情没有变化，只要池补上了滞后的数据也会更新**，市场概况和信号过去表现的缓存随之失效。已经保存的巡检结果不重算。
+另外，运行结束时先按本次运行中三个权威涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`）任务的变化条数，决定是否更新 `ops.derived_version` 的 `limit_pool` 行。这三个池只写 `raw.record`、没有类型化表，不在 `PRICE_TABLES` 里，所以单独判断；**即使行情没有变化，只要池补上了滞后的数据也会更新**，市场概况和信号过去表现的缓存随之失效，并且和行情有变化时一样，在最新交易日上重做一次每日巡检、刷新还没处理过的调仓建议（当天的名单比行情晚到时，之前的巡检用的是自算的涨停）。更早日期的巡检结果不重算。
 
 重算完成后，用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，再为每个账户生成 [调仓建议](../domains/accounts.md#generation)；失败只写日志，不影响运行的状态。执行循环每分钟的维护里也补齐缺的建议，并在后台每周重算策略过去表现和参考值回测（`advice::maintain`）。下一个波次在这些计算之前就已规划，计算失败不会让后面的波次停掉。复权的计算规则见 [复权](../domains/price_adjustment.md)。
 
