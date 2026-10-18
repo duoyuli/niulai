@@ -42,6 +42,8 @@ const MEMBER_WRITES: &[(Method, &str)] = &[
     (Method::PUT, "/accounts/*/positions"),
     (Method::POST, "/accounts/*/trades"),
     (Method::DELETE, "/accounts/*/trades/*"),
+    (Method::POST, "/accounts/*/corp-actions/rights/*/*/subscribe"),
+    (Method::POST, "/accounts/*/corp-actions/rights/*/*/ignore"),
     (Method::POST, "/accounts/*/advice/refresh"),
     (Method::POST, "/accounts/*/advice/*/items/*/execute"),
     (Method::POST, "/accounts/*/advice/*/items/*/skip"),

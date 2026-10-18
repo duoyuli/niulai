@@ -691,6 +691,241 @@
         }
       }
     },
+    "/accounts/{account_id}/corp-actions": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "待处理的公司行动（目前是配股）：除权日已经过去、还没认购也没选「暂不处理」的配股",
+        "operationId": "list_corp_actions",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；没有待处理的配股时是空列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PendingRights"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/corp-actions/rights/{thscode}/{ex_date}/ignore": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "暂不处理这次配股：不买、不扣钱，只记下处理状态，提醒消失",
+        "operationId": "ignore_rights",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "thscode",
+            "in": "path",
+            "description": "股票代码",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ex_date",
+            "in": "path",
+            "description": "除权日",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已记下，不再提醒"
+          },
+          "400": {
+            "description": "没有这次配股、已经处理过或不足 1 股",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/corp-actions/rights/{thscode}/{ex_date}/subscribe": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "记一笔配股认购：按除权日持有的股数和公告的配股比例算出认购股数，扣配股款和费用，按平均成本更新持仓；\n提醒随之消失，之后重新生成建议",
+        "operationId": "subscribe_rights",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "thscode",
+            "in": "path",
+            "description": "股票代码",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ex_date",
+            "in": "path",
+            "description": "除权日",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已记下，返回更新后的账户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "没有这次配股、已经处理过、按股数不足 1 股或现金不够",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/equity": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "每日净值曲线：每个交易日的现金、持仓市值、总资产和当天盈亏，返回最近 `days` 个交易日",
+        "operationId": "get_equity",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "description": "最近多少个交易日，默认 180，最多 1,825（约 7 年）",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；还没有日线或账户还没有资金时是空曲线",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EquityCurve"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/accounts/{account_id}/positions": {
       "put": {
         "tags": [
@@ -4160,6 +4395,43 @@
           }
         }
       },
+      "AccountEquityPoint": {
+        "type": "object",
+        "description": "曲线上的一个交易日",
+        "required": [
+          "trade_date",
+          "cash",
+          "market_value",
+          "total_assets",
+          "day_pnl"
+        ],
+        "properties": {
+          "cash": {
+            "type": "number",
+            "format": "double",
+            "description": "现金（元）"
+          },
+          "day_pnl": {
+            "type": "number",
+            "format": "double",
+            "description": "当日盈亏（元），已经剔除当天的转入转出"
+          },
+          "market_value": {
+            "type": "number",
+            "format": "double",
+            "description": "持仓市值（元）"
+          },
+          "total_assets": {
+            "type": "number",
+            "format": "double",
+            "description": "总资产（元）"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
       "AccountPosition": {
         "type": "object",
         "required": [
@@ -5776,6 +6048,44 @@
           }
         }
       },
+      "EquityCurve": {
+        "type": "object",
+        "description": "一段时间的净值曲线",
+        "required": [
+          "points",
+          "net_transfer"
+        ],
+        "properties": {
+          "net_transfer": {
+            "type": "number",
+            "format": "double",
+            "description": "区间内的转入减转出（元）"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountEquityPoint"
+            },
+            "description": "按交易日从早到晚；最多请求的 `days` 个交易日"
+          },
+          "return_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "区间收益率（%）：（期末利润 − 期初利润）÷ 期初总资产；期初总资产为 0 时为空"
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "从哪一天开始有数据（建账户或第一笔流水）"
+          }
+        }
+      },
       "EquityPoint": {
         "type": "object",
         "required": [
@@ -7046,6 +7356,64 @@
           "text": {
             "type": "string",
             "description": "从券商 App 复制的持仓文字"
+          }
+        }
+      },
+      "PendingRights": {
+        "type": "object",
+        "description": "一只待处理的配股",
+        "required": [
+          "thscode",
+          "name",
+          "ex_date",
+          "rights_per_10",
+          "rights_price",
+          "held_shares",
+          "rights_shares",
+          "amount",
+          "fee"
+        ],
+        "properties": {
+          "amount": {
+            "type": "number",
+            "format": "double",
+            "description": "配股款（配股价 × 认购股数），不含费用"
+          },
+          "ex_date": {
+            "type": "string",
+            "format": "date",
+            "description": "除权日"
+          },
+          "fee": {
+            "type": "number",
+            "format": "double",
+            "description": "按账户费率估算的费用"
+          },
+          "held_shares": {
+            "type": "integer",
+            "format": "int64",
+            "description": "除权日持有的股数（按有效流水算）"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rights_per_10": {
+            "type": "number",
+            "format": "double",
+            "description": "每 10 股配几股"
+          },
+          "rights_price": {
+            "type": "number",
+            "format": "double",
+            "description": "配股价（元）"
+          },
+          "rights_shares": {
+            "type": "integer",
+            "format": "int64",
+            "description": "这次可以认购的股数（股数 × 配股比例，不足 1 股舍去）"
+          },
+          "thscode": {
+            "type": "string"
           }
         }
       },
@@ -10116,6 +10484,7 @@
           "sell",
           "dividend",
           "bonus",
+          "rights",
           "cash_in",
           "cash_out",
           "adjust"
