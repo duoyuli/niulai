@@ -39,7 +39,7 @@ import { ACTIONS, TRADE_KINDS, TRADE_SOURCES, yuan } from "../lib/accounts";
 import { BACKTEST_RANGES, fmtDateTime, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
 
 const TABS = [
-  { value: "advice", label: "操作计划" },
+  { value: "advice", label: "运营" },
   { value: "positions", label: "持仓" },
   { value: "records", label: "记录" },
   { value: "settings", label: "设置" },
@@ -303,7 +303,7 @@ function TradeForm({ d, onDone }: { d: AccountDetail; onDone: () => void }) {
       >
         {add.isPending ? "记录中…" : "记下来"}
       </button>
-      <p className="basis-full text-xs text-zinc-500">买卖的费用按账户费率估算；记完后操作计划会按新的持仓重新生成。</p>
+      <p className="basis-full text-xs text-zinc-500">买卖的费用按账户费率估算；记完后运营建议会按新的持仓重新生成。</p>
       {!!add.error && <p className="basis-full text-sm text-red-600">{errorText(add.error)}</p>}
     </div>
   );

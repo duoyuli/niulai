@@ -76,10 +76,10 @@ function Body({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-xl font-semibold">
-              {dayLabel(a.next_date)}操作计划：{a.headline}
+              {dayLabel(a.next_date)}运营建议：{a.headline}
             </h2>
             <p className="mt-1 text-xs text-zinc-500">
-              根据 {a.trade_date} 收盘的数据生成，下一个交易日开盘后照着做 · 生成于 {fmtDateTime(s.created_at)}
+              根据 {a.trade_date} 收盘的数据，生成下一个交易日的运营建议 · 生成于 {fmtDateTime(s.created_at)}
             </p>
             {a.why_nothing && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{a.why_nothing}</p>}
             {sells.length + buys.length > 0 && !readonly && (
@@ -115,7 +115,7 @@ function Body({
         )}
         {latestBar && latestBar > a.trade_date && (
           <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-            已经有 {latestBar} 的日线，新的计划等巡检完成后自动生成。
+            已经有 {latestBar} 的日线，新的运营建议等巡检完成后自动生成。
           </p>
         )}
         {a.notes.map((n) => (
@@ -131,7 +131,7 @@ function Body({
       {sells.length > 0 && (
         <Card title={`卖出（${dayLabel(a.next_date)}开盘后）`}>
           <OrderTable accountId={accountId} s={s} items={sells} readonly={readonly} kind="sell" />
-          <p className="mt-2 text-xs text-zinc-500">开盘一字跌停卖不出时，下一份计划会继续提示。</p>
+          <p className="mt-2 text-xs text-zinc-500">开盘一字跌停卖不出时，下一份建议会继续提示。</p>
         </Card>
       )}
 
@@ -139,7 +139,7 @@ function Body({
         <Card title={`买入（${dayLabel(a.next_date)}开盘后，开盘价不超过上限才买）`}>
           <OrderTable accountId={accountId} s={s} items={buys} readonly={readonly} kind="buy" />
           <p className="mt-2 text-xs text-zinc-500">
-            开盘价高于「最高买入价」就是追高，这只放弃；开盘一字涨停买不进，这条作废。也可以直接按最高买入价挂限价单。买入后跌到止损价，计划会提示卖出。
+            开盘价高于「最高买入价」就是追高，这只放弃；开盘一字涨停买不进，这条作废。也可以直接按最高买入价挂限价单。买入后跌到止损价，建议会提示卖出。
           </p>
         </Card>
       )}
@@ -196,7 +196,7 @@ function Body({
         </Card>
       </div>
       <p className="text-xs text-zinc-400">
-        计划只根据规则和已经发生的数据，不预测涨跌，也不保证收益。参考价是 {a.trade_date} 的收盘价，实际成交以券商为准。
+        建议只根据规则和已经发生的数据，不预测涨跌，也不保证收益。参考价是 {a.trade_date} 的收盘价，实际成交以券商为准。
       </p>
     </div>
   );

@@ -365,7 +365,7 @@ export const getUpdateAccountUrl = (accountId: number,) => {
 }
 
 /**
- * @summary 修改名字、选股和风控规则、费率、备注；之后重新生成操作计划
+ * @summary 修改名字、选股和风控规则、费率、备注；之后重新生成运营建议
  */
 export const updateAccount = async (accountId: number,
     accountUpdate: AccountUpdate, options?: Parameters<typeof apiFetch>[1]): Promise<AccountDetail> => {
@@ -432,7 +432,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type UpdateAccountMutationVariables = {accountId: number;data: AccountUpdate}
 
     /**
- * @summary 修改名字、选股和风控规则、费率、备注；之后重新生成操作计划
+ * @summary 修改名字、选股和风控规则、费率、备注；之后重新生成运营建议
  */
 export const useUpdateAccount = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAccount>>, TError,UpdateAccountMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
@@ -756,7 +756,7 @@ export const getRefreshAdviceUrl = (accountId: number,) => {
 }
 
 /**
- * @summary 按现在的持仓和最新的巡检结果重新生成操作计划
+ * @summary 按现在的持仓和最新的巡检结果重新生成运营建议
  */
 export const refreshAdvice = async (accountId: number, options?: Parameters<typeof apiFetch>[1]): Promise<AdviceResponse> => {
 
@@ -808,7 +808,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type RefreshAdviceMutationVariables = {accountId: number}
 
     /**
- * @summary 按现在的持仓和最新的巡检结果重新生成操作计划
+ * @summary 按现在的持仓和最新的巡检结果重新生成运营建议
  */
 export const useRefreshAdvice = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshAdvice>>, TError,RefreshAdviceMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}

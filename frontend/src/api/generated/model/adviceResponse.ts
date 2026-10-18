@@ -10,7 +10,7 @@ import type { StoredAdvice } from './storedAdvice';
 export interface AdviceResponse {
   advice?: StoredAdvice | null;
   /**
-     * 最新日线的日期：比建议的交易日新时，说明新的操作计划还在等巡检
+     * 最新日线的日期：比建议的交易日新时，说明新的运营建议还在等巡检
      * @nullable
      */
   latest_bar?: string | null;

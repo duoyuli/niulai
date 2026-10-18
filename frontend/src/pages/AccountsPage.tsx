@@ -13,7 +13,7 @@ export function AdviceLine({ a }: { a: AccountSummary }) {
   const act = b.sells + b.reduces + b.buys > 0;
   return (
     <span className={act ? "font-medium text-zinc-900 dark:text-zinc-100" : "text-zinc-500"}>
-      {dayLabel(b.next_date)}操作计划：{b.headline}
+      {dayLabel(b.next_date)}运营建议：{b.headline}
       {act && b.pending > 0 && (
         <span className="ml-1 text-xs font-normal text-amber-700 dark:text-amber-400">（{b.pending} 条待处理）</span>
       )}
