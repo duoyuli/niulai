@@ -571,7 +571,7 @@ function Settings({ d }: { d: AccountDetail }) {
         {backtest.data && (
           <div className="mt-2">
             <BacktestLine b={backtest.data} />
-            <BacktestTrades trades={backtest.data.trades} />
+            <BacktestTrades trades={backtest.data.trades ?? []} />
           </div>
         )}
         {!!backtest.error && <p className="mt-2 text-sm text-red-600">{errorText(backtest.error)}</p>}

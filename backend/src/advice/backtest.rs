@@ -115,7 +115,8 @@ pub struct RulesBacktest {
     pub summary: RulesBacktestSummary,
     /// 每周一个点
     pub equity: Vec<RulesEquityPoint>,
-    /// 全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，这里为空
+    /// 全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，存下来的结果里没有这一项
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trades: Vec<RulesTrade>,
 }
 

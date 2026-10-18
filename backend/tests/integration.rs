@@ -1209,8 +1209,19 @@ async fn accounts_positions_and_daily_advice() {
     let (r, v) = call_as(&app, Some(&admin), "PUT", &format!("/api/v1/strategies/{id}"), Some(changed)).await;
     assert_eq!(st(&r), StatusCode::OK, "只改是否在今日展示可以：{v}");
 
-    // 规则的辅助：三组参考值和全部参加巡检的策略
-    let (_, guide) = call_as(&app, Some(&mama), "GET", "/api/v1/rules/guide", None).await;
+    // 规则的辅助：三组参考值和全部参加巡检的策略。存下来的参考值回测只有汇总，没有交易记录
+    sqlx::query(
+        "INSERT INTO app.preset_stat (preset, rules_hash, end_date, result) VALUES ('balanced', 'h', '2026-06-30', $1)",
+    )
+    .bind(json!({"summary": {"start": "2023-06-30", "end": "2026-06-30", "total_return": 0.1, "annual_return": 0.03, "max_drawdown": 0.2,
+        "benchmark_name": null, "benchmark_return": null, "trades": 10, "win_rate": 0.5, "avg_positions": 3.0, "avg_cash_ratio": 0.2,
+        "strategies": 14, "avg_effective": 5.0}, "equity": []}))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (r, guide) = call_as(&app, Some(&mama), "GET", "/api/v1/rules/guide", None).await;
+    assert_eq!(st(&r), StatusCode::OK, "{guide}");
+    assert!(guide["presets"].as_array().unwrap().iter().any(|p| p["backtest"]["summary"]["trades"] == 10));
     assert_eq!(guide["presets"].as_array().unwrap().len(), 3);
     assert!(!guide["presets"][0]["design"].as_array().unwrap().is_empty());
     assert!(guide["strategies"].as_array().unwrap().len() >= builtin.len());
