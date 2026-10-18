@@ -30,6 +30,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_securities))
         .routes(routes!(get_security))
+        .routes(routes!(security_fundamentals))
         .routes(routes!(security_bars))
         .routes(routes!(list_indices))
         .routes(routes!(index_bars))
@@ -71,16 +72,21 @@ pub struct Page<T> {
 
 /// 证券列表
 #[utoipa::path(get, path = "/securities", tag = "market", params(SecurityQuery), responses((status = 200, description = "成功", body = Page<Security>)))]
-async fn list_securities(State(s): State<AppState>, Query(q): Query<SecurityQuery>) -> ApiResult<Json<Page<Security>>> {
+async fn list_securities(
+    State(s): State<AppState>,
+    Query(q): Query<SecurityQuery>,
+) -> ApiResult<Json<Page<Security>>> {
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
     let pattern = q.q.as_deref().map(|t| format!("%{}%", t.trim()));
     let filter = "($1::text IS NULL OR thscode ILIKE $1 OR name ILIKE $1) AND ($2::text IS NULL OR board = $2)";
     // 审计：filter 是固定的 SQL 片段，用户输入全部走绑定参数
-    let total: i64 = sqlx::query_scalar(AssertSqlSafe(format!("SELECT count(*) FROM ref.security WHERE {filter}")))
-        .bind(&pattern)
-        .bind(&q.board)
-        .fetch_one(&s.pool)
-        .await?;
+    let total: i64 = sqlx::query_scalar(AssertSqlSafe(format!(
+        "SELECT count(*) FROM ref.security WHERE {filter}"
+    )))
+    .bind(&pattern)
+    .bind(&q.board)
+    .fetch_one(&s.pool)
+    .await?;
     let items = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT thscode, ticker, name, exchange, board, list_date, delisted_on, last_seen FROM ref.security WHERE {filter} ORDER BY thscode LIMIT $3 OFFSET $4"
     )))
@@ -112,10 +118,78 @@ pub struct SecurityDetail {
     pub bars: i64,
 }
 
+#[derive(Deserialize, IntoParams)]
+pub struct FundamentalsQuery {
+    /// 返回最近多少个交易日的估值，默认 90，最大 365
+    pub limit: Option<i64>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ValuationPoint {
+    pub trade_date: NaiveDate,
+    /// 流通市值（元）
+    pub float_market_cap: Option<String>,
+    /// 市盈率（TTM）
+    pub pe_ttm: Option<String>,
+    /// 市盈率（最近报告期）
+    pub pe_mrq: Option<String>,
+    /// 市净率（最近报告期）
+    pub pb_mrq: Option<String>,
+    /// 市销率（TTM）
+    pub ps_ttm: Option<String>,
+    /// 市现率（TTM）
+    pub pcf_ttm: Option<String>,
+}
+
+type ValuationRow = (
+    NaiveDate,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+#[derive(Serialize, ToSchema)]
+pub struct FundamentalMetric {
+    /// 面向用户的指标名称
+    pub name: String,
+    pub value: f64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct FinancialStatement {
+    pub period_end: Option<NaiveDate>,
+    pub report_date: Option<NaiveDate>,
+    pub metrics: Vec<FundamentalMetric>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct FinancialAbility {
+    /// growth / profitability / solvency / operation / cash-flow
+    pub name: String,
+    pub metrics: Vec<FundamentalMetric>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct Fundamentals {
+    pub thscode: String,
+    /// 每个交易日一条，按日期倒序
+    pub valuation: Vec<ValuationPoint>,
+    pub income: Option<FinancialStatement>,
+    pub balance: Option<FinancialStatement>,
+    pub cashflow: Option<FinancialStatement>,
+    pub indicators: Vec<FinancialAbility>,
+}
+
 /// 单只证券详情
 #[utoipa::path(get, path = "/securities/{thscode}", tag = "market", params(("thscode" = String, Path, description = "例：600519.SH")),
     responses((status = 200, description = "成功", body = SecurityDetail), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
-async fn get_security(State(s): State<AppState>, Path(code): Path<String>) -> ApiResult<Json<SecurityDetail>> {
+async fn get_security(
+    State(s): State<AppState>,
+    Path(code): Path<String>,
+) -> ApiResult<Json<SecurityDetail>> {
     let security: Security = sqlx::query_as(
         "SELECT thscode, ticker, name, exchange, board, list_date, delisted_on, last_seen FROM ref.security WHERE thscode = $1",
     )
@@ -132,7 +206,188 @@ async fn get_security(State(s): State<AppState>, Path(code): Path<String>) -> Ap
             .bind(&code)
             .fetch_one(&s.pool)
             .await?;
-    Ok(Json(SecurityDetail { security, name_history, first_bar, last_bar, bars }))
+    Ok(Json(SecurityDetail {
+        security,
+        name_history,
+        first_bar,
+        last_bar,
+        bars,
+    }))
+}
+
+/// 个股估值和最近财务摘要。财务数据按披露日期标记，页面不会把报告期误当成数据可见日期。
+#[utoipa::path(get, path = "/securities/{thscode}/fundamentals", tag = "market", params(("thscode" = String, Path, description = "例：600519.SH"), FundamentalsQuery),
+    responses((status = 200, description = "成功", body = Fundamentals), (status = 404, description = "证券不存在", body = crate::error::ErrorBody)))]
+async fn security_fundamentals(
+    State(s): State<AppState>,
+    Path(code): Path<String>,
+    Query(q): Query<FundamentalsQuery>,
+) -> ApiResult<Json<Fundamentals>> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ref.security WHERE thscode = $1)")
+            .bind(&code)
+            .fetch_one(&s.pool)
+            .await?;
+    if !exists {
+        return Err(ApiError::NotFound(format!("证券不存在：{code}")));
+    }
+
+    let limit = q.limit.unwrap_or(90).clamp(1, 365);
+    let valuation_rows: Vec<ValuationRow> = sqlx::query_as(
+        "SELECT trade_date, float_market_cap::text, pe_ttm::text, pe_mrq::text, pb_mrq::text, ps_ttm::text, pcf_ttm::text
+         FROM fin.valuation_1d WHERE thscode = $1 ORDER BY trade_date DESC LIMIT $2",
+    )
+    .bind(&code)
+    .bind(limit)
+    .fetch_all(&s.pool)
+    .await?;
+    let valuation = valuation_rows
+        .into_iter()
+        .map(
+            |(trade_date, float_market_cap, pe_ttm, pe_mrq, pb_mrq, ps_ttm, pcf_ttm)| {
+                ValuationPoint {
+                    trade_date,
+                    float_market_cap,
+                    pe_ttm,
+                    pe_mrq,
+                    pb_mrq,
+                    ps_ttm,
+                    pcf_ttm,
+                }
+            },
+        )
+        .collect();
+
+    let income = latest_statement(&s.pool, "a_share.income_q", &code).await?;
+    let balance = latest_statement(&s.pool, "a_share.balance_q", &code).await?;
+    let cashflow = latest_statement(&s.pool, "a_share.cashflow_q", &code).await?;
+    let indicator_rows: Vec<(Option<NaiveDate>, Value)> = sqlx::query_as(
+        "SELECT obs_date, payload FROM raw.record
+         WHERE dataset_id = 'a_share.fin_indicator' AND thscode = $1
+         ORDER BY obs_date DESC NULLS LAST, last_seen_at DESC LIMIT 1",
+    )
+    .bind(&code)
+    .fetch_all(&s.pool)
+    .await?;
+    let indicators = indicator_rows
+        .into_iter()
+        .flat_map(|(_, payload)| parse_abilities(&payload))
+        .collect();
+
+    Ok(Json(Fundamentals {
+        thscode: code,
+        valuation,
+        income,
+        balance,
+        cashflow,
+        indicators,
+    }))
+}
+
+async fn latest_statement(
+    pool: &sqlx::PgPool,
+    dataset: &str,
+    code: &str,
+) -> sqlx::Result<Option<FinancialStatement>> {
+    let row: Option<(Option<NaiveDate>, Value)> = sqlx::query_as(
+        "SELECT obs_date, payload FROM raw.record
+         WHERE dataset_id = $1 AND thscode = $2
+         ORDER BY obs_date DESC NULLS LAST, last_seen_at DESC LIMIT 1",
+    )
+    .bind(dataset)
+    .bind(code)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|(period_end, payload)| parse_statement(&payload, period_end, dataset)))
+}
+
+fn parse_statement(
+    payload: &Value,
+    period_end: Option<NaiveDate>,
+    dataset: &str,
+) -> Option<FinancialStatement> {
+    let keys: &[(&str, &str)] = match dataset {
+        "a_share.income_q" => &[
+            ("operating_income", "营业收入"),
+            ("operating_profit", "营业利润"),
+            ("parent_holder_net_profit", "归母净利润"),
+            ("net_profit", "净利润"),
+            ("basic_eps", "基本每股收益"),
+        ],
+        "a_share.balance_q" => &[
+            ("assets_total", "资产总额"),
+            ("total_debt", "负债总额"),
+            ("holder_equity_total", "所有者权益"),
+            ("cash", "货币资金"),
+            ("accounts_receivable", "应收账款"),
+        ],
+        "a_share.cashflow_q" => &[
+            ("act_cash_flow_net", "经营现金流净额"),
+            ("invest_cash_flow_net", "投资现金流净额"),
+            ("financing_cash_flow_net", "筹资现金流净额"),
+            ("cash_equivalents_net_addition", "现金及等价物净增加"),
+        ],
+        _ => return None,
+    };
+    let metrics = keys
+        .iter()
+        .filter_map(|(key, name)| {
+            json_number(payload, key).map(|value| FundamentalMetric {
+                name: (*name).into(),
+                value,
+            })
+        })
+        .collect::<Vec<_>>();
+    if metrics.is_empty() {
+        return None;
+    }
+    Some(FinancialStatement {
+        period_end,
+        report_date: json_date_ms(payload, "report_date_ms"),
+        metrics,
+    })
+}
+
+fn parse_abilities(payload: &Value) -> Vec<FinancialAbility> {
+    payload
+        .get("abilities")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|group| {
+            let name = group.get("ability")?.as_str()?.to_string();
+            let metrics = group
+                .get("indicators")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|item| {
+                    Some(FundamentalMetric {
+                        name: item.get("index_id")?.as_str()?.to_string(),
+                        value: json_number(item, "value")?,
+                    })
+                })
+                .collect::<Vec<_>>();
+            (!metrics.is_empty()).then_some(FinancialAbility { name, metrics })
+        })
+        .collect()
+}
+
+fn json_number(payload: &Value, key: &str) -> Option<f64> {
+    let value = payload.get(key)?;
+    let number = value
+        .as_f64()
+        .or_else(|| value.as_str()?.parse::<f64>().ok())?;
+    number.is_finite().then_some(number)
+}
+
+fn json_date_ms(payload: &Value, key: &str) -> Option<NaiveDate> {
+    let ms = payload
+        .get(key)?
+        .as_i64()
+        .or_else(|| payload.get(key)?.as_str()?.parse::<i64>().ok())?;
+    chrono::DateTime::from_timestamp(ms / 1000, ((ms % 1000) * 1_000_000) as u32)
+        .map(|d| d.date_naive())
 }
 
 // ───────────────────────── 日线 ─────────────────────────
@@ -179,14 +434,22 @@ fn bar_view(adjust: &str) -> ApiResult<&'static str> {
         "hfq" => "mkt.v_stock_bar_hfq",
         "qfq_ths" => "mkt.v_stock_bar_qfq_ths",
         "hfq_ths" => "mkt.v_stock_bar_hfq_ths",
-        other => return Err(ApiError::BadRequest(format!("adjust 只能是 none / qfq / hfq / qfq_ths / hfq_ths：{other}"))),
+        other => {
+            return Err(ApiError::BadRequest(format!(
+                "adjust 只能是 none / qfq / hfq / qfq_ths / hfq_ths：{other}"
+            )));
+        }
     })
 }
 
 /// 个股日线
 #[utoipa::path(get, path = "/securities/{thscode}/bars", tag = "market", params(("thscode" = String, Path), BarQuery),
     responses((status = 200, description = "成功", body = BarSeries), (status = 400, description = "参数不合法", body = crate::error::ErrorBody)))]
-async fn security_bars(State(s): State<AppState>, Path(code): Path<String>, Query(q): Query<BarQuery>) -> ApiResult<Json<BarSeries>> {
+async fn security_bars(
+    State(s): State<AppState>,
+    Path(code): Path<String>,
+    Query(q): Query<BarQuery>,
+) -> ApiResult<Json<BarSeries>> {
     let adjust = q.adjust.unwrap_or_else(|| "qfq".into());
     let view = bar_view(&adjust)?;
     let limit = q.limit.unwrap_or(500).clamp(1, 10_000);
@@ -201,23 +464,55 @@ async fn security_bars(State(s): State<AppState>, Path(code): Path<String>, Quer
            ORDER BY trade_date DESC LIMIT $4) t ORDER BY trade_date"
     );
     /// (日期, 开, 高, 低, 收, 成交量, 成交额, 复权系数)
-    type BarRow = (NaiveDate, String, String, String, String, i64, Decimal, Option<f64>);
+    type BarRow = (
+        NaiveDate,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        Decimal,
+        Option<f64>,
+    );
     // 审计：view 来自白名单，factor 是固定表达式
-    let rows: Vec<BarRow> =
-        sqlx::query_as(AssertSqlSafe(sql)).bind(&code).bind(q.start).bind(q.end).bind(limit).fetch_all(&s.pool).await?;
-    let fmt = |v: String| if adjust == "none" { v } else { v.parse::<f64>().map(|f| format!("{f:.6}")).unwrap_or(v) };
+    let rows: Vec<BarRow> = sqlx::query_as(AssertSqlSafe(sql))
+        .bind(&code)
+        .bind(q.start)
+        .bind(q.end)
+        .bind(limit)
+        .fetch_all(&s.pool)
+        .await?;
+    let fmt = |v: String| {
+        if adjust == "none" {
+            v
+        } else {
+            v.parse::<f64>().map(|f| format!("{f:.6}")).unwrap_or(v)
+        }
+    };
     let bars = rows
         .into_iter()
-        .map(|(trade_date, o, h, l, c, volume, amount, factor)| Bar { trade_date, open: fmt(o), high: fmt(h), low: fmt(l), close: fmt(c), volume, amount, factor })
+        .map(|(trade_date, o, h, l, c, volume, amount, factor)| Bar {
+            trade_date,
+            open: fmt(o),
+            high: fmt(h),
+            low: fmt(l),
+            close: fmt(c),
+            volume,
+            amount,
+            factor,
+        })
         .collect();
-    Ok(Json(BarSeries { thscode: code, adjust, bars }))
+    Ok(Json(BarSeries {
+        thscode: code,
+        adjust,
+        bars,
+    }))
 }
 
 /// 校验快慢线周期，返回 (fast, slow)
 pub(super) fn windows(fast: Option<i32>, slow: Option<i32>) -> ApiResult<(usize, usize)> {
     ma::validate_windows(fast.unwrap_or(15), slow.unwrap_or(30)).map_err(ApiError::BadRequest)
 }
-
 
 // ───────────────────────── 指数 ─────────────────────────
 
@@ -239,7 +534,10 @@ pub struct IndexQuery {
 
 /// 指数与板块列表
 #[utoipa::path(get, path = "/indices", tag = "market", params(IndexQuery), responses((status = 200, description = "成功", body = [IndexInfo])))]
-async fn list_indices(State(s): State<AppState>, Query(q): Query<IndexQuery>) -> ApiResult<Json<Vec<IndexInfo>>> {
+async fn list_indices(
+    State(s): State<AppState>,
+    Query(q): Query<IndexQuery>,
+) -> ApiResult<Json<Vec<IndexInfo>>> {
     let rows = sqlx::query_as(
         "SELECT i.thscode, i.name, i.category,
                 (SELECT count(*) FROM ref.index_member m WHERE m.index_code = i.thscode AND m.valid_to IS NULL) AS members
@@ -256,7 +554,11 @@ async fn list_indices(State(s): State<AppState>, Query(q): Query<IndexQuery>) ->
 
 /// 指数日线（指数没有复权）
 #[utoipa::path(get, path = "/indices/{thscode}/bars", tag = "market", params(("thscode" = String, Path), BarQuery), responses((status = 200, description = "成功", body = BarSeries)))]
-async fn index_bars(State(s): State<AppState>, Path(code): Path<String>, Query(q): Query<BarQuery>) -> ApiResult<Json<BarSeries>> {
+async fn index_bars(
+    State(s): State<AppState>,
+    Path(code): Path<String>,
+    Query(q): Query<BarQuery>,
+) -> ApiResult<Json<BarSeries>> {
     let limit = q.limit.unwrap_or(500).clamp(1, 10_000);
     let rows: Vec<(NaiveDate, String, String, String, String, Decimal, Decimal)> = sqlx::query_as(
         "SELECT * FROM (SELECT trade_date, open::text, high::text, low::text, close::text, volume, amount FROM mkt.index_bar_1d
@@ -282,7 +584,11 @@ async fn index_bars(State(s): State<AppState>, Path(code): Path<String>, Query(q
             factor: None,
         })
         .collect();
-    Ok(Json(BarSeries { thscode: code, adjust: "none".into(), bars }))
+    Ok(Json(BarSeries {
+        thscode: code,
+        adjust: "none".into(),
+        bars,
+    }))
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -301,7 +607,11 @@ pub struct MemberQuery {
 
 /// 指数成分（从开始采集那天起有历史）
 #[utoipa::path(get, path = "/indices/{thscode}/members", tag = "market", params(("thscode" = String, Path), MemberQuery), responses((status = 200, description = "成功", body = [IndexMember])))]
-async fn index_members(State(s): State<AppState>, Path(code): Path<String>, Query(q): Query<MemberQuery>) -> ApiResult<Json<Vec<IndexMember>>> {
+async fn index_members(
+    State(s): State<AppState>,
+    Path(code): Path<String>,
+    Query(q): Query<MemberQuery>,
+) -> ApiResult<Json<Vec<IndexMember>>> {
     let rows = sqlx::query_as(
         "SELECT m.thscode, s.name, m.valid_from, m.valid_to FROM ref.index_member m LEFT JOIN ref.security s USING (thscode)
          WHERE m.index_code = $1 AND m.valid_from <= coalesce($2, current_date) AND (m.valid_to IS NULL OR m.valid_to > coalesce($2, current_date))
@@ -425,26 +735,44 @@ pub struct HotStats {
 // @project-doc docs/domains/hotspots.md#rules
 #[utoipa::path(get, path = "/market/hot", tag = "market", params(HotQuery),
     responses((status = 200, description = "成功；这一天的涨跌停数据还没同步时 available 为 false，note 说明原因", body = HotMarket)))]
-async fn market_hot(State(s): State<AppState>, Query(q): Query<HotQuery>) -> ApiResult<Json<HotMarket>> {
+async fn market_hot(
+    State(s): State<AppState>,
+    Query(q): Query<HotQuery>,
+) -> ApiResult<Json<HotMarket>> {
     // 交易日和 /market/overview 一样取本地日线里不晚于请求日期的最近一天；
     // 日线还没同步时退回涨跌停池自己的最新日期，先把已经同步的涨停池显示出来
-    let bar_date: Option<NaiveDate> =
-        sqlx::query_scalar("SELECT max(trade_date) FROM mkt.stock_bar_1d WHERE ($1::date IS NULL OR trade_date <= $1)")
-            .bind(q.date)
-            .fetch_one(&s.pool)
-            .await?;
+    let bar_date: Option<NaiveDate> = sqlx::query_scalar(
+        "SELECT max(trade_date) FROM mkt.stock_bar_1d WHERE ($1::date IS NULL OR trade_date <= $1)",
+    )
+    .bind(q.date)
+    .fetch_one(&s.pool)
+    .await?;
     let trade_date = match (bar_date, q.date) {
         (Some(d), _) => Some(d),
         (None, Some(d)) => Some(d),
         (None, None) => {
-            sqlx::query_scalar("SELECT max(obs_date) FROM raw.record WHERE dataset_id = $1").bind(HOT_LIMIT_UP).fetch_one(&s.pool).await?
+            sqlx::query_scalar("SELECT max(obs_date) FROM raw.record WHERE dataset_id = $1")
+                .bind(HOT_LIMIT_UP)
+                .fetch_one(&s.pool)
+                .await?
         }
     };
     let Some(trade_date) = trade_date else {
-        return Ok(empty_hot(None, "本地还没有行情数据，等第一次同步完成后再看".to_string()));
+        return Ok(empty_hot(
+            None,
+            "本地还没有行情数据，等第一次同步完成后再看".to_string(),
+        ));
     };
 
-    let ids: Vec<String> = [HOT_LIMIT_UP, HOT_LIMIT_DOWN, HOT_LIMIT_BREAK, HOT_LIMIT_STATS].iter().map(|s| (*s).to_string()).collect();
+    let ids: Vec<String> = [
+        HOT_LIMIT_UP,
+        HOT_LIMIT_DOWN,
+        HOT_LIMIT_BREAK,
+        HOT_LIMIT_STATS,
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
     // 只取这 4 个数据集当天的记录；供应商偶尔有一行的 thscode 为空，用 ticker 到证券表里补
     let rows: Vec<(String, Value, Option<String>)> = sqlx::query_as(
         "SELECT r.dataset_id, r.payload,
@@ -458,7 +786,8 @@ async fn market_hot(State(s): State<AppState>, Query(q): Query<HotQuery>) -> Api
     .fetch_all(&s.pool)
     .await?;
 
-    let (mut up_rows, mut down_rows, mut break_rows, mut stats) = (Vec::new(), Vec::new(), Vec::new(), None);
+    let (mut up_rows, mut down_rows, mut break_rows, mut stats) =
+        (Vec::new(), Vec::new(), Vec::new(), None);
     for (dataset, payload, thscode) in rows {
         match dataset.as_str() {
             HOT_LIMIT_UP => up_rows.push((payload, thscode)),
@@ -468,16 +797,23 @@ async fn market_hot(State(s): State<AppState>, Query(q): Query<HotQuery>) -> Api
             _ => {}
         }
     }
-    let available = !up_rows.is_empty() || !down_rows.is_empty() || !break_rows.is_empty() || stats.is_some();
+    let available =
+        !up_rows.is_empty() || !down_rows.is_empty() || !break_rows.is_empty() || stats.is_some();
     if !available {
         // 涨停池从 2020-07-22 才有；比这更早的日期不是没同步，而是那时还没数据
         let earliest = NaiveDate::from_ymd_opt(2020, 7, 22).expect("固定日期");
         let note = if trade_date < earliest {
-            format!("{} 太早了：涨停数据从 2020 年 7 月 22 日才开始有", trade_date.format("%Y-%m-%d"))
+            format!(
+                "{} 太早了：涨停数据从 2020 年 7 月 22 日才开始有",
+                trade_date.format("%Y-%m-%d")
+            )
         } else if trade_date == crate::time::today_cn() {
             "今天的涨停数据还没同步，稍后再看".to_string()
         } else {
-            format!("{} 的涨停、跌停、炸板数据还没同步，稍后再看", trade_date.format("%Y-%m-%d"))
+            format!(
+                "{} 的涨停、跌停、炸板数据还没同步，稍后再看",
+                trade_date.format("%Y-%m-%d")
+            )
         };
         return Ok(empty_hot(Some(trade_date), note));
     }
@@ -486,7 +822,10 @@ async fn market_hot(State(s): State<AppState>, Query(q): Query<HotQuery>) -> Api
     let mut by_board: BTreeMap<i32, Vec<(f64, HotLimitUpStock)>> = BTreeMap::new();
     for (payload, thscode) in up_rows {
         let seal = json_num(&payload, "seal_money").unwrap_or(0.0);
-        by_board.entry(board_num_of(&payload)).or_default().push((seal, limit_up_stock(&payload, thscode)));
+        by_board
+            .entry(board_num_of(&payload))
+            .or_default()
+            .push((seal, limit_up_stock(&payload, thscode)));
     }
     let limit_up_total = by_board.values().map(|v| v.len()).sum::<usize>() as i64;
     let max_board = by_board.keys().next_back().copied().unwrap_or(0);
@@ -494,22 +833,50 @@ async fn market_hot(State(s): State<AppState>, Query(q): Query<HotQuery>) -> Api
         .into_iter()
         .rev()
         .map(|(board_num, mut stocks)| {
-            stocks.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.thscode.cmp(&b.1.thscode)));
+            stocks.sort_by(|a, b| {
+                b.0.total_cmp(&a.0)
+                    .then_with(|| a.1.thscode.cmp(&b.1.thscode))
+            });
             let count = stocks.len() as i64;
-            let stocks = stocks.into_iter().take(HOT_STOCK_LIMIT).map(|(_, s)| s).collect();
-            HotLimitUpGroup { board_num, label: board_label(board_num), count, stocks }
+            let stocks = stocks
+                .into_iter()
+                .take(HOT_STOCK_LIMIT)
+                .map(|(_, s)| s)
+                .collect();
+            HotLimitUpGroup {
+                board_num,
+                label: board_label(board_num),
+                count,
+                stocks,
+            }
         })
         .collect();
 
     // 跌停按跌幅从大到小；炸板按炸板次数从多到少。都只列前 50 只，总数另给
     let limit_down_total = down_rows.len() as i64;
-    let mut limit_down_stocks: Vec<HotStock> = down_rows.into_iter().map(|(payload, thscode)| hot_stock(&payload, thscode)).collect();
-    limit_down_stocks.sort_by(|a, b| a.price_change_pct.unwrap_or(0.0).total_cmp(&b.price_change_pct.unwrap_or(0.0)).then_with(|| a.thscode.cmp(&b.thscode)));
+    let mut limit_down_stocks: Vec<HotStock> = down_rows
+        .into_iter()
+        .map(|(payload, thscode)| hot_stock(&payload, thscode))
+        .collect();
+    limit_down_stocks.sort_by(|a, b| {
+        a.price_change_pct
+            .unwrap_or(0.0)
+            .total_cmp(&b.price_change_pct.unwrap_or(0.0))
+            .then_with(|| a.thscode.cmp(&b.thscode))
+    });
     limit_down_stocks.truncate(HOT_STOCK_LIMIT);
 
     let broken_total = break_rows.len() as i64;
-    let mut broken_stocks: Vec<HotStock> = break_rows.into_iter().map(|(payload, thscode)| hot_stock(&payload, thscode)).collect();
-    broken_stocks.sort_by(|a, b| b.open_times.unwrap_or(0).cmp(&a.open_times.unwrap_or(0)).then_with(|| a.thscode.cmp(&b.thscode)));
+    let mut broken_stocks: Vec<HotStock> = break_rows
+        .into_iter()
+        .map(|(payload, thscode)| hot_stock(&payload, thscode))
+        .collect();
+    broken_stocks.sort_by(|a, b| {
+        b.open_times
+            .unwrap_or(0)
+            .cmp(&a.open_times.unwrap_or(0))
+            .then_with(|| a.thscode.cmp(&b.thscode))
+    });
     broken_stocks.truncate(HOT_STOCK_LIMIT);
 
     Ok(Json(HotMarket {
@@ -555,7 +922,11 @@ fn board_num_of(payload: &Value) -> i32 {
 }
 
 fn board_label(board_num: i32) -> String {
-    if board_num <= 1 { "首板".to_string() } else { format!("{board_num} 板") }
+    if board_num <= 1 {
+        "首板".to_string()
+    } else {
+        format!("{board_num} 板")
+    }
 }
 
 fn limit_up_stock(payload: &Value, thscode: Option<String>) -> HotLimitUpStock {
@@ -567,7 +938,10 @@ fn limit_up_stock(payload: &Value, thscode: Option<String>) -> HotLimitUpStock {
         last_price: json_str(payload, "last_price"),
         seal_money: json_str(payload, "seal_money"),
         limit_up_time: json_str(payload, "limit_up_time"),
-        is_st: payload.get("is_st").and_then(Value::as_bool).unwrap_or(false),
+        is_st: payload
+            .get("is_st")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     }
 }
 
@@ -589,7 +963,9 @@ fn hot_stats(payload: &Value) -> HotStats {
     HotStats {
         seal_rate: json_num(payload, "seal_rate"),
         limit_up_count: payload.get("limit_up_stock_count").and_then(Value::as_i64),
-        touched_limit_up_count: payload.get("touched_limit_up_stock_count").and_then(Value::as_i64),
+        touched_limit_up_count: payload
+            .get("touched_limit_up_stock_count")
+            .and_then(Value::as_i64),
         open_count: payload.get("open_stock_count").and_then(Value::as_i64),
     }
 }
@@ -598,8 +974,19 @@ fn hot_stats(payload: &Value) -> HotStats {
 /// 都没有时按 6 位代码段补交易所后缀，保证页面上的链接可用
 fn stock_code(payload: &Value, resolved: Option<String>) -> String {
     resolved
-        .or_else(|| payload.get("thscode").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string))
-        .or_else(|| payload.get("ticker").and_then(Value::as_str).and_then(ticker_with_exchange))
+        .or_else(|| {
+            payload
+                .get("thscode")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            payload
+                .get("ticker")
+                .and_then(Value::as_str)
+                .and_then(ticker_with_exchange)
+        })
         .unwrap_or_default()
 }
 

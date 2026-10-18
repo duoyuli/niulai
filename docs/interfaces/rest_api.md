@@ -42,6 +42,7 @@
 | `PUT /setup/api-key` | 验证并保存 API Key，立即生效 | 请求体 `{api_key}`；见 [首次登录引导](#setup) |
 | `GET /securities` | 证券列表 | `q`（代码或名称片段）、`board`；`limit` 默认 50、最大 500；`offset` |
 | `GET /securities/{thscode}` | 证券详情：简称历史、本地日线的范围和根数 | 不存在时返回 404 |
+| `GET /securities/{thscode}/fundamentals` | 个股基本面：最近估值历史，以及最近一期利润表、资产负债表、现金流量表和财务指标；报表同时返回披露日期 | `limit` 默认 90、最大 365 |
 | `GET /securities/{thscode}/bars` | 个股日线 | `adjust`（见 [复权参数](#adjust_param)）、`start`、`end`；`limit` 默认 500、最大 10,000，返回范围内**最近**的 N 根，按日期升序 |
 | `GET /backtest/ma-cross` | 单只股票的均线交叉策略回测：汇总指标、交易记录、每日账户总值 | `thscode`（必填）、`fast`、`slow`、`start`、`end`、`capital` 默认 100,000；`commission_rate`、`min_commission`、`stamp_tax_rate` 默认万 2.5、5 元、千分之 0.5；规则见 [回测](../domains/backtest.md) |
 | `GET /backtest/strategy` | 单只股票的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
@@ -70,7 +71,7 @@
 | `GET /watchlist` | 当前用户的自选股及诊断（每个用户各自一份）：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |
-| `GET /rules/guide` | 设置规则时的辅助：三组参考值（适合什么样的账户、怎么设计、规则、过去 3 年回测），全部参加巡检的策略和它们的过去表现、是否有效 | 见 [选股和风控规则](../domains/accounts.md#rules) |
+| `GET /rules/guide` | 设置规则时的辅助：三组风控参考值（适合什么样的账户、怎么设计），以及可勾选的巡检策略 | 见 [选股和风控规则](../domains/accounts.md#rules) |
 | `GET /accounts` | 当前用户的账户：总资产、当日盈亏、已实现盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的；已实现盈亏见 [撤销流水和已实现盈亏](../domains/accounts.md#undo) |
 | `POST /accounts` | 新建账户（规则用稳健型的参考值），返回 201 和详情，并生成第一份建议 | 请求体 `{name, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
 | `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比、盈亏、止损价、趋势均线）；修改名字、规则 `rules`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [选股和风控规则](../domains/accounts.md#rules)，之后重新生成建议 |
@@ -102,7 +103,7 @@
 | `PUT /sync/schedule` | 修改同步时间（上海时间），返回新的同步计划 | 请求体 `{daily_time, weekly_weekday, weekly_time}`；时间是 `HH:MM`，星期 1（周一）到 7（周日），不合法时返回 400 |
 | `GET /datasets/{dataset_id}/records` | 通用记录查询，返回供应商原始字段 | `thscode`、`start`、`end`（按 `obs_date`）；`limit` 默认 100、最大 1,000；按 `obs_date` 倒序 |
 | `GET /sync/runs` | 最近的运行 | `limit` 默认 20、最大 200 |
-| `POST /sync/runs` | 发起运行，只规划任务，由执行循环执行；返回 202 | 请求体 `{kind, datasets, priorities, thscodes}`；`kind` 是 `backfill` 或 `incremental`；`datasets` 为空时按 `priorities` 选择已开启的数据集，两者都为空时是全部已开启的数据集；运行的 `params.trigger` 记为 `manual` |
+| `POST /sync/runs` | 发起运行，立即返回 202 和第一个波次的 `run_id`；任务规划在后台完成，详情接口轮询任务数 | 请求体 `{kind, datasets, priorities, thscodes}`；`kind` 是 `backfill` 或 `incremental`；`datasets` 为空时按 `priorities` 选择已开启的数据集，两者都为空时是全部已开启的数据集；运行的 `params.trigger` 记为 `manual` |
 | `GET /sync/runs/{run_id}` | 一次同步的详情，传任何一批的编号都返回整次同步：第一批的字段、已经开始的各批（`waves`）、还没开始的批次的数据集（`waiting`）、各批合计的各数据集进度、这次没有新建任务的数据集及原因（`without_tasks`，`queued_in` 是同样内容正在排队的那次同步）、最多 50 条失败任务 | 进度中 `done` 包括成功、没有数据和跳过，`pending` 包括等待重试的，`failed` 只算不再重试的，与运行的 `tasks_done`、`tasks_failed` 口径一致 |
 
 `POST /sync/runs` 返回的 `run_id` 是第一个波次。后续波次是新的运行，`params.root_run` 指向它，见 [波次规划](../architecture/sync_pipeline.md#waves)。

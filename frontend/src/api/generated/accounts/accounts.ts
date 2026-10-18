@@ -2158,7 +2158,7 @@ export const useUndoTrade = <TError = ErrorBody,
 }
 
 /**
- * @summary 设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和参考策略的过去表现
+ * @summary 设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和可勾选策略
  */
 export const rulesGuide = async ( options?: Parameters<typeof apiFetch>[1]): Promise<RulesGuide> => {
 
@@ -2229,7 +2229,7 @@ export function useRulesGuide<TData = Awaited<ReturnType<typeof rulesGuide>>, TE
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary 设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和参考策略的过去表现
+ * @summary 设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和可勾选策略
  */
 
 export function useRulesGuide<TData = Awaited<ReturnType<typeof rulesGuide>>, TError = unknown>(

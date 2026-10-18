@@ -60,7 +60,7 @@
 | `special.limit_up_stats` | 封板率、涨停家数、各连板高度的家数 | 最近一年 |
 | `special.dragon_tiger`、`special.dragon_tiger_institution` | 龙虎榜；上榜 A 股的机构买卖金额和席位 | 最近一年 |
 | `special.dragon_tiger_department*` | 营业部战绩与历史上榜（P3，默认关闭） | — |
-| `special.hot_stock_daily` | 每日热股前 30 名 | 最近一年 |
+| `special.hot_stock_daily` | 每日热股前 30 名；供应商返回 5003 时按没有数据处理 | 最近一年 |
 | `special.anomaly_reason` | 当日个股异动原因和关键词（约 350 条） | 只有当天 |
 | `special.abnormal_monitor` | 交易所严重异动、重点监控 | 历史约 740 条 |
 | `special.auction_*`、`special.hot_stock_now`、`special.skyrocket` | 竞价基准与机会、实时热榜（P3，默认关闭） | 一年或只有当前 |

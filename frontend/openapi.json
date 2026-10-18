@@ -2452,7 +2452,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和参考策略的过去表现",
+        "summary": "设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和可勾选策略",
         "operationId": "rules_guide",
         "responses": {
           "200": {
@@ -2752,6 +2752,61 @@
           },
           "404": {
             "description": "证券不存在或没有日线",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/securities/{thscode}/fundamentals": {
+      "get": {
+        "tags": [
+          "market"
+        ],
+        "summary": "个股估值和最近财务摘要。财务数据按披露日期标记，页面不会把报告期误当成数据可见日期。",
+        "operationId": "security_fundamentals",
+        "parameters": [
+          {
+            "name": "thscode",
+            "in": "path",
+            "description": "例：600519.SH",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "返回最近多少个交易日的估值，默认 90，最大 365",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Fundamentals"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "证券不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -6348,6 +6403,126 @@
           }
         }
       },
+      "FinancialAbility": {
+        "type": "object",
+        "required": [
+          "name",
+          "metrics"
+        ],
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FundamentalMetric"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "growth / profitability / solvency / operation / cash-flow"
+          }
+        }
+      },
+      "FinancialStatement": {
+        "type": "object",
+        "required": [
+          "metrics"
+        ],
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FundamentalMetric"
+            }
+          },
+          "period_end": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "report_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          }
+        }
+      },
+      "FundamentalMetric": {
+        "type": "object",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "面向用户的指标名称"
+          },
+          "value": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "Fundamentals": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "valuation",
+          "indicators"
+        ],
+        "properties": {
+          "balance": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FinancialStatement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cashflow": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FinancialStatement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "income": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FinancialStatement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "indicators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FinancialAbility"
+            }
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "valuation": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValuationPoint"
+            },
+            "description": "每个交易日一条，按日期倒序"
+          }
+        }
+      },
       "Gap": {
         "type": "object",
         "required": [
@@ -8239,7 +8414,7 @@
       },
       "PresetInfo": {
         "type": "object",
-        "description": "一组参考值：适合什么样的账户、怎么设计、过去 3 年的回测",
+        "description": "一组参考值：适合什么样的账户、怎么设计",
         "required": [
           "preset",
           "name",
@@ -8248,17 +8423,6 @@
           "rules"
         ],
         "properties": {
-          "backtest": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/RulesBacktest",
-                "description": "按这组规则过去 3 年的回测；还没算时为空"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "design": {
             "type": "array",
             "items": {
@@ -8573,13 +8737,13 @@
           "min_edge_pct": {
             "type": "number",
             "format": "double",
-            "description": "有效策略的门槛：过去 3 年买点之后 20 个交易日，平均比随便买至少多涨几个百分点",
-            "default": 0.3
+            "description": "历史兼容字段：旧版本保存的有效门槛仍能读取，但当前建议流程不使用它",
+            "default": 0.0
           },
           "min_picks": {
             "type": "integer",
             "format": "int32",
-            "description": "至少几个有效策略同时选中才买",
+            "description": "至少几个勾选的策略同时选中才买",
             "default": 1,
             "minimum": 0
           },
@@ -8780,7 +8944,7 @@
             "items": {
               "$ref": "#/components/schemas/StrategyQuality"
             },
-            "description": "全部参加巡检的策略，过去表现好的在前"
+            "description": "全部参加巡检的策略，内置策略在前，再按名称排序"
           }
         }
       },
@@ -10141,7 +10305,7 @@
       },
       "StrategyQuality": {
         "type": "object",
-        "description": "一个参考策略：过去表现和是否算作有效策略",
+        "description": "一个参考策略：勾选后即可参与账户建议",
         "required": [
           "strategy_id",
           "name",
@@ -10151,125 +10315,12 @@
           "builtin": {
             "type": "boolean"
           },
-          "effective": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "买点之后 20 日平均好于同一天随便买，而且超过误差的 2 倍（不是运气）；还没统计或买点太少时为空"
-          },
           "name": {
             "type": "string"
-          },
-          "stat": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/StrategyStat",
-                "description": "过去 3 年的表现；还没统计时为空"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "strategy_id": {
             "type": "integer",
             "format": "int64"
-          }
-        }
-      },
-      "StrategyStat": {
-        "type": "object",
-        "required": [
-          "start",
-          "end",
-          "signals",
-          "closed"
-        ],
-        "properties": {
-          "after20_avg_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "买点之后 20 个交易日的平均涨跌（%，第二天开盘买、第 20 个交易日收盘算）"
-          },
-          "after20_up_ratio": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "买点之后 20 个交易日上涨的比例"
-          },
-          "avg_bars_held": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "avg_return_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "卖出的交易的平均收益（%，前复权，不扣费用）"
-          },
-          "base20_avg_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "同样那些天随便买的平均涨跌（%）：每个买点日默认股票池里全部股票的平均，按买点数加权"
-          },
-          "closed": {
-            "type": "integer",
-            "format": "int64",
-            "description": "其中已经按卖出规则卖出的",
-            "minimum": 0
-          },
-          "end": {
-            "type": "string",
-            "format": "date"
-          },
-          "excess_se_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "超额的标准误（百分点，按交易日分组）。超额不到它的 2 倍，多半是运气。旧的统计没有，重算后才有"
-          },
-          "signal_days": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "有买点的交易日数",
-            "minimum": 0
-          },
-          "signals": {
-            "type": "integer",
-            "format": "int64",
-            "description": "买点次数",
-            "minimum": 0
-          },
-          "start": {
-            "type": "string",
-            "format": "date"
-          },
-          "win_rate": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "卖出的交易中赚钱的比例（0.55 表示 55%）"
           }
         }
       },
@@ -11045,6 +11096,60 @@
           },
           "user": {
             "$ref": "#/components/schemas/User"
+          }
+        }
+      },
+      "ValuationPoint": {
+        "type": "object",
+        "required": [
+          "trade_date"
+        ],
+        "properties": {
+          "float_market_cap": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "流通市值（元）"
+          },
+          "pb_mrq": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "市净率（最近报告期）"
+          },
+          "pcf_ttm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "市现率（TTM）"
+          },
+          "pe_mrq": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "市盈率（最近报告期）"
+          },
+          "pe_ttm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "市盈率（TTM）"
+          },
+          "ps_ttm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "市销率（TTM）"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
           }
         }
       },

@@ -24,8 +24,6 @@ use crate::analysis::points;
 use crate::analysis::prices;
 use crate::analysis::strategy::Definition;
 
-use super::stats::{DayAcc, MIN_SIGNALS, edge, forward_return};
-
 /// 判断有效策略往前看几年；参考值的回测区间也是这么长
 pub const YEARS: i64 = 3;
 
@@ -33,7 +31,11 @@ pub const YEARS: i64 = 3;
 pub const MAX_YEARS: i64 = 5;
 
 /// 回测区间：开始日期为空时是结束日期那年的 1 月 1 日（今年以来），结束日期为空或晚于最新交易日时取最新交易日
-pub fn resolve_range(latest: NaiveDate, start: Option<NaiveDate>, end: Option<NaiveDate>) -> Result<(NaiveDate, NaiveDate), String> {
+pub fn resolve_range(
+    latest: NaiveDate,
+    start: Option<NaiveDate>,
+    end: Option<NaiveDate>,
+) -> Result<(NaiveDate, NaiveDate), String> {
     let end = end.map_or(latest, |e| e.min(latest));
     let start = start.unwrap_or_else(|| NaiveDate::from_ymd_opt(end.year(), 1, 1).unwrap_or(end));
     if start >= end {
@@ -48,7 +50,10 @@ pub fn resolve_range(latest: NaiveDate, start: Option<NaiveDate>, end: Option<Na
 pub const MAX_STRATEGIES: usize = 64;
 /// 本金（只影响金额，不影响收益率）
 const CAPITAL: f64 = 1_000_000.0;
-const FEES: Fees = Fees { commission_rate: 0.00025, min_commission: 5.0 };
+const FEES: Fees = Fees {
+    commission_rate: 0.00025,
+    min_commission: 5.0,
+};
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
 pub struct RulesBacktestSummary {
@@ -144,90 +149,82 @@ impl Stock {
     }
 }
 
-/// 某一年哪些策略有效（按位），以及各自的超额（%）
+/// 某一年允许参与买入的策略（按位）。账户回测不再根据过去表现筛掉策略。
 #[derive(Clone, Default, Debug)]
 struct YearEdge {
     mask: u64,
-    edge: Vec<f64>,
-}
-
-/// 每个策略按买点日累计的涨跌（第二天开盘买、第 20 个交易日收盘算），以及同一天随便买的；和策略过去表现同一个口径（见 stats）
-struct Sums {
-    by_strategy: Vec<DayAcc>,
-    base: DayAcc,
-}
-
-impl Sums {
-    fn new(n: usize) -> Self {
-        Sums { by_strategy: (0..n).map(|_| DayAcc::default()).collect(), base: DayAcc::default() }
-    }
-
-    /// 第 year 年的有效策略：只看 year 之前 3 年里的买点，并且买点之后的 20 个交易日在 year 开始之前已经走完
-    /// （买点日至少早 40 天），不用未来的数据；判断和每日建议相同（超过门槛、超过标准误的 2 倍、买点够多）
-    fn edges(&self, year: i32, rules: &Rules) -> YearEdge {
-        let n = self.by_strategy.len();
-        let mut out = YearEdge { mask: 0, edge: vec![f64::NAN; n] };
-        let (Some(from), Some(jan1)) = (NaiveDate::from_ymd_opt(year - YEARS as i32, 1, 1), NaiveDate::from_ymd_opt(year, 1, 1)) else { return out };
-        let until = jan1 - chrono::Duration::days(40);
-        for (k, acc) in self.by_strategy.iter().enumerate() {
-            let Some(e) = edge(acc, &self.base, |d| d >= from && d < until) else { continue };
-            if e.n < MIN_SIGNALS {
-                continue;
-            }
-            out.edge[k] = e.excess;
-            if rules.effective(e.se.map(|se| (e.excess, se))) {
-                out.mask |= 1 << k;
-            }
-        }
-        out
-    }
 }
 
 // @project-doc docs/domains/accounts.md#rules_backtest
 /// 回测 [start, end]（用 resolve_range 定好的区间）
-pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start: NaiveDate, end: NaiveDate) -> anyhow::Result<Option<RulesBacktest>> {
-    let used: Vec<&(i64, Definition)> = all.iter().filter(|(id, _)| rules.uses(*id)).take(MAX_STRATEGIES).collect();
+pub async fn run(
+    pool: &PgPool,
+    rules: &Rules,
+    all: &[(i64, Definition)],
+    start: NaiveDate,
+    end: NaiveDate,
+) -> anyhow::Result<Option<RulesBacktest>> {
+    let used: Vec<&(i64, Definition)> = all
+        .iter()
+        .filter(|(id, _)| rules.uses(*id))
+        .take(MAX_STRATEGIES)
+        .collect();
     if used.is_empty() {
         return Ok(None);
     }
     let defs: Vec<&Definition> = used.iter().map(|(_, d)| d).collect();
-    let names: HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>("SELECT strategy_id, name FROM app.strategy").fetch_all(pool).await?.into_iter().collect();
-    let strategy_names: Vec<String> = used.iter().map(|(id, _)| names.get(id).cloned().unwrap_or_else(|| format!("策略 {id}"))).collect();
+    let names: HashMap<i64, String> =
+        sqlx::query_as::<_, (i64, String)>("SELECT strategy_id, name FROM app.strategy")
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .collect();
+    let strategy_names: Vec<String> = used
+        .iter()
+        .map(|(id, _)| {
+            names
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| format!("策略 {id}"))
+        })
+        .collect();
     let edge_from = start - chrono::Duration::days(365 * YEARS);
     let sec = market::securities(pool).await?;
     let base_def = Definition::any_stock();
-    let warmup = defs.iter().map(|d| d.warmup()).max().unwrap_or(30).max(rules.trend_ma) + 5;
+    let warmup = defs
+        .iter()
+        .map(|d| d.warmup())
+        .max()
+        .unwrap_or(30)
+        .max(rules.trend_ma)
+        + 5;
     let lo = edge_from - chrono::Duration::days(calendar_days_for(warmup));
     // 权威涨跌停池：参考值回测里的买卖点同样以供应商的名单为准
     let limits = crate::analysis::limit_pool::LimitPool::load(pool, lo, end).await?;
     let mut raw: Vec<(Vec<NaiveDate>, Stock)> = vec![];
-    let mut sums = Sums::new(defs.len());
     let mut ew = crate::analysis::portfolio::EqualWeight::default();
     // 每天：收盘站上 20 日均线的股票数、当天有日线的股票数
     let mut breadth: HashMap<NaiveDate, (u32, u32)> = HashMap::new();
     prices::for_each_stock(pool, lo, end, |code, bars| {
-        let Some(meta) = sec.meta.get(code) else { return };
-        let Some(first_edge) = bars.iter().position(|b| b.date >= edge_from) else { return };
-        let f = Frame::with_authority(bars, Some(meta), &limits, code);
-        for i in first_edge..bars.len() {
-            if base_def.in_universe(&f, meta, i)
-                && let Some(r) = forward_return(bars, i)
-            {
-                sums.base.add(bars[i].date, r);
-            }
-        }
+        let Some(meta) = sec.meta.get(code) else {
+            return;
+        };
+        let Some(first_edge) = bars.iter().position(|b| b.date >= edge_from) else {
+            return;
+        };
+        let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
+        let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
         let first = bars.iter().position(|b| b.date >= start);
         let n = first.map_or(0, |f0| bars.len() - f0);
         let mut buy = vec![0u64; n];
         for (k, d) in defs.iter().enumerate() {
             for t in points::run(bars, &f, meta, d, first_edge).trades {
-                let Ok(s) = bars.binary_search_by_key(&t.signal_date, |b| b.date) else { continue };
-                if let Some(r) = forward_return(bars, s) {
-                    sums.by_strategy[k].add(t.signal_date, r);
-                }
+                let Ok(s) = bars.binary_search_by_key(&t.signal_date, |b| b.date) else {
+                    continue;
+                };
                 if let Some(f0) = first
                     && s >= f0
-                    && !meta.is_st
+                    && !f.is_st(s)
                 {
                     buy[s - f0] |= 1 << k;
                 }
@@ -275,11 +272,20 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
         raw.push((dates, s));
     })
     .await?;
-    let calendar: Vec<NaiveDate> = raw.iter().flat_map(|(d, _)| d.iter().copied()).collect::<BTreeSet<_>>().into_iter().collect();
+    let calendar: Vec<NaiveDate> = raw
+        .iter()
+        .flat_map(|(d, _)| d.iter().copied())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     if calendar.len() < 20 {
         return Ok(None);
     }
-    let index: HashMap<NaiveDate, u32> = calendar.iter().enumerate().map(|(i, d)| (*d, i as u32)).collect();
+    let index: HashMap<NaiveDate, u32> = calendar
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (*d, i as u32))
+        .collect();
     let stocks: Vec<Stock> = raw
         .into_iter()
         .map(|(dates, mut s)| {
@@ -295,9 +301,25 @@ pub async fn run(pool: &PgPool, rules: &Rules, all: &[(i64, Definition)], start:
             }
         }
     }
-    let edges: HashMap<i32, YearEdge> = (calendar[0].year()..=calendar[calendar.len() - 1].year()).map(|y| (y, sums.edges(y, rules))).collect();
+    let all_mask = if defs.len() >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << defs.len()) - 1
+    };
+    let edges: HashMap<i32, YearEdge> = (calendar[0].year()..=calendar[calendar.len() - 1].year())
+        .map(|y| (y, YearEdge { mask: all_mask }))
+        .collect();
     let bench = ew.series(calendar[0], *calendar.last().expect("日历不为空"));
-    let mut r = simulate(rules, &stocks, &signals, &calendar, &breadth, &edges, bench, &strategy_names);
+    let mut r = simulate(
+        rules,
+        &stocks,
+        &signals,
+        &calendar,
+        &breadth,
+        &edges,
+        bench,
+        &strategy_names,
+    );
     r.summary.strategies = defs.len();
     Ok(Some(r))
 }
@@ -335,7 +357,10 @@ struct PendingBuy {
 
 /// 按位列出策略名
 fn names_of(bits: u64, names: &[String]) -> Vec<String> {
-    (0..names.len()).filter(|k| bits & (1 << k) != 0).map(|k| names[k].clone()).collect()
+    (0..names.len())
+        .filter(|k| bits & (1 << k) != 0)
+        .map(|k| names[k].clone())
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -401,7 +426,12 @@ fn simulate(
                 cash += net;
                 closed += 1;
                 wins += (net > h.cost) as usize;
-                trades.push(trade(&h, Some((d32, s.open[k] as f64, ps.reason)), net, d32));
+                trades.push(trade(
+                    &h,
+                    Some((d32, s.open[k] as f64, ps.reason)),
+                    net,
+                    d32,
+                ));
             }
         }
         pending_sell = still;
@@ -409,7 +439,9 @@ fn simulate(
             let s = &stocks[b.stock];
             let Some(k) = s.at(d32) else { continue };
             let open = s.q_open[k] as f64;
-            if (s.one_price[k] && open > b.ref_close) || open / b.ref_close - 1.0 > p.chase_limit_pct / 100.0 {
+            if (s.one_price[k] && open > b.ref_close)
+                || open / b.ref_close - 1.0 > p.chase_limit_pct / 100.0
+            {
                 continue;
             }
             let invest = b.budget.min(cash);
@@ -446,7 +478,11 @@ fn simulate(
         let week = date.format("%G-%V").to_string();
         if last_week.as_ref() != Some(&week) || d + 1 == calendar.len() {
             last_week = Some(week);
-            equity.push(RulesEquityPoint { date: *date, value: value / CAPITAL, benchmark: bench.as_ref().and_then(|(_, b)| b.get(date).copied()) });
+            equity.push(RulesEquityPoint {
+                date: *date,
+                value: value / CAPITAL,
+                benchmark: bench.as_ref().and_then(|(_, b)| b.get(date).copied()),
+            });
         }
 
         // 收盘后：决定明天卖什么
@@ -462,14 +498,20 @@ fn simulate(
             let reason = if ret <= -p.stop_loss_pct / 100.0 {
                 Some(format!("止损：亏 {:.1}%", -ret * 100.0))
             } else if s.exit[k] & h.origin != 0 {
-                Some(format!("「{}」的卖出条件", names_of(h.origin, strategy_names).join("")))
+                Some(format!(
+                    "「{}」的卖出条件",
+                    names_of(h.origin, strategy_names).join("")
+                ))
             } else if !ma.is_nan() && close < ma {
                 Some(format!("收盘跌破 {} 日均线", p.trend_ma))
             } else {
                 None
             };
             if let Some(reason) = reason {
-                pending_sell.push(PendingSell { stock: h.stock, reason });
+                pending_sell.push(PendingSell {
+                    stock: h.stock,
+                    reason,
+                });
             }
         }
         // 再决定明天买什么
@@ -478,22 +520,27 @@ fn simulate(
         if weak && p.weak_market == WeakMarket::Pause {
             continue;
         }
-        let mut slots = p.max_positions as i64 - held.len().saturating_sub(pending_sell.len()) as i64;
-        let proceeds: f64 = held.iter().filter(|h| pending_sell.iter().any(|x| x.stock == h.stock)).map(|h| h.units * h.last_close).sum();
+        let mut slots =
+            p.max_positions as i64 - held.len().saturating_sub(pending_sell.len()) as i64;
+        let proceeds: f64 = held
+            .iter()
+            .filter(|h| pending_sell.iter().any(|x| x.stock == h.stock))
+            .map(|h| h.units * h.last_close)
+            .sum();
         let mut available = cash + proceeds - value * p.min_cash_pct / 100.0;
         if weak && p.weak_market == WeakMarket::Half {
             available *= 0.5;
         }
-        let edge_sum = |m: u64| (0..64usize).filter(|k| m & (1 << k) != 0).map(|k| year.edge.get(k).copied().filter(|e| e.is_finite()).unwrap_or(0.0)).sum::<f64>();
         let mut list: Vec<(usize, usize, u64)> = signals[d]
             .iter()
             .map(|&(si, k)| (si, k, stocks[si].buy[k] & year.mask))
-            .filter(|(si, _, m)| m.count_ones() >= p.min_picks && !held.iter().any(|h| h.stock == *si))
+            .filter(|(si, _, m)| {
+                m.count_ones() >= p.min_picks && !held.iter().any(|h| h.stock == *si)
+            })
             .collect();
         list.sort_by(|a, b| {
             b.2.count_ones()
                 .cmp(&a.2.count_ones())
-                .then_with(|| edge_sum(b.2).total_cmp(&edge_sum(a.2)))
                 .then_with(|| stocks[b.0].amount[b.1].total_cmp(&stocks[a.0].amount[a.1]))
         });
         for (si, k, m) in list {
@@ -501,7 +548,14 @@ fn simulate(
                 break;
             }
             let target = (available / slots as f64).min(value * p.max_weight_pct / 100.0);
-            pending_buy.push(PendingBuy { stock: si, budget: target, origin: m.isolate_lowest_one(), picks: m, ref_close: stocks[si].q_close[k] as f64, signal_day: d32 });
+            pending_buy.push(PendingBuy {
+                stock: si,
+                budget: target,
+                origin: m.isolate_lowest_one(),
+                picks: m,
+                ref_close: stocks[si].q_close[k] as f64,
+                signal_day: d32,
+            });
             available -= target;
             slots -= 1;
         }
@@ -511,7 +565,11 @@ fn simulate(
     for h in &held {
         trades.push(trade(h, None, h.units * h.last_close, n as u32 - 1));
     }
-    trades.sort_by(|a, b| b.entry_date.cmp(&a.entry_date).then_with(|| a.thscode.cmp(&b.thscode)));
+    trades.sort_by(|a, b| {
+        b.entry_date
+            .cmp(&a.entry_date)
+            .then_with(|| a.thscode.cmp(&b.thscode))
+    });
     let last = equity.last().map_or(1.0, |e| e.value);
     let days = (calendar[n - 1] - calendar[0]).num_days();
     RulesBacktest {
@@ -522,7 +580,11 @@ fn simulate(
             annual_return: (days >= 90).then(|| last.powf(365.25 / days as f64) - 1.0),
             max_drawdown: max_dd,
             benchmark_name: bench.as_ref().map(|(name, _)| name.clone()),
-            benchmark_return: equity.iter().rev().find_map(|e| e.benchmark).map(|b| b - 1.0),
+            benchmark_return: equity
+                .iter()
+                .rev()
+                .find_map(|e| e.benchmark)
+                .map(|b| b - 1.0),
             trades: closed,
             win_rate: (closed > 0).then(|| wins as f64 / closed as f64),
             avg_positions: pos_sum / n as f64,
@@ -541,9 +603,15 @@ pub async fn refresh_presets(pool: &PgPool) -> anyhow::Result<()> {
     for preset in Preset::ALL {
         let rules = preset.rules();
         let started = std::time::Instant::now();
-        let Some(latest) = market::resolve_date(pool, None).await? else { return Ok(()) };
-        let start = latest.checked_sub_months(chrono::Months::new(12 * YEARS as u32)).unwrap_or(latest);
-        let Some(mut r) = run(pool, &rules, &defs, start, latest).await? else { continue };
+        let Some(latest) = market::resolve_date(pool, None).await? else {
+            return Ok(());
+        };
+        let start = latest
+            .checked_sub_months(chrono::Months::new(12 * YEARS as u32))
+            .unwrap_or(latest);
+        let Some(mut r) = run(pool, &rules, &defs, start, latest).await? else {
+            continue;
+        };
         // 参考值只展示汇总，不保存几百笔交易记录
         r.trades.clear();
         sqlx::query(
@@ -556,14 +624,25 @@ pub async fn refresh_presets(pool: &PgPool) -> anyhow::Result<()> {
         .bind(serde_json::to_value(&r)?)
         .execute(pool)
         .await?;
-        tracing::info!(preset = preset.key(), total_return = r.summary.total_return, max_drawdown = r.summary.max_drawdown, ms = started.elapsed().as_millis() as u64, "参考值回测完成");
+        tracing::info!(
+            preset = preset.key(),
+            total_return = r.summary.total_return,
+            max_drawdown = r.summary.max_drawdown,
+            ms = started.elapsed().as_millis() as u64,
+            "参考值回测完成"
+        );
     }
     Ok(())
 }
 
 pub async fn load_presets(pool: &PgPool) -> anyhow::Result<HashMap<String, RulesBacktest>> {
-    let rows: Vec<(String, serde_json::Value)> = sqlx::query_as("SELECT preset, result FROM app.preset_stat").fetch_all(pool).await?;
-    rows.into_iter().map(|(k, v)| Ok((k, serde_json::from_value(v)?))).collect()
+    let rows: Vec<(String, serde_json::Value)> =
+        sqlx::query_as("SELECT preset, result FROM app.preset_stat")
+            .fetch_all(pool)
+            .await?;
+    rows.into_iter()
+        .map(|(k, v)| Ok((k, serde_json::from_value(v)?)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -572,7 +651,9 @@ mod tests {
 
     /// 两只股票、10 天：A 只被策略 1 选中、一路上涨；B 被两个策略选中、之后跌破止损。开盘价等于前一天收盘价
     fn stocks() -> (Vec<Stock>, Vec<NaiveDate>) {
-        let cal: Vec<NaiveDate> = (0..10).map(|i| NaiveDate::from_ymd_opt(2026, 9, 1).unwrap() + chrono::Duration::days(i)).collect();
+        let cal: Vec<NaiveDate> = (0..10)
+            .map(|i| NaiveDate::from_ymd_opt(2026, 9, 1).unwrap() + chrono::Duration::days(i))
+            .collect();
         let mk = |closes: Vec<f32>, buy_days: &[usize], bits: u64| Stock {
             code: "T".into(),
             name: "测试".into(),
@@ -582,12 +663,22 @@ mod tests {
             q_close: closes.clone(),
             one_price: vec![false; 10],
             ma_trend: vec![f32::NAN; 10],
-            buy: (0..10).map(|i| if buy_days.contains(&i) { bits } else { 0 }).collect(),
+            buy: (0..10)
+                .map(|i| if buy_days.contains(&i) { bits } else { 0 })
+                .collect(),
             exit: vec![0; 10],
             amount: vec![1e9; 10],
         };
-        let a = mk((0..10).map(|i| 10.0 + i as f32).collect(), &[0, 1, 2, 3], 0b01);
-        let b = mk(vec![10.0, 10.0, 10.0, 9.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0], &[1], 0b11);
+        let a = mk(
+            (0..10).map(|i| 10.0 + i as f32).collect(),
+            &[0, 1, 2, 3],
+            0b01,
+        );
+        let b = mk(
+            vec![10.0, 10.0, 10.0, 9.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0],
+            &[1],
+            0b11,
+        );
         (vec![a, b], cal)
     }
 
@@ -604,14 +695,23 @@ mod tests {
     }
 
     #[test]
-    fn only_effective_strategies_count_and_stops_out() {
+    fn selected_strategies_count_and_stops_out() {
         let (stocks, cal) = stocks();
         let breadth: HashMap<NaiveDate, (u32, u32)> = cal.iter().map(|d| (*d, (60, 100))).collect();
         let p = Preset::Aggressive.rules();
         let names = vec!["策略一".to_string(), "策略二".to_string()];
         // 两个策略都有效：A 第 1 天买入一路涨；B 第 2 天买入，第 3 天收盘亏 10% 触发止损，第 4 天卖出
-        let both: HashMap<i32, YearEdge> = HashMap::from([(2026, YearEdge { mask: 0b11, edge: vec![1.0, 2.0] })]);
-        let r = simulate(&p, &stocks, &signals(&stocks), &cal, &breadth, &both, None, &names);
+        let both: HashMap<i32, YearEdge> = HashMap::from([(2026, YearEdge { mask: 0b11 })]);
+        let r = simulate(
+            &p,
+            &stocks,
+            &signals(&stocks),
+            &cal,
+            &breadth,
+            &both,
+            None,
+            &names,
+        );
         assert_eq!(r.summary.trades, 1, "{:?}", r.summary);
         assert_eq!(r.summary.win_rate, Some(0.0));
         assert!(r.summary.total_return > 0.0, "{:?}", r.summary);
@@ -620,20 +720,28 @@ mod tests {
         assert_eq!(r.trades.len(), 2, "{:?}", r.trades);
         let b = r.trades.iter().find(|t| t.exit_date.is_some()).unwrap();
         // 第 4 天收盘亏 20%（第 3 天亏 10% 差一点没到止损线），第 5 天开盘卖出
-        assert_eq!((b.signal_date, b.entry_date, b.exit_date), (cal[1], cal[2], Some(cal[5])));
+        assert_eq!(
+            (b.signal_date, b.entry_date, b.exit_date),
+            (cal[1], cal[2], Some(cal[5]))
+        );
         assert_eq!(b.exit_reason.as_deref(), Some("止损：亏 20.0%"));
         assert_eq!(b.strategies, ["策略一", "策略二"]);
         assert!(b.return_pct < 0.0 && b.profit < 0.0 && b.days_held == 3);
         let a = r.trades.iter().find(|t| t.exit_date.is_none()).unwrap();
         assert!(a.return_pct > 0.0 && a.exit_reason.is_none());
         assert!(r.trades[0].entry_date >= r.trades[1].entry_date);
-        // 只有策略 2 有效：A 只被策略 1 选中，不买；只买 B
-        let second: HashMap<i32, YearEdge> = HashMap::from([(2026, YearEdge { mask: 0b10, edge: vec![-1.0, 2.0] })]);
-        let r = simulate(&p, &stocks, &signals(&stocks), &cal, &breadth, &second, None, &names);
-        assert!(r.summary.total_return < 0.0, "{:?}", r.summary);
-        // 要求至少 2 个有效策略：只剩 B（两个策略都选中）
+        // 至少 2 个勾选策略同时选中时，只买 B
         let strict = Rules { min_picks: 2, ..p };
-        let r = simulate(&strict, &stocks, &signals(&stocks), &cal, &breadth, &both, None, &names);
+        let r = simulate(
+            &strict,
+            &stocks,
+            &signals(&stocks),
+            &cal,
+            &breadth,
+            &both,
+            None,
+            &names,
+        );
         assert_eq!(r.summary.trades, 1);
         assert!(r.summary.total_return < 0.0);
     }
@@ -642,35 +750,20 @@ mod tests {
     fn ranges_default_to_this_year_and_stop_at_latest_day() {
         let d = |y, m, dd| NaiveDate::from_ymd_opt(y, m, dd).unwrap();
         let latest = d(2026, 10, 16);
-        assert_eq!(resolve_range(latest, None, None), Ok((d(2026, 1, 1), latest)), "默认今年以来");
-        assert_eq!(resolve_range(latest, Some(d(2026, 7, 16)), Some(d(2026, 12, 31))), Ok((d(2026, 7, 16), latest)), "结束日期不晚于最新交易日");
+        assert_eq!(
+            resolve_range(latest, None, None),
+            Ok((d(2026, 1, 1), latest)),
+            "默认今年以来"
+        );
+        assert_eq!(
+            resolve_range(latest, Some(d(2026, 7, 16)), Some(d(2026, 12, 31))),
+            Ok((d(2026, 7, 16), latest)),
+            "结束日期不晚于最新交易日"
+        );
         assert!(resolve_range(latest, Some(d(2026, 10, 16)), None).is_err());
-        assert!(resolve_range(latest, Some(d(2020, 1, 1)), None).is_err(), "最长 5 年");
-    }
-
-    #[test]
-    fn edges_only_use_earlier_years() {
-        let d = |y, m, day| NaiveDate::from_ymd_opt(y, m, day).unwrap();
-        let mut s = Sums::new(2);
-        let rules = |min_edge_pct| Rules { min_edge_pct, ..Rules::default() };
-        // 2021–2023 年每个月一天：随便买涨 1%，策略 0 每个买点涨 3%（每天略有不同），策略 1 涨 0.5%
-        for y in [2021, 2022, 2023] {
-            for m in 1..=12 {
-                let day = d(y, m, 10);
-                s.base.add(day, 1.0);
-                for i in 0..3 {
-                    s.by_strategy[0].add(day, 3.0 + f64::from(i + m) * 0.01);
-                    s.by_strategy[1].add(day, 0.5 + f64::from(i) * 0.01);
-                }
-            }
-        }
-        // 2024 年里的表现不影响 2024 年的判断；2023 年 12 月的买点 20 天还没走完，也不用
-        s.base.add(d(2024, 3, 1), 1.0);
-        s.by_strategy[1].add(d(2024, 3, 1), 1e9);
-        let e = s.edges(2024, &rules(0.0));
-        assert_eq!(e.mask, 0b01);
-        assert_eq!(s.edges(2024, &rules(2.5)).mask, 0, "门槛 2.5% 时策略 0 的约 2% 不够");
-        assert!((e.edge[0] - 2.075).abs() < 0.01 && (e.edge[1] + 0.49).abs() < 0.01, "{:?}", e.edge);
-        assert_eq!(s.edges(2021, &rules(0.0)).mask, 0, "之前没有数据时没有有效策略");
+        assert!(
+            resolve_range(latest, Some(d(2020, 1, 1)), None).is_err(),
+            "最长 5 年"
+        );
     }
 }

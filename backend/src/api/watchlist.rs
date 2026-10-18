@@ -14,10 +14,10 @@ use utoipa_axum::routes;
 use super::AppState;
 use super::auth::CurrentUser;
 use super::market::windows;
-use crate::analysis::ma::{CrossSignal, ma_cross, state_of};
 use crate::analysis::diagnosis::{SignalEvent, recent_signals};
 use crate::analysis::indicators::Frame;
 use crate::analysis::limit_pool::LimitPool;
+use crate::analysis::ma::{CrossSignal, ma_cross, state_of};
 use crate::analysis::{market, prices};
 use crate::error::{ApiError, ApiResult};
 
@@ -27,7 +27,9 @@ const LOOKBACK: i64 = 500;
 const RECENT_BARS: i64 = 200;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(list_watchlist)).routes(routes!(add_watch, remove_watch))
+    OpenApiRouter::new()
+        .routes(routes!(list_watchlist))
+        .routes(routes!(add_watch, remove_watch))
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -104,10 +106,22 @@ pub struct LastCross {
 /// 自选股列表及诊断
 #[utoipa::path(get, path = "/watchlist", tag = "watchlist", params(WatchQuery),
     responses((status = 200, description = "成功", body = Watchlist), (status = 400, description = "参数不合法", body = crate::error::ErrorBody)))]
-async fn list_watchlist(State(s): State<AppState>, me: CurrentUser, Query(q): Query<WatchQuery>) -> ApiResult<Json<Watchlist>> {
+async fn list_watchlist(
+    State(s): State<AppState>,
+    me: CurrentUser,
+    Query(q): Query<WatchQuery>,
+) -> ApiResult<Json<Watchlist>> {
     let (fast, slow) = windows(q.fast, q.slow)?;
     /// (代码, 名称, 板块, 退市日, 收藏时间, 最新日期, 最新收盘)
-    type BaseRow = (String, String, String, Option<NaiveDate>, DateTime<Utc>, Option<NaiveDate>, Option<String>);
+    type BaseRow = (
+        String,
+        String,
+        String,
+        Option<NaiveDate>,
+        DateTime<Utc>,
+        Option<NaiveDate>,
+        Option<String>,
+    );
     let base: Vec<BaseRow> = sqlx::query_as(
         "SELECT w.thscode, s.name, s.board, s.delisted_on, w.added_at, l.trade_date, l.close::text
          FROM app.watchlist w JOIN ref.security s USING (thscode)
@@ -126,20 +140,55 @@ async fn list_watchlist(State(s): State<AppState>, me: CurrentUser, Query(q): Qu
     let sec = market::securities(&s.pool).await?;
     // 权威涨跌停池：最近信号里的涨跌停、炸板、连板以供应商的名单为准；自选股数量不多，按股票只读需要的行
     let limits = match market::resolve_date(&s.pool, None).await? {
-        Some(last) => LimitPool::load_for(&s.pool, &codes, last - chrono::Duration::days(market::calendar_days_for((RECENT_BARS + 10) as u32)), last).await?,
+        Some(last) => {
+            LimitPool::load_for(
+                &s.pool,
+                &codes,
+                last - chrono::Duration::days(market::calendar_days_for((RECENT_BARS + 10) as u32)),
+                last,
+            )
+            .await?
+        }
         None => LimitPool::empty(),
     };
     let mut items = vec![];
     for (thscode, name, board, delisted_on, added_at, last_date, close) in base {
-        let diagnosis = series.get(&thscode).and_then(|pts| diagnose(pts, fast, slow));
+        let diagnosis = series
+            .get(&thscode)
+            .and_then(|pts| diagnose(pts, fast, slow));
         let bars = prices::recent_bars(&s.pool, &thscode, RECENT_BARS).await?;
         let recent_signals = {
-            let f = Frame::with_authority(&bars, sec.meta.get(&thscode), &limits, &thscode);
+            let history = sec
+                .st_history
+                .get(&thscode)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let f = Frame::with_authority_and_st_history(
+                &bars,
+                sec.meta.get(&thscode),
+                &limits,
+                &thscode,
+                history,
+            );
             recent_signals(&f, 5)
         };
-        items.push(WatchItem { thscode, name, board, delisted_on, added_at, last_date, close, diagnosis, recent_signals });
+        items.push(WatchItem {
+            thscode,
+            name,
+            board,
+            delisted_on,
+            added_at,
+            last_date,
+            close,
+            diagnosis,
+            recent_signals,
+        });
     }
-    Ok(Json(Watchlist { fast: fast as i32, slow: slow as i32, items }))
+    Ok(Json(Watchlist {
+        fast: fast as i32,
+        slow: slow as i32,
+        items,
+    }))
 }
 
 // @project-doc docs/domains/ma_signals.md#watchlist
@@ -151,35 +200,70 @@ fn diagnose(pts: &[(NaiveDate, f64)], fast: usize, slow: usize) -> Option<WatchD
     let rows = ma_cross(&closes, fast, slow);
     let ma = rows.last().copied().flatten().map(|last| {
         let last_cross = rows.iter().enumerate().rev().find_map(|(i, r)| {
-            r.and_then(|r| r.signal).map(|signal| LastCross { signal, trade_date: pts[i].0, bars_ago: (pts.len() - 1 - i) as i64 })
+            r.and_then(|r| r.signal).map(|signal| LastCross {
+                signal,
+                trade_date: pts[i].0,
+                bars_ago: (pts.len() - 1 - i) as i64,
+            })
         });
         let trend = match state_of(last.ma_fast, last.ma_slow) {
             1 => MaTrend::Above,
             -1 => MaTrend::Below,
             _ => MaTrend::Equal,
         };
-        MaState { ma_fast: last.ma_fast, ma_slow: last.ma_slow, trend, last_cross }
+        MaState {
+            ma_fast: last.ma_fast,
+            ma_slow: last.ma_slow,
+            trend,
+            last_cross,
+        }
     });
-    Some(WatchDiagnosis { change_1d: change(1), change_20d: change(20), ma })
+    Some(WatchDiagnosis {
+        change_1d: change(1),
+        change_20d: change(20),
+        ma,
+    })
 }
 
 /// 收藏一只股票（重复收藏不报错）
 #[utoipa::path(put, path = "/watchlist/{thscode}", tag = "watchlist", params(("thscode" = String, Path, description = "例：600519.SH")),
     responses((status = 204, description = "已收藏"), (status = 404, description = "证券不存在", body = crate::error::ErrorBody)))]
-async fn add_watch(State(s): State<AppState>, me: CurrentUser, Path(code): Path<String>) -> ApiResult<StatusCode> {
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ref.security WHERE thscode = $1)").bind(&code).fetch_one(&s.pool).await?;
+async fn add_watch(
+    State(s): State<AppState>,
+    me: CurrentUser,
+    Path(code): Path<String>,
+) -> ApiResult<StatusCode> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ref.security WHERE thscode = $1)")
+            .bind(&code)
+            .fetch_one(&s.pool)
+            .await?;
     if !exists {
         return Err(ApiError::NotFound(format!("证券不存在：{code}")));
     }
-    sqlx::query("INSERT INTO app.watchlist (user_id, thscode) VALUES ($1, $2) ON CONFLICT DO NOTHING").bind(me.user_id).bind(&code).execute(&s.pool).await?;
+    sqlx::query(
+        "INSERT INTO app.watchlist (user_id, thscode) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(me.user_id)
+    .bind(&code)
+    .execute(&s.pool)
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// 取消收藏（本来没有收藏也不报错）
 #[utoipa::path(delete, path = "/watchlist/{thscode}", tag = "watchlist", params(("thscode" = String, Path, description = "例：600519.SH")),
     responses((status = 204, description = "已取消收藏")))]
-async fn remove_watch(State(s): State<AppState>, me: CurrentUser, Path(code): Path<String>) -> ApiResult<StatusCode> {
-    sqlx::query("DELETE FROM app.watchlist WHERE user_id = $1 AND thscode = $2").bind(me.user_id).bind(&code).execute(&s.pool).await?;
+async fn remove_watch(
+    State(s): State<AppState>,
+    me: CurrentUser,
+    Path(code): Path<String>,
+) -> ApiResult<StatusCode> {
+    sqlx::query("DELETE FROM app.watchlist WHERE user_id = $1 AND thscode = $2")
+        .bind(me.user_id)
+        .bind(&code)
+        .execute(&s.pool)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -190,13 +274,21 @@ mod tests {
     #[test]
     fn enough_history_for_recent_signals() {
         use crate::analysis::signals;
-        let most = signals::CATALOG.iter().map(|s| signals::warmup(s.id, &signals::Params::new())).max().unwrap();
+        let most = signals::CATALOG
+            .iter()
+            .map(|s| signals::warmup(s.id, &signals::Params::new()))
+            .max()
+            .unwrap();
         assert!(most as i64 + 5 <= RECENT_BARS);
     }
 
     fn pts(closes: &[f64]) -> Vec<(NaiveDate, f64)> {
         let d0 = NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
-        closes.iter().enumerate().map(|(i, &c)| (d0 + chrono::Duration::days(i as i64), c)).collect()
+        closes
+            .iter()
+            .enumerate()
+            .map(|(i, &c)| (d0 + chrono::Duration::days(i as i64), c))
+            .collect()
     }
 
     #[test]
@@ -209,7 +301,10 @@ mod tests {
         let ma = d.ma.unwrap();
         assert_eq!(ma.trend, MaTrend::Above);
         let c = ma.last_cross.unwrap();
-        assert_eq!((c.signal, c.trade_date, c.bars_ago), (CrossSignal::Golden, p[5].0, 1));
+        assert_eq!(
+            (c.signal, c.trade_date, c.bars_ago),
+            (CrossSignal::Golden, p[5].0, 1)
+        );
     }
 
     #[test]

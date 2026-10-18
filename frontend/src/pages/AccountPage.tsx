@@ -822,8 +822,8 @@ function Settings({ d }: { d: AccountDetail }) {
       <Card title="用这个账户的规则回测">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           按保存后的规则，假设这段时间每天都照着建议做，账户会怎样。点快捷区间会把起止日期填进框里，也可以直接改日期（最长
-          5 年，结束日期最晚到最新交易日）。哪些策略算有效，每年只用之前 3
-          年的数据判断。全市场计算，通常要几十秒到一两分钟，算的时候可以取消；改日期不会自动重算。
+          5
+          年，结束日期最晚到最新交易日）。勾选的策略都会参与，按同时命中的策略数和成交额排序。全市场计算，通常要几十秒到一两分钟，算的时候可以取消；改日期不会自动重算。
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <RangePicker value={range} options={BACKTEST_RANGES} onChange={(p) => setRange((r) => ({ ...r, ...p }))} />

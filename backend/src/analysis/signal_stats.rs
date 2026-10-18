@@ -78,8 +78,15 @@ struct Base {
 
 // @project-doc docs/domains/strategies.md#signal_stats
 /// 统计一个条件（通常是「当天出现某个信号」）最近 years 年的表现。股票池用默认股票池，排除 ST、低价和成交太少的股票
-pub async fn compute(pool: &PgPool, cond: &Condition, lib: &SignalLib, years: u32) -> anyhow::Result<Option<SignalStats>> {
-    let Some(end) = market::resolve_date(pool, None).await? else { return Ok(None) };
+pub async fn compute(
+    pool: &PgPool,
+    cond: &Condition,
+    lib: &SignalLib,
+    years: u32,
+) -> anyhow::Result<Option<SignalStats>> {
+    let Some(end) = market::resolve_date(pool, None).await? else {
+        return Ok(None);
+    };
     let start = end - chrono::Duration::days(365 * years as i64);
     let sec = market::securities(pool).await?;
     let d = Definition {
@@ -101,9 +108,14 @@ pub async fn compute(pool: &PgPool, cond: &Condition, lib: &SignalLib, years: u3
     let mut stocks = 0u64;
     let mut recent: Vec<Occurrence> = vec![];
     prices::for_each_stock(pool, lo, end, |code, bars| {
-        let Some(meta) = sec.meta.get(code) else { return };
-        let Some(first) = bars.iter().position(|b| b.date >= start) else { return };
-        let f = Frame::with_authority(bars, Some(meta), &limits, code);
+        let Some(meta) = sec.meta.get(code) else {
+            return;
+        };
+        let Some(first) = bars.iter().position(|b| b.date >= start) else {
+            return;
+        };
+        let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
+        let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
         let s = cond.series(&f, lib);
         let mut hit = false;
         for i in first..bars.len() {
@@ -116,7 +128,9 @@ pub async fn compute(pool: &PgPool, cond: &Condition, lib: &SignalLib, years: u3
                 hit = true;
             }
             for (h, &days) in HORIZONS.iter().enumerate() {
-                let Some(later) = bars.get(i + days) else { continue };
+                let Some(later) = bars.get(i + days) else {
+                    continue;
+                };
                 let r = (later.q_close / bars[i].q_close - 1.0) * 100.0;
                 if !r.is_finite() {
                     continue;
@@ -129,8 +143,15 @@ pub async fn compute(pool: &PgPool, cond: &Condition, lib: &SignalLib, years: u3
                 }
             }
             if fresh {
-                let after = bars.get(i + 20).map(|l| (l.q_close / bars[i].q_close - 1.0) * 100.0);
-                recent.push(Occurrence { trade_date: bars[i].date, thscode: code.to_string(), name: sec.names.get(code).cloned().unwrap_or_default(), after_20d_pct: after });
+                let after = bars
+                    .get(i + 20)
+                    .map(|l| (l.q_close / bars[i].q_close - 1.0) * 100.0);
+                recent.push(Occurrence {
+                    trade_date: bars[i].date,
+                    thscode: code.to_string(),
+                    name: sec.names.get(code).cloned().unwrap_or_default(),
+                    after_20d_pct: after,
+                });
                 // 只留最近的一批，避免全市场几万次出现都放在内存里
                 if recent.len() > RECENT * 20 {
                     recent.sort_by_key(|o| std::cmp::Reverse(o.trade_date));
@@ -141,7 +162,11 @@ pub async fn compute(pool: &PgPool, cond: &Condition, lib: &SignalLib, years: u3
         stocks += hit as u64;
     })
     .await?;
-    recent.sort_by(|a, b| b.trade_date.cmp(&a.trade_date).then_with(|| a.thscode.cmp(&b.thscode)));
+    recent.sort_by(|a, b| {
+        b.trade_date
+            .cmp(&a.trade_date)
+            .then_with(|| a.thscode.cmp(&b.thscode))
+    });
     recent.truncate(RECENT);
     let horizons = HORIZONS
         .iter()
@@ -150,9 +175,17 @@ pub async fn compute(pool: &PgPool, cond: &Condition, lib: &SignalLib, years: u3
         .map(|((&days, mut a), b)| {
             let n = a.returns.len();
             a.returns.sort_by(|x, y| x.total_cmp(y));
-            let avg = if n > 0 { a.returns.iter().sum::<f64>() / n as f64 } else { f64::NAN };
+            let avg = if n > 0 {
+                a.returns.iter().sum::<f64>() / n as f64
+            } else {
+                f64::NAN
+            };
             let median = if n > 0 { a.returns[n / 2] } else { f64::NAN };
-            let up = if n > 0 { a.returns.iter().filter(|r| **r > 0.0).count() as f64 / n as f64 } else { f64::NAN };
+            let up = if n > 0 {
+                a.returns.iter().filter(|r| **r > 0.0).count() as f64 / n as f64
+            } else {
+                f64::NAN
+            };
             HorizonStat {
                 days: days as u32,
                 samples: n as u64,
@@ -164,7 +197,15 @@ pub async fn compute(pool: &PgPool, cond: &Condition, lib: &SignalLib, years: u3
             }
         })
         .collect();
-    Ok(Some(SignalStats { start, end, occurrences, stocks, horizons, recent, universe: d.describe_universe() }))
+    Ok(Some(SignalStats {
+        start,
+        end,
+        occurrences,
+        stocks,
+        horizons,
+        recent,
+        universe: d.describe_universe(),
+    }))
 }
 
 fn finite(v: f64) -> Option<f64> {

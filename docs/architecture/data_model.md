@@ -61,7 +61,7 @@
 | `mkt.stock_bar_1d` | `a_share.bar_1d`（`source = hist`）、`a_share.snapshot`（`source = snapshot`） | 未复权日线。两种来源的覆盖规则见 [快照精度](../domains/market_data_rules.md#snapshot_precision) |
 | `mkt.index_bar_1d` | `index.bar_1d`、`index.snapshot` | 指数日线，没有复权；快照只补 `pre_close` |
 | `mkt.corp_action` | `a_share.corp_action_dump` | 公司行动原样保存，`seq` 是同一除权日内的源顺序。覆盖规则见 [公司行动规则](../domains/price_adjustment.md#corp_action_rules) |
-| `fin.valuation_1d` | `a_share.valuation`（PE、PB、PS、PCF）、`a_share.auction_final`（`float_market_cap`） | 每个交易日一行，两个数据集分别更新各自的列 |
+| `fin.valuation_1d` | `a_share.valuation`（PE、PB、PS、PCF）、`a_share.auction_final`（`float_market_cap`） | 每个交易日一行，两个数据集分别更新各自的列；个股基本面接口读取这里的估值历史 |
 
 `mkt.adj_segment` 不由 sink 写入，由运行结束后的存储过程全量重算，见 [复权](../domains/price_adjustment.md)。
 

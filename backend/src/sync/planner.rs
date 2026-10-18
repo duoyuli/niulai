@@ -55,6 +55,17 @@ pub struct PlanOptions {
     pub windows: Vec<Window>,
 }
 
+/// API 交给后台规划的第一批运行。`run_id` 已经可供页面轮询，规划完成后才会出现任务。
+pub struct PlanningJob {
+    pub run_id: i64,
+    kind: RunKind,
+    trade_date: NaiveDate,
+    datasets: Vec<String>,
+    pending: Vec<Vec<String>>,
+    only: Vec<String>,
+    trigger: Option<String>,
+}
+
 /// 依赖层级（波次）：
 /// - 0：不依赖本地数据的数据集（once、enum，以及按自然日或接口日期列表展开的 trading_day）
 /// - 1：按本地交易日历展开的 trading_day（排在交易日历之后）
@@ -129,6 +140,61 @@ impl<'a> Planner<'a> {
         self.plan_wave(wave).await?.context("没有前一个运行时总会创建运行")
     }
 
+    /// 先创建一个带 planning 标记的运行，给 API 立即返回；实际展开任务由调用方在后台执行。
+    pub async fn create_planning_job(&self, kind: RunKind, specs: &[&DatasetSpec], opts: PlanOptions) -> anyhow::Result<PlanningJob> {
+        let mut waves: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+        for s in specs {
+            waves.entry(wave_of(s, self.registry)).or_default().push(s.id.clone());
+        }
+        let mut waves: Vec<Vec<String>> = waves.into_values().collect();
+        if waves.is_empty() {
+            bail!("没有可规划的数据集");
+        }
+        let datasets = waves.remove(0);
+        let trade_date = opts.trade_date.unwrap_or_else(today_cn);
+        let trigger = opts.trigger.clone();
+        let mut tx = self.pool.begin().await?;
+        let new_run = run::NewRun {
+            kind,
+            trade_date,
+            datasets: &datasets,
+            pending_waves: &waves,
+            root_run: None,
+            only_thscodes: &opts.only_thscodes,
+            trigger: trigger.as_deref(),
+            planning: true,
+        };
+        let run_id = run::create(&mut tx, &new_run).await?;
+        tx.commit().await?;
+        Ok(PlanningJob { run_id, kind, trade_date, datasets, pending: waves, only: opts.only_thscodes, trigger })
+    }
+
+    /// 在后台展开已创建的 planning 运行；失败时把运行标为 failed，页面仍可展示原因。
+    pub async fn run_planning_job(&self, job: PlanningJob) -> anyhow::Result<()> {
+        let PlanningJob { run_id, kind, trade_date, datasets, pending, only, trigger } = job;
+        let windows: Vec<Window> = vec![];
+        let wave = Wave {
+            kind,
+            trade_date,
+            datasets,
+            pending,
+            root_run: None,
+            prev_run: None,
+            only: &only,
+            trigger: trigger.as_deref(),
+            windows: &windows,
+        };
+        if let Err(e) = self.plan_wave_existing(wave, run_id).await {
+            sqlx::query("UPDATE ops.run SET status = 'failed', error = $2, finished_at = now(), params = params - 'planning' WHERE run_id = $1")
+                .bind(run_id)
+                .bind(format!("规划失败：{e:#}"))
+                .execute(self.pool)
+                .await?;
+            return Err(e);
+        }
+        Ok(())
+    }
+
     /// 某个波次结束后，规划下一个波次（如果有）。返回新的 run_id；已经被别人接上时返回 None。
     /// 可以重复调用：结束后处理中途失败、进程退出时，执行器的定期维护会对还没接上的运行再调一次（[`run::unchained`]）
     pub async fn continue_chain(&self, finished_run: i64) -> anyhow::Result<Option<i64>> {
@@ -153,6 +219,14 @@ impl<'a> Planner<'a> {
     /// 先算出全部任务种子，再在一个事务里创建运行和任务：执行者看到运行时，它的任务已经齐全，
     /// 不会出现前几个数据集的任务做完、后面的还没写入，运行就被判定结束的情况。
     async fn plan_wave(&self, wave: Wave<'_>) -> anyhow::Result<Option<(i64, Vec<(String, usize)>)>> {
+        self.plan_wave_inner(wave, None).await
+    }
+
+    async fn plan_wave_existing(&self, wave: Wave<'_>, run_id: i64) -> anyhow::Result<Option<(i64, Vec<(String, usize)>)>> {
+        self.plan_wave_inner(wave, Some(run_id)).await
+    }
+
+    async fn plan_wave_inner(&self, wave: Wave<'_>, existing_run: Option<i64>) -> anyhow::Result<Option<(i64, Vec<(String, usize)>)>> {
         let specs: Vec<&DatasetSpec> = wave.datasets.iter().filter_map(|id| self.registry.get(id)).collect();
         let ctx = PlanContext { pool: self.pool, client: self.client, today: today_cn(), kind: wave.kind, only: wave.only, windows: wave.windows };
         let mut planned = Vec::with_capacity(specs.len());
@@ -173,16 +247,29 @@ impl<'a> Planner<'a> {
         {
             return Ok(None);
         }
-        let new_run = run::NewRun {
-            kind: wave.kind,
-            trade_date: wave.trade_date,
-            datasets: &wave.datasets,
-            pending_waves: &wave.pending,
-            root_run: wave.root_run,
-            only_thscodes: wave.only,
-            trigger: wave.trigger,
+        let run_id = if let Some(run_id) = existing_run {
+            let changed = sqlx::query("UPDATE ops.run SET params = params - 'planning' WHERE run_id = $1 AND status = 'running'")
+                .bind(run_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+            if changed == 0 {
+                return Ok(None);
+            }
+            run_id
+        } else {
+            let new_run = run::NewRun {
+                kind: wave.kind,
+                trade_date: wave.trade_date,
+                datasets: &wave.datasets,
+                pending_waves: &wave.pending,
+                root_run: wave.root_run,
+                only_thscodes: wave.only,
+                trigger: wave.trigger,
+                planning: false,
+            };
+            run::create(&mut tx, &new_run).await?
         };
-        let run_id = run::create(&mut tx, &new_run).await?;
         let mut summary = vec![];
         let mut total = 0usize;
         for p in &planned {

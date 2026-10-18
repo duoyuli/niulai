@@ -1,4 +1,4 @@
-//! 账户的选股和风控规则：参考哪些策略（默认全部参加巡检的策略）、至少几个有效策略同时选中才买、最多持几只、
+//! 账户的选股和风控规则：参考哪些策略（默认全部参加巡检的策略）、至少几个策略同时选中才买、最多持几只、
 //! 单只最多占多少、留多少现金、止损线、趋势卖出看哪条均线、弱市怎么办、追高上限。
 //! 规则不绑定具体策略：候选股按同一套优先级排序（见 advice::generate）。
 //!
@@ -26,9 +26,9 @@ pub enum WeakMarket {
 pub struct Rules {
     /// 只参考这些策略（策略编号）；为空（null）表示全部参加巡检的策略，以后新增的也自动参考
     pub strategies: Option<Vec<i64>>,
-    /// 有效策略的门槛：过去 3 年买点之后 20 个交易日，平均比随便买至少多涨几个百分点
+    /// 历史兼容字段：旧版本保存的有效门槛仍能读取，但当前建议流程不使用它
     pub min_edge_pct: f64,
-    /// 至少几个有效策略同时选中才买
+    /// 至少几个勾选的策略同时选中才买
     pub min_picks: u32,
     /// 最多同时持有几只
     pub max_positions: u32,
@@ -61,8 +61,14 @@ pub const TREND_MAS: [u32; 5] = [10, 20, 30, 60, 120];
 impl Rules {
     /// 参数是否在合理范围内
     pub fn validate(&self) -> Result<(), String> {
-        let range = |v: f64, lo: f64, hi: f64, what: &str| if (lo..=hi).contains(&v) { Ok(()) } else { Err(format!("{what}应在 {lo} 到 {hi} 之间")) };
-        range(self.min_edge_pct, 0.0, 10.0, "有效策略的门槛（%）")?;
+        let range = |v: f64, lo: f64, hi: f64, what: &str| {
+            if (lo..=hi).contains(&v) {
+                Ok(())
+            } else {
+                Err(format!("{what}应在 {lo} 到 {hi} 之间"))
+            }
+        };
+        range(self.min_edge_pct, 0.0, 10.0, "历史兼容字段（%）")?;
         range(self.min_picks as f64, 1.0, 5.0, "至少几个有效策略同时选中")?;
         range(self.max_positions as f64, 1.0, 20.0, "最多持有只数")?;
         range(self.max_weight_pct, 5.0, 100.0, "单只上限（%）")?;
@@ -83,12 +89,12 @@ impl Rules {
 
     /// 这个策略是否参考
     pub fn uses(&self, strategy_id: i64) -> bool {
-        self.strategies.as_ref().is_none_or(|l| l.contains(&strategy_id))
+        self.strategies
+            .as_ref()
+            .is_none_or(|l| l.contains(&strategy_id))
     }
 
-    /// 策略是否够得上有效：超额（过去 3 年买点之后 20 日平均比同一天随便买多涨的百分点）超过门槛，
-    /// 并且超过标准误的 2 倍（不是运气）。edge 是（超额, 标准误）；还没有统计、买点太少（None）的在观察期，
-    /// 不算有效：新建的策略不会当晚就被拿来买入
+    /// 旧版本兼容方法。当前账户建议不再用历史表现判断策略是否有效。
     pub fn effective(&self, edge: Option<(f64, f64)>) -> bool {
         edge.is_some_and(|(e, se)| e > self.min_edge_pct && e > 2.0 * se)
     }
@@ -135,23 +141,21 @@ impl Preset {
     pub fn design(self) -> Vec<&'static str> {
         match self {
             Preset::Conservative => vec![
-                "只信过去表现明显好的策略：比随便买至少多涨 1 个百分点才算有效",
-                "选股门槛高：至少 2 个有效策略同时看好才买，宁可错过",
+                "至少 2 个勾选的策略同时看好才买，宁可错过",
                 "分散：最多 5 只，单只不超过 20%，一只出问题影响有限",
                 "留 20% 现金，跌的时候有余地",
                 "止损紧（6%），收盘跌破 20 日均线就走，不扛单",
                 "全市场偏弱时不买新股票；开盘比参考价高 3% 以上不追",
             ],
             Preset::Balanced => vec![
-                "比随便买多涨 0.3 个百分点以上的策略算有效",
-                "1 个有效策略看好就考虑买",
+                "1 个勾选的策略看好就考虑买",
                 "最多 6 只，单只不超过 25%，留 10% 现金",
                 "止损 8%，收盘跌破 20 日均线就卖",
                 "全市场偏弱时用于买新股票的钱减半；开盘比参考价高 5% 以上不追",
             ],
             Preset::Aggressive => vec![
-                "只要比随便买好的策略都算有效，候选最多",
-                "1 个有效策略看好就买，几乎满仓",
+                "勾选的策略都可以提供候选，候选最多",
+                "1 个勾选的策略看好就买，几乎满仓",
                 "最多 8 只，单只可以到 30%",
                 "止损宽（10%），趋势看 60 日均线，给股票更多波动空间，但单笔亏损会更大",
                 "全市场偏弱也照常买；开盘比参考价高 7% 以内都追；持有的股票被 ST 也不急着卖",
@@ -163,7 +167,7 @@ impl Preset {
     pub fn rules(self) -> Rules {
         let base = Rules {
             strategies: None,
-            min_edge_pct: 0.3,
+            min_edge_pct: 0.0,
             min_picks: 1,
             max_positions: 6,
             max_weight_pct: 25.0,
@@ -177,7 +181,6 @@ impl Preset {
         };
         match self {
             Preset::Conservative => Rules {
-                min_edge_pct: 1.0,
                 min_picks: 2,
                 max_positions: 5,
                 max_weight_pct: 20.0,
@@ -189,7 +192,6 @@ impl Preset {
             },
             Preset::Balanced => base,
             Preset::Aggressive => Rules {
-                min_edge_pct: 0.0,
                 max_positions: 8,
                 max_weight_pct: 30.0,
                 min_cash_pct: 0.0,
@@ -211,16 +213,26 @@ mod tests {
     #[test]
     fn presets_are_valid_and_ordered() {
         for p in Preset::ALL {
-            p.rules().validate().unwrap_or_else(|e| panic!("{}：{e}", p.name()));
+            p.rules()
+                .validate()
+                .unwrap_or_else(|e| panic!("{}：{e}", p.name()));
         }
-        let (c, b, a) = (Preset::Conservative.rules(), Preset::Balanced.rules(), Preset::Aggressive.rules());
+        let (c, b, a) = (
+            Preset::Conservative.rules(),
+            Preset::Balanced.rules(),
+            Preset::Aggressive.rules(),
+        );
         assert!(c.max_positions < b.max_positions && b.max_positions < a.max_positions);
         assert!(c.stop_loss_pct < b.stop_loss_pct && b.stop_loss_pct < a.stop_loss_pct);
         assert!(c.min_picks >= b.min_picks && b.min_picks >= a.min_picks);
-        assert!(c.min_edge_pct > b.min_edge_pct && b.min_edge_pct > a.min_edge_pct, "越保守，有效策略的门槛越高");
         assert_eq!(Rules::default(), b);
-        assert!(!b.effective(None) && b.effective(Some((0.5, 0.1))) && !b.effective(Some((0.3, 0.1))));
-        assert!(!b.effective(Some((1.0, 0.6))), "超额不到标准误的 2 倍，多半是运气");
+        assert!(
+            !b.effective(None) && b.effective(Some((0.5, 0.1))) && b.effective(Some((0.3, 0.1)))
+        );
+        assert!(
+            !b.effective(Some((1.0, 0.6))),
+            "超额不到标准误的 2 倍，多半是运气"
+        );
     }
 
     #[test]
@@ -229,9 +241,20 @@ mod tests {
         assert_eq!(r.stop_loss_pct, 5.0);
         assert_eq!(r.max_positions, Preset::Balanced.rules().max_positions);
         assert!(r.uses(42));
-        let r = Rules { strategies: Some(vec![1, 2]), ..r };
+        let r = Rules {
+            strategies: Some(vec![1, 2]),
+            ..r
+        };
         assert!(r.uses(1) && !r.uses(3));
-        assert!(Rules { strategies: Some(vec![]), ..r.clone() }.validate().is_err(), "一个都不勾不行，不会当成全部");
+        assert!(
+            Rules {
+                strategies: Some(vec![]),
+                ..r.clone()
+            }
+            .validate()
+            .is_err(),
+            "一个都不勾不行，不会当成全部"
+        );
         assert!(Rules { trend_ma: 7, ..r }.validate().is_err());
     }
 }

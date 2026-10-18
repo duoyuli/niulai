@@ -117,7 +117,14 @@ struct Stock {
 
 /// 按策略的买卖点规则（`points::run`，与每日巡检、K 线买卖点、单股回测同一套）从第 from 根日线
 /// （空仓起步）起找出全部候选交易。资金、仓位、费用和分红处理不在这里，留给账户循环。
-fn candidates(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, from: usize, stock: usize) -> Vec<Candidate> {
+fn candidates(
+    bars: &[DailyBar],
+    f: &Frame,
+    meta: &StockMeta,
+    d: &Definition,
+    from: usize,
+    stock: usize,
+) -> Vec<Candidate> {
     points::run(bars, f, meta, d, from)
         .trades
         .into_iter()
@@ -146,7 +153,11 @@ fn candidates(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, fr
 }
 
 // @project-doc docs/domains/backtest.md#portfolio
-pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Option<PortfolioOutcome>> {
+pub async fn run(
+    pool: &PgPool,
+    d: &Definition,
+    p: &Params,
+) -> anyhow::Result<Option<PortfolioOutcome>> {
     let sec = market::securities(pool).await?;
     let warmup = d.warmup() + 5;
     let lo = p.start - chrono::Duration::days(calendar_days_for(warmup));
@@ -158,19 +169,27 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
     let mut ew = EqualWeight::default();
     let any_stock = Definition::any_stock();
     prices::for_each_stock(pool, lo, p.end, |code, bars| {
-        let Some(meta) = sec.meta.get(code) else { return };
-        let Some(first) = bars.iter().position(|b| b.date >= p.start) else { return };
+        let Some(meta) = sec.meta.get(code) else {
+            return;
+        };
+        let Some(first) = bars.iter().position(|b| b.date >= p.start) else {
+            return;
+        };
         for b in &bars[first..] {
             calendar.insert(b.date);
         }
-        let f = Frame::with_authority(bars, Some(meta), &limits, code);
+        let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
+        let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
         ew.add(&any_stock, bars, &f, meta, first);
         let found = candidates(bars, &f, meta, d, first, stocks.len());
         if found.is_empty() {
             return;
         }
         cands.extend(found);
-        stocks.push(Stock { code: code.to_string(), closes: bars[first..].iter().map(|b| (b.date, b.q_close)).collect() });
+        stocks.push(Stock {
+            code: code.to_string(),
+            closes: bars[first..].iter().map(|b| (b.date, b.q_close)).collect(),
+        });
     })
     .await?;
     if calendar.is_empty() {
@@ -185,8 +204,16 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
     for list in by_entry.values_mut() {
         list.sort_by(|a, b| {
             let (x, y) = (cands[*a].sort_value, cands[*b].sort_value);
-            let o = if d.sort.desc { y.total_cmp(&x) } else { x.total_cmp(&y) };
-            if x.is_nan() || y.is_nan() { x.is_nan().cmp(&y.is_nan()) } else { o }
+            let o = if d.sort.desc {
+                y.total_cmp(&x)
+            } else {
+                x.total_cmp(&y)
+            };
+            if x.is_nan() || y.is_nan() {
+                x.is_nan().cmp(&y.is_nan())
+            } else {
+                o
+            }
         });
     }
 
@@ -202,8 +229,14 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
     let mut held: Vec<Held> = vec![];
     let mut trades: Vec<PortfolioTrade> = vec![];
     let mut equity: Vec<PortfolioPoint> = vec![];
-    let (mut fees, mut skipped, mut peak, mut max_dd, mut pos_days) = (0.0, 0usize, f64::MIN, 0.0f64, 0usize);
-    let name = |c: &Candidate| sec.names.get(&stocks[c.stock].code).cloned().unwrap_or_default();
+    let (mut fees, mut skipped, mut peak, mut max_dd, mut pos_days) =
+        (0.0, 0usize, f64::MIN, 0.0f64, 0usize);
+    let name = |c: &Candidate| {
+        sec.names
+            .get(&stocks[c.stock].code)
+            .cloned()
+            .unwrap_or_default()
+    };
     let trade = |c: &Candidate, ret: f64, closed: bool| PortfolioTrade {
         thscode: stocks[c.stock].code.clone(),
         name: name(c),
@@ -254,7 +287,13 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
                 }
                 fees += fee;
                 cash -= invest;
-                held.push(Held { cand: ci, units: (invest - fee) / c.entry_q, cost: invest, cursor: 0, last_close: c.entry_q });
+                held.push(Held {
+                    cand: ci,
+                    units: (invest - fee) / c.entry_q,
+                    cost: invest,
+                    cursor: 0,
+                    last_close: c.entry_q,
+                });
             }
         }
         // 收盘：按前复权收盘价计算市值；停牌的股票用最近一个收盘价
@@ -270,8 +309,15 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
         peak = peak.max(value);
         max_dd = max_dd.max(1.0 - value / peak);
         pos_days += held.len();
-        let b = bench.as_ref().and_then(|(_, series)| series.get(&day).map(|r| r * p.capital));
-        equity.push(PortfolioPoint { date: day, equity: value, positions: held.len(), benchmark: b });
+        let b = bench
+            .as_ref()
+            .and_then(|(_, series)| series.get(&day).map(|r| r * p.capital));
+        equity.push(PortfolioPoint {
+            date: day,
+            equity: value,
+            positions: held.len(),
+            benchmark: b,
+        });
     }
     // 期末仍持有的按最后收盘价计算，不扣卖出费用
     for h in &held {
@@ -286,7 +332,11 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
     let wins = closed.iter().filter(|t| t.return_pct > 0.0).count();
     let days = (end - start).num_days();
     let annual = (days >= 90).then(|| (1.0 + total_return).powf(365.25 / days as f64) - 1.0);
-    let benchmark_return = equity.iter().rev().find_map(|e| e.benchmark).map(|v| v / p.capital - 1.0);
+    let benchmark_return = equity
+        .iter()
+        .rev()
+        .find_map(|e| e.benchmark)
+        .map(|v| v / p.capital - 1.0);
     let summary = PortfolioSummary {
         start,
         end,
@@ -302,7 +352,8 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
         wins,
         win_rate: (!closed.is_empty()).then(|| wins as f64 / closed.len() as f64),
         payoff_ratio: payoff(&closed.iter().map(|t| t.return_pct).collect::<Vec<_>>()),
-        avg_bars_held: (!closed.is_empty()).then(|| closed.iter().map(|t| t.bars_held as f64).sum::<f64>() / closed.len() as f64),
+        avg_bars_held: (!closed.is_empty())
+            .then(|| closed.iter().map(|t| t.bars_held as f64).sum::<f64>() / closed.len() as f64),
         avg_positions: pos_days as f64 / equity.len() as f64,
         fees,
         signals: cands.len(),
@@ -310,7 +361,11 @@ pub async fn run(pool: &PgPool, d: &Definition, p: &Params) -> anyhow::Result<Op
     };
     trades.sort_by_key(|t| std::cmp::Reverse(t.entry_date));
     trades.truncate(MAX_TRADES_RETURNED);
-    Ok(Some(PortfolioOutcome { summary, equity, trades }))
+    Ok(Some(PortfolioOutcome {
+        summary,
+        equity,
+        trades,
+    }))
 }
 
 /// 基准的名字
@@ -324,7 +379,14 @@ pub(crate) struct EqualWeight(HashMap<NaiveDate, (f64, u32)>);
 
 impl EqualWeight {
     /// 一只股票从第 from 根日线起每天的涨跌（前一天收盘时在默认股票池里才算）
-    pub fn add(&mut self, pool: &Definition, bars: &[DailyBar], f: &Frame, meta: &super::indicators::StockMeta, from: usize) {
+    pub fn add(
+        &mut self,
+        pool: &Definition,
+        bars: &[DailyBar],
+        f: &Frame,
+        meta: &super::indicators::StockMeta,
+        from: usize,
+    ) {
         for i in from.max(1)..bars.len() {
             if !pool.in_universe(f, meta, i - 1) {
                 continue;
@@ -339,8 +401,16 @@ impl EqualWeight {
     }
 
     /// [start, end] 内的净值，第一天为 1
-    pub fn series(&self, start: NaiveDate, end: NaiveDate) -> Option<(String, HashMap<NaiveDate, f64>)> {
-        let mut days: Vec<(&NaiveDate, &(f64, u32))> = self.0.iter().filter(|(d, _)| **d >= start && **d <= end).collect();
+    pub fn series(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Option<(String, HashMap<NaiveDate, f64>)> {
+        let mut days: Vec<(&NaiveDate, &(f64, u32))> = self
+            .0
+            .iter()
+            .filter(|(d, _)| **d >= start && **d <= end)
+            .collect();
         days.sort_by_key(|(d, _)| **d);
         let (first, _) = days.first()?;
         let mut level = 1.0;
@@ -362,10 +432,16 @@ mod tests {
     /// 组合回测的候选交易必须就是 `points::run` 算出的买卖点：日期、成交价、卖出原因都一致
     #[test]
     fn candidates_follow_points() {
-        let closes = [10.0, 9.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 10.0, 9.0, 8.0, 7.0];
+        let closes = [
+            10.0, 9.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 10.0, 9.0, 8.0, 7.0,
+        ];
         let b = bars_from(&closes);
         let f = Frame::new(&b, None);
-        let meta = StockMeta { board: "main".into(), is_st: false, list_date: None };
+        let meta = StockMeta {
+            board: "main".into(),
+            is_st: false,
+            list_date: None,
+        };
         let d: Definition = serde_json::from_value(serde_json::json!({
             "universe": {"exclude_st": false},
             "all": [{"kind": "compare", "left": {"id": "close"}, "op": "crosses_above", "right": {"id": "ma", "n": 3}}],

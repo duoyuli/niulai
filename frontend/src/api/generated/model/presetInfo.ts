@@ -7,13 +7,11 @@
  */
 import type { Preset } from './preset';
 import type { Rules } from './rules';
-import type { RulesBacktest } from './rulesBacktest';
 
 /**
- * 一组参考值：适合什么样的账户、怎么设计、过去 3 年的回测
+ * 一组参考值：适合什么样的账户、怎么设计
  */
 export interface PresetInfo {
-  backtest?: RulesBacktest | null;
   /** 这类账户一般怎么设计，每条说明一个参数为什么这样取 */
   design: string[];
   name: string;

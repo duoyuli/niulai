@@ -2,7 +2,7 @@ import { clsx } from "clsx";
 import { useRulesGuide } from "../api/generated/accounts/accounts";
 import type { Rules, RulesBacktest, StrategyQuality, WeakMarket } from "../api/generated/model";
 import { WEAK_MARKET } from "../lib/accounts";
-import { fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
+import { fmtPercent, upDownClass } from "../lib/format";
 import { Field, inputClass, QueryView } from "./ui";
 
 /** 后端总是返回完整的规则（缺的字段按稳健型补齐） */
@@ -11,7 +11,7 @@ export type FullRules = Required<Rules>;
 /** 规则写成几句白话 */
 export function rulesText(p: FullRules): string[] {
   return [
-    `参考${p.strategies ? `勾选的 ${p.strategies.length} 个策略` : "全部策略"}：过去 3 年比随便买多涨 ${p.min_edge_pct}% 以上才算有效，至少 ${p.min_picks} 个有效策略同时看好才买`,
+    `参考${p.strategies ? `勾选的 ${p.strategies.length} 个策略` : "全部策略"}：至少 ${p.min_picks} 个勾选的策略同时看好才买`,
     `最多同时持有 ${p.max_positions} 只，单只最多占总资产的 ${p.max_weight_pct}%${p.min_cash_pct > 0 ? `，至少留 ${p.min_cash_pct}% 现金` : ""}`,
     `比成本价亏 ${p.stop_loss_pct}% 就卖（止损），收盘跌破 ${p.trend_ma} 日均线也卖`,
     `全市场站上 20 日均线的股票不到 ${p.weak_threshold_pct}% 时算弱市：${WEAK_MARKET[p.weak_market]}`,
@@ -34,19 +34,10 @@ export function BacktestLine({ b }: { b: RulesBacktest }) {
         </>
       )}
       。平均持有 {s.avg_positions.toFixed(1)} 只，{s.trades} 笔交易
-      {s.win_rate !== null && s.win_rate !== undefined && <>，{(s.win_rate * 100).toFixed(0)}% 赚钱</>}；平均{" "}
-      {s.avg_effective.toFixed(1)} 个策略算作有效（每年只用之前 3 年的数据判断）。
+      {s.win_rate !== null && s.win_rate !== undefined && <>，{(s.win_rate * 100).toFixed(0)}% 赚钱</>}。
     </p>
   );
 }
-
-/** 过去 3 年买点少于这个次数的策略在观察期，不算有效（和后端 MIN_SIGNALS 一致） */
-const MIN_SIGNALS = 30;
-
-const excessOf = (s: StrategyQuality) =>
-  s.stat?.after20_avg_pct != null && s.stat.base20_avg_pct != null
-    ? s.stat.after20_avg_pct - s.stat.base20_avg_pct
-    : null;
 
 type NumKey =
   | "max_positions"
@@ -74,17 +65,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
   return (
     <QueryView query={guide}>
       {(g) => {
-        // 够门槛的策略列在上面；不够门槛的、还在观察期的（没统计出来或买点太少）在分界线下面，灰显
-        const qualifies = (s: StrategyQuality) => {
-          const e = excessOf(s);
-          const se = s.stat?.excess_se_pct;
-          return (
-            e !== null && se != null && (s.stat?.signals ?? 0) >= MIN_SIGNALS && e > value.min_edge_pct && e > 2 * se
-          );
-        };
-        const above = g.strategies.filter(qualifies);
-        const below = g.strategies.filter((s) => !qualifies(s));
-        // 勾选只表示参考它；够不够门槛单独显示。null 表示全部（以后新增的也自动参考）
+        // 勾选只表示参考它；null 表示全部（以后新增的也自动参考）
         const picked = value.strategies;
         const checked = (s: StrategyQuality) => picked === null || picked.includes(s.strategy_id);
         const toggle = (s: StrategyQuality) => {
@@ -94,25 +75,13 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
           });
         };
         const row = (s: StrategyQuality) => {
-          const e = excessOf(s);
-          const ok = qualifies(s);
-          const se = s.stat?.excess_se_pct;
           return (
             <li key={s.strategy_id}>
               <label className="flex cursor-pointer items-center gap-2 py-0.5">
                 <input type="checkbox" checked={checked(s)} onChange={() => toggle(s)} />
-                <span className={clsx("min-w-0 flex-1 truncate", (!checked(s) || !ok) && "text-zinc-400")}>
+                <span className={clsx("min-w-0 flex-1 truncate", !checked(s) && "text-zinc-400")}>
                   {s.name}
                   {!s.builtin && <span className="ml-1 text-xs text-zinc-400">自建</span>}
-                </span>
-                <span
-                  className={clsx("num w-24 text-right text-xs", upDownClass(e))}
-                  title={se != null && e !== null && e <= 2 * se ? "多涨的不到误差，说不清是不是运气" : undefined}
-                >
-                  {e === null || se == null ? "观察期" : `${fmtPctValue(e, 1)} ±${(2 * se).toFixed(1)}`}
-                </span>
-                <span className="num hidden w-20 text-right text-xs text-zinc-400 sm:inline">
-                  {s.stat ? `${s.stat.signals} 次${s.stat.signals < MIN_SIGNALS ? "，太少" : ""}` : "统计中"}
                 </span>
               </label>
             </li>
@@ -124,37 +93,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
               <section>
                 <h3 className="text-sm font-medium">选股</h3>
                 <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                  <Field
-                    label="有效门槛：过去 3 年比随便买至少多涨（个百分点）"
-                    help={
-                      <>
-                        <span className="block font-medium">「随便买」是一个对照组</span>
-                        <span className="mt-1 block">
-                          策略每出现一个买点，就看同一天所有正常交易的股票平均涨多少，相当于那天闭着眼睛随便买一只。和同一天比，大盘整体涨跌就抵消了。
-                        </span>
-                        <span className="mt-1 block">
-                          策略的数字 = 它的买点之后的平均涨跌 − 同一天随便买的平均涨跌。比如买点之后平均涨
-                          3%、同一天随便买平均涨 1%，就是多涨 2 个百分点；负数说明照着它挑还不如闭眼买。
-                        </span>
-                        <span className="mt-1 block">
-                          数字后面的 ± 是误差：多涨的不到误差这么多，就说不清是策略好还是运气好，也不算有效。
-                        </span>
-                        <span className="mt-1 block text-zinc-500">
-                          都按能做到的算：买点第二天开盘买入（一字涨停买不进的不算），拿 20 个交易日。正常交易指排除
-                          ST、股价低于 2 元、成交额不到 5000 万、上市不满 60
-                          个交易日的。不扣费用，是平均数，不代表以后；每周用最新数据重算。
-                        </span>
-                      </>
-                    }
-                  >
-                    <input
-                      className={inputClass}
-                      inputMode="decimal"
-                      value={value.min_edge_pct}
-                      onChange={(e) => set({ min_edge_pct: num(e.target.value) })}
-                    />
-                  </Field>
-                  <Field label="至少几个有效策略同时看好才买">
+                  <Field label="至少几个勾选的策略同时看好才买">
                     <input
                       className={inputClass}
                       inputMode="numeric"
@@ -165,7 +104,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 </div>
                 <div className="mt-3 flex items-baseline justify-between gap-2 text-xs text-zinc-500">
                   <span>
-                    参考的策略（右边是过去 3 年比随便买多涨多少）：
+                    参考的策略：
                     {picked === null ? "现在是全部参考，以后新增的策略也自动参考。" : `现在勾了 ${picked.length} 个。`}
                   </span>
                   <span className="flex shrink-0 gap-3">
@@ -195,19 +134,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 {picked !== null && picked.length === 0 && (
                   <p className="mt-1 text-sm text-red-600">至少勾选一个策略，否则没有候选股</p>
                 )}
-                <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">{above.map(row)}</ul>
-                {above.length === 0 && (
-                  <p className="mt-1 text-sm text-zinc-500">没有策略够这个门槛，可以把门槛调低一些</p>
-                )}
-                {below.length > 0 && (
-                  <details className="mt-2 border-t border-dashed border-zinc-300 pt-1 text-sm dark:border-zinc-700">
-                    <summary className="cursor-pointer text-xs text-zinc-500">
-                      以下 {below.length} 个比随便买多涨不到 {value.min_edge_pct}%，多涨的不到误差（±
-                      后面的数），或还在观察期（没统计出来、3 年里买点不到 {MIN_SIGNALS} 次），暂时不用来选股
-                    </summary>
-                    <ul className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">{below.map(row)}</ul>
-                  </details>
-                )}
+                <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">{g.strategies.map(row)}</ul>
               </section>
 
               <section>
@@ -271,7 +198,6 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                       <li key={d}>{d}</li>
                     ))}
                   </ul>
-                  {p.backtest && <BacktestLine b={p.backtest} />}
                   <button
                     type="button"
                     className="self-start text-xs text-zinc-500 underline decoration-dotted hover:text-zinc-900 dark:hover:text-zinc-100"

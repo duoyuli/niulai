@@ -81,7 +81,9 @@ pub struct Edge {
 pub fn edge(sig: &DayAcc, base: &DayAcc, keep: impl Fn(NaiveDate) -> bool) -> Option<Edge> {
     let mut days: Vec<(f64, f64, f64)> = vec![];
     for (d, (sum, n)) in &sig.0 {
-        let Some((bs, bn)) = base.0.get(d) else { continue };
+        let Some((bs, bn)) = base.0.get(d) else {
+            continue;
+        };
         if !keep(*d) || *n == 0 || *bn == 0 {
             continue;
         }
@@ -97,10 +99,20 @@ pub fn edge(sig: &DayAcc, base: &DayAcc, keep: impl Fn(NaiveDate) -> bool) -> Op
     let excess = after - base_avg;
     let k = days.len() as f64;
     let se = (days.len() >= 2).then(|| {
-        let v: f64 = days.iter().map(|(n, a, b)| (n * (a - b - excess)).powi(2)).sum();
+        let v: f64 = days
+            .iter()
+            .map(|(n, a, b)| (n * (a - b - excess)).powi(2))
+            .sum();
         (k / (k - 1.0) * v).sqrt() / total
     });
-    Some(Edge { after, base: base_avg, excess, se, n: total as u64, days: days.len() as u64 })
+    Some(Edge {
+        after,
+        base: base_avg,
+        excess,
+        se,
+        n: total as u64,
+        days: days.len() as u64,
+    })
 }
 
 /// 第 s 天收盘出现买点：第二天开盘买入、第 s + HORIZON 天收盘的涨跌（%，前复权）。
@@ -116,7 +128,11 @@ pub fn forward_return(bars: &[prices::DailyBar], s: usize) -> Option<f64> {
 }
 
 fn move_text(v: f64) -> String {
-    if v >= 0.0 { format!("涨 {v:.1}%") } else { format!("跌 {:.1}%", -v) }
+    if v >= 0.0 {
+        format!("涨 {v:.1}%")
+    } else {
+        format!("跌 {:.1}%", -v)
+    }
 }
 
 /// 过去 3 年至少这么多次买点，超额才拿来判断有效策略；更少时平均数主要是运气
@@ -143,15 +159,28 @@ impl StrategyStat {
 
     /// 一句话，建议的理由里引用
     pub fn describe(&self, name: &str) -> String {
-        let mut s = format!("「{name}」过去 {YEARS} 年在全市场出现 {} 次买点", self.signals);
+        let mut s = format!(
+            "「{name}」过去 {YEARS} 年在全市场出现 {} 次买点",
+            self.signals
+        );
         if let (Some(a), Some(b)) = (self.after20_avg_pct, self.base20_avg_pct) {
-            s.push_str(&format!("，第二天开盘买、拿 20 个交易日平均{}，同一天随便买平均{}", move_text(a), move_text(b)));
+            s.push_str(&format!(
+                "，第二天开盘买、拿 20 个交易日平均{}，同一天随便买平均{}",
+                move_text(a),
+                move_text(b)
+            ));
             if let Some(se) = self.excess_se_pct {
                 s.push_str(&format!("（差别的误差约 ±{:.1} 个百分点）", 2.0 * se));
             }
         }
-        if let (Some(w), Some(r), Some(h)) = (self.win_rate, self.avg_return_pct, self.avg_bars_held) {
-            s.push_str(&format!("；按它的卖出规则卖出，{:.0}% 的交易赚钱，平均每笔{}、持有 {h:.0} 个交易日", w * 100.0, move_text(r)));
+        if let (Some(w), Some(r), Some(h)) =
+            (self.win_rate, self.avg_return_pct, self.avg_bars_held)
+        {
+            s.push_str(&format!(
+                "；按它的卖出规则卖出，{:.0}% 的交易赚钱，平均每笔{}、持有 {h:.0} 个交易日",
+                w * 100.0,
+                move_text(r)
+            ));
         }
         s.push_str(&format!("（统计到 {}，不扣费用，不代表以后）", self.end));
         s
@@ -160,7 +189,10 @@ impl StrategyStat {
 
 /// 定义加上统计口径的版本：两者有一个变了就重算
 pub fn definition_hash(d: &Definition) -> String {
-    hash_json(&format!("{STATS_VERSION}{}", serde_json::to_string(d).unwrap_or_default()))
+    hash_json(&format!(
+        "{STATS_VERSION}{}",
+        serde_json::to_string(d).unwrap_or_default()
+    ))
 }
 
 pub fn rules_hash(p: &crate::account::rules::Rules) -> String {
@@ -168,7 +200,10 @@ pub fn rules_hash(p: &crate::account::rules::Rules) -> String {
 }
 
 fn hash_json(json: &str) -> String {
-    Sha256::digest(json.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(json.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 #[derive(Default)]
@@ -185,8 +220,13 @@ struct Acc {
 
 // @project-doc docs/domains/accounts.md#strategy_stats
 /// 一次读全市场，同时统计这些策略
-pub async fn compute(pool: &PgPool, defs: &[(i64, Definition)]) -> anyhow::Result<HashMap<i64, StrategyStat>> {
-    let Some(end) = market::resolve_date(pool, None).await? else { return Ok(HashMap::new()) };
+pub async fn compute(
+    pool: &PgPool,
+    defs: &[(i64, Definition)],
+) -> anyhow::Result<HashMap<i64, StrategyStat>> {
+    let Some(end) = market::resolve_date(pool, None).await? else {
+        return Ok(HashMap::new());
+    };
     let start = end - chrono::Duration::days(365 * YEARS);
     let sec = market::securities(pool).await?;
     let base_def = Definition::any_stock();
@@ -197,9 +237,14 @@ pub async fn compute(pool: &PgPool, defs: &[(i64, Definition)]) -> anyhow::Resul
     let mut accs: Vec<Acc> = defs.iter().map(|_| Acc::default()).collect();
     let mut base = DayAcc::default();
     prices::for_each_stock(pool, lo, end, |code, bars| {
-        let Some(meta) = sec.meta.get(code) else { return };
-        let Some(first) = bars.iter().position(|b| b.date >= start) else { return };
-        let f = Frame::with_authority(bars, Some(meta), &limits, code);
+        let Some(meta) = sec.meta.get(code) else {
+            return;
+        };
+        let Some(first) = bars.iter().position(|b| b.date >= start) else {
+            return;
+        };
+        let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
+        let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
         for (acc, (_, d)) in accs.iter_mut().zip(defs) {
             let p = points::run(bars, &f, meta, d, first);
             for t in &p.trades {
@@ -254,8 +299,15 @@ pub async fn compute(pool: &PgPool, defs: &[(i64, Definition)]) -> anyhow::Resul
 }
 
 pub async fn load(pool: &PgPool, ids: &[i64]) -> anyhow::Result<HashMap<i64, StrategyStat>> {
-    let rows: Vec<(i64, serde_json::Value)> = sqlx::query_as("SELECT strategy_id, stats FROM app.strategy_stat WHERE strategy_id = ANY($1)").bind(ids).fetch_all(pool).await?;
-    rows.into_iter().map(|(id, v)| Ok((id, serde_json::from_value(v)?))).collect()
+    let rows: Vec<(i64, serde_json::Value)> = sqlx::query_as(
+        "SELECT strategy_id, stats FROM app.strategy_stat WHERE strategy_id = ANY($1)",
+    )
+    .bind(ids)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|(id, v)| Ok((id, serde_json::from_value(v)?)))
+        .collect()
 }
 
 pub async fn store(pool: &PgPool, id: i64, hash: &str, stat: &StrategyStat) -> anyhow::Result<()> {
@@ -277,8 +329,15 @@ pub async fn due(pool: &PgPool) -> anyhow::Result<bool> {
     let list = crate::analysis::screener::screening_strategies(pool).await?;
     let rows: Vec<(i64, String, bool)> =
         sqlx::query_as("SELECT strategy_id, definition_hash, computed_at < now() - interval '7 days' FROM app.strategy_stat").fetch_all(pool).await?;
-    let known: HashMap<i64, (String, bool)> = rows.into_iter().map(|(id, h, old)| (id, (h, old))).collect();
-    Ok(list.iter().any(|(id, d)| known.get(id).is_none_or(|(h, old)| *old || *h != definition_hash(d))))
+    let known: HashMap<i64, (String, bool)> = rows
+        .into_iter()
+        .map(|(id, h, old)| (id, (h, old)))
+        .collect();
+    Ok(list.iter().any(|(id, d)| {
+        known
+            .get(id)
+            .is_none_or(|(h, old)| *old || *h != definition_hash(d))
+    }))
 }
 
 /// 重算全部参加巡检的策略并保存
@@ -291,7 +350,11 @@ pub async fn refresh(pool: &PgPool) -> anyhow::Result<()> {
             store(pool, *id, &definition_hash(d), s).await?;
         }
     }
-    tracing::info!(strategies = defs.len(), ms = started.elapsed().as_millis() as u64, "策略的过去表现已统计");
+    tracing::info!(
+        strategies = defs.len(),
+        ms = started.elapsed().as_millis() as u64,
+        "策略的过去表现已统计"
+    );
     Ok(())
 }
 
@@ -318,11 +381,40 @@ mod tests {
         };
         assert!((s.excess20_pct().unwrap() - 1.8).abs() < 1e-9);
         let t = s.describe("放量突破");
-        assert!(t.contains("3412 次买点") && t.contains("平均涨 2.4%") && t.contains("随便买平均涨 0.6%") && t.contains("±0.8") && t.contains("平均每笔跌 0.3%"), "{t}");
-        assert!(StrategyStat { base20_avg_pct: None, ..s.clone() }.excess20_pct().is_none());
+        assert!(
+            t.contains("3412 次买点")
+                && t.contains("平均涨 2.4%")
+                && t.contains("随便买平均涨 0.6%")
+                && t.contains("±0.8")
+                && t.contains("平均每笔跌 0.3%"),
+            "{t}"
+        );
+        assert!(
+            StrategyStat {
+                base20_avg_pct: None,
+                ..s.clone()
+            }
+            .excess20_pct()
+            .is_none()
+        );
         assert!(s.convincing());
-        assert!(!StrategyStat { excess_se_pct: Some(1.0), ..s.clone() }.convincing(), "超额不到误差的 2 倍");
-        assert!(StrategyStat { excess_se_pct: None, ..s }.edge().is_none(), "旧口径的统计要重算");
+        assert!(
+            !StrategyStat {
+                excess_se_pct: Some(1.0),
+                ..s.clone()
+            }
+            .convincing(),
+            "超额不到误差的 2 倍"
+        );
+        assert!(
+            StrategyStat {
+                excess_se_pct: None,
+                ..s
+            }
+            .edge()
+            .is_none(),
+            "旧口径的统计要重算"
+        );
     }
 
     #[test]
@@ -340,7 +432,10 @@ mod tests {
         base.add(d(2), -2.0);
         base.add(d(3), 50.0); // 没有买点的那天不影响
         let e = edge(&sig, &base, |_| true).unwrap();
-        assert!((e.excess - 1.0).abs() < 1e-9, "每个买点都比同一天多涨 1 个百分点：{e:?}");
+        assert!(
+            (e.excess - 1.0).abs() < 1e-9,
+            "每个买点都比同一天多涨 1 个百分点：{e:?}"
+        );
         assert_eq!((e.n, e.days), (3, 2));
         assert!(e.se.unwrap() < 1e-9, "每天的超额都一样，没有误差");
         assert!(edge(&sig, &base, |x| x == d(2)).is_some_and(|e| e.n == 1));

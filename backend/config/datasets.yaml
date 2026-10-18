@@ -450,8 +450,9 @@ datasets:
     key: "{_part.date}|{rank}"
     thscode: "{thscode}"
     obs_date: "{_part.date}"
+    empty_codes: [5003]                        # 某些历史自然日供应商没有热股榜，按没有数据处理
     incremental: {since_cursor: {}}
-    notes: 每天前 30 名；只能查一年内。
+    notes: 每天前 30 名；只能查一年内；供应商返回 5003 时按没有数据处理。
 
   - id: special.hot_stock_now
     title: 实时热股

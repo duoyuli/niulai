@@ -70,7 +70,14 @@ fn yes() -> bool {
 
 impl Default for Universe {
     fn default() -> Self {
-        Universe { boards: vec![], exclude_st: true, min_price: Some(2.0), min_amount: Some(5e7), min_listed_days: Some(60), sector: None }
+        Universe {
+            boards: vec![],
+            exclude_st: true,
+            min_price: Some(2.0),
+            min_amount: Some(5e7),
+            min_listed_days: Some(60),
+            sector: None,
+        }
     }
 }
 
@@ -191,7 +198,10 @@ pub struct Sort {
 
 impl Default for Sort {
     fn default() -> Self {
-        Sort { by: IndicatorRef::new(IndicatorId::Amount, None), desc: true }
+        Sort {
+            by: IndicatorRef::new(IndicatorId::Amount, None),
+            desc: true,
+        }
     }
 }
 
@@ -233,13 +243,26 @@ impl SignalDef {
     }
 
     pub fn warmup(&self, lib: &SignalLib) -> u32 {
-        self.conditions.iter().map(|c| c.warmup(lib)).max().unwrap_or(0)
+        self.conditions
+            .iter()
+            .map(|c| c.warmup(lib))
+            .max()
+            .unwrap_or(0)
     }
 
     /// 每天是否满足，与日线等长
     pub fn series(&self, f: &Frame, lib: &SignalLib) -> Vec<bool> {
-        let parts: Vec<std::rc::Rc<Vec<bool>>> = self.conditions.iter().map(|c| c.series(f, lib)).collect();
-        (0..f.len()).map(|i| if self.match_all { parts.iter().all(|p| p[i]) } else { parts.iter().any(|p| p[i]) }).collect()
+        let parts: Vec<std::rc::Rc<Vec<bool>>> =
+            self.conditions.iter().map(|c| c.series(f, lib)).collect();
+        (0..f.len())
+            .map(|i| {
+                if self.match_all {
+                    parts.iter().all(|p| p[i])
+                } else {
+                    parts.iter().any(|p| p[i])
+                }
+            })
+            .collect()
     }
 
     /// 每条条件的白话
@@ -250,7 +273,9 @@ impl SignalDef {
     /// 是事件（某天发生）还是状态（持续成立）：含上穿下穿、事件类内置信号或时间范围时算事件
     pub fn is_event(&self) -> bool {
         self.conditions.iter().any(|c| match c {
-            Condition::Signal { signal, .. } => signals::info_of(*signal).kind == signals::SignalKind::Event,
+            Condition::Signal { signal, .. } => {
+                signals::info_of(*signal).kind == signals::SignalKind::Event
+            }
             Condition::Compare { op, .. } => op.is_cross(),
             Condition::MySignal { .. } => false,
         })
@@ -275,16 +300,30 @@ impl SignalDef {
 impl Condition {
     fn window(&self) -> (u32, u32) {
         match self {
-            Condition::Signal { within_days, streak_days, .. }
-            | Condition::MySignal { within_days, streak_days, .. }
-            | Condition::Compare { within_days, streak_days, .. } => (*within_days, *streak_days),
+            Condition::Signal {
+                within_days,
+                streak_days,
+                ..
+            }
+            | Condition::MySignal {
+                within_days,
+                streak_days,
+                ..
+            }
+            | Condition::Compare {
+                within_days,
+                streak_days,
+                ..
+            } => (*within_days, *streak_days),
         }
     }
 
     pub fn validate(&self, lib: &SignalLib) -> Result<(), String> {
         let (within, streak) = self.window();
         if !(1..=MAX_WITHIN_DAYS).contains(&within) || !(1..=MAX_WITHIN_DAYS).contains(&streak) {
-            return Err(format!("「最近 N 个交易日」「连续 N 个交易日」的 N 应在 1 到 {MAX_WITHIN_DAYS} 之间"));
+            return Err(format!(
+                "「最近 N 个交易日」「连续 N 个交易日」的 N 应在 1 到 {MAX_WITHIN_DAYS} 之间"
+            ));
         }
         if within > 1 && streak > 1 {
             return Err("「最近 N 天内出现过」和「连续 N 天」只能选一个".into());
@@ -292,13 +331,21 @@ impl Condition {
         match self {
             Condition::Signal { signal, params, .. } => signals::validate(*signal, params),
             Condition::MySignal { signal_id, .. } => {
-                if lib.contains_key(signal_id) { Ok(()) } else { Err(format!("自定义信号不存在：{signal_id}")) }
+                if lib.contains_key(signal_id) {
+                    Ok(())
+                } else {
+                    Err(format!("自定义信号不存在：{signal_id}"))
+                }
             }
-            Condition::Compare { left, op, right, .. } => {
+            Condition::Compare {
+                left, op, right, ..
+            } => {
                 left.validate()?;
                 match right {
                     Operand::Indicator(r) => r.validate()?,
-                    Operand::Value { value } if !value.is_finite() => return Err("比较的数值不合法".into()),
+                    Operand::Value { value } if !value.is_finite() => {
+                        return Err("比较的数值不合法".into());
+                    }
                     Operand::Value { .. } if op.is_cross() => {}
                     Operand::Value { .. } => {}
                 }
@@ -311,8 +358,12 @@ impl Condition {
         let (within, streak) = self.window();
         let base = match self {
             Condition::Signal { signal, params, .. } => signals::warmup(*signal, params),
-            Condition::MySignal { signal_id, .. } => lib.get(signal_id).map_or(0, |s| s.def.warmup(lib)),
-            Condition::Compare { left, op, right, .. } => {
+            Condition::MySignal { signal_id, .. } => {
+                lib.get(signal_id).map_or(0, |s| s.def.warmup(lib))
+            }
+            Condition::Compare {
+                left, op, right, ..
+            } => {
                 let r = match right {
                     Operand::Indicator(r) => r.warmup(),
                     Operand::Value { .. } => 0,
@@ -329,9 +380,14 @@ impl Condition {
             Condition::Signal { signal, params, .. } => signals::series(f, *signal, params),
             Condition::MySignal { signal_id, .. } => {
                 let key = format!("my:{signal_id}");
-                f.memo_bools(key, || lib.get(signal_id).map_or_else(|| vec![false; f.len()], |s| s.def.series(f, lib)))
+                f.memo_bools(key, || {
+                    lib.get(signal_id)
+                        .map_or_else(|| vec![false; f.len()], |s| s.def.series(f, lib))
+                })
             }
-            Condition::Compare { left, op, right, .. } => {
+            Condition::Compare {
+                left, op, right, ..
+            } => {
                 let key = format!("cmp:{left:?}{op:?}{right:?}");
                 f.memo_bools(key, || {
                     let l = f.get(*left);
@@ -397,12 +453,20 @@ impl Condition {
                 return wrap_signal(&signals::label(*signal, params), state, within, streak);
             }
             Condition::MySignal { signal_id, .. } => {
-                let (name, state) = lib.get(signal_id).map_or((format!("自定义信号 {signal_id}"), false), |s| (s.name.clone(), !s.def.is_event()));
+                let (name, state) = lib
+                    .get(signal_id)
+                    .map_or((format!("自定义信号 {signal_id}"), false), |s| {
+                        (s.name.clone(), !s.def.is_event())
+                    });
                 return wrap_signal(&name, state, within, streak);
             }
-            Condition::Compare { left, op, right, .. } => {
+            Condition::Compare {
+                left, op, right, ..
+            } => {
                 let r = match right {
-                    Operand::Value { value } => format_value(*value, indicators::info_of(left.id).unit),
+                    Operand::Value { value } => {
+                        format_value(*value, indicators::info_of(left.id).unit)
+                    }
                     Operand::Indicator(r) => r.label(),
                 };
                 format!("{}{} {r}", left.label(), op.word())
@@ -420,7 +484,10 @@ impl Condition {
 
 fn wrap_signal(name: &str, state: bool, within: u32, streak: u32) -> String {
     if streak > 1 {
-        return format!("连续 {streak} 个交易日{}「{name}」", if state { "处于" } else { "出现" });
+        return format!(
+            "连续 {streak} 个交易日{}「{name}」",
+            if state { "处于" } else { "出现" }
+        );
     }
     match (within <= 1, state) {
         (true, false) => format!("当天出现「{name}」"),
@@ -431,7 +498,11 @@ fn wrap_signal(name: &str, state: bool, within: u32, streak: u32) -> String {
 }
 
 fn format_value(v: f64, unit: &str) -> String {
-    let n = if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") };
+    let n = if v.fract() == 0.0 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    };
     match unit {
         "pct" => format!("{n}%"),
         "ratio" => format!("{n} 倍"),
@@ -452,14 +523,23 @@ pub struct Evaluation {
 impl Definition {
     /// 只有默认股票池、没有条件的定义：「随便买」和基准用它判断某天某只股票算不算正常交易
     pub fn any_stock() -> Self {
-        Definition { universe: Universe::default(), all: vec![], any: vec![], exit: Default::default(), sort: Default::default(), limit: 50, lib: SignalLib::default() }
+        Definition {
+            universe: Universe::default(),
+            all: vec![],
+            any: vec![],
+            exit: Default::default(),
+            sort: Default::default(),
+            limit: 50,
+            lib: SignalLib::default(),
+        }
     }
 
     pub fn validate(&self) -> Result<(), String> {
         if self.all.is_empty() && self.any.is_empty() {
             return Err("至少要有一个条件".into());
         }
-        if self.all.len() + self.any.len() > MAX_CONDITIONS || self.exit.any.len() > MAX_CONDITIONS {
+        if self.all.len() + self.any.len() > MAX_CONDITIONS || self.exit.any.len() > MAX_CONDITIONS
+        {
             return Err(format!("条件最多 {MAX_CONDITIONS} 个"));
         }
         for c in self.all.iter().chain(&self.any).chain(&self.exit.any) {
@@ -469,7 +549,11 @@ impl Definition {
         if !(1..=200).contains(&self.limit) {
             return Err("每天保留的数量应在 1 到 200 之间".into());
         }
-        if self.universe.min_listed_days.is_some_and(|d| d > MAX_LISTED_DAYS) {
+        if self
+            .universe
+            .min_listed_days
+            .is_some_and(|d| d > MAX_LISTED_DAYS)
+        {
             return Err(format!("上市天数最多 {MAX_LISTED_DAYS} 个交易日"));
         }
         for b in &self.universe.boards {
@@ -478,11 +562,18 @@ impl Definition {
             }
         }
         if let Some(s) = &self.universe.sector
-            && (!["industry", "cn_concept"].contains(&s.category.as_str()) || !(1..=60).contains(&s.days) || !(1.0..=100.0).contains(&s.top_pct))
+            && (!["industry", "cn_concept"].contains(&s.category.as_str())
+                || !(1..=60).contains(&s.days)
+                || !(1.0..=100.0).contains(&s.top_pct))
         {
-            return Err("强势板块条件：分类只能是行业或概念，天数 1 到 60，前百分比 1 到 100".into());
+            return Err(
+                "强势板块条件：分类只能是行业或概念，天数 1 到 60，前百分比 1 到 100".into(),
+            );
         }
-        for v in [self.exit.stop_loss_pct, self.exit.take_profit_pct].into_iter().flatten() {
+        for v in [self.exit.stop_loss_pct, self.exit.take_profit_pct]
+            .into_iter()
+            .flatten()
+        {
             if !(0.5..=90.0).contains(&v) {
                 return Err("止损、止盈的百分比应在 0.5 到 90 之间".into());
             }
@@ -498,13 +589,24 @@ impl Definition {
     /// 判断需要的历史日线根数
     /// 判断一天需要往前看多少根日线。「上市满 N 个交易日」按读入的日线根数判断，所以也要覆盖 N
     pub fn warmup(&self) -> u32 {
-        let conditions = self.all.iter().chain(&self.any).chain(&self.exit.any).map(|c| c.warmup(&self.lib)).max().unwrap_or(0);
-        conditions.max(self.sort.by.warmup()).max(self.universe.min_listed_days.unwrap_or(0)).max(30)
+        let conditions = self
+            .all
+            .iter()
+            .chain(&self.any)
+            .chain(&self.exit.any)
+            .map(|c| c.warmup(&self.lib))
+            .max()
+            .unwrap_or(0);
+        conditions
+            .max(self.sort.by.warmup())
+            .max(self.universe.min_listed_days.unwrap_or(0))
+            .max(30)
     }
 
     /// 在第 i 天是否满足买入条件（不含股票池），不生成说明文字；回测逐日判断时用
     pub fn matches(&self, f: &Frame, i: usize) -> bool {
-        self.all.iter().all(|c| c.eval(f, i, &self.lib)) && (self.any.is_empty() || self.any.iter().any(|c| c.eval(f, i, &self.lib)))
+        self.all.iter().all(|c| c.eval(f, i, &self.lib))
+            && (self.any.is_empty() || self.any.iter().any(|c| c.eval(f, i, &self.lib)))
     }
 
     /// 在第 i 天是否满足买入条件（不含股票池），以及命中了哪些条件
@@ -512,18 +614,32 @@ impl Definition {
         let mut reasons = vec![];
         for c in &self.all {
             if !c.eval(f, i, &self.lib) {
-                return Evaluation { matched: false, reasons: vec![] };
+                return Evaluation {
+                    matched: false,
+                    reasons: vec![],
+                };
             }
             reasons.push(c.describe(&self.lib));
         }
         if !self.any.is_empty() {
-            let hit: Vec<String> = self.any.iter().filter(|c| c.eval(f, i, &self.lib)).map(|c| c.describe(&self.lib)).collect();
+            let hit: Vec<String> = self
+                .any
+                .iter()
+                .filter(|c| c.eval(f, i, &self.lib))
+                .map(|c| c.describe(&self.lib))
+                .collect();
             if hit.is_empty() {
-                return Evaluation { matched: false, reasons: vec![] };
+                return Evaluation {
+                    matched: false,
+                    reasons: vec![],
+                };
             }
             reasons.extend(hit);
         }
-        Evaluation { matched: true, reasons }
+        Evaluation {
+            matched: true,
+            reasons,
+        }
     }
 
     /// 第 i 天是否满足卖出条件（不含止损、止盈、持有天数）
@@ -535,18 +651,29 @@ impl Definition {
     pub fn buy_series(&self, f: &Frame) -> Vec<bool> {
         let all: Vec<_> = self.all.iter().map(|c| c.series(f, &self.lib)).collect();
         let any: Vec<_> = self.any.iter().map(|c| c.series(f, &self.lib)).collect();
-        (0..f.len()).map(|i| all.iter().all(|s| s[i]) && (any.is_empty() || any.iter().any(|s| s[i]))).collect()
+        (0..f.len())
+            .map(|i| all.iter().all(|s| s[i]) && (any.is_empty() || any.iter().any(|s| s[i])))
+            .collect()
     }
 
     /// 每天是否满足任一卖出条件（不含止损、止盈、持有天数）
     pub fn exit_series(&self, f: &Frame) -> Vec<bool> {
-        let parts: Vec<_> = self.exit.any.iter().map(|c| c.series(f, &self.lib)).collect();
+        let parts: Vec<_> = self
+            .exit
+            .any
+            .iter()
+            .map(|c| c.series(f, &self.lib))
+            .collect();
         (0..f.len()).map(|i| parts.iter().any(|s| s[i])).collect()
     }
 
     /// 第 i 天触发的卖出条件（白话），没有时为空
     pub fn exit_reason_text(&self, f: &Frame, i: usize) -> Option<String> {
-        self.exit.any.iter().find(|c| c.eval(f, i, &self.lib)).map(|c| c.describe(&self.lib))
+        self.exit
+            .any
+            .iter()
+            .find(|c| c.eval(f, i, &self.lib))
+            .map(|c| c.describe(&self.lib))
     }
 
     /// 填上可用的自定义信号
@@ -562,12 +689,34 @@ impl Definition {
 
     /// 引用的自定义信号
     pub fn my_signals(&self) -> Vec<i64> {
-        self.all.iter().chain(&self.any).chain(&self.exit.any).filter_map(|c| if let Condition::MySignal { signal_id, .. } = c { Some(*signal_id) } else { None }).collect()
+        self.all
+            .iter()
+            .chain(&self.any)
+            .chain(&self.exit.any)
+            .filter_map(|c| {
+                if let Condition::MySignal { signal_id, .. } = c {
+                    Some(*signal_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// 引用的内置信号
     pub fn builtin_signals(&self) -> Vec<SignalId> {
-        self.all.iter().chain(&self.any).chain(&self.exit.any).filter_map(|c| if let Condition::Signal { signal, .. } = c { Some(*signal) } else { None }).collect()
+        self.all
+            .iter()
+            .chain(&self.any)
+            .chain(&self.exit.any)
+            .filter_map(|c| {
+                if let Condition::Signal { signal, .. } = c {
+                    Some(*signal)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// 引用的指标（条件和排序）
@@ -589,7 +738,7 @@ impl Definition {
         let u = &self.universe;
         let b = &f.bars[i];
         (u.boards.is_empty() || u.boards.contains(&meta.board))
-            && !(u.exclude_st && meta.is_st)
+            && !(u.exclude_st && f.is_st(i))
             && u.min_price.is_none_or(|p| b.close >= p)
             && u.min_amount.is_none_or(|a| b.amount >= a)
             && u.min_listed_days.is_none_or(|d| i + 1 >= d as usize)
@@ -625,8 +774,15 @@ impl Definition {
             out.push(format!("上市满 {d} 个交易日"));
         }
         if let Some(s) = &u.sector {
-            let cat = if s.category == "industry" { "行业" } else { "概念" };
-            out.push(format!("所属{cat}近 {} 日涨幅排名前 {}%", s.days, s.top_pct));
+            let cat = if s.category == "industry" {
+                "行业"
+            } else {
+                "概念"
+            };
+            out.push(format!(
+                "所属{cat}近 {} 日涨幅排名前 {}%",
+                s.days, s.top_pct
+            ));
         }
         out
     }
@@ -643,30 +799,69 @@ pub struct Template {
 }
 
 fn sig(signal: SignalId, params: &[(&str, f64)], within_days: u32) -> Condition {
-    Condition::Signal { signal, params: params.iter().map(|(k, v)| (k.to_string(), *v)).collect(), within_days, streak_days: 1 }
+    Condition::Signal {
+        signal,
+        params: params.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        within_days,
+        streak_days: 1,
+    }
 }
 
 /// 指标与一个数比较，当天
 pub fn cmp(id: IndicatorId, n: Option<u32>, op: Op, value: f64) -> Condition {
-    Condition::Compare { left: IndicatorRef::new(id, n), op, right: Operand::Value { value }, within_days: 1, streak_days: 1 }
+    Condition::Compare {
+        left: IndicatorRef::new(id, n),
+        op,
+        right: Operand::Value { value },
+        within_days: 1,
+        streak_days: 1,
+    }
 }
 
 /// 指标与另一个指标比较，当天
-pub fn cmp_ind(id: IndicatorId, n: Option<u32>, op: Op, rid: IndicatorId, rn: Option<u32>) -> Condition {
-    Condition::Compare { left: IndicatorRef::new(id, n), op, right: Operand::Indicator(IndicatorRef::new(rid, rn)), within_days: 1, streak_days: 1 }
+pub fn cmp_ind(
+    id: IndicatorId,
+    n: Option<u32>,
+    op: Op,
+    rid: IndicatorId,
+    rn: Option<u32>,
+) -> Condition {
+    Condition::Compare {
+        left: IndicatorRef::new(id, n),
+        op,
+        right: Operand::Indicator(IndicatorRef::new(rid, rn)),
+        within_days: 1,
+        streak_days: 1,
+    }
 }
 
 /// 模板默认的卖出规则：跌破 20 日均线，或亏损 8%，或持有满 20 个交易日
 fn default_exit() -> ExitRule {
-    ExitRule { any: vec![sig(SignalId::PriceCrossBelowMa, &[("n", 20.0)], 1)], stop_loss_pct: Some(8.0), take_profit_pct: None, max_hold_days: Some(20) }
+    ExitRule {
+        any: vec![sig(SignalId::PriceCrossBelowMa, &[("n", 20.0)], 1)],
+        stop_loss_pct: Some(8.0),
+        take_profit_pct: None,
+        max_hold_days: Some(20),
+    }
 }
 
 fn def(all: Vec<Condition>, sort: Sort) -> Definition {
-    Definition { universe: Universe::default(), all, any: vec![], exit: default_exit(), sort, limit: 50, lib: SignalLib::default() }
+    Definition {
+        universe: Universe::default(),
+        all,
+        any: vec![],
+        exit: default_exit(),
+        sort,
+        limit: 50,
+        lib: SignalLib::default(),
+    }
 }
 
 fn by(id: IndicatorId, n: Option<u32>, desc: bool) -> Sort {
-    Sort { by: IndicatorRef::new(id, n), desc }
+    Sort {
+        by: IndicatorRef::new(id, n),
+        desc,
+    }
 }
 
 // @project-doc docs/domains/strategies.md#templates
@@ -679,14 +874,20 @@ pub fn templates() -> Vec<Template> {
             key: "ma_golden",
             name: "均线金叉",
             description: "5 日均线刚上穿 20 日均线，短期走势开始转强",
-            definition: def(vec![sig(S::MaCrossUp, &[("fast", 5.0), ("slow", 20.0)], 1)], amount.clone()),
+            definition: def(
+                vec![sig(S::MaCrossUp, &[("fast", 5.0), ("slow", 20.0)], 1)],
+                amount.clone(),
+            ),
         },
         Template {
             key: "bullish_trend",
             name: "均线多头",
             description: "5、20、60 日均线从上到下依次排列，股价在 20 日均线上方，处在上升趋势中",
             definition: def(
-                vec![sig(S::MaBullish, &[], 1), cmp_ind(I::Close, None, Op::Gt, I::Ma, Some(20))],
+                vec![
+                    sig(S::MaBullish, &[], 1),
+                    cmp_ind(I::Close, None, Op::Gt, I::Ma, Some(20)),
+                ],
                 by(I::Momentum, Some(20), true),
             ),
         },
@@ -708,7 +909,13 @@ pub fn templates() -> Vec<Template> {
             key: "volume_breakout",
             name: "放量突破",
             description: "成交量放大到前 5 天平均的 2 倍以上，同时收盘站上 20 日均线",
-            definition: def(vec![sig(S::VolumeSurge, &[("ratio", 2.0)], 1), sig(S::PriceCrossAboveMa, &[("n", 20.0)], 1)], by(I::VolRatio, Some(5), true)),
+            definition: def(
+                vec![
+                    sig(S::VolumeSurge, &[("ratio", 2.0)], 1),
+                    sig(S::PriceCrossAboveMa, &[("n", 20.0)], 1),
+                ],
+                by(I::VolRatio, Some(5), true),
+            ),
         },
         Template {
             key: "new_high_60",
@@ -726,7 +933,13 @@ pub fn templates() -> Vec<Template> {
             key: "oversold_rebound",
             name: "超跌反弹",
             description: "近 20 个交易日跌了 20% 以上，当天涨超 2%，可能是跌多了的反弹",
-            definition: def(vec![cmp(I::Momentum, Some(20), Op::Le, -20.0), cmp(I::ChangePct, None, Op::Gt, 2.0)], by(I::ChangePct, None, true)),
+            definition: def(
+                vec![
+                    cmp(I::Momentum, Some(20), Op::Le, -20.0),
+                    cmp(I::ChangePct, None, Op::Gt, 2.0),
+                ],
+                by(I::ChangePct, None, true),
+            ),
         },
         Template {
             key: "boll_breakout",
@@ -738,14 +951,24 @@ pub fn templates() -> Vec<Template> {
             key: "low_volume_surge",
             name: "低位放量",
             description: "股价在近 60 天低点附近（高出不到 10%），成交量明显放大，可能有资金开始进入",
-            definition: def(vec![cmp(I::PctFromLow, Some(60), Op::Le, 10.0), sig(S::VolumeSurge, &[("ratio", 2.0)], 1)], by(I::VolRatio, Some(5), true)),
+            definition: def(
+                vec![
+                    cmp(I::PctFromLow, Some(60), Op::Le, 10.0),
+                    sig(S::VolumeSurge, &[("ratio", 2.0)], 1),
+                ],
+                by(I::VolRatio, Some(5), true),
+            ),
         },
         Template {
             key: "strong_pullback",
             name: "强势股回调",
             description: "近 20 个交易日涨了 20% 以上，最近 3 天小幅回落（不超过 8%），强势股的回调",
             definition: def(
-                vec![cmp(I::Momentum, Some(20), Op::Ge, 20.0), cmp(I::Momentum, Some(3), Op::Le, 0.0), cmp(I::Momentum, Some(3), Op::Ge, -8.0)],
+                vec![
+                    cmp(I::Momentum, Some(20), Op::Ge, 20.0),
+                    cmp(I::Momentum, Some(3), Op::Le, 0.0),
+                    cmp(I::Momentum, Some(3), Op::Ge, -8.0),
+                ],
                 by(I::Momentum, Some(20), true),
             ),
         },
@@ -753,14 +976,25 @@ pub fn templates() -> Vec<Template> {
             key: "macd_bottom_divergence",
             name: "MACD 底背离",
             description: "股价创了新低，MACD 的低点却抬高了，下跌的力量在减弱；当天收涨，确认有人买",
-            definition: def(vec![sig(S::MacdBottomDivergence, &[], 3), cmp(I::ChangePct, None, Op::Gt, 0.0)], amount.clone()),
+            definition: def(
+                vec![
+                    sig(S::MacdBottomDivergence, &[], 3),
+                    cmp(I::ChangePct, None, Op::Gt, 0.0),
+                ],
+                amount.clone(),
+            ),
         },
         Template {
             key: "supertrend_follow",
             name: "Supertrend 趋势跟随",
             description: "Supertrend 翻多时买入，翻空时卖出，中间不管涨跌一直拿着；亏损 10% 止损",
             definition: Definition {
-                exit: ExitRule { any: vec![sig(S::SupertrendDown, &[], 1)], stop_loss_pct: Some(10.0), take_profit_pct: None, max_hold_days: None },
+                exit: ExitRule {
+                    any: vec![sig(S::SupertrendDown, &[], 1)],
+                    stop_loss_pct: Some(10.0),
+                    take_profit_pct: None,
+                    max_hold_days: None,
+                },
                 ..def(vec![sig(S::SupertrendUp, &[], 1)], amount.clone())
             },
         },
@@ -769,7 +1003,11 @@ pub fn templates() -> Vec<Template> {
             name: "趋势确认的均线金叉",
             description: "5 日均线上穿 20 日均线，同时 ADX 高于 20、+DI 在 −DI 上方：只做趋势明确时的金叉，过滤横盘中的假金叉",
             definition: def(
-                vec![sig(S::MaCrossUp, &[("fast", 5.0), ("slow", 20.0)], 1), cmp(I::Adx, Some(14), Op::Gt, 20.0), cmp_ind(I::PlusDi, Some(14), Op::Gt, I::MinusDi, Some(14))],
+                vec![
+                    sig(S::MaCrossUp, &[("fast", 5.0), ("slow", 20.0)], 1),
+                    cmp(I::Adx, Some(14), Op::Gt, 20.0),
+                    cmp_ind(I::PlusDi, Some(14), Op::Gt, I::MinusDi, Some(14)),
+                ],
                 by(I::Adx, Some(14), true),
             ),
         },
@@ -778,7 +1016,12 @@ pub fn templates() -> Vec<Template> {
             name: "缩量回踩 20 日均线",
             description: "上升趋势中回落到 20 日均线附近（上下 2% 以内），成交量缩到前 5 天平均的 0.7 倍以下：回调时卖的人不多",
             definition: def(
-                vec![sig(S::MaBullish, &[], 1), cmp(I::MaGap, Some(20), Op::Ge, -2.0), cmp(I::MaGap, Some(20), Op::Le, 2.0), sig(S::VolumeShrink, &[("ratio", 0.7)], 1)],
+                vec![
+                    sig(S::MaBullish, &[], 1),
+                    cmp(I::MaGap, Some(20), Op::Ge, -2.0),
+                    cmp(I::MaGap, Some(20), Op::Le, 2.0),
+                    sig(S::VolumeShrink, &[("ratio", 0.7)], 1),
+                ],
                 amount.clone(),
             ),
         },
@@ -793,12 +1036,18 @@ mod tests {
     #[test]
     fn templates_are_valid_and_round_trip() {
         for t in templates() {
-            t.definition.validate().unwrap_or_else(|e| panic!("模板 {} 不合法：{e}", t.key));
+            t.definition
+                .validate()
+                .unwrap_or_else(|e| panic!("模板 {} 不合法：{e}", t.key));
             let json = serde_json::to_value(&t.definition).unwrap();
             let back: Definition = serde_json::from_value(json).unwrap();
             assert_eq!(back.all.len(), t.definition.all.len());
             // 巡检读入的日线要够判断「上市满 N 个交易日」，否则所有股票都会被排除
-            assert!(t.definition.warmup() >= t.definition.universe.min_listed_days.unwrap_or(0), "{}", t.key);
+            assert!(
+                t.definition.warmup() >= t.definition.universe.min_listed_days.unwrap_or(0),
+                "{}",
+                t.key
+            );
         }
     }
 
@@ -817,7 +1066,13 @@ mod tests {
         // 下标 5 金叉；下标 6 在「最近 2 天内」窗口中，收盘 8 高于 3 日均线 5.33
         let e = d.eval(&f, 6);
         assert!(e.matched);
-        assert_eq!(e.reasons, vec!["最近 2 个交易日内出现过「2 日均线上穿 3 日均线」", "收盘价高于 3 日均线"]);
+        assert_eq!(
+            e.reasons,
+            vec![
+                "最近 2 个交易日内出现过「2 日均线上穿 3 日均线」",
+                "收盘价高于 3 日均线"
+            ]
+        );
         assert!(!d.eval(&f, 4).matched);
     }
 
@@ -826,7 +1081,12 @@ mod tests {
         let empty: Definition = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(empty.validate().is_err());
         let bad = serde_json::json!({"all": [{"kind": "compare", "left": {"id": "ma", "n": 999}, "op": ">", "right": {"value": 1}}]});
-        assert!(serde_json::from_value::<Definition>(bad).unwrap().validate().is_err());
+        assert!(
+            serde_json::from_value::<Definition>(bad)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
         let unknown = serde_json::json!({"all": [{"kind": "signal", "signal": "no_such_signal"}]});
         assert!(serde_json::from_value::<Definition>(unknown).is_err());
     }

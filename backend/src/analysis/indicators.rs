@@ -88,12 +88,30 @@ pub struct IndicatorInfo {
     pub n_max: Option<u32>,
 }
 
-const fn info(id: IndicatorId, name: &'static str, group: &'static str, unit: &'static str, description: &'static str, n: Option<(u32, u32, u32)>) -> IndicatorInfo {
+const fn info(
+    id: IndicatorId,
+    name: &'static str,
+    group: &'static str,
+    unit: &'static str,
+    description: &'static str,
+    n: Option<(u32, u32, u32)>,
+) -> IndicatorInfo {
     let (n_default, n_min, n_max) = match n {
         Some((d, lo, hi)) => (Some(d), Some(lo), Some(hi)),
         None => (None, None, None),
     };
-    IndicatorInfo { id, name, group, unit, description, usage: "", formula: "", n_default, n_min, n_max }
+    IndicatorInfo {
+        id,
+        name,
+        group,
+        unit,
+        description,
+        usage: "",
+        formula: "",
+        n_default,
+        n_min,
+        n_max,
+    }
 }
 
 impl IndicatorInfo {
@@ -150,7 +168,10 @@ pub const CATALOG: &[IndicatorInfo] = &[
 ];
 
 pub fn info_of(id: IndicatorId) -> &'static IndicatorInfo {
-    CATALOG.iter().find(|i| i.id == id).expect("每个指标都在目录中")
+    CATALOG
+        .iter()
+        .find(|i| i.id == id)
+        .expect("每个指标都在目录中")
 }
 
 impl IndicatorRef {
@@ -172,14 +193,19 @@ impl IndicatorRef {
         if let (Some(n), Some(lo), Some(hi)) = (self.n, i.n_min, i.n_max)
             && !(lo..=hi).contains(&n)
         {
-            return Err(format!("{} 的周期应在 {lo} 到 {hi} 之间", i.name.replace("{n}", "N")));
+            return Err(format!(
+                "{} 的周期应在 {lo} 到 {hi} 之间",
+                i.name.replace("{n}", "N")
+            ));
         }
         Ok(())
     }
 
     /// 白话名称，例如「20 日均线」
     pub fn label(&self) -> String {
-        info_of(self.id).name.replace("{n}", &self.period().to_string())
+        info_of(self.id)
+            .name
+            .replace("{n}", &self.period().to_string())
     }
 
     /// 算出这个指标需要的历史日线根数（含指数均线的收敛期）
@@ -189,7 +215,10 @@ impl IndicatorRef {
             IndicatorId::MacdDif | IndicatorId::MacdDea | IndicatorId::MacdHist => 120,
             IndicatorId::Rsi | IndicatorId::Atr | IndicatorId::AtrPct => self.period() * 4,
             IndicatorId::KdjK | IndicatorId::KdjD | IndicatorId::KdjJ => 40,
-            IndicatorId::BollUpper | IndicatorId::BollMid | IndicatorId::BollLower | IndicatorId::BollWidth => 20,
+            IndicatorId::BollUpper
+            | IndicatorId::BollMid
+            | IndicatorId::BollLower
+            | IndicatorId::BollWidth => 20,
             IndicatorId::PlusDi | IndicatorId::MinusDi | IndicatorId::Adx => self.period() + 10,
             // 路径相关（翻转与否取决于之前的状态），多读一些让开头的状态不影响结果
             IndicatorId::Supertrend => self.period() * 4 + 60,
@@ -209,6 +238,14 @@ pub struct StockMeta {
     pub list_date: Option<NaiveDate>,
 }
 
+/// 从开始采集那天起记录的简称区间；区间内的 ST 状态用于历史涨跌停判断。
+#[derive(Clone, Debug)]
+pub struct StPeriod {
+    pub valid_from: NaiveDate,
+    pub valid_to: Option<NaiveDate>,
+    pub is_st: bool,
+}
+
 /// 指标缓存的键：指标和实际周期
 type IndicatorKey = (IndicatorId, u32);
 
@@ -222,6 +259,8 @@ pub struct Frame<'a> {
     limits: RefCell<Option<Rc<Limits>>>,
     /// 权威涨跌停池和这只股票的代码；没有时涨跌停全部自算
     authority: Option<(&'a LimitPool, &'a str)>,
+    /// 简称历史；没有覆盖的日期回退当前简称
+    st_history: Option<&'a [StPeriod]>,
 }
 
 /// 涨跌停价与当天是否涨停、跌停、炸板
@@ -238,13 +277,68 @@ pub struct Limits {
 
 impl<'a> Frame<'a> {
     pub fn new(bars: &'a [DailyBar], meta: Option<&'a StockMeta>) -> Self {
-        Frame { bars, meta, cache: RefCell::new(HashMap::new()), bools: RefCell::new(HashMap::new()), limits: RefCell::new(None), authority: None }
+        Frame {
+            bars,
+            meta,
+            cache: RefCell::new(HashMap::new()),
+            bools: RefCell::new(HashMap::new()),
+            limits: RefCell::new(None),
+            authority: None,
+            st_history: None,
+        }
+    }
+
+    pub fn with_st_history(
+        bars: &'a [DailyBar],
+        meta: Option<&'a StockMeta>,
+        history: &'a [StPeriod],
+    ) -> Self {
+        Frame {
+            bars,
+            meta,
+            cache: RefCell::new(HashMap::new()),
+            bools: RefCell::new(HashMap::new()),
+            limits: RefCell::new(None),
+            authority: None,
+            st_history: Some(history),
+        }
     }
 
     /// 带权威涨跌停池的 Frame：涨停、跌停、炸板以供应商的池为准，池没有覆盖的日期和北交所回退自算。
     /// pool 的加载窗口必须覆盖 bars 的全部日期，否则窗口外的日期会回退自算（见 [`LimitPool::load`] 的覆盖裁剪）
-    pub fn with_authority(bars: &'a [DailyBar], meta: Option<&'a StockMeta>, pool: &'a LimitPool, code: &'a str) -> Self {
-        Frame { bars, meta, cache: RefCell::new(HashMap::new()), bools: RefCell::new(HashMap::new()), limits: RefCell::new(None), authority: Some((pool, code)) }
+    pub fn with_authority(
+        bars: &'a [DailyBar],
+        meta: Option<&'a StockMeta>,
+        pool: &'a LimitPool,
+        code: &'a str,
+    ) -> Self {
+        Frame {
+            bars,
+            meta,
+            cache: RefCell::new(HashMap::new()),
+            bools: RefCell::new(HashMap::new()),
+            limits: RefCell::new(None),
+            authority: Some((pool, code)),
+            st_history: None,
+        }
+    }
+
+    pub fn with_authority_and_st_history(
+        bars: &'a [DailyBar],
+        meta: Option<&'a StockMeta>,
+        pool: &'a LimitPool,
+        code: &'a str,
+        history: &'a [StPeriod],
+    ) -> Self {
+        Frame {
+            bars,
+            meta,
+            cache: RefCell::new(HashMap::new()),
+            bools: RefCell::new(HashMap::new()),
+            limits: RefCell::new(None),
+            authority: Some((pool, code)),
+            st_history: Some(history),
+        }
     }
 
     /// 布尔序列（信号）的缓存：同一只股票上同一个信号只算一次
@@ -263,6 +357,24 @@ impl<'a> Frame<'a> {
 
     pub fn is_empty(&self) -> bool {
         self.bars.is_empty()
+    }
+
+    /// 这根日线当天是否处于 ST 状态；历史区间没有覆盖时回退当前简称。
+    pub fn is_st(&self, i: usize) -> bool {
+        let date = self.bars.get(i).map(|b| b.date);
+        date.map(|d| self.is_st_on(d))
+            .unwrap_or_else(|| self.meta.is_some_and(|m| m.is_st))
+    }
+
+    fn is_st_on(&self, date: NaiveDate) -> bool {
+        if let Some(history) = self.st_history
+            && let Some(p) = history
+                .iter()
+                .find(|p| p.valid_from <= date && p.valid_to.is_none_or(|to| date < to))
+        {
+            return p.is_st;
+        }
+        self.meta.is_some_and(|m| m.is_st)
     }
 
     /// 指标序列（与日线等长，不可用的位置是 NaN）
@@ -297,28 +409,57 @@ impl<'a> Frame<'a> {
             I::Volume => self.col(|b| b.volume),
             I::ChangePct => {
                 let c = close();
-                (0..c.len()).map(|i| if i == 0 { f64::NAN } else { (c[i] / c[i - 1] - 1.0) * 100.0 }).collect()
+                (0..c.len())
+                    .map(|i| {
+                        if i == 0 {
+                            f64::NAN
+                        } else {
+                            (c[i] / c[i - 1] - 1.0) * 100.0
+                        }
+                    })
+                    .collect()
             }
             I::Amplitude => {
                 let b = self.bars;
-                (0..b.len()).map(|i| if i == 0 { f64::NAN } else { (b[i].q_high - b[i].q_low) / b[i - 1].q_close * 100.0 }).collect()
+                (0..b.len())
+                    .map(|i| {
+                        if i == 0 {
+                            f64::NAN
+                        } else {
+                            (b[i].q_high - b[i].q_low) / b[i - 1].q_close * 100.0
+                        }
+                    })
+                    .collect()
             }
-            I::Ma => sma(&close(), n).into_iter().map(|v| v.unwrap_or(f64::NAN)).collect(),
+            I::Ma => sma(&close(), n)
+                .into_iter()
+                .map(|v| v.unwrap_or(f64::NAN))
+                .collect(),
             I::Ema => ema(&close(), n),
             I::MaGap => {
                 let c = close();
                 let m = self.get(IndicatorRef::new(I::Ma, Some(n as u32)));
-                c.iter().zip(m.iter()).map(|(c, m)| (c / m - 1.0) * 100.0).collect()
+                c.iter()
+                    .zip(m.iter())
+                    .map(|(c, m)| (c / m - 1.0) * 100.0)
+                    .collect()
             }
             I::MacdDif => {
                 let c = close();
-                ema(&c, 12).iter().zip(ema(&c, 26)).map(|(a, b)| a - b).collect()
+                ema(&c, 12)
+                    .iter()
+                    .zip(ema(&c, 26))
+                    .map(|(a, b)| a - b)
+                    .collect()
             }
             I::MacdDea => ema(&self.get(IndicatorRef::new(I::MacdDif, None)), 9),
             I::MacdHist => {
                 let dif = self.get(IndicatorRef::new(I::MacdDif, None));
                 let dea = self.get(IndicatorRef::new(I::MacdDea, None));
-                dif.iter().zip(dea.iter()).map(|(a, b)| 2.0 * (a - b)).collect()
+                dif.iter()
+                    .zip(dea.iter())
+                    .map(|(a, b)| 2.0 * (a - b))
+                    .collect()
             }
             I::Rsi => rsi(&close(), n),
             I::KdjK | I::KdjD | I::KdjJ => {
@@ -340,7 +481,10 @@ impl<'a> Frame<'a> {
             I::Atr => atr(self.bars, n),
             I::AtrPct => {
                 let a = self.get(IndicatorRef::new(I::Atr, Some(n as u32)));
-                a.iter().zip(self.bars).map(|(a, b)| a / b.q_close * 100.0).collect()
+                a.iter()
+                    .zip(self.bars)
+                    .map(|(a, b)| a / b.q_close * 100.0)
+                    .collect()
             }
             I::VolRatio => {
                 let v = self.col(|b| b.volume);
@@ -356,14 +500,25 @@ impl<'a> Frame<'a> {
             }
             I::Momentum => {
                 let c = close();
-                (0..c.len()).map(|i| if i < n { f64::NAN } else { (c[i] / c[i - n] - 1.0) * 100.0 }).collect()
+                (0..c.len())
+                    .map(|i| {
+                        if i < n {
+                            f64::NAN
+                        } else {
+                            (c[i] / c[i - n] - 1.0) * 100.0
+                        }
+                    })
+                    .collect()
             }
             I::HighN => rolling(&self.col(|b| b.q_high), n, f64::max),
             I::LowN => rolling(&self.col(|b| b.q_low), n, f64::min),
             I::PctFromHigh => {
                 let c = close();
                 let hi = rolling(&c, n, f64::max);
-                c.iter().zip(hi).map(|(c, h)| (c / h - 1.0) * 100.0).collect()
+                c.iter()
+                    .zip(hi)
+                    .map(|(c, h)| (c / h - 1.0) * 100.0)
+                    .collect()
             }
             I::PrevHighClose | I::PrevLowClose => {
                 let c = close();
@@ -374,14 +529,21 @@ impl<'a> Frame<'a> {
                             return f64::NAN;
                         }
                         let w = c[i - n..i].iter().copied();
-                        if high { w.fold(f64::MIN, f64::max) } else { w.fold(f64::MAX, f64::min) }
+                        if high {
+                            w.fold(f64::MIN, f64::max)
+                        } else {
+                            w.fold(f64::MAX, f64::min)
+                        }
                     })
                     .collect()
             }
             I::PctFromLow => {
                 let c = close();
                 let lo = rolling(&c, n, f64::min);
-                c.iter().zip(lo).map(|(c, l)| (c / l - 1.0) * 100.0).collect()
+                c.iter()
+                    .zip(lo)
+                    .map(|(c, l)| (c / l - 1.0) * 100.0)
+                    .collect()
             }
             I::PlusDi | I::MinusDi | I::Adx => {
                 let (pdi, mdi, adx) = dmi(self.bars, n, 6);
@@ -394,18 +556,30 @@ impl<'a> Frame<'a> {
             I::Supertrend => supertrend(self.bars, n, 3.0),
             I::Cci => cci(self.bars, n),
             I::BollWidth => {
-                let (up, lo, mid) = (self.get(IndicatorRef::new(I::BollUpper, None)), self.get(IndicatorRef::new(I::BollLower, None)), self.get(IndicatorRef::new(I::BollMid, None)));
-                (0..up.len()).map(|i| (up[i] - lo[i]) / mid[i] * 100.0).collect()
+                let (up, lo, mid) = (
+                    self.get(IndicatorRef::new(I::BollUpper, None)),
+                    self.get(IndicatorRef::new(I::BollLower, None)),
+                    self.get(IndicatorRef::new(I::BollMid, None)),
+                );
+                (0..up.len())
+                    .map(|i| (up[i] - lo[i]) / mid[i] * 100.0)
+                    .collect()
             }
             I::MaSpread => {
-                let mas: Vec<Rc<Vec<f64>>> = [5, 10, 20, 60].iter().map(|k| self.get(IndicatorRef::new(I::Ma, Some(*k)))).collect();
+                let mas: Vec<Rc<Vec<f64>>> = [5, 10, 20, 60]
+                    .iter()
+                    .map(|k| self.get(IndicatorRef::new(I::Ma, Some(*k))))
+                    .collect();
                 (0..self.len())
                     .map(|i| {
                         let v: Vec<f64> = mas.iter().map(|m| m[i]).collect();
                         if v.iter().any(|x| x.is_nan()) {
                             return f64::NAN;
                         }
-                        let (hi, lo) = (v.iter().copied().fold(f64::MIN, f64::max), v.iter().copied().fold(f64::MAX, f64::min));
+                        let (hi, lo) = (
+                            v.iter().copied().fold(f64::MIN, f64::max),
+                            v.iter().copied().fold(f64::MAX, f64::min),
+                        );
                         (hi - lo) / self.bars[i].q_close * 100.0
                     })
                     .collect()
@@ -437,7 +611,7 @@ impl<'a> Frame<'a> {
             if self.ipo_period(i) {
                 continue;
             }
-            let pct = self.limit_pct(b[i].date);
+            let pct = self.limit_pct(i);
             // 前复权价之比消去了除权：今天的原价 × 昨天和今天的前复权价之比 = 昨天的收盘价按除权调整后的值
             let base = b[i].close * b[i - 1].q_close / b[i].q_close;
             let up = round2(base * (1.0 + pct));
@@ -449,7 +623,9 @@ impl<'a> Frame<'a> {
             l.broken[i] = b[i].high >= up - 0.005 && !l.limit_up[i];
         }
         // 权威池。北交所不在池里（池里没有 %.BJ），回退自算；没有证券信息时也不知道板块，同样自算
-        let authority = self.authority.filter(|_| self.meta.is_some_and(|m| m.board != "bse"));
+        let authority = self
+            .authority
+            .filter(|_| self.meta.is_some_and(|m| m.board != "bse"));
         let empty = super::limit_pool::CodeLimits::default();
         let code_limits = authority.map(|(pool, code)| (pool, pool.code(code).unwrap_or(&empty)));
         let mut run = 0u32;
@@ -465,7 +641,11 @@ impl<'a> Frame<'a> {
                     while ui < limits.up.len() && limits.up[ui].0 < date {
                         ui += 1;
                     }
-                    let count = limits.up.get(ui).filter(|(d, _)| *d == date).map_or(0, |(_, count)| *count);
+                    let count = limits
+                        .up
+                        .get(ui)
+                        .filter(|(d, _)| *d == date)
+                        .map_or(0, |(_, count)| *count);
                     l.limit_up[i] = count > 0;
                     l.consecutive_up[i] = count;
                     run = count;
@@ -501,14 +681,15 @@ impl<'a> Frame<'a> {
         }
     }
 
-    fn limit_pct(&self, date: NaiveDate) -> f64 {
+    fn limit_pct(&self, i: usize) -> f64 {
         let Some(m) = self.meta else { return 0.10 };
+        let date = self.bars[i].date;
         let chinext_reform = NaiveDate::from_ymd_opt(2020, 8, 24).unwrap();
         match m.board.as_str() {
             "bse" => 0.30,
             "star" => 0.20,
             "chinext" if date >= chinext_reform => 0.20,
-            _ if m.is_st => 0.05,
+            _ if self.is_st_on(date) => 0.05,
             _ => 0.10,
         }
     }
@@ -524,7 +705,11 @@ pub fn ema(values: &[f64], n: usize) -> Vec<f64> {
     let mut out = Vec::with_capacity(values.len());
     let mut prev = f64::NAN;
     for &v in values {
-        prev = if prev.is_nan() { v } else { alpha * v + (1.0 - alpha) * prev };
+        prev = if prev.is_nan() {
+            v
+        } else {
+            alpha * v + (1.0 - alpha) * prev
+        };
         out.push(prev);
     }
     out
@@ -539,7 +724,11 @@ fn smooth(values: &[f64], n: usize, seed: f64) -> Vec<f64> {
             if v.is_nan() {
                 return f64::NAN;
             }
-            prev = if prev.is_nan() { v } else { (v + (n as f64 - 1.0) * prev) / n as f64 };
+            prev = if prev.is_nan() {
+                v
+            } else {
+                (v + (n as f64 - 1.0) * prev) / n as f64
+            };
             prev
         })
         .collect()
@@ -561,29 +750,58 @@ fn rsi(close: &[f64], n: usize) -> Vec<f64> {
     su.iter()
         .zip(sa)
         .enumerate()
-        .map(|(i, (u, a))| if i < n { f64::NAN } else if a > 0.0 { u / a * 100.0 } else { 50.0 })
+        .map(|(i, (u, a))| {
+            if i < n {
+                f64::NAN
+            } else if a > 0.0 {
+                u / a * 100.0
+            } else {
+                50.0
+            }
+        })
         .collect()
 }
 
 fn kdj(bars: &[DailyBar], n: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    let hi = rolling(&bars.iter().map(|b| b.q_high).collect::<Vec<_>>(), n, f64::max);
-    let lo = rolling(&bars.iter().map(|b| b.q_low).collect::<Vec<_>>(), n, f64::min);
+    let hi = rolling(
+        &bars.iter().map(|b| b.q_high).collect::<Vec<_>>(),
+        n,
+        f64::max,
+    );
+    let lo = rolling(
+        &bars.iter().map(|b| b.q_low).collect::<Vec<_>>(),
+        n,
+        f64::min,
+    );
     let rsv: Vec<f64> = bars
         .iter()
         .enumerate()
         .map(|(i, b)| {
             let range = hi[i] - lo[i];
-            if hi[i].is_nan() { f64::NAN } else if range > 0.0 { (b.q_close - lo[i]) / range * 100.0 } else { 50.0 }
+            if hi[i].is_nan() {
+                f64::NAN
+            } else if range > 0.0 {
+                (b.q_close - lo[i]) / range * 100.0
+            } else {
+                50.0
+            }
         })
         .collect();
     let k = smooth(&rsv, 3, 50.0);
     let d = smooth(&k, 3, 50.0);
-    let j = k.iter().zip(d.iter()).map(|(k, d)| 3.0 * k - 2.0 * d).collect();
+    let j = k
+        .iter()
+        .zip(d.iter())
+        .map(|(k, d)| 3.0 * k - 2.0 * d)
+        .collect();
     (k, d, j)
 }
 
 fn atr(bars: &[DailyBar], n: usize) -> Vec<f64> {
-    sma(&true_range(bars), n).into_iter().map(|v| v.unwrap_or(f64::NAN)).collect()
+    sma(&true_range(bars), n)
+        .into_iter()
+        .map(|v| v.unwrap_or(f64::NAN))
+        .collect()
 }
 
 /// 真实波幅：最高 − 最低、最高 − 昨收、昨收 − 最低中的最大值；第一天没有昨收，取最高 − 最低
@@ -595,14 +813,24 @@ fn true_range(bars: &[DailyBar]) -> Vec<f64> {
                 return b.q_high - b.q_low;
             }
             let pc = bars[i - 1].q_close;
-            (b.q_high - b.q_low).max((b.q_high - pc).abs()).max((b.q_low - pc).abs())
+            (b.q_high - b.q_low)
+                .max((b.q_high - pc).abs())
+                .max((b.q_low - pc).abs())
         })
         .collect()
 }
 
 /// 最近 n 个值（含当天）之和；不足 n 个或含 NaN 时为 NaN
 fn rolling_sum(values: &[f64], n: usize) -> Vec<f64> {
-    (0..values.len()).map(|i| if i + 1 < n { f64::NAN } else { values[i + 1 - n..=i].iter().sum() }).collect()
+    (0..values.len())
+        .map(|i| {
+            if i + 1 < n {
+                f64::NAN
+            } else {
+                values[i + 1 - n..=i].iter().sum()
+            }
+        })
+        .collect()
 }
 
 /// DMI，与通达信、同花顺的公式一致：
@@ -623,11 +851,47 @@ fn dmi(bars: &[DailyBar], n: usize, m: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) 
     if let Some(t) = tr.first_mut() {
         *t = f64::NAN;
     }
-    let (mtr, sp, sm) = (rolling_sum(&tr, n), rolling_sum(&dmp, n), rolling_sum(&dmm, n));
-    let pdi: Vec<f64> = (0..len).map(|i| if mtr[i] > 0.0 { sp[i] * 100.0 / mtr[i] } else { f64::NAN }).collect();
-    let mdi: Vec<f64> = (0..len).map(|i| if mtr[i] > 0.0 { sm[i] * 100.0 / mtr[i] } else { f64::NAN }).collect();
-    let dx: Vec<f64> = (0..len).map(|i| if pdi[i] + mdi[i] > 0.0 { (mdi[i] - pdi[i]).abs() / (mdi[i] + pdi[i]) * 100.0 } else { f64::NAN }).collect();
-    let adx = (0..len).map(|i| if i + 1 < m || dx[i + 1 - m..=i].iter().any(|v| v.is_nan()) { f64::NAN } else { dx[i + 1 - m..=i].iter().sum::<f64>() / m as f64 }).collect();
+    let (mtr, sp, sm) = (
+        rolling_sum(&tr, n),
+        rolling_sum(&dmp, n),
+        rolling_sum(&dmm, n),
+    );
+    let pdi: Vec<f64> = (0..len)
+        .map(|i| {
+            if mtr[i] > 0.0 {
+                sp[i] * 100.0 / mtr[i]
+            } else {
+                f64::NAN
+            }
+        })
+        .collect();
+    let mdi: Vec<f64> = (0..len)
+        .map(|i| {
+            if mtr[i] > 0.0 {
+                sm[i] * 100.0 / mtr[i]
+            } else {
+                f64::NAN
+            }
+        })
+        .collect();
+    let dx: Vec<f64> = (0..len)
+        .map(|i| {
+            if pdi[i] + mdi[i] > 0.0 {
+                (mdi[i] - pdi[i]).abs() / (mdi[i] + pdi[i]) * 100.0
+            } else {
+                f64::NAN
+            }
+        })
+        .collect();
+    let adx = (0..len)
+        .map(|i| {
+            if i + 1 < m || dx[i + 1 - m..=i].iter().any(|v| v.is_nan()) {
+                f64::NAN
+            } else {
+                dx[i + 1 - m..=i].iter().sum::<f64>() / m as f64
+            }
+        })
+        .collect();
     (pdi, mdi, adx)
 }
 
@@ -675,7 +939,10 @@ fn supertrend(bars: &[DailyBar], n: usize, mult: f64) -> Vec<f64> {
 
 /// CCI，与通达信、同花顺一致：(典型价 − MA(典型价, n)) ÷ (0.015 × AVEDEV(典型价, n))
 fn cci(bars: &[DailyBar], n: usize) -> Vec<f64> {
-    let tp: Vec<f64> = bars.iter().map(|b| (b.q_high + b.q_low + b.q_close) / 3.0).collect();
+    let tp: Vec<f64> = bars
+        .iter()
+        .map(|b| (b.q_high + b.q_low + b.q_close) / 3.0)
+        .collect();
     (0..tp.len())
         .map(|i| {
             if i + 1 < n {
@@ -684,7 +951,11 @@ fn cci(bars: &[DailyBar], n: usize) -> Vec<f64> {
             let w = &tp[i + 1 - n..=i];
             let mean = w.iter().sum::<f64>() / n as f64;
             let dev = w.iter().map(|v| (v - mean).abs()).sum::<f64>() / n as f64;
-            if dev > 0.0 { (tp[i] - mean) / (0.015 * dev) } else { 0.0 }
+            if dev > 0.0 {
+                (tp[i] - mean) / (0.015 * dev)
+            } else {
+                0.0
+            }
         })
         .collect()
 }
@@ -706,7 +977,17 @@ fn rolling_std(values: &[f64], n: usize) -> Vec<f64> {
 /// 最近 n 个值（含当天）按 f 归约，例如最高值、最低值
 fn rolling(values: &[f64], n: usize, f: fn(f64, f64) -> f64) -> Vec<f64> {
     (0..values.len())
-        .map(|i| if i + 1 < n { f64::NAN } else { values[i + 1 - n..=i].iter().copied().reduce(f).unwrap_or(f64::NAN) })
+        .map(|i| {
+            if i + 1 < n {
+                f64::NAN
+            } else {
+                values[i + 1 - n..=i]
+                    .iter()
+                    .copied()
+                    .reduce(f)
+                    .unwrap_or(f64::NAN)
+            }
+        })
         .collect()
 }
 
@@ -742,10 +1023,17 @@ pub(crate) mod tests {
         let ma3 = f.get(IndicatorRef::new(IndicatorId::Ma, Some(3)));
         assert!(ma3[1].is_nan());
         assert!((ma3[4] - 13.0).abs() < 1e-12);
-        assert!((f.at(IndicatorRef::new(IndicatorId::Momentum, Some(2)), 4) - (14.0 / 12.0 - 1.0) * 100.0).abs() < 1e-9);
+        assert!(
+            (f.at(IndicatorRef::new(IndicatorId::Momentum, Some(2)), 4)
+                - (14.0 / 12.0 - 1.0) * 100.0)
+                .abs()
+                < 1e-9
+        );
         assert!((f.at(IndicatorRef::new(IndicatorId::ChangePct, None), 1) - 10.0).abs() < 1e-9);
         // 成交量 1000、2000、3000、4000、5000：第 5 天是前 3 天平均 3000 的 5/3 倍
-        assert!((f.at(IndicatorRef::new(IndicatorId::VolRatio, Some(3)), 4) - 5.0 / 3.0).abs() < 1e-9);
+        assert!(
+            (f.at(IndicatorRef::new(IndicatorId::VolRatio, Some(3)), 4) - 5.0 / 3.0).abs() < 1e-9
+        );
         assert!((f.at(IndicatorRef::new(IndicatorId::PctFromHigh, Some(3)), 4)).abs() < 1e-9);
     }
 
@@ -755,22 +1043,37 @@ pub(crate) mod tests {
         let f = Frame::new(&b, None);
         assert!((f.at(IndicatorRef::new(IndicatorId::Rsi, Some(14)), 29) - 100.0).abs() < 1e-9);
         assert_eq!(f.at(IndicatorRef::new(IndicatorId::Ema, Some(5)), 0), 1.0);
-        assert!(f.at(IndicatorRef::new(IndicatorId::MacdDif, None), 29) > 0.0, "持续上涨时 DIF 为正");
+        assert!(
+            f.at(IndicatorRef::new(IndicatorId::MacdDif, None), 29) > 0.0,
+            "持续上涨时 DIF 为正"
+        );
     }
 
     #[test]
     fn dmi_supertrend_and_cci() {
         // 先涨 40 天再跌 40 天
-        let closes: Vec<f64> = (0..40).map(|i| 10.0 + i as f64 * 0.2).chain((0..40).map(|i| 18.0 - i as f64 * 0.2)).collect();
+        let closes: Vec<f64> = (0..40)
+            .map(|i| 10.0 + i as f64 * 0.2)
+            .chain((0..40).map(|i| 18.0 - i as f64 * 0.2))
+            .collect();
         let b = bars_from(&closes);
         let f = Frame::new(&b, None);
         let at = |id, n, i| f.at(IndicatorRef::new(id, n), i);
         // 上涨段：+DI 在 −DI 上方，趋势明确；下跌段相反
         assert!(at(IndicatorId::PlusDi, Some(14), 39) > at(IndicatorId::MinusDi, Some(14), 39));
         assert!(at(IndicatorId::MinusDi, Some(14), 79) > at(IndicatorId::PlusDi, Some(14), 79));
-        assert!(at(IndicatorId::Adx, Some(14), 39) > 25.0 && at(IndicatorId::Adx, Some(14), 79) > 25.0);
-        assert!(at(IndicatorId::PlusDi, Some(14), 13).is_nan(), "前 n 天算不出");
-        assert!(at(IndicatorId::Adx, Some(14), 18).is_nan() && !at(IndicatorId::Adx, Some(14), 19).is_nan(), "ADX 再晚 5 天");
+        assert!(
+            at(IndicatorId::Adx, Some(14), 39) > 25.0 && at(IndicatorId::Adx, Some(14), 79) > 25.0
+        );
+        assert!(
+            at(IndicatorId::PlusDi, Some(14), 13).is_nan(),
+            "前 n 天算不出"
+        );
+        assert!(
+            at(IndicatorId::Adx, Some(14), 18).is_nan()
+                && !at(IndicatorId::Adx, Some(14), 19).is_nan(),
+            "ADX 再晚 5 天"
+        );
         // Supertrend：上涨时在股价下方，下跌时翻到上方
         assert!(at(IndicatorId::Supertrend, Some(10), 39) < closes[39]);
         assert!(at(IndicatorId::Supertrend, Some(10), 79) > closes[79]);
@@ -781,29 +1084,77 @@ pub(crate) mod tests {
         assert!((cci - 2.0 * step / (0.015 * mad)).abs() < 1e-6, "{cci}");
         // 布林带宽度、均线粘合度
         let w = at(IndicatorId::BollWidth, None, 30);
-        let (u, l, m) = (at(IndicatorId::BollUpper, None, 30), at(IndicatorId::BollLower, None, 30), at(IndicatorId::BollMid, None, 30));
+        let (u, l, m) = (
+            at(IndicatorId::BollUpper, None, 30),
+            at(IndicatorId::BollLower, None, 30),
+            at(IndicatorId::BollMid, None, 30),
+        );
         assert!((w - (u - l) / m * 100.0).abs() < 1e-9);
-        assert!(at(IndicatorId::MaSpread, None, 58).is_nan() && at(IndicatorId::MaSpread, None, 59) > 0.0);
+        assert!(
+            at(IndicatorId::MaSpread, None, 58).is_nan()
+                && at(IndicatorId::MaSpread, None, 59) > 0.0
+        );
     }
 
     #[test]
     fn limit_up_follows_board_rules() {
         let mut b = bars_from(&[10.0, 11.0, 12.1]);
         b[2].high = 12.1;
-        let main = StockMeta { board: "main".into(), is_st: false, list_date: None };
+        let main = StockMeta {
+            board: "main".into(),
+            is_st: false,
+            list_date: None,
+        };
         let f = Frame::new(&b, Some(&main));
         let l = f.limits();
         assert!(l.limit_up[1] && l.limit_up[2], "主板涨 10% 封涨停");
-        let st = StockMeta { board: "main".into(), is_st: true, list_date: None };
+        let st = StockMeta {
+            board: "main".into(),
+            is_st: true,
+            list_date: None,
+        };
         let f = Frame::new(&b, Some(&st));
         assert!((f.limits().up_price[1] - 10.5).abs() < 1e-9, "ST 涨跌幅 5%");
-        let star = StockMeta { board: "star".into(), is_st: false, list_date: None };
+        let star = StockMeta {
+            board: "star".into(),
+            is_st: false,
+            list_date: None,
+        };
         let f = Frame::new(&b, Some(&star));
         assert!(!f.limits().limit_up[1], "科创板 20% 才涨停");
     }
 
+    #[test]
+    fn historical_st_period_changes_limit_rule() {
+        let b = bars_from(&[10.0, 10.5, 11.55]);
+        let main = StockMeta {
+            board: "main".into(),
+            is_st: false,
+            list_date: None,
+        };
+        let history = [StPeriod {
+            valid_from: b[2].date,
+            valid_to: None,
+            is_st: true,
+        }];
+        let f = Frame::with_st_history(&b, Some(&main), &history);
+        let l = f.limits();
+        assert!(
+            (l.up_price[1] - 11.0).abs() < 1e-9,
+            "历史区间外回退当前简称前仍应按主板 10%"
+        );
+        assert!(
+            (l.up_price[2] - 11.03).abs() < 1e-9,
+            "进入 ST 区间后应按 5%"
+        );
+    }
+
     fn meta(board: &str, is_st: bool) -> StockMeta {
-        StockMeta { board: board.into(), is_st, list_date: None }
+        StockMeta {
+            board: board.into(),
+            is_st,
+            list_date: None,
+        }
     }
 
     /// 主板 ST：自算按 5% 判断，但 2026-07-06 起涨跌幅限制改为 10%，涨 7% 不是涨停。
@@ -815,7 +1166,10 @@ pub(crate) mod tests {
         b[2].high = 11.0;
         let st = meta("main", true);
         // 老的自算结果：涨 7% 被当成涨停（5% 的限制）
-        assert!(Frame::new(&b, Some(&st)).limits().limit_up[1], "自算按 5% 判断，涨 7% 算涨停");
+        assert!(
+            Frame::new(&b, Some(&st)).limits().limit_up[1],
+            "自算按 5% 判断，涨 7% 算涨停"
+        );
         // 权威池覆盖 10-02 这一天，但这只股票不在涨停名单里
         let mut pool = LimitPool::empty();
         pool.push_up("600000.SH", b[1].date, 1);
@@ -842,7 +1196,10 @@ pub(crate) mod tests {
         b[2].high = 10.0;
         let st = meta("main", true);
         let self_limits = Frame::new(&b, Some(&st)).limits();
-        assert!(self_limits.limit_down[1] && self_limits.broken[2], "自算结果");
+        assert!(
+            self_limits.limit_down[1] && self_limits.broken[2],
+            "自算结果"
+        );
         // 权威池：只想说明这两个池覆盖了这三天（用别的股票登记），目标股票不在名单里
         let mut pool = LimitPool::empty();
         pool.push_up("600000.SH", b[1].date, 1);
@@ -851,7 +1208,10 @@ pub(crate) mod tests {
         pool.push_broken("600000.SH", b[2].date);
         let f = Frame::with_authority(&b, Some(&st), &pool, "600519.SH");
         let l = f.limits();
-        assert!(!l.limit_down[1] && !l.broken[2], "权威名单里没有它，就不是跌停、炸板");
+        assert!(
+            !l.limit_down[1] && !l.broken[2],
+            "权威名单里没有它，就不是跌停、炸板"
+        );
         // 在名单里就是
         let mut pool = LimitPool::empty();
         pool.push_up("600519.SH", b[1].date, 1);
@@ -874,7 +1234,11 @@ pub(crate) mod tests {
         let f = Frame::with_authority(&b, Some(&main), &pool, "600519.SH");
         let self_l = Frame::new(&b, Some(&main)).limits();
         let l = f.limits();
-        assert_eq!((l.limit_up[0], l.limit_up[2], l.limit_up[3]), (self_l.limit_up[0], self_l.limit_up[2], self_l.limit_up[3]), "覆盖外回退自算");
+        assert_eq!(
+            (l.limit_up[0], l.limit_up[2], l.limit_up[3]),
+            (self_l.limit_up[0], self_l.limit_up[2], self_l.limit_up[3]),
+            "覆盖外回退自算"
+        );
         assert!(!l.limit_up[1], "覆盖内、名单里没有就不是涨停");
         // 覆盖内的日期不再从自算的连续涨停累加：名单里没有，连板数为 0
         assert_eq!(l.consecutive_up[1], 0);

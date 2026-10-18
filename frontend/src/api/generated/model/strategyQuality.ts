@@ -5,19 +5,12 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
-import type { StrategyStat } from './strategyStat';
 
 /**
- * 一个参考策略：过去表现和是否算作有效策略
+ * 一个参考策略：勾选后即可参与账户建议
  */
 export interface StrategyQuality {
   builtin: boolean;
-  /**
-     * 买点之后 20 日平均好于同一天随便买，而且超过误差的 2 倍（不是运气）；还没统计或买点太少时为空
-     * @nullable
-     */
-  effective?: boolean | null;
   name: string;
-  stat?: StrategyStat | null;
   strategy_id: number;
 }

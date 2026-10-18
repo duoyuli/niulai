@@ -24,6 +24,7 @@ import type {
   BarSeries,
   Diagnosis,
   ErrorBody,
+  Fundamentals,
   HotMarket,
   IndexBarsParams,
   IndexInfo,
@@ -38,7 +39,8 @@ import type {
   SectorStrength,
   SectorsParams,
   SecurityBarsParams,
-  SecurityDetail
+  SecurityDetail,
+  SecurityFundamentalsParams
 } from '../model';
 
 import { apiFetch } from '../../fetcher';
@@ -1134,6 +1136,121 @@ export function useSecurityDiagnosis<TData = Awaited<ReturnType<typeof securityD
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getSecurityDiagnosisQueryOptions(thscode,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSecurityFundamentalsUrl = (thscode: string,
+    params?: SecurityFundamentalsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/securities/${thscode}/fundamentals?${stringifiedParams}` : `/api/v1/securities/${thscode}/fundamentals`
+}
+
+/**
+ * @summary 个股估值和最近财务摘要。财务数据按披露日期标记，页面不会把报告期误当成数据可见日期。
+ */
+export const securityFundamentals = async (thscode: string,
+    params?: SecurityFundamentalsParams, options?: Parameters<typeof apiFetch>[1]): Promise<Fundamentals> => {
+
+  return apiFetch<Fundamentals>(getSecurityFundamentalsUrl(thscode,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getSecurityFundamentalsQueryKey = (thscode: string,
+    params?: SecurityFundamentalsParams,) => {
+    return [
+    `/api/v1/securities/${thscode}/fundamentals`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getSecurityFundamentalsQueryOptions = <TData = Awaited<ReturnType<typeof securityFundamentals>>, TError = ErrorBody>(thscode: string,
+    params?: SecurityFundamentalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityFundamentals>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSecurityFundamentalsQueryKey(thscode,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof securityFundamentals>>> = ({ signal }) => securityFundamentals(thscode,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: thscode !== null && thscode !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof securityFundamentals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type SecurityFundamentalsQueryResult = NonNullable<Awaited<ReturnType<typeof securityFundamentals>>>
+export type SecurityFundamentalsQueryError = ErrorBody
+
+
+export function useSecurityFundamentals<TData = Awaited<ReturnType<typeof securityFundamentals>>, TError = ErrorBody>(
+ thscode: string,
+    params: undefined |  SecurityFundamentalsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityFundamentals>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof securityFundamentals>>,
+          TError,
+          Awaited<ReturnType<typeof securityFundamentals>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSecurityFundamentals<TData = Awaited<ReturnType<typeof securityFundamentals>>, TError = ErrorBody>(
+ thscode: string,
+    params?: SecurityFundamentalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityFundamentals>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof securityFundamentals>>,
+          TError,
+          Awaited<ReturnType<typeof securityFundamentals>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useSecurityFundamentals<TData = Awaited<ReturnType<typeof securityFundamentals>>, TError = ErrorBody>(
+ thscode: string,
+    params?: SecurityFundamentalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityFundamentals>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 个股估值和最近财务摘要。财务数据按披露日期标记，页面不会把报告期误当成数据可见日期。
+ */
+
+export function useSecurityFundamentals<TData = Awaited<ReturnType<typeof securityFundamentals>>, TError = ErrorBody>(
+ thscode: string,
+    params?: SecurityFundamentalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof securityFundamentals>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getSecurityFundamentalsQueryOptions(thscode,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

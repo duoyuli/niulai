@@ -10,6 +10,6 @@ import type { StrategyQuality } from './strategyQuality';
 
 export interface RulesGuide {
   presets: PresetInfo[];
-  /** 全部参加巡检的策略，过去表现好的在前 */
+  /** 全部参加巡检的策略，内置策略在前，再按名称排序 */
   strategies: StrategyQuality[];
 }

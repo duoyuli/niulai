@@ -2,7 +2,7 @@ import { keepPreviousData } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useParams } from "react-router";
 import { useMaCrossBacktest, useStrategyBacktest } from "../api/generated/backtest/backtest";
-import { useGetSecurity, useSecurityBars } from "../api/generated/market/market";
+import { useGetSecurity, useSecurityBars, useSecurityFundamentals } from "../api/generated/market/market";
 import { useListSignals } from "../api/generated/signal/signal";
 import { useCatalog, useListStrategies } from "../api/generated/strategy/strategy";
 import { COST_DEFAULTS, CostFields, costParams, Loaded, Result, RulesNote } from "../components/backtest";
@@ -12,10 +12,10 @@ import { MaControls } from "../components/MaControls";
 import { OverlayPicker, useOverlayParam, useOverlays } from "../components/overlays";
 import { PriceChart } from "../components/PriceChart";
 import { RangePicker, rangeQuery } from "../components/RangePicker";
-import { Badge, Card, Empty, ErrorState, Field, inputClass, Segmented, Spinner } from "../components/ui";
+import { Badge, Card, Empty, ErrorState, Field, inputClass, Segmented, Spinner, Table } from "../components/ui";
 import { WatchButton } from "../components/WatchButton";
 import { useSearchState } from "../hooks/useSearchState";
-import { fmtInt, fmtPercent, fmtPrice, RANGES, rangeStart, toNumber, upDownClass } from "../lib/format";
+import { fmtBig, fmtInt, fmtPercent, fmtPrice, RANGES, rangeStart, toNumber, upDownClass } from "../lib/format";
 import { ADJUSTS, type Adjust, BOARDS } from "../lib/labels";
 
 const TABS = [
@@ -81,10 +81,185 @@ export function SecurityDetailPage() {
       ) : (
         <>
           <DiagnosisCard thscode={thscode} />
+          <FundamentalsCard thscode={thscode} />
           <ChartCard thscode={thscode} earliest={sec?.first_bar} />
         </>
       )}
     </>
+  );
+}
+
+function FundamentalsCard({ thscode }: { thscode: string }) {
+  const q = useSecurityFundamentals(thscode, { limit: 90 }, { query: { staleTime: 300_000 } });
+  if (q.isPending)
+    return (
+      <Card title="基本面">
+        <Spinner />
+      </Card>
+    );
+  if (q.error)
+    return (
+      <Card title="基本面">
+        <p className="text-sm text-zinc-500">基本面暂时无法加载。</p>
+      </Card>
+    );
+  const d = q.data;
+  if (!d || (d.valuation.length === 0 && !d.income && !d.balance && !d.cashflow && d.indicators.length === 0)) {
+    return (
+      <Card title="基本面">
+        <Empty>本地还没有估值或财务数据，可能仍在回补中</Empty>
+      </Card>
+    );
+  }
+  const latest = d.valuation[0];
+  return (
+    <Card title="基本面" extra={<span className="text-xs text-zinc-500">数据来自本地已同步内容</span>}>
+      {latest && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <FundamentalStat label="市盈率 TTM" value={latest.pe_ttm} />
+            <FundamentalStat label="市盈率 MRQ" value={latest.pe_mrq} />
+            <FundamentalStat label="市净率" value={latest.pb_mrq} />
+            <FundamentalStat label="市销率 TTM" value={latest.ps_ttm} />
+            <FundamentalStat label="市现率 TTM" value={latest.pcf_ttm} />
+            <FundamentalStat label="流通市值" value={latest.float_market_cap} big />
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">估值截至 {latest.trade_date}；估值没有数据时显示「—」。</p>
+        </>
+      )}
+      {d.valuation.length > 1 && (
+        <details className="mt-4 text-sm">
+          <summary className="cursor-pointer text-zinc-500 select-none">
+            查看估值历史（最近 {d.valuation.length} 个交易日）
+          </summary>
+          <div className="mt-2 overflow-x-auto">
+            <Table>
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>PE TTM</th>
+                  <th>PB</th>
+                  <th>PS TTM</th>
+                  <th>流通市值</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.valuation.map((x) => (
+                  <tr key={x.trade_date}>
+                    <td className="num">{x.trade_date}</td>
+                    <td className="num">{x.pe_ttm ?? "—"}</td>
+                    <td className="num">{x.pb_mrq ?? "—"}</td>
+                    <td className="num">{x.ps_ttm ?? "—"}</td>
+                    <td className="num">{x.float_market_cap ? fmtBig(x.float_market_cap) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
+        </details>
+      )}
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        <StatementBlock title="利润表" data={d.income} />
+        <StatementBlock title="资产负债表" data={d.balance} />
+        <StatementBlock title="现金流量表" data={d.cashflow} />
+      </div>
+      {d.indicators.length > 0 && (
+        <div className="mt-4">
+          <h3 className="text-sm font-medium">财务指标</h3>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {d.indicators.map((group) => (
+              <div key={group.name} className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/60">
+                <p className="text-xs font-medium text-zinc-500">{abilityName(group.name)}</p>
+                <div className="mt-2 flex flex-col gap-1">
+                  {group.metrics.map((m) => (
+                    <div key={m.name} className="flex justify-between gap-2 text-xs">
+                      <span className="truncate" title={m.name}>
+                        {indicatorName(m.name)}
+                      </span>
+                      <span className="num">{m.value.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <p className="mt-3 text-xs text-zinc-500">
+        报表按报告期末统计，同时显示披露日期；披露日期晚于报告期时，历史回测不能把它提前使用。
+      </p>
+    </Card>
+  );
+}
+
+function FundamentalStat({ label, value, big = false }: { label: string; value?: string | null; big?: boolean }) {
+  const n = value === null || value === undefined ? null : toNumber(value);
+  return (
+    <div>
+      <p className="text-xs text-zinc-500">{label}</p>
+      <p className="num mt-0.5 font-medium">{n === null ? "—" : big ? fmtBig(n) : n.toFixed(2)}</p>
+    </div>
+  );
+}
+
+function StatementBlock({
+  title,
+  data,
+}: {
+  title: string;
+  data?: { period_end?: string | null; report_date?: string | null; metrics: { name: string; value: number }[] } | null;
+}) {
+  if (!data)
+    return (
+      <div className="rounded-lg border border-dashed border-zinc-200 p-3 text-xs text-zinc-400 dark:border-zinc-700">
+        {title}：暂无
+      </div>
+    );
+  return (
+    <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+      <p className="text-sm font-medium">{title}</p>
+      <p className="mt-1 text-xs text-zinc-500">
+        报告期 {data.period_end ?? "—"} · 披露 {data.report_date ?? "—"}
+      </p>
+      <div className="mt-2 flex flex-col gap-1">
+        {data.metrics.map((m) => (
+          <div key={m.name} className="flex justify-between gap-2 text-xs">
+            <span>{m.name}</span>
+            <span className="num">{fmtBig(m.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function abilityName(name: string) {
+  return (
+    (
+      { growth: "成长", profitability: "盈利", solvency: "偿债", operation: "营运", "cash-flow": "现金流" } as Record<
+        string,
+        string
+      >
+    )[name] ?? name
+  );
+}
+
+function indicatorName(name: string) {
+  return (
+    (
+      {
+        current_ratio: "流动比率",
+        quick_ratio: "速动比率",
+        cash_ratio: "现金比率",
+        sale_gross_margin: "销售毛利率",
+        sale_net_interest_ratio: "销售净利率",
+        index_weighted_avg_roe: "加权 ROE",
+        index_deduct_weighted_avg_roe: "扣非 ROE",
+        assets_debt_ratio: "资产负债率",
+        total_assets_growth_ratio: "资产增长率",
+        total_assets_turnover_ratio: "总资产周转率",
+      } as Record<string, string>
+    )[name] ?? name
   );
 }
 

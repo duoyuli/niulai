@@ -84,32 +84,56 @@ pub enum Mode {
 
 // @project-doc docs/domains/strategies.md#screening
 /// 对 date（为空时取最新交易日）执行这些策略。没有日线时返回 None
-pub async fn screen(pool: &PgPool, defs: &[&Definition], date: Option<NaiveDate>, mode: Mode) -> anyhow::Result<Option<Outcome>> {
-    let Some(date) = market::resolve_date(pool, date).await? else { return Ok(None) };
+pub async fn screen(
+    pool: &PgPool,
+    defs: &[&Definition],
+    date: Option<NaiveDate>,
+    mode: Mode,
+) -> anyhow::Result<Option<Outcome>> {
+    let Some(date) = market::resolve_date(pool, date).await? else {
+        return Ok(None);
+    };
     let sec = market::securities(pool).await?;
     // 强势板块过滤：每个策略预先算好允许的股票（只作用于买点）
     let mut sector_sets: Vec<Option<HashSet<String>>> = vec![];
     for d in defs {
         sector_sets.push(match &d.universe.sector {
-            Some(s) => Some(market::stocks_in_top_sectors(pool, &s.category, s.days, s.top_pct, date).await?),
+            Some(s) => Some(
+                market::stocks_in_top_sectors(pool, &s.category, s.days, s.top_pct, date).await?,
+            ),
             None => None,
         });
     }
-    let window = if mode == Mode::Points { POINT_DAYS as u32 } else { 0 };
+    let window = if mode == Mode::Points {
+        POINT_DAYS as u32
+    } else {
+        0
+    };
     let warmup = defs.iter().map(|d| d.warmup()).max().unwrap_or(30) + 5 + window;
     let lo = date - chrono::Duration::days(calendar_days_for(warmup));
     // 权威涨跌停池：整个窗口加载一次，全市场共用
     let limits = super::limit_pool::LimitPool::load(pool, lo, date).await?;
-    let mut found: Vec<StrategyResult> = defs.iter().map(|_| StrategyResult { matched: 0, hits: vec![], sells: vec![], holdings: vec![] }).collect();
+    let mut found: Vec<StrategyResult> = defs
+        .iter()
+        .map(|_| StrategyResult {
+            matched: 0,
+            hits: vec![],
+            sells: vec![],
+            holdings: vec![],
+        })
+        .collect();
     let mut scanned = 0usize;
     prices::for_each_stock(pool, lo, date, |code, bars| {
         let Some(last) = bars.last() else { return };
-        let Some(meta) = sec.meta.get(code) else { return };
+        let Some(meta) = sec.meta.get(code) else {
+            return;
+        };
         if last.date != date {
             return; // 当天停牌
         }
         scanned += 1;
-        let f = Frame::with_authority(bars, Some(meta), &limits, code);
+        let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
+        let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
         let i = bars.len() - 1;
         let name = || sec.names.get(code).cloned().unwrap_or_default();
         let change_pct = f.at(IndicatorRef::new(IndicatorId::ChangePct, None), i);
@@ -173,19 +197,28 @@ pub async fn screen(pool: &PgPool, defs: &[&Definition], date: Option<NaiveDate>
                 }
             });
             r.hits.truncate(d.limit as usize);
-            r.sells.sort_by(|a, b| a.return_pct.total_cmp(&b.return_pct));
-            r.holdings.sort_by(|a, b| b.return_pct.total_cmp(&a.return_pct));
+            r.sells
+                .sort_by(|a, b| a.return_pct.total_cmp(&b.return_pct));
+            r.holdings
+                .sort_by(|a, b| b.return_pct.total_cmp(&a.return_pct));
             r.holdings.truncate(MAX_HOLDINGS);
             r
         })
         .collect();
-    Ok(Some(Outcome { trade_date: date, scanned, results }))
+    Ok(Some(Outcome {
+        trade_date: date,
+        scanned,
+        results,
+    }))
 }
 
 /// 开启巡检的全部策略
 pub async fn screening_strategies(pool: &PgPool) -> anyhow::Result<Vec<(i64, Definition)>> {
-    let rows: Vec<(i64, serde_json::Value)> =
-        sqlx::query_as("SELECT strategy_id, definition FROM app.strategy WHERE screening ORDER BY strategy_id").fetch_all(pool).await?;
+    let rows: Vec<(i64, serde_json::Value)> = sqlx::query_as(
+        "SELECT strategy_id, definition FROM app.strategy WHERE screening ORDER BY strategy_id",
+    )
+    .fetch_all(pool)
+    .await?;
     let lib = super::signal_lib::load(pool).await?;
     let mut out = vec![];
     for (id, v) in rows {
@@ -208,7 +241,11 @@ pub struct ScreeningSummary {
 
 /// 执行巡检：对开启巡检的策略（或只对 only 指定的策略）在 date 上选股，并保存结果。
 /// 同一策略同一天重复执行时覆盖；与该策略上一次巡检比较，标出新入选的股票（第一次巡检不标）
-pub async fn run_and_store(pool: &PgPool, date: Option<NaiveDate>, only: Option<i64>) -> anyhow::Result<ScreeningSummary> {
+pub async fn run_and_store(
+    pool: &PgPool,
+    date: Option<NaiveDate>,
+    only: Option<i64>,
+) -> anyhow::Result<ScreeningSummary> {
     let started = std::time::Instant::now();
     let mut list = screening_strategies(pool).await?;
     if let Some(id) = only {
@@ -218,11 +255,21 @@ pub async fn run_and_store(pool: &PgPool, date: Option<NaiveDate>, only: Option<
         };
     }
     if list.is_empty() {
-        return Ok(ScreeningSummary { trade_date: None, strategies: 0, scanned: 0, ms: 0 });
+        return Ok(ScreeningSummary {
+            trade_date: None,
+            strategies: 0,
+            scanned: 0,
+            ms: 0,
+        });
     }
     let defs: Vec<&Definition> = list.iter().map(|(_, d)| d).collect();
     let Some(out) = screen(pool, &defs, date, Mode::Points).await? else {
-        return Ok(ScreeningSummary { trade_date: None, strategies: 0, scanned: 0, ms: 0 });
+        return Ok(ScreeningSummary {
+            trade_date: None,
+            strategies: 0,
+            scanned: 0,
+            ms: 0,
+        });
     };
     let mut tx = pool.begin().await?;
     for ((id, _), res) in list.iter().zip(&out.results) {
@@ -236,7 +283,14 @@ pub async fn run_and_store(pool: &PgPool, date: Option<NaiveDate>, only: Option<
         .await?;
         let prev: Option<HashSet<String>> = match prev_run {
             Some(r) => Some(
-                sqlx::query_scalar("SELECT thscode FROM app.screen_hit WHERE run_id = $1 AND kind = 'buy'").bind(r).fetch_all(&mut *tx).await?.into_iter().collect(),
+                sqlx::query_scalar(
+                    "SELECT thscode FROM app.screen_hit WHERE run_id = $1 AND kind = 'buy'",
+                )
+                .bind(r)
+                .fetch_all(&mut *tx)
+                .await?
+                .into_iter()
+                .collect(),
             ),
             None => None,
         };
@@ -251,7 +305,10 @@ pub async fn run_and_store(pool: &PgPool, date: Option<NaiveDate>, only: Option<
         .bind(res.matched as i32)
         .fetch_one(&mut *tx)
         .await?;
-        sqlx::query("DELETE FROM app.screen_hit WHERE run_id = $1").bind(run_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM app.screen_hit WHERE run_id = $1")
+            .bind(run_id)
+            .execute(&mut *tx)
+            .await?;
         let insert = "INSERT INTO app.screen_hit (run_id, thscode, rank, is_new, reasons, metrics, kind) VALUES ($1, $2, $3, $4, $5, $6, $7)";
         for (rank, h) in res.hits.iter().enumerate() {
             let metrics = serde_json::json!({ "name": h.name, "close": h.close, "change_pct": finite(h.change_pct), "amount": h.amount, "sort_value": finite(h.sort_value) });
@@ -288,7 +345,12 @@ pub async fn run_and_store(pool: &PgPool, date: Option<NaiveDate>, only: Option<
     tx.commit().await?;
     let ms = started.elapsed().as_millis() as u64;
     tracing::info!(trade_date = %out.trade_date, strategies = list.len(), scanned = out.scanned, ms, "每日巡检完成");
-    Ok(ScreeningSummary { trade_date: Some(out.trade_date), strategies: list.len(), scanned: out.scanned, ms })
+    Ok(ScreeningSummary {
+        trade_date: Some(out.trade_date),
+        strategies: list.len(),
+        scanned: out.scanned,
+        ms,
+    })
 }
 
 /// JSON 不能表示 NaN
@@ -297,9 +359,15 @@ fn finite(v: f64) -> Option<f64> {
 }
 
 pub async fn load_strategy(pool: &PgPool, id: i64) -> anyhow::Result<Option<Definition>> {
-    let v: Option<serde_json::Value> = sqlx::query_scalar("SELECT definition FROM app.strategy WHERE strategy_id = $1").bind(id).fetch_optional(pool).await?;
+    let v: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT definition FROM app.strategy WHERE strategy_id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
     Ok(match v {
-        Some(v) => Some(serde_json::from_value::<Definition>(v)?.with_lib(super::signal_lib::load(pool).await?)),
+        Some(v) => Some(
+            serde_json::from_value::<Definition>(v)?.with_lib(super::signal_lib::load(pool).await?),
+        ),
         None => None,
     })
 }
@@ -326,7 +394,14 @@ pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {
         .await?;
         let same: Vec<i64> = rows
             .iter()
-            .filter(|(_, b, v)| b.is_some() || serde_json::from_value::<Definition>(v.clone()).ok().and_then(|d| serde_json::to_value(&d).ok()).as_ref() == Some(&def))
+            .filter(|(_, b, v)| {
+                b.is_some()
+                    || serde_json::from_value::<Definition>(v.clone())
+                        .ok()
+                        .and_then(|d| serde_json::to_value(&d).ok())
+                        .as_ref()
+                        == Some(&def)
+            })
             .map(|(id, _, _)| *id)
             .collect();
         let Some(&keep) = same.first() else {
@@ -340,7 +415,11 @@ pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {
             continue;
         };
         for &dup in &same[1..] {
-            sqlx::query("UPDATE app.position SET strategy_id = $2 WHERE strategy_id = $1").bind(dup).bind(keep).execute(&mut *tx).await?;
+            sqlx::query("UPDATE app.position SET strategy_id = $2 WHERE strategy_id = $1")
+                .bind(dup)
+                .bind(keep)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query(
                 "UPDATE app.account SET rules = jsonb_set(rules, '{strategies}',
                    (SELECT jsonb_agg(DISTINCT CASE WHEN x::bigint = $1 THEN $2 ELSE x::bigint END) FROM jsonb_array_elements_text(rules->'strategies') x))
@@ -350,8 +429,16 @@ pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {
             .bind(keep)
             .execute(&mut *tx)
             .await?;
-            sqlx::query("DELETE FROM app.strategy WHERE strategy_id = $1").bind(dup).execute(&mut *tx).await?;
-            tracing::info!(key = t.key, keep, merged = dup, "合并了和模板相同的重复策略");
+            sqlx::query("DELETE FROM app.strategy WHERE strategy_id = $1")
+                .bind(dup)
+                .execute(&mut *tx)
+                .await?;
+            tracing::info!(
+                key = t.key,
+                keep,
+                merged = dup,
+                "合并了和模板相同的重复策略"
+            );
         }
         // 先清掉可能占着这个 key 的行（被合并删掉的已经不在了），再把保留的那份设为内置并按模板更新
         sqlx::query(
@@ -373,7 +460,11 @@ pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {
 
 /// 内置策略的编号，按模板 key
 pub async fn builtin_ids(pool: &PgPool) -> sqlx::Result<HashMap<String, i64>> {
-    let rows: Vec<(String, i64)> = sqlx::query_as("SELECT builtin_key, strategy_id FROM app.strategy WHERE builtin_key IS NOT NULL").fetch_all(pool).await?;
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT builtin_key, strategy_id FROM app.strategy WHERE builtin_key IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await?;
     Ok(rows.into_iter().collect())
 }
 

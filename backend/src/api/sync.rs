@@ -261,7 +261,7 @@ pub struct PlannedDataset {
     pub tasks: usize,
 }
 
-/// 发起一次同步运行。只负责规划任务，由 `niulai serve` 的执行循环执行。
+/// 发起一次同步运行。先返回运行编号，任务规划在后台完成，避免首次大回补占住 HTTP 请求。
 #[utoipa::path(post, path = "/sync/runs", tag = "sync", request_body = CreateRun,
     responses((status = 202, description = "已规划，任务由执行循环执行", body = CreatedRun), (status = 400, description = "参数不合法", body = crate::error::ErrorBody)))]
 async fn create_run(State(s): State<AppState>, Json(body): Json<CreateRun>) -> ApiResult<(StatusCode, Json<CreatedRun>)> {
@@ -270,9 +270,19 @@ async fn create_run(State(s): State<AppState>, Json(body): Json<CreateRun>) -> A
     if specs.is_empty() {
         return Err(ApiError::BadRequest("没有选中任何数据集".into()));
     }
-    let (run_id, summary) = s.engine.planner().plan_run(kind, &specs, planner::PlanOptions { only_thscodes: body.thscodes, trigger: Some("manual".into()), ..Default::default() }).await?;
-    let planned = summary.into_iter().map(|(dataset_id, tasks)| PlannedDataset { dataset_id, tasks }).collect();
-    Ok((StatusCode::ACCEPTED, Json(CreatedRun { run_id, planned })))
+    let job = s
+        .engine
+        .planner()
+        .create_planning_job(kind, &specs, planner::PlanOptions { only_thscodes: body.thscodes, trigger: Some("manual".into()), ..Default::default() })
+        .await?;
+    let run_id = job.run_id;
+    let engine = s.engine.clone();
+    tokio::spawn(async move {
+        if let Err(e) = engine.planner().run_planning_job(job).await {
+            tracing::error!(run_id, error = %format!("{e:#}"), "后台规划同步运行失败");
+        }
+    });
+    Ok((StatusCode::ACCEPTED, Json(CreatedRun { run_id, planned: vec![] })))
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]

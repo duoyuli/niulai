@@ -8,7 +8,6 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::stats::{MIN_SIGNALS, StrategyStat};
 use crate::account::lots::{self, Fees, round2};
 use crate::account::rules::{Rules, WeakMarket};
 
@@ -88,7 +87,6 @@ pub struct CandidateIn {
 pub struct StrategyIn {
     pub strategy_id: i64,
     pub name: String,
-    pub stat: Option<StrategyStat>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -110,7 +108,7 @@ pub struct Input {
     pub market: Option<MarketIn>,
     pub holdings: Vec<HoldingIn>,
     pub candidates: Vec<CandidateIn>,
-    /// 参考的策略（全部参加巡检的，或账户勾选的）和它们的过去表现
+    /// 参考的策略（全部参加巡检的，或账户勾选的）
     pub strategies: Vec<StrategyIn>,
     /// 之前连续几份建议都给出了同一条卖出或减仓、且没有执行：键是 item key
     pub streaks: BTreeMap<String, u32>,
@@ -150,7 +148,10 @@ pub struct Note {
 }
 
 fn note(kind: &str, text: impl Into<String>) -> Note {
-    Note { kind: kind.into(), text: text.into() }
+    Note {
+        kind: kind.into(),
+        text: text.into(),
+    }
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
@@ -260,18 +261,43 @@ pub fn yuan(v: f64) -> String {
 pub fn generate(inp: &Input) -> Advice {
     let p = &inp.rules;
     let price_of = |h: &HoldingIn| h.snap.as_ref().map(|s| s.close);
-    let market_value: f64 = inp.holdings.iter().map(|h| h.shares as f64 * price_of(h).unwrap_or(0.0)).sum();
+    let market_value: f64 = inp
+        .holdings
+        .iter()
+        .map(|h| h.shares as f64 * price_of(h).unwrap_or(0.0))
+        .sum();
     let total = inp.cash + market_value;
-    let weak = inp.market.is_some_and(|m| m.above_ma20_pct < p.weak_threshold_pct);
+    let weak = inp
+        .market
+        .is_some_and(|m| m.above_ma20_pct < p.weak_threshold_pct);
     let market_text = inp.market.map(|m| {
-        let verdict = if weak { format!("低于 {:.0}%，算弱市", p.weak_threshold_pct) } else { format!("不低于 {:.0}%，不算弱市", p.weak_threshold_pct) };
-        format!("全市场 {:.0}% 的股票收盘站上 20 日均线，{verdict}", m.above_ma20_pct)
+        let verdict = if weak {
+            format!("低于 {:.0}%，算弱市", p.weak_threshold_pct)
+        } else {
+            format!("不低于 {:.0}%，不算弱市", p.weak_threshold_pct)
+        };
+        format!(
+            "全市场 {:.0}% 的股票收盘站上 20 日均线，{verdict}",
+            m.above_ma20_pct
+        )
     });
 
     // 第 1 步：每只持仓下结论
-    let mut items: Vec<Item> = inp.holdings.iter().map(|h| judge_holding(inp, h, total)).collect();
-    let sold: HashSet<&str> = items.iter().filter(|i| i.action == Action::Sell).map(|i| i.thscode.as_str()).collect();
-    let proceeds: f64 = items.iter().filter(|i| matches!(i.action, Action::Sell | Action::Reduce)).map(|i| i.amount - i.fee).sum();
+    let mut items: Vec<Item> = inp
+        .holdings
+        .iter()
+        .map(|h| judge_holding(inp, h, total))
+        .collect();
+    let sold: HashSet<&str> = items
+        .iter()
+        .filter(|i| i.action == Action::Sell)
+        .map(|i| i.thscode.as_str())
+        .collect();
+    let proceeds: f64 = items
+        .iter()
+        .filter(|i| matches!(i.action, Action::Sell | Action::Reduce))
+        .map(|i| i.amount - i.fee)
+        .sum();
     let remaining = items.iter().filter(|i| i.action != Action::Sell).count();
 
     // 第 2 步：明天能用的钱；第 3、4 步：挑候选、分配
@@ -279,17 +305,28 @@ pub fn generate(inp: &Input) -> Advice {
     let mut available = inp.cash + proceeds - reserve;
     let mut slots = p.max_positions as i64 - remaining as i64;
     let held: HashSet<&str> = inp.holdings.iter().map(|h| h.thscode.as_str()).collect();
-    let stats: HashMap<i64, &StrategyIn> = inp.strategies.iter().map(|s| (s.strategy_id, s)).collect();
-    let edge = |id: i64| stats.get(&id).and_then(|s| s.stat.as_ref()).and_then(|s| s.edge());
-    let excess = |id: i64| edge(id).map(|(e, _)| e);
-    // 有效策略：过去 3 年买点之后 20 日平均比同一天随便买多涨，超过账户的门槛且不是运气；还没有统计、买点太少的在观察期，不算
-    let effective = |id: i64| p.effective(edge(id));
-    let name_of = |id: i64| stats.get(&id).map_or_else(|| format!("策略 {id}"), |s| s.name.clone());
+    let names: HashMap<i64, String> = inp
+        .strategies
+        .iter()
+        .map(|s| (s.strategy_id, s.name.clone()))
+        .collect();
+    let name_of = |id: i64| {
+        names
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| format!("策略 {id}"))
+    };
 
     let mut skipped: Vec<Skipped> = vec![];
-    let skip = |skipped: &mut Vec<Skipped>, c: &CandidateIn, reason: String| skipped.push(Skipped { thscode: c.thscode.clone(), name: c.name.clone(), reason });
+    let skip = |skipped: &mut Vec<Skipped>, c: &CandidateIn, reason: String| {
+        skipped.push(Skipped {
+            thscode: c.thscode.clone(),
+            name: c.name.clone(),
+            reason,
+        })
+    };
     // (候选, 采纳的策略, 被排除的策略)
-    let mut ranked: Vec<(&CandidateIn, Vec<&Pick>, Vec<&Pick>)> = vec![];
+    let mut ranked: Vec<(&CandidateIn, Vec<&Pick>)> = vec![];
     let mut too_few_picks = false;
     for c in &inp.candidates {
         if held.contains(c.thscode.as_str()) || sold.contains(c.thscode.as_str()) {
@@ -299,27 +336,36 @@ pub fn generate(inp: &Input) -> Advice {
             skip(&mut skipped, c, "ST 股不买".into());
             continue;
         }
-        let (kept, dropped): (Vec<&Pick>, Vec<&Pick>) = c.picks.iter().filter(|k| p.uses(k.strategy_id)).partition(|k| effective(k.strategy_id));
-        let names = |l: &[&Pick]| l.iter().map(|k| format!("「{}」", name_of(k.strategy_id))).collect::<Vec<_>>().join("、");
+        let kept: Vec<&Pick> = c.picks.iter().filter(|k| p.uses(k.strategy_id)).collect();
+        let names = |l: &[&Pick]| {
+            l.iter()
+                .map(|k| format!("「{}」", name_of(k.strategy_id)))
+                .collect::<Vec<_>>()
+                .join("、")
+        };
         if kept.is_empty() {
-            if !dropped.is_empty() {
-                skip(&mut skipped, c, format!("只被不够有效门槛的策略选中（{}，门槛是比随便买多涨 {}%）", names(&dropped), p.min_edge_pct));
-            }
             continue;
         }
         if (kept.len() as u32) < p.min_picks {
             too_few_picks = true;
-            skip(&mut skipped, c, format!("只有 {} 个有效策略选中（{}），本账户要求至少 {} 个", kept.len(), names(&kept), p.min_picks));
+            skip(
+                &mut skipped,
+                c,
+                format!(
+                    "只有 {} 个勾选的策略选中（{}），本账户要求至少 {} 个",
+                    kept.len(),
+                    names(&kept),
+                    p.min_picks
+                ),
+            );
             continue;
         }
-        ranked.push((c, kept, dropped));
+        ranked.push((c, kept));
     }
-    // 优先级：同时选中的有效策略数 → 它们的超额之和 → 成交额
-    let edge_sum = |picks: &[&Pick]| picks.iter().filter_map(|k| excess(k.strategy_id)).sum::<f64>();
+    // 优先级：同时选中的勾选策略数 → 成交额
     ranked.sort_by(|a, b| {
         b.1.len()
             .cmp(&a.1.len())
-            .then_with(|| edge_sum(&b.1).total_cmp(&edge_sum(&a.1)))
             .then_with(|| b.0.snap.amount.total_cmp(&a.0.snap.amount))
             .then_with(|| a.0.thscode.cmp(&b.0.thscode))
     });
@@ -332,19 +378,30 @@ pub fn generate(inp: &Input) -> Advice {
     }
     let mut buys: Vec<Item> = vec![];
     let (mut full, mut no_money) = (false, false);
-    for (c, kept, dropped) in &ranked {
+    for (c, kept) in &ranked {
         if pause {
             skip(&mut skipped, c, "弱市：本账户的规则是暂停买入新股票".into());
             continue;
         }
         if slots <= 0 {
             full = true;
-            skip(&mut skipped, c, format!("仓位已满（本账户最多持有 {} 只）", p.max_positions));
+            skip(
+                &mut skipped,
+                c,
+                format!("仓位已满（本账户最多持有 {} 只）", p.max_positions),
+            );
             continue;
         }
         if available <= 1.0 {
             no_money = true;
-            skip(&mut skipped, c, format!("可用的钱用完了（要保留总资产的 {:.0}% 作为现金）", p.min_cash_pct));
+            skip(
+                &mut skipped,
+                c,
+                format!(
+                    "可用的钱用完了（要保留总资产的 {:.0}% 作为现金）",
+                    p.min_cash_pct
+                ),
+            );
             continue;
         }
         let target = (available / slots as f64).min(total * p.max_weight_pct / 100.0);
@@ -354,14 +411,36 @@ pub fn generate(inp: &Input) -> Advice {
         if shares == 0 {
             no_money = true;
             let need = rule.min as f64 * close;
-            skip(&mut skipped, c, format!("钱不够买最少 {} 股（约 {}，这只最多能投 {}）", rule.min, yuan(need + inp.fees.buy_fee(need)), yuan(target)));
+            skip(
+                &mut skipped,
+                c,
+                format!(
+                    "钱不够买最少 {} 股（约 {}，这只最多能投 {}）",
+                    rule.min,
+                    yuan(need + inp.fees.buy_fee(need)),
+                    yuan(target)
+                ),
+            );
             continue;
         }
         let amount = round2(shares as f64 * close);
         let fee = inp.fees.buy_fee(amount);
         available -= amount + fee;
         slots -= 1;
-        buys.push(buy_item(inp, c, kept, dropped, shares, amount, fee, buys.len() + 1, total, weak, half, &name_of, &excess, market_text.as_deref()));
+        buys.push(buy_item(
+            inp,
+            c,
+            kept,
+            shares,
+            amount,
+            fee,
+            buys.len() + 1,
+            total,
+            weak,
+            half,
+            &name_of,
+            market_text.as_deref(),
+        ));
     }
     skipped.truncate(MAX_SKIPPED);
 
@@ -372,32 +451,49 @@ pub fn generate(inp: &Input) -> Advice {
     for it in &items {
         let left = match it.action {
             Action::Sell => 0,
-            Action::Reduce => inp.holdings.iter().find(|h| h.thscode == it.thscode).map_or(0, |h| h.shares - it.shares),
+            Action::Reduce => inp
+                .holdings
+                .iter()
+                .find(|h| h.thscode == it.thscode)
+                .map_or(0, |h| h.shares - it.shares),
             _ => it.shares,
         };
         if left > 0 {
-            weights.push(Weight { thscode: it.thscode.clone(), name: it.name.clone(), weight_pct: left as f64 * it.ref_price / total.max(1.0) * 100.0 });
+            weights.push(Weight {
+                thscode: it.thscode.clone(),
+                name: it.name.clone(),
+                weight_pct: left as f64 * it.ref_price / total.max(1.0) * 100.0,
+            });
         }
     }
-    weights.extend(buys.iter().map(|b| Weight { thscode: b.thscode.clone(), name: b.name.clone(), weight_pct: b.weight_pct }));
+    weights.extend(buys.iter().map(|b| Weight {
+        thscode: b.thscode.clone(),
+        name: b.name.clone(),
+        weight_pct: b.weight_pct,
+    }));
     weights.sort_by(|a, b| b.weight_pct.total_cmp(&a.weight_pct));
-    let after = After { cash: cash_after, cash_pct: cash_after / total.max(1.0) * 100.0, positions: weights.len(), weights };
+    let after = After {
+        cash: cash_after,
+        cash_pct: cash_after / total.max(1.0) * 100.0,
+        positions: weights.len(),
+        weights,
+    };
 
     let n_sell = items.iter().filter(|i| i.action == Action::Sell).count();
     let n_reduce = items.iter().filter(|i| i.action == Action::Reduce).count();
     let n_buy = buys.len();
-    let used: Vec<&StrategyIn> = inp.strategies.iter().filter(|s| p.uses(s.strategy_id)).collect();
-    let good = used.iter().filter(|s| effective(s.strategy_id)).count();
+    let used: Vec<&StrategyIn> = inp
+        .strategies
+        .iter()
+        .filter(|s| p.uses(s.strategy_id))
+        .collect();
     let settings_hint = if n_buy > 0 || pause {
         None
-    } else if good == 0 {
-        Some(format!(
-            "参考的 {} 个策略都不够有效门槛（过去 3 年比随便买多涨 {}% 以上），所以选不出股票。可以在「设置」里多勾几个策略，或者调低有效门槛",
-            used.len(),
-            p.min_edge_pct
-        ))
     } else if ranked.is_empty() && too_few_picks {
-        Some(format!("有效策略选出了股票，但没有一只同时被 {} 个有效策略看好。可以在「设置」里调低「至少几个有效策略同时看好」", p.min_picks))
+        Some(format!(
+            "有候选股票，但没有一只同时被 {} 个勾选的策略看好。可以在「设置」里调低「至少几个勾选的策略同时看好」",
+            p.min_picks
+        ))
     } else {
         None
     };
@@ -420,30 +516,31 @@ pub fn generate(inp: &Input) -> Advice {
         } else {
             "没有要买入的".to_string()
         };
-        ("不用操作".to_string(), Some(format!("{holding_part}；{buy_part}。")))
+        (
+            "不用操作".to_string(),
+            Some(format!("{holding_part}；{buy_part}。")),
+        )
     } else {
-        let parts: Vec<String> = [(n_sell, "卖出"), (n_reduce, "减仓"), (n_buy, "买入")].iter().filter(|(n, _)| *n > 0).map(|(n, w)| format!("{w} {n} 只")).collect();
+        let parts: Vec<String> = [(n_sell, "卖出"), (n_reduce, "减仓"), (n_buy, "买入")]
+            .iter()
+            .filter(|(n, _)| *n > 0)
+            .map(|(n, w)| format!("{w} {n} 只"))
+            .collect();
         (parts.join("、"), None)
     };
 
     let mut notes = vec![format!(
-        "参考 {} 个策略，其中 {good} 个过去 3 年买点之后 20 个交易日平均比随便买多涨 {}% 以上（有效策略），只有它们选中的股票才考虑买入",
-        used.len(),
-        p.min_edge_pct
+        "参考 {} 个勾选的策略；同时命中的策略越多，排序越靠前",
+        used.len()
     )];
-    let missing_cost = inp.holdings.iter().filter(|h| h.cost_price.is_none()).count();
-    if missing_cost > 0 {
-        notes.push(format!("{missing_cost} 只持仓没填成本价，不能按止损线判断，可以在持仓页补上"));
-    }
-    let watching: Vec<String> = used
+    let missing_cost = inp
+        .holdings
         .iter()
-        .filter(|s| s.stat.as_ref().is_none_or(|t| t.signals < MIN_SIGNALS))
-        .map(|s| format_name(&s.name))
-        .collect();
-    if !watching.is_empty() {
+        .filter(|h| h.cost_price.is_none())
+        .count();
+    if missing_cost > 0 {
         notes.push(format!(
-            "{}还在观察期（过去表现还没统计出来，或 3 年里买点不到 {MIN_SIGNALS} 次），先不拿来买入",
-            watching.join("、")
+            "{missing_cost} 只持仓没填成本价，不能按止损线判断，可以在持仓页补上"
         ));
     }
 
@@ -497,13 +594,28 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         weight_pct: 0.0,
     };
     let Some(s) = h.snap.as_ref() else {
-        return base(Action::Wait, "本地还没有这只股票的日线，暂时判断不了".into(), "没有行情时不给建议".into());
+        return base(
+            Action::Wait,
+            "本地还没有这只股票的日线，暂时判断不了".into(),
+            "没有行情时不给建议".into(),
+        );
     };
     if h.delisted {
-        return base(Action::Wait, "已经退市".into(), "退市的股票不能在交易所正常买卖，按券商的退市安排处理".into());
+        return base(
+            Action::Wait,
+            "已经退市".into(),
+            "退市的股票不能在交易所正常买卖，按券商的退市安排处理".into(),
+        );
     }
     if h.last_date.is_some_and(|d| d < inp.trade_date) {
-        let mut it = base(Action::Wait, format!("停牌中（最后交易日 {}），复牌后再判断", h.last_date.unwrap_or(inp.trade_date)), "停牌时不能交易".into());
+        let mut it = base(
+            Action::Wait,
+            format!(
+                "停牌中（最后交易日 {}），复牌后再判断",
+                h.last_date.unwrap_or(inp.trade_date)
+            ),
+            "停牌时不能交易".into(),
+        );
         it.weight_pct = h.shares as f64 * s.close / total.max(1.0) * 100.0;
         return it;
     }
@@ -516,12 +628,31 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
     let mut evidence = vec![];
     if let (Some(c), Some(r)) = (h.cost_price, ret) {
         let pnl = (close - c) * h.shares as f64;
-        let held = h.bars_held.map(|n| format!("，已持有 {n} 个交易日")).unwrap_or_default();
-        evidence.push(note("position", format!("成本 {c:.2} 元，现价 {close:.2} 元，{} {:.1}%（{}）{held}", if r >= 0.0 { "赚" } else { "亏" }, (r * 100.0).abs(), yuan(pnl.abs()))));
+        let held = h
+            .bars_held
+            .map(|n| format!("，已持有 {n} 个交易日"))
+            .unwrap_or_default();
+        evidence.push(note(
+            "position",
+            format!(
+                "成本 {c:.2} 元，现价 {close:.2} 元，{} {:.1}%（{}）{held}",
+                if r >= 0.0 { "赚" } else { "亏" },
+                (r * 100.0).abs(),
+                yuan(pnl.abs())
+            ),
+        ));
     }
     if let Some(ma) = s.ma_trend {
         let gap = (close / ma - 1.0) * 100.0;
-        evidence.push(note("price", format!("收盘 {close:.2} 元，{} 日均线 {ma:.2} 元，{}{:.1}%", p.trend_ma, if gap >= 0.0 { "高出 " } else { "低了 " }, gap.abs())));
+        evidence.push(note(
+            "price",
+            format!(
+                "收盘 {close:.2} 元，{} 日均线 {ma:.2} 元，{}{:.1}%",
+                p.trend_ma,
+                if gap >= 0.0 { "高出 " } else { "低了 " },
+                gap.abs()
+            ),
+        ));
     }
     if !s.trend_text.is_empty() {
         evidence.push(note("diagnosis", format!("趋势：{}", s.trend_text)));
@@ -531,7 +662,10 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
     if let Some(rsi) = s.rsi
         && rsi <= 30.0
     {
-        cautions.push(note("diagnosis", format!("RSI(14) 为 {rsi:.0}，已经超卖，短期可能反弹")));
+        cautions.push(note(
+            "diagnosis",
+            format!("RSI(14) 为 {rsi:.0}，已经超卖，短期可能反弹"),
+        ));
     }
 
     let sell = |headline: String, rule: String, evidence: Vec<Note>, cautions: Vec<Note>| {
@@ -540,14 +674,23 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         let streak = inp.streaks.get(&key).copied().unwrap_or(0) + 1;
         let mut ev = evidence;
         if streak > 1 {
-            ev.insert(0, note("rule", format!("已连续 {streak} 天建议卖出，还没有执行")));
+            ev.insert(
+                0,
+                note("rule", format!("已连续 {streak} 天建议卖出，还没有执行")),
+            );
         }
         Item {
             amount,
             fee: inp.fees.sell_fee(amount),
             evidence: ev,
             cautions,
-            plan: vec![format!("下一个交易日（{}）开盘后卖出全部 {} 股", inp.next_date, h.shares), "开盘一字跌停卖不出时，下一份建议会继续提示".into()],
+            plan: vec![
+                format!(
+                    "下一个交易日（{}）开盘后卖出全部 {} 股",
+                    inp.next_date, h.shares
+                ),
+                "开盘一字跌停卖不出时，下一份建议会继续提示".into(),
+            ],
             stop_price,
             streak,
             weight_pct: weight,
@@ -560,13 +703,25 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
     {
         return sell(
             format!("亏损 {:.1}%，超过止损线 {}%", -r * 100.0, p.stop_loss_pct),
-            format!("本账户的规则：比成本价亏 {}% 就卖出（止损价 {:.2} 元）", p.stop_loss_pct, c * (1.0 - p.stop_loss_pct / 100.0)),
+            format!(
+                "本账户的规则：比成本价亏 {}% 就卖出（止损价 {:.2} 元）",
+                p.stop_loss_pct,
+                c * (1.0 - p.stop_loss_pct / 100.0)
+            ),
             evidence,
             cautions,
         );
     }
     if let (Some(text), Some(st)) = (&h.strategy_exit, &h.strategy) {
-        return sell(format!("买入依据「{}」的卖出条件满足：{text}", st.name), format!("按「{}」的买入建议买的，就按它的卖出条件卖出：{text}", st.name), evidence, cautions);
+        return sell(
+            format!("买入依据「{}」的卖出条件满足：{text}", st.name),
+            format!(
+                "按「{}」的买入建议买的，就按它的卖出条件卖出：{text}",
+                st.name
+            ),
+            evidence,
+            cautions,
+        );
     }
     if let Some(ma) = s.ma_trend
         && close < ma
@@ -579,7 +734,12 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         );
     }
     if h.is_st && p.sell_st {
-        return sell("被实施风险警示（ST）".into(), "本账户的规则：不持有 ST 股".into(), evidence, cautions);
+        return sell(
+            "被实施风险警示（ST）".into(),
+            "本账户的规则：不持有 ST 股".into(),
+            evidence,
+            cautions,
+        );
     }
     if weight > p.max_weight_pct + 0.5 {
         let target = total * p.max_weight_pct / 100.0;
@@ -592,7 +752,10 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
             let after_pct = (h.shares - n) as f64 * close / total.max(1.0) * 100.0;
             let mut ev = evidence;
             if streak > 1 {
-                ev.insert(0, note("rule", format!("已连续 {streak} 天建议减仓，还没有执行")));
+                ev.insert(
+                    0,
+                    note("rule", format!("已连续 {streak} 天建议减仓，还没有执行")),
+                );
             }
             return Item {
                 shares: n,
@@ -600,14 +763,24 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
                 fee: inp.fees.sell_fee(amount),
                 evidence: ev,
                 cautions,
-                plan: vec![format!("下一个交易日（{}）卖出 {n} 股，剩下 {} 股，约占总资产 {after_pct:.0}%", inp.next_date, h.shares - n)],
+                plan: vec![format!(
+                    "下一个交易日（{}）卖出 {n} 股，剩下 {} 股，约占总资产 {after_pct:.0}%",
+                    inp.next_date,
+                    h.shares - n
+                )],
                 stop_price,
                 streak,
                 weight_pct: weight,
                 ..base(
                     Action::Reduce,
-                    format!("占总资产 {weight:.0}%，超过单只上限 {}%，减到约 {after_pct:.0}%", p.max_weight_pct),
-                    format!("本账户的规则：单只最多占总资产的 {}%，涨多了要减回去，避免一只股票拖累整个账户", p.max_weight_pct),
+                    format!(
+                        "占总资产 {weight:.0}%，超过单只上限 {}%，减到约 {after_pct:.0}%",
+                        p.max_weight_pct
+                    ),
+                    format!(
+                        "本账户的规则：单只最多占总资产的 {}%，涨多了要减回去，避免一只股票拖累整个账户",
+                        p.max_weight_pct
+                    ),
                 )
             };
         }
@@ -622,7 +795,11 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         triggers.push(format!("亏到 {sp:.2} 元（止损价）"));
     }
     let headline = match s.ma_trend {
-        Some(ma) => format!("收盘仍在 {} 日均线上方 {:.1}%", p.trend_ma, (close / ma - 1.0) * 100.0),
+        Some(ma) => format!(
+            "收盘仍在 {} 日均线上方 {:.1}%",
+            p.trend_ma,
+            (close / ma - 1.0) * 100.0
+        ),
         None => "还没有触发卖出规则".into(),
     };
     if h.is_st {
@@ -633,7 +810,10 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         plan.push(format!("{}时会建议卖出", triggers.join("，或")));
     }
     if let Some(st) = &h.strategy {
-        plan.push(format!("买入依据「{}」的卖出条件满足时也会建议卖出", st.name));
+        plan.push(format!(
+            "买入依据「{}」的卖出条件满足时也会建议卖出",
+            st.name
+        ));
     }
     Item {
         evidence,
@@ -641,7 +821,11 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         plan,
         stop_price,
         weight_pct: weight,
-        ..base(Action::Hold, headline, "本账户的卖出规则（止损、趋势、ST、单只上限）一条都没有触发".into())
+        ..base(
+            Action::Hold,
+            headline,
+            "本账户的卖出规则（止损、趋势、ST、单只上限）一条都没有触发".into(),
+        )
     }
 }
 
@@ -650,7 +834,6 @@ fn buy_item(
     inp: &Input,
     c: &CandidateIn,
     kept: &[&Pick],
-    dropped: &[&Pick],
     shares: i64,
     amount: f64,
     fee: f64,
@@ -659,30 +842,35 @@ fn buy_item(
     weak: bool,
     half: bool,
     name_of: &dyn Fn(i64) -> String,
-    excess: &dyn Fn(i64) -> Option<f64>,
     market: Option<&str>,
 ) -> Item {
     let p = &inp.rules;
     let s = &c.snap;
     let close = s.close;
-    let names: Vec<String> = kept.iter().map(|k| format!("「{}」", name_of(k.strategy_id))).collect();
-    let edges: Vec<f64> = kept.iter().filter_map(|k| excess(k.strategy_id)).collect();
-    let edge = if edges.is_empty() { String::new() } else { format!("，过去 3 年比随便买合计多涨 {:.1}%", edges.iter().sum::<f64>()) };
-    let together = if kept.len() > 1 { format!("，{} 个有效策略同时选中", kept.len()) } else { "选中".to_string() };
-    let headline = format!("{}{together}{edge}，排第 {rank}", names.join(" + "));
+    let names: Vec<String> = kept
+        .iter()
+        .map(|k| format!("「{}」", name_of(k.strategy_id)))
+        .collect();
+    let together = if kept.len() > 1 {
+        format!("，{} 个勾选的策略同时选中", kept.len())
+    } else {
+        "选中".to_string()
+    };
+    let headline = format!("{}{together}，排第 {rank}", names.join(" + "));
 
-    let mut evidence: Vec<Note> = kept.iter().map(|k| note("strategy", format!("{}：{}", format_name(&name_of(k.strategy_id)), k.reasons.join("，")))).collect();
-    let mut pending = vec![];
-    for k in kept {
-        let st = inp.strategies.iter().find(|x| x.strategy_id == k.strategy_id);
-        match st.and_then(|x| x.stat.as_ref()) {
-            Some(stat) => evidence.push(note("stat", stat.describe(&name_of(k.strategy_id)))),
-            None => pending.push(format_name(&name_of(k.strategy_id))),
-        }
-    }
-    if !pending.is_empty() {
-        evidence.push(note("stat", format!("{}的过去表现还在统计中", pending.join("、"))));
-    }
+    let mut evidence: Vec<Note> = kept
+        .iter()
+        .map(|k| {
+            note(
+                "strategy",
+                format!(
+                    "{}：{}",
+                    format_name(&name_of(k.strategy_id)),
+                    k.reasons.join("，")
+                ),
+            )
+        })
+        .collect();
     if !s.trend_text.is_empty() {
         evidence.push(note("diagnosis", format!("趋势：{}", s.trend_text)));
     }
@@ -697,12 +885,21 @@ fn buy_item(
     if let Some(rsi) = s.rsi
         && rsi >= 70.0
     {
-        cautions.push(note("diagnosis", format!("RSI(14) 为 {rsi:.0}，短期涨得较多（超买）")));
+        cautions.push(note(
+            "diagnosis",
+            format!("RSI(14) 为 {rsi:.0}，短期涨得较多（超买）"),
+        ));
     }
     if let Some(pos) = s.range60_pos
         && pos >= 0.9
     {
-        cautions.push(note("diagnosis", format!("处在近 60 个交易日价格区间的 {:.0}% 位置，接近高点", pos * 100.0)));
+        cautions.push(note(
+            "diagnosis",
+            format!(
+                "处在近 60 个交易日价格区间的 {:.0}% 位置，接近高点",
+                pos * 100.0
+            ),
+        ));
     }
     if let Some(m) = s.momentum20
         && m >= 20.0
@@ -710,40 +907,60 @@ fn buy_item(
         cautions.push(note("diagnosis", format!("近 20 个交易日已经涨了 {m:.0}%")));
     }
     if s.trend_weak {
-        cautions.push(note("diagnosis", "诊断的趋势偏弱（均线空头排列），属于逆势买入"));
+        cautions.push(note(
+            "diagnosis",
+            "诊断的趋势偏弱（均线空头排列），属于逆势买入",
+        ));
     }
     if s.amount < 1e8 {
-        cautions.push(note("risk", format!("当天成交额 {:.2} 亿元，偏小，买卖可能不太顺畅", s.amount / 1e8)));
+        cautions.push(note(
+            "risk",
+            format!(
+                "当天成交额 {:.2} 亿元，偏小，买卖可能不太顺畅",
+                s.amount / 1e8
+            ),
+        ));
     }
     if half {
         cautions.push(note("market", "弱市：按本账户的规则，用于买新股票的钱减半"));
     } else if weak {
         cautions.push(note("market", "全市场偏弱，买入后更容易遇到下跌"));
     }
-    for k in dropped {
-        cautions.push(note("stat", format!("{}也选中了它，但不够有效门槛，没有算进来", format_name(&name_of(k.strategy_id)))));
-    }
 
     let stop_price = close * (1.0 - p.stop_loss_pct / 100.0);
-    let loss = shares as f64 * (close - stop_price) + fee + inp.fees.sell_fee(shares as f64 * stop_price);
+    let loss =
+        shares as f64 * (close - stop_price) + fee + inp.fees.sell_fee(shares as f64 * stop_price);
     let chase = close * (1.0 + p.chase_limit_pct / 100.0);
     let mut plan = vec![
-        format!("下一个交易日（{}）开盘后买入；开盘高于 {chase:.2} 元（比参考价高 {}%）就不要买，开盘一字涨停买不进时这条作废", inp.next_date, p.chase_limit_pct),
-        format!("止损价 {stop_price:.2} 元：跌到这里会建议卖出，这笔大约亏 {}，占总资产 {:.1}%", yuan(loss), loss / total.max(1.0) * 100.0),
+        format!(
+            "下一个交易日（{}）开盘后买入；开盘高于 {chase:.2} 元（比参考价高 {}%）就不要买，开盘一字涨停买不进时这条作废",
+            inp.next_date, p.chase_limit_pct
+        ),
+        format!(
+            "止损价 {stop_price:.2} 元：跌到这里会建议卖出，这笔大约亏 {}，占总资产 {:.1}%",
+            yuan(loss),
+            loss / total.max(1.0) * 100.0
+        ),
     ];
     if let Some(ma) = s.ma_trend {
-        plan.push(format!("收盘跌破 {} 日均线（现在 {ma:.2} 元）也会建议卖出", p.trend_ma));
+        plan.push(format!(
+            "收盘跌破 {} 日均线（现在 {ma:.2} 元）也会建议卖出",
+            p.trend_ma
+        ));
     }
     let scope = match &p.strategies {
         None => "全部参加巡检的策略".to_string(),
         Some(l) => format!("勾选的 {} 个策略", l.len()),
     };
     let rule = format!(
-        "本账户的规则：参考{scope}中过去 3 年比随便买多涨 {}% 以上的（有效策略），至少 {} 个同时选中才买；按「同时选中的有效策略数 → 它们的超额之和 → 成交额」排序；每只投入「可用的钱 ÷ 空余仓位」，不超过总资产的 {}%{}",
-        p.min_edge_pct,
+        "本账户的规则：参考{scope}，至少 {} 个同时选中才买；按「同时选中的勾选策略数 → 成交额」排序；每只投入「可用的钱 ÷ 空余仓位」，不超过总资产的 {}%{}",
         p.min_picks,
         p.max_weight_pct,
-        if p.min_cash_pct > 0.0 { format!("，并保留 {}% 现金", p.min_cash_pct) } else { String::new() }
+        if p.min_cash_pct > 0.0 {
+            format!("，并保留 {}% 现金", p.min_cash_pct)
+        } else {
+            String::new()
+        }
     );
     Item {
         key: format!("buy-{}", c.thscode),
@@ -777,7 +994,18 @@ mod tests {
     use crate::account::rules::Preset;
 
     fn snap(close: f64, ma: f64) -> Snapshot {
-        Snapshot { close, change_pct: Some(1.0), amount: 5e8, ma_trend: Some(ma), rsi: Some(55.0), momentum20: Some(5.0), range60_pos: Some(0.6), trend_text: "上升趋势".into(), trend_strong: true, ..Default::default() }
+        Snapshot {
+            close,
+            change_pct: Some(1.0),
+            amount: 5e8,
+            ma_trend: Some(ma),
+            rsi: Some(55.0),
+            momentum20: Some(5.0),
+            range60_pos: Some(0.6),
+            trend_text: "上升趋势".into(),
+            trend_strong: true,
+            ..Default::default()
+        }
     }
 
     fn holding(code: &str, shares: i64, cost: Option<f64>, s: Snapshot) -> HoldingIn {
@@ -804,8 +1032,17 @@ mod tests {
             name: format!("候选{code}"),
             board: "main".into(),
             is_st: false,
-            picks: picks.iter().map(|id| Pick { strategy_id: *id, reasons: vec!["当天出现「放量突破」".into()] }).collect(),
-            snap: Snapshot { amount, ..snap(close, close * 0.95) },
+            picks: picks
+                .iter()
+                .map(|id| Pick {
+                    strategy_id: *id,
+                    reasons: vec!["当天出现「放量突破」".into()],
+                })
+                .collect(),
+            snap: Snapshot {
+                amount,
+                ..snap(close, close * 0.95)
+            },
         }
     }
 
@@ -813,24 +1050,40 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 10, 16).unwrap()
     }
 
-    fn stat(excess: f64) -> StrategyStat {
-        StrategyStat { start: day(), end: day(), signals: 1000, closed: 900, win_rate: Some(0.55), avg_return_pct: Some(1.2), avg_bars_held: Some(9.0), after20_avg_pct: Some(0.6 + excess), base20_avg_pct: Some(0.6), after20_up_ratio: Some(0.52), excess_se_pct: Some(0.1), signal_days: Some(400) }
-    }
-
-    fn input(preset: Preset, cash: f64, holdings: Vec<HoldingIn>, candidates: Vec<CandidateIn>) -> Input {
+    fn input(
+        preset: Preset,
+        cash: f64,
+        holdings: Vec<HoldingIn>,
+        candidates: Vec<CandidateIn>,
+    ) -> Input {
         Input {
             trade_date: day(),
             next_date: day().succ_opt().unwrap(),
             rules: preset.rules(),
-            fees: Fees { commission_rate: 0.00025, min_commission: 5.0 },
+            fees: Fees {
+                commission_rate: 0.00025,
+                min_commission: 5.0,
+            },
             cash,
-            market: Some(MarketIn { above_ma20_pct: 55.0, stocks: 5000 }),
+            market: Some(MarketIn {
+                above_ma20_pct: 55.0,
+                stocks: 5000,
+            }),
             holdings,
             candidates,
             strategies: vec![
-                StrategyIn { strategy_id: 1, name: "放量突破".into(), stat: Some(stat(1.8)) },
-                StrategyIn { strategy_id: 2, name: "MACD 金叉".into(), stat: Some(stat(1.2)) },
-                StrategyIn { strategy_id: 3, name: "回踩 20 日均线".into(), stat: Some(stat(-0.4)) },
+                StrategyIn {
+                    strategy_id: 1,
+                    name: "放量突破".into(),
+                },
+                StrategyIn {
+                    strategy_id: 2,
+                    name: "MACD 金叉".into(),
+                },
+                StrategyIn {
+                    strategy_id: 3,
+                    name: "回踩 20 日均线".into(),
+                },
             ],
             streaks: BTreeMap::new(),
         }
@@ -843,19 +1096,38 @@ mod tests {
     #[test]
     fn sells_on_stop_loss_then_trend_and_holds_otherwise() {
         let hs = vec![
-            holding("A", 1000, Some(15.10), snap(13.80, 13.0)),  // 亏 8.6%，止损（稳健 8%）
-            holding("B", 200, Some(142.5), snap(138.0, 141.3)),  // 亏 3.2%，跌破 20 日均线
+            holding("A", 1000, Some(15.10), snap(13.80, 13.0)), // 亏 8.6%，止损（稳健 8%）
+            holding("B", 200, Some(142.5), snap(138.0, 141.3)), // 亏 3.2%，跌破 20 日均线
             holding("C", 500, Some(10.0), snap(12.0, 11.6)),    // 赚，在均线上方
         ];
         let a = generate(&input(Preset::Balanced, 50_000.0, hs, vec![]));
         let (ia, ib, ic) = (find(&a, "A"), find(&a, "B"), find(&a, "C"));
         assert_eq!(ia.action, Action::Sell);
-        assert!(ia.headline.contains("亏损 8.6%") && ia.rule.contains("止损价 13.89 元"), "{} / {}", ia.headline, ia.rule);
+        assert!(
+            ia.headline.contains("亏损 8.6%") && ia.rule.contains("止损价 13.89 元"),
+            "{} / {}",
+            ia.headline,
+            ia.rule
+        );
         assert_eq!(ib.action, Action::Sell);
-        assert!(ib.headline.contains("跌破 20 日均线 141.30 元"), "{}", ib.headline);
-        assert!(ib.evidence.iter().any(|n| n.text.contains("亏 3.2%（¥900）")), "{:?}", ib.evidence);
+        assert!(
+            ib.headline.contains("跌破 20 日均线 141.30 元"),
+            "{}",
+            ib.headline
+        );
+        assert!(
+            ib.evidence
+                .iter()
+                .any(|n| n.text.contains("亏 3.2%（¥900）")),
+            "{:?}",
+            ib.evidence
+        );
         assert_eq!(ic.action, Action::Hold);
-        assert!(ic.plan[0].contains("收盘跌破 11.60 元（20 日均线），或亏到 9.20 元（止损价）"), "{:?}", ic.plan);
+        assert!(
+            ic.plan[0].contains("收盘跌破 11.60 元（20 日均线），或亏到 9.20 元（止损价）"),
+            "{:?}",
+            ic.plan
+        );
         assert_eq!(a.headline, "卖出 2 只");
         assert_eq!(a.items[0].action, Action::Sell, "卖出排在前面");
         // 卖出全部；印花税和佣金按卖出金额估算
@@ -866,9 +1138,17 @@ mod tests {
     #[test]
     fn strategy_exit_and_streak_and_overweight() {
         let mut h = holding("A", 1000, Some(10.0), snap(12.0, 11.0));
-        h.strategy = Some(StrategyRef { strategy_id: 1, name: "放量突破".into() });
+        h.strategy = Some(StrategyRef {
+            strategy_id: 1,
+            name: "放量突破".into(),
+        });
         h.strategy_exit = Some("收盘价下穿 20 日均线".into());
-        let mut inp = input(Preset::Balanced, 10_000.0, vec![h, holding("B", 3000, Some(10.0), snap(20.0, 18.0))], vec![]);
+        let mut inp = input(
+            Preset::Balanced,
+            10_000.0,
+            vec![h, holding("B", 3000, Some(10.0), snap(20.0, 18.0))],
+            vec![],
+        );
         inp.streaks.insert("sell-A".into(), 1);
         let a = generate(&inp);
         let ia = find(&a, "A");
@@ -885,46 +1165,92 @@ mod tests {
     }
 
     #[test]
-    fn buys_ranked_by_agreement_edge_and_split_across_free_slots() {
+    fn buys_ranked_by_agreement_and_split_across_free_slots() {
         let cands = vec![
-            cand("X", 20.0, &[1], 9e8),     // 一个策略
-            cand("Y", 30.0, &[1, 2], 2e8),  // 两个策略同时选中：排第一
-            cand("Z", 10.0, &[3], 9e9),     // 只被过去表现不如随便买的策略选中：不采纳
-            cand("W", 5000.0, &[2], 3e8),   // 太贵：一手要 50 万
+            cand("X", 20.0, &[1], 9e8),    // 一个策略
+            cand("Y", 30.0, &[1, 2], 2e8), // 两个策略同时选中：排第一
+            cand("Z", 10.0, &[3], 9e9),    // 勾选的策略也可以提供候选
+            cand("W", 5000.0, &[2], 3e8),  // 太贵：一手要 50 万
         ];
         let a = generate(&input(Preset::Balanced, 100_000.0, vec![], cands));
         let buys: Vec<&Item> = a.items.iter().filter(|i| i.action == Action::Buy).collect();
-        assert_eq!(buys.iter().map(|b| b.thscode.as_str()).collect::<Vec<_>>(), ["Y", "X"]);
-        assert!(buys[0].headline.contains("2 个有效策略同时选中，过去 3 年比随便买合计多涨 3.0%，排第 1"), "{}", buys[0].headline);
+        assert_eq!(
+            buys.iter().map(|b| b.thscode.as_str()).collect::<Vec<_>>(),
+            ["Y", "Z", "X"]
+        );
+        assert!(
+            buys[0].headline.contains("2 个勾选的策略同时选中，排第 1"),
+            "{}",
+            buys[0].headline
+        );
         // 稳健：保留 10% 现金，6 个空位平分 90,000，每只不超过总资产的 25%
-        assert_eq!(buys[0].shares, 400, "15,000 元：500 股加佣金超了，买 400 股");
-        assert_eq!(buys[1].shares, 700, "剩下 77,995 元分给 5 个空位，每只 15,599 元");
-        assert!(buys[0].plan[0].contains("31.50 元"), "追高上限 5%：{}", buys[0].plan[0]);
+        assert_eq!(
+            buys[0].shares, 400,
+            "15,000 元：500 股加佣金超了，买 400 股"
+        );
+        assert!(buys.iter().any(|b| b.thscode == "X"));
+        assert!(
+            buys[0].plan[0].contains("31.50 元"),
+            "追高上限 5%：{}",
+            buys[0].plan[0]
+        );
         assert_eq!(buys[0].limit_price, Some(31.5));
         assert_eq!(buys[0].stop_price, Some(27.6));
-        assert!(buys[0].plan[1].contains("止损价 27.60 元"), "{}", buys[0].plan[1]);
-        assert!(buys[0].evidence.iter().any(|n| n.kind == "stat" && n.text.contains("随便买")));
-        let reasons: HashMap<&str, &str> = a.skipped.iter().map(|s| (s.thscode.as_str(), s.reason.as_str())).collect();
-        assert!(reasons["Z"].contains("不够有效门槛"), "{reasons:?}");
+        assert!(
+            buys[0].plan[1].contains("止损价 27.60 元"),
+            "{}",
+            buys[0].plan[1]
+        );
+        let reasons: HashMap<&str, &str> = a
+            .skipped
+            .iter()
+            .map(|s| (s.thscode.as_str(), s.reason.as_str()))
+            .collect();
         assert!(reasons["W"].contains("钱不够买最少 100 股"), "{reasons:?}");
-        assert_eq!(a.headline, "买入 2 只");
-        assert!(a.after.cash < 100_000.0 && a.after.positions == 2);
-        assert!(a.notes[0].contains("参考 3 个策略，其中 2 个"), "{:?}", a.notes);
+        assert_eq!(a.headline, "买入 3 只");
+        assert!(a.after.cash < 100_000.0 && a.after.positions == 3);
+        assert!(a.notes[0].contains("参考 3 个勾选的策略"), "{:?}", a.notes);
 
         // 保守型要求至少 2 个有效策略同时选中：X 只有 1 个，跳过
-        let mut inp = input(Preset::Conservative, 100_000.0, vec![], vec![cand("X", 20.0, &[1], 9e8), cand("Y", 30.0, &[1, 2], 2e8)]);
-        inp.market = Some(MarketIn { above_ma20_pct: 55.0, stocks: 5000 });
+        let mut inp = input(
+            Preset::Conservative,
+            100_000.0,
+            vec![],
+            vec![cand("X", 20.0, &[1], 9e8), cand("Y", 30.0, &[1, 2], 2e8)],
+        );
+        inp.market = Some(MarketIn {
+            above_ma20_pct: 55.0,
+            stocks: 5000,
+        });
         let a = generate(&inp);
-        let buys: Vec<&str> = a.items.iter().filter(|i| i.action == Action::Buy).map(|i| i.thscode.as_str()).collect();
+        let buys: Vec<&str> = a
+            .items
+            .iter()
+            .filter(|i| i.action == Action::Buy)
+            .map(|i| i.thscode.as_str())
+            .collect();
         assert_eq!(buys, ["Y"]);
-        assert!(a.skipped[0].reason.contains("本账户要求至少 2 个"), "{:?}", a.skipped);
+        assert!(
+            a.skipped[0].reason.contains("本账户要求至少 2 个"),
+            "{:?}",
+            a.skipped
+        );
 
         // 只勾选了策略 2：只按它选中的算
-        let mut inp = input(Preset::Balanced, 100_000.0, vec![], vec![cand("X", 20.0, &[1], 9e8), cand("Y", 30.0, &[1, 2], 2e8)]);
+        let mut inp = input(
+            Preset::Balanced,
+            100_000.0,
+            vec![],
+            vec![cand("X", 20.0, &[1], 9e8), cand("Y", 30.0, &[1, 2], 2e8)],
+        );
         inp.rules.strategies = Some(vec![2]);
         let a = generate(&inp);
         let y = a.items.iter().find(|i| i.thscode == "Y").unwrap();
-        assert!(y.headline.starts_with("「MACD 金叉」选中"), "{}", y.headline);
+        assert!(
+            y.headline.starts_with("「MACD 金叉」选中"),
+            "{}",
+            y.headline
+        );
         assert!(!a.items.iter().any(|i| i.thscode == "X"));
     }
 
@@ -932,51 +1258,63 @@ mod tests {
     fn weak_market_pauses_conservative_and_halves_balanced() {
         let cands = || vec![cand("Y", 30.0, &[1, 2], 2e8)];
         let mut inp = input(Preset::Conservative, 100_000.0, vec![], cands());
-        inp.strategies.iter_mut().for_each(|s| s.stat = Some(stat(1.5)));
-        inp.market = Some(MarketIn { above_ma20_pct: 22.0, stocks: 5000 });
+        inp.market = Some(MarketIn {
+            above_ma20_pct: 22.0,
+            stocks: 5000,
+        });
         let a = generate(&inp);
         assert_eq!(a.headline, "不用操作");
-        assert!(a.why_nothing.as_deref().unwrap().contains("暂停买入"), "{:?}", a.why_nothing);
+        assert!(
+            a.why_nothing.as_deref().unwrap().contains("暂停买入"),
+            "{:?}",
+            a.why_nothing
+        );
         assert!(a.market.as_deref().unwrap().contains("算弱市"));
 
         let mut inp = input(Preset::Balanced, 100_000.0, vec![], cands());
-        inp.market = Some(MarketIn { above_ma20_pct: 22.0, stocks: 5000 });
+        inp.market = Some(MarketIn {
+            above_ma20_pct: 22.0,
+            stocks: 5000,
+        });
         let a = generate(&inp);
         let b = a.items.iter().find(|i| i.action == Action::Buy).unwrap();
-        assert_eq!(b.shares, 200, "可用的 90,000 元减半，6 个空位每只 7,500 元，买 200 股");
+        assert_eq!(
+            b.shares, 200,
+            "可用的 90,000 元减半，6 个空位每只 7,500 元，买 200 股"
+        );
         assert!(b.cautions.iter().any(|n| n.text.contains("减半")));
     }
 
     #[test]
-    fn hints_at_settings_when_no_strategy_clears_the_threshold() {
-        let mut inp = input(Preset::Balanced, 100_000.0, vec![], vec![cand("X", 20.0, &[3], 9e8)]);
-        inp.rules.strategies = Some(vec![3]);
-        let a = generate(&inp);
-        assert_eq!(a.headline, "不用操作");
-        assert!(a.settings_hint.as_deref().unwrap().contains("参考的 1 个策略都不够有效门槛"), "{:?}", a.settings_hint);
-        // 都够门槛、但要求同时看好的太多
-        let mut inp = input(Preset::Balanced, 100_000.0, vec![], vec![cand("X", 20.0, &[1], 9e8)]);
+    fn hints_at_settings_when_too_many_strategies_are_required() {
+        let mut inp = input(
+            Preset::Balanced,
+            100_000.0,
+            vec![],
+            vec![cand("X", 20.0, &[1], 9e8)],
+        );
         inp.rules.min_picks = 2;
         let a = generate(&inp);
-        assert!(a.settings_hint.as_deref().unwrap().contains("调低「至少几个有效策略同时看好」"), "{:?}", a.settings_hint);
-    }
-
-    #[test]
-    fn unproven_strategies_are_watched_not_bought() {
-        // 刚建的策略（没有统计）和买点太少的策略都在观察期：只被它们选中的股票不买
-        for st in [None, Some(StrategyStat { signals: MIN_SIGNALS - 1, ..stat(5.0) })] {
-            let mut inp = input(Preset::Aggressive, 100_000.0, vec![], vec![cand("N", 20.0, &[4], 9e8)]);
-            inp.strategies.push(StrategyIn { strategy_id: 4, name: "新策略".into(), stat: st });
-            let a = generate(&inp);
-            assert!(a.items.iter().all(|i| i.action != Action::Buy), "{a:#?}");
-            assert!(a.notes.iter().any(|n| n.contains("「新策略」还在观察期")), "{:?}", a.notes);
-        }
+        assert!(
+            a.settings_hint
+                .as_deref()
+                .unwrap()
+                .contains("调低「至少几个勾选的策略同时看好」"),
+            "{:?}",
+            a.settings_hint
+        );
     }
 
     #[test]
     fn reads_advice_saved_before_new_fields() {
         // 早先保存的建议没有 limit_price、settings_hint，照样能读出来
-        let mut v = serde_json::to_value(generate(&input(Preset::Balanced, 100_000.0, vec![], vec![cand("Y", 30.0, &[1, 2], 2e8)]))).unwrap();
+        let mut v = serde_json::to_value(generate(&input(
+            Preset::Balanced,
+            100_000.0,
+            vec![],
+            vec![cand("Y", 30.0, &[1, 2], 2e8)],
+        )))
+        .unwrap();
         v.as_object_mut().unwrap().remove("settings_hint");
         for it in v["items"].as_array_mut().unwrap() {
             it.as_object_mut().unwrap().remove("limit_price");
@@ -987,9 +1325,17 @@ mod tests {
 
     #[test]
     fn nothing_to_do_explains_why() {
-        let a = generate(&input(Preset::Balanced, 100_000.0, vec![holding("C", 500, None, snap(12.0, 11.6))], vec![]));
+        let a = generate(&input(
+            Preset::Balanced,
+            100_000.0,
+            vec![holding("C", 500, None, snap(12.0, 11.6))],
+            vec![],
+        ));
         assert_eq!(a.headline, "不用操作");
-        assert_eq!(a.why_nothing.as_deref(), Some("1 只持仓都还没有触发卖出规则；2026-10-16 收盘没有符合本账户规则的新买点。"));
+        assert_eq!(
+            a.why_nothing.as_deref(),
+            Some("1 只持仓都还没有触发卖出规则；2026-10-16 收盘没有符合本账户规则的新买点。")
+        );
         assert!(a.settings_hint.is_none(), "没有买点不是设置的问题");
         assert!(a.notes[1].contains("没填成本价"), "{:?}", a.notes);
         let mut h = holding("D", 100, Some(10.0), snap(9.0, 9.5));

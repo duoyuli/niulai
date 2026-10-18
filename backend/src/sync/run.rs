@@ -50,6 +50,8 @@ pub struct NewRun<'a> {
     pub only_thscodes: &'a [String],
     /// 谁发起的：daily、catch_up、weekly、weekly+monthly、manual、setup、cli、repair
     pub trigger: Option<&'a str>,
+    /// true while an API request has handed planning to the background task
+    pub planning: bool,
 }
 
 pub async fn create(conn: &mut PgConnection, run: &NewRun<'_>) -> anyhow::Result<i64> {
@@ -58,7 +60,7 @@ pub async fn create(conn: &mut PgConnection, run: &NewRun<'_>) -> anyhow::Result
         .bind(run.kind.as_str())
         .bind(single)
         .bind(run.trade_date)
-        .bind(json!({"datasets": run.datasets, "pending_waves": run.pending_waves, "root_run": run.root_run, "only_thscodes": run.only_thscodes, "trigger": run.trigger}))
+        .bind(json!({"datasets": run.datasets, "pending_waves": run.pending_waves, "root_run": run.root_run, "only_thscodes": run.only_thscodes, "trigger": run.trigger, "planning": run.planning}))
         .fetch_one(conn)
         .await?)
 }
@@ -100,6 +102,7 @@ pub async fn try_complete(pool: &PgPool, run_id: i64) -> anyhow::Result<Option<S
                       count(*) FILTER (WHERE status = 'dead') bad
                FROM ops.task WHERE run_id = $1) s
          WHERE r.run_id = $1 AND r.status = 'running'
+           AND coalesce((r.params->>'planning')::boolean, false) = false
            AND NOT EXISTS (SELECT 1 FROM ops.task t WHERE t.run_id = $1 AND t.status IN ('pending', 'running', 'failed'))
          RETURNING r.status",
     )
@@ -140,6 +143,7 @@ pub async fn unchained(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
 pub async fn stalled(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
     Ok(sqlx::query_scalar(
         "SELECT run_id FROM ops.run r WHERE status = 'running'
+           AND coalesce((params->>'planning')::boolean, false) = false
            AND NOT EXISTS (SELECT 1 FROM ops.task t WHERE t.run_id = r.run_id AND t.status IN ('pending', 'running', 'failed'))
          ORDER BY run_id",
     )

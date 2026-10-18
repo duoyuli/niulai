@@ -303,7 +303,7 @@ async fn run_completes_only_after_its_last_task() {
     niulai::sync::registry::sync_to_db(&db.pool, &registry()).await.unwrap();
     let datasets = vec!["a_share.calendar".to_string()];
     let mut tx = db.pool.begin().await.unwrap();
-    let new_run = NewRun { kind: RunKind::Backfill, trade_date: "2026-10-15".parse().unwrap(), datasets: &datasets, pending_waves: &[], root_run: None, only_thscodes: &[], trigger: None };
+    let new_run = NewRun { kind: RunKind::Backfill, trade_date: "2026-10-15".parse().unwrap(), datasets: &datasets, pending_waves: &[], root_run: None, only_thscodes: &[], trigger: None, planning: false };
     let run_id = run::create(&mut tx, &new_run).await.unwrap();
     for part in ["a", "b", "c"] {
         sqlx::query("INSERT INTO ops.task (run_id, dataset_id, part_key, params) VALUES ($1, 'a_share.calendar', $2, '{}')")
@@ -687,6 +687,15 @@ async fn sync_schedule_can_be_viewed_and_changed() {
     let (st, d) = call(&app, "GET", &format!("/api/v1/sync/runs/{first}"), None).await;
     assert_eq!(st, StatusCode::OK, "{d}");
     assert_eq!(d["waves"].as_array().unwrap().len(), 1);
+    let mut d = d;
+    for _ in 0..50 {
+        if d["progress"].as_array().is_some_and(|p| !p.is_empty()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let (_, next) = call(&app, "GET", &format!("/api/v1/sync/runs/{first}"), None).await;
+        d = next;
+    }
     assert_eq!(d["progress"][0]["dataset_id"], "a_share.calendar");
     assert_eq!(d["progress"][0]["pending"], 1);
     let (_, again) = call(&app, "POST", "/api/v1/sync/runs", Some(json!({"kind": "incremental", "datasets": ["a_share.calendar"]}))).await;
@@ -1211,7 +1220,7 @@ async fn accounts_positions_and_daily_advice() {
     let (r, v) = call_as(&app, Some(&admin), "PUT", &format!("/api/v1/strategies/{id}"), Some(changed)).await;
     assert_eq!(st(&r), StatusCode::OK, "只改是否在今日展示可以：{v}");
 
-    // 规则的辅助：三组参考值和全部参加巡检的策略。存下来的参考值回测只有汇总，没有交易记录
+    // 规则的辅助：只返回三组风控参考值和全部可勾选的巡检策略，不展示历史回测数字
     sqlx::query(
         "INSERT INTO app.preset_stat (preset, rules_hash, end_date, result) VALUES ('balanced', 'h', '2026-06-30', $1)",
     )
@@ -1223,10 +1232,11 @@ async fn accounts_positions_and_daily_advice() {
     .unwrap();
     let (r, guide) = call_as(&app, Some(&mama), "GET", "/api/v1/rules/guide", None).await;
     assert_eq!(st(&r), StatusCode::OK, "{guide}");
-    assert!(guide["presets"].as_array().unwrap().iter().any(|p| p["backtest"]["summary"]["trades"] == 10));
     assert_eq!(guide["presets"].as_array().unwrap().len(), 3);
     assert!(!guide["presets"][0]["design"].as_array().unwrap().is_empty());
+    assert!(guide["presets"].as_array().unwrap().iter().all(|p| p.get("backtest").is_none()));
     assert!(guide["strategies"].as_array().unwrap().len() >= builtin.len());
+    assert!(guide["strategies"].as_array().unwrap().iter().all(|s| s.get("stat").is_none() && s.get("effective").is_none()));
 
     // 普通用户建账户；还没有巡检时建议在等待
     let (r, v) = call_as(&app, Some(&mama), "POST", "/api/v1/accounts", Some(json!({"name": "华泰主账户", "cash": 100000}))).await;
@@ -1362,6 +1372,69 @@ async fn accounts_positions_and_daily_advice() {
 async fn account_trades(app: &axum::Router, cookie: &str, base: &str) -> Vec<Value> {
     let (_, v) = call_as(app, Some(cookie), "GET", &format!("{base}/trades"), None).await;
     v.as_array().cloned().unwrap_or_default()
+}
+
+#[tokio::test]
+async fn security_fundamentals_exposes_valuation_and_report_dates() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    synthetic_stock(&db.pool).await;
+    let run_id: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind, trade_date) VALUES ('backfill', '2026-06-29') RETURNING run_id")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO fin.valuation_1d (thscode, trade_date, pe_ttm, pb_mrq, float_market_cap, run_id)
+         VALUES ('600000.SH', '2026-06-29', 12.3, 2.1, 123456789.0, $1)",
+    )
+    .bind(run_id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    for (dataset, key, payload) in [
+        (
+            "a_share.income_q",
+            "600000.SH|2026-03-31",
+            json!({"period_end_ms": 1774915200000_i64, "report_date_ms": 1782864000000_i64, "operating_income": 100.0, "parent_holder_net_profit": 20.0, "basic_eps": 0.5}),
+        ),
+        (
+            "a_share.balance_q",
+            "600000.SH|2026-03-31",
+            json!({"period_end_ms": 1774915200000_i64, "report_date_ms": 1782864000000_i64, "assets_total": 500.0, "total_debt": 200.0, "holder_equity_total": 300.0}),
+        ),
+        (
+            "a_share.cashflow_q",
+            "600000.SH|2026-03-31",
+            json!({"period_end_ms": 1774915200000_i64, "report_date_ms": 1782864000000_i64, "act_cash_flow_net": 30.0, "invest_cash_flow_net": -10.0}),
+        ),
+        (
+            "a_share.fin_indicator",
+            "600000.SH|2026-1",
+            json!({"report": "2026-1", "abilities": [{"ability": "profitability", "indicators": [{"index_id": "sale_gross_margin", "value": "18.5"}]}]}),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO raw.record (dataset_id, rkey, obs_date, thscode, payload, payload_hash)
+             VALUES ($1, $2, '2026-03-31', '600000.SH', $3, 'test')",
+        )
+        .bind(dataset)
+        .bind(key)
+        .bind(payload)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+    let app = niulai::api::router(Engine::new(bare_settings("http://127.0.0.1:1", Some("test")), db.pool.clone()).await.unwrap());
+    let admin = login(&app, "admin", "secret-pass").await.unwrap();
+    let (r, body) = call_as(&app, Some(&admin), "GET", "/api/v1/securities/600000.SH/fundamentals?limit=1", None).await;
+    assert_eq!(r.status(), StatusCode::OK, "{body}");
+    assert_eq!(body["valuation"][0]["pe_ttm"], "12.300000");
+    assert_eq!(body["income"]["period_end"], "2026-03-31");
+    assert_eq!(body["income"]["report_date"], "2026-07-01");
+    assert_eq!(body["indicators"][0]["metrics"][0]["name"], "sale_gross_margin");
+    db.drop().await;
 }
 
 #[tokio::test]
