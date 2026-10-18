@@ -97,16 +97,19 @@ pub async fn screen(pool: &PgPool, defs: &[&Definition], date: Option<NaiveDate>
     }
     let window = if mode == Mode::Points { POINT_DAYS as u32 } else { 0 };
     let warmup = defs.iter().map(|d| d.warmup()).max().unwrap_or(30) + 5 + window;
+    let lo = date - chrono::Duration::days(calendar_days_for(warmup));
+    // 权威涨跌停池：整个窗口加载一次，全市场共用
+    let limits = super::limit_pool::LimitPool::load(pool, lo, date).await?;
     let mut found: Vec<StrategyResult> = defs.iter().map(|_| StrategyResult { matched: 0, hits: vec![], sells: vec![], holdings: vec![] }).collect();
     let mut scanned = 0usize;
-    prices::for_each_stock(pool, date - chrono::Duration::days(calendar_days_for(warmup)), date, |code, bars| {
+    prices::for_each_stock(pool, lo, date, |code, bars| {
         let Some(last) = bars.last() else { return };
         let Some(meta) = sec.meta.get(code) else { return };
         if last.date != date {
             return; // 当天停牌
         }
         scanned += 1;
-        let f = Frame::new(bars, Some(meta));
+        let f = Frame::with_authority(bars, Some(meta), &limits, code);
         let i = bars.len() - 1;
         let name = || sec.names.get(code).cloned().unwrap_or_default();
         let change_pct = f.at(IndicatorRef::new(IndicatorId::ChangePct, None), i);

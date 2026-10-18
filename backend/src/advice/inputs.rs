@@ -11,6 +11,7 @@ use super::stats::{self, StrategyStat};
 use crate::account::{self, Account};
 use crate::analysis::diagnosis::{self, Verdict};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef, StockMeta};
+use crate::analysis::limit_pool::LimitPool;
 use crate::analysis::market::{self, Securities};
 use crate::analysis::prices::{self, DailyBar};
 use crate::analysis::screener;
@@ -33,6 +34,8 @@ pub struct Shared {
     screening: Vec<(i64, String)>,
     names: HashMap<i64, String>,
     stats: HashMap<i64, StrategyStat>,
+    /// 当天买点的权威涨跌停池（区间覆盖每只股票要读的日线）
+    limits: LimitPool,
     /// 当天的买点：(策略, 股票, 命中条件, 成交额)
     hits: Vec<(i64, String, Vec<String>, f64)>,
     delisted: HashMap<String, bool>,
@@ -65,6 +68,9 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
     let next_date = next_trading_day(pool, trade_date).await?;
     let market = market::overview(pool, Some(trade_date)).await?.map(|o| MarketIn { above_ma20_pct: o.above_ma20 * 100.0, stocks: o.stocks });
     let sec = market::securities(pool).await?;
+    // 权威涨跌停池：持仓股和候选股的诊断、卖出条件里的涨跌停信号共用，整个读取窗口加载一次
+    let lo = trade_date - chrono::Duration::days(market::calendar_days_for(BARS as u32));
+    let limits = LimitPool::load(pool, lo, trade_date).await?;
     let names: HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>("SELECT strategy_id, name FROM app.strategy").fetch_all(pool).await?.into_iter().collect();
     let screening: Vec<(i64, String)> = sqlx::query_as("SELECT strategy_id, name FROM app.strategy WHERE screening ORDER BY strategy_id").fetch_all(pool).await?;
     let ids: Vec<i64> = screening.iter().map(|(id, _)| *id).collect();
@@ -80,7 +86,7 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
     let hits = rows.into_iter().map(|(id, code, r, amount)| (id, code, r.0, amount.unwrap_or(0.0))).collect();
     let delisted: HashMap<String, bool> =
         sqlx::query_as::<_, (String, bool)>("SELECT thscode, delisted_on IS NOT NULL FROM ref.security").fetch_all(pool).await?.into_iter().collect();
-    Ok(Some(Shared { trade_date, next_date, market, sec, screening, names, stats, hits, delisted }))
+    Ok(Some(Shared { trade_date, next_date, market, sec, screening, names, stats, limits, hits, delisted }))
 }
 
 fn finite(v: f64) -> Option<f64> {
@@ -88,10 +94,13 @@ fn finite(v: f64) -> Option<f64> {
 }
 
 /// 一只股票在最后一根日线上的状态；价格换算成未复权价（最新一段的前复权价等于原价，这里按比例换算以防万一）
-fn snapshot(bars: &[DailyBar], meta: &StockMeta, trend_ma: u32) -> Option<Snapshot> {
+fn snapshot(bars: &[DailyBar], meta: &StockMeta, trend_ma: u32, authority: Option<(&LimitPool, &str)>) -> Option<Snapshot> {
     let last = bars.last()?;
-    let d = diagnosis::diagnose(bars, meta, &[])?;
-    let f = Frame::new(bars, Some(meta));
+    let d = diagnosis::diagnose(bars, meta, &[], authority)?;
+    let f = match authority {
+        Some((pool, code)) => Frame::with_authority(bars, Some(meta), pool, code),
+        None => Frame::new(bars, Some(meta)),
+    };
     let i = bars.len() - 1;
     let v = |id, n| finite(f.at(IndicatorRef::new(id, n), i));
     let to_raw = if last.q_close > 0.0 { last.close / last.q_close } else { 1.0 };
@@ -145,7 +154,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
     for p in &positions {
         let meta = sh.sec.meta.get(&p.thscode).cloned().unwrap_or(StockMeta { board: "main".into(), is_st: false, list_date: None });
         let bars = prices::recent_bars_until(pool, &p.thscode, sh.trade_date, BARS).await?;
-        let snap = snapshot(&bars, &meta, rules.trend_ma);
+        let snap = snapshot(&bars, &meta, rules.trend_ma, Some((&sh.limits, &p.thscode)));
         let bars_held = match p.opened_on {
             Some(d) => Some(
                 sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mkt.stock_bar_1d WHERE thscode = $1 AND trade_date >= $2 AND trade_date <= $3")
@@ -161,7 +170,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         let strategy_exit = match (p.strategy_id, bars.is_empty()) {
             (Some(id), false) => match screener::load_strategy(pool, id).await? {
                 Some(def) => {
-                    let f = Frame::new(&bars, Some(&meta));
+                    let f = Frame::with_authority(&bars, Some(&meta), &sh.limits, &p.thscode);
                     let i = bars.len() - 1;
                     if def.exit_signal(&f, i) { def.exit_reason_text(&f, i).or_else(|| Some("卖出条件".into())) } else { None }
                 }
@@ -211,7 +220,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
     for (code, mut picks, _) in pre.into_iter().filter(|(c, _, _)| !positions.iter().any(|p| p.thscode == *c)).take(MAX_CANDIDATES) {
         let Some(meta) = sh.sec.meta.get(code) else { continue };
         let bars = prices::recent_bars_until(pool, code, sh.trade_date, BARS).await?;
-        let Some(snap) = snapshot(&bars, meta, rules.trend_ma) else { continue };
+        let Some(snap) = snapshot(&bars, meta, rules.trend_ma, Some((&sh.limits, code))) else { continue };
         // 过去表现好的策略列在前面
         picks.sort_by(|a, b| excess(b.strategy_id).unwrap_or(f64::MIN).total_cmp(&excess(a.strategy_id).unwrap_or(f64::MIN)));
         candidates.push(CandidateIn { thscode: code.to_string(), name: sh.sec.names.get(code).cloned().unwrap_or_default(), board: meta.board.clone(), is_st: meta.is_st, picks, snap });

@@ -185,10 +185,10 @@ pub const CATALOG: &[SignalInfo] = &[
     SignalInfo { id: S::BearishEngulfing, name: "看跌吞没", group: "K 线形态", tone: Bearish, kind: Event, description: "前一天收阳，当天收阴，且当天的实体完全包住前一天的实体", usage: "两根 K 线的反转形态：一天之内把前一天的涨幅全部吐回。出现在上涨之后要警惕。", params: NONE },
     SignalInfo { id: S::MorningStar, name: "早晨之星", group: "K 线形态", tone: Bullish, kind: Event, description: "三根 K 线：一根较大的阴线，一根实体很小的 K 线落在它下方，再一根阳线收复第一根阴线实体的一半以上", usage: "经典的底部反转形态：跌、犹豫、涨。出现在一段下跌之后更可靠。", params: NONE },
     SignalInfo { id: S::EveningStar, name: "黄昏之星", group: "K 线形态", tone: Bearish, kind: Event, description: "三根 K 线：一根较大的阳线，一根实体很小的 K 线落在它上方，再一根阴线跌掉第一根阳线实体的一半以上", usage: "经典的顶部反转形态：涨、犹豫、跌。出现在一段上涨之后更可靠。", params: NONE },
-    SignalInfo { id: S::LimitUp, name: "涨停", group: "涨跌停", tone: Bullish, kind: Event, description: "收盘价达到涨停价", usage: "A 股的单日涨幅上限（主板 10%，创业板、科创板 20%，北交所 30%）。涨停说明短期资金追捧，但第二天走势分化很大；一字涨停的股票普通人往往买不进。", params: NONE },
-    SignalInfo { id: S::LimitDown, name: "跌停", group: "涨跌停", tone: Bearish, kind: Event, description: "收盘价达到跌停价", usage: "单日跌幅下限，往往伴随重大利空或恐慌。跌停封死时很难卖出。", params: NONE },
-    SignalInfo { id: S::BrokenLimitUp, name: "炸板", group: "涨跌停", tone: Bearish, kind: Event, description: "盘中触及涨停价，收盘没有封住", usage: "冲上涨停却没封住，说明高位有大量卖盘，第二天表现通常偏弱。", params: NONE },
-    SignalInfo { id: S::ConsecutiveLimitUp, name: "连续 {n} 个涨停", group: "涨跌停", tone: Bullish, kind: Event, description: "连续 {n} 个交易日收盘涨停", usage: "市场炒作最热的股票，波动和风险都极大，不适合普通投资者追。", params: &[p("n", "连板数", 2.0, 2.0, 10.0, true)] },
+    SignalInfo { id: S::LimitUp, name: "涨停", group: "涨跌停", tone: Bullish, kind: Event, description: "当天在供应商的涨停股名单里（2020-07-22 起）；名单没有覆盖的日期按交易所规则推算收盘价是否达到涨停价", usage: "A 股的单日涨幅上限（主板 10%，创业板、科创板 20%，北交所 30%）。涨停说明短期资金追捧，但第二天走势分化很大；一字涨停的股票普通人往往买不进。历史上主板 ST 股的涨跌幅限制是 5%，本地按现在的简称猜不出当时的 ST 状态，所以以供应商的名单为准。", params: NONE },
+    SignalInfo { id: S::LimitDown, name: "跌停", group: "涨跌停", tone: Bearish, kind: Event, description: "当天在供应商的跌停股名单里（2025-10-16 起）；名单没有覆盖的日期按交易所规则推算", usage: "单日跌幅下限，往往伴随重大利空或恐慌。跌停封死时很难卖出。", params: NONE },
+    SignalInfo { id: S::BrokenLimitUp, name: "炸板", group: "涨跌停", tone: Bearish, kind: Event, description: "当天在供应商的炸板股名单里（2025-10-16 起）；名单没有覆盖的日期按「最高价触及涨停价、收盘没封住」判断", usage: "冲上涨停却没封住，说明高位有大量卖盘，第二天表现通常偏弱。", params: NONE },
+    SignalInfo { id: S::ConsecutiveLimitUp, name: "连续 {n} 个涨停", group: "涨跌停", tone: Bullish, kind: Event, description: "连续 {n} 个交易日收盘涨停；有供应商名单的日期用名单给出的连板数，所以数据开头不会把已经连了好几板的股票算成第 1 板", usage: "市场炒作最热的股票，波动和风险都极大，不适合普通投资者追。", params: &[p("n", "连板数", 2.0, 2.0, 10.0, true)] },
 ];
 
 pub fn info_of(id: SignalId) -> &'static SignalInfo {
@@ -460,16 +460,10 @@ fn special(f: &Frame, id: SignalId, params: &Params) -> Vec<bool> {
         S::LimitUp => f.limits().limit_up.clone(),
         S::LimitDown => f.limits().limit_down.clone(),
         S::BrokenLimitUp => f.limits().broken.clone(),
+        // 连板数取权威池给出的值（数据起点处不会把已经连了几板的股票算成第 1 板），没有池时是自算的连续涨停天数
         S::ConsecutiveLimitUp => {
-            let lu = &f.limits().limit_up;
-            let k = pv("n") as usize;
-            let mut run = 0usize;
-            lu.iter()
-                .map(|&u| {
-                    run = if u { run + 1 } else { 0 };
-                    run >= k
-                })
-                .collect()
+            let k = pv("n") as u32;
+            f.limits().consecutive_up.iter().map(|&run| run >= k).collect()
         }
         _ => unreachable!("能写成条件的信号走 definition"),
     }
@@ -493,10 +487,10 @@ pub fn special_rule(id: SignalId) -> Option<&'static str> {
         S::RsiTopDivergence => "收盘价的一个高点（前后各 3 天都不比它高）比上一个高点（60 天以内）更高，而这两天的 RSI(14) 后一个更低；在高点确认（之后第 3 天）时出现",
         S::MaSqueezeBreakUp => "前 10 个交易日里至少 8 天 5、10、20、60 日均线相差不超过收盘价的 2%（粘合），当天相差超过 3%（前一天还不超过），且收盘价高于四条均线",
         S::MaSqueezeBreakDown => "前 10 个交易日里至少 8 天 5、10、20、60 日均线相差不超过收盘价的 2%（粘合），当天相差超过 3%（前一天还不超过），且收盘价低于四条均线",
-        S::LimitUp => "收盘价达到按交易所规则推算的涨停价",
-        S::LimitDown => "收盘价达到按交易所规则推算的跌停价",
-        S::BrokenLimitUp => "最高价触及涨停价，收盘没有封住",
-        S::ConsecutiveLimitUp => "连续 N 个交易日收盘涨停",
+        S::LimitUp => "当天在供应商的涨停股名单里（2020-07-22 起）；名单没有覆盖的日期按交易所规则推算收盘价是否达到涨停价",
+        S::LimitDown => "当天在供应商的跌停股名单里（2025-10-16 起）；名单没有覆盖的日期按交易所规则推算",
+        S::BrokenLimitUp => "当天在供应商的炸板股名单里（2025-10-16 起）；名单没有覆盖的日期按「最高价触及涨停价、收盘没封住」判断",
+        S::ConsecutiveLimitUp => "连续 N 个交易日收盘涨停；有供应商名单的日期用名单给出的连板数",
         _ => return None,
     })
 }
@@ -608,15 +602,8 @@ mod tests {
             S::LimitDown => f.limits().limit_down.clone(),
             S::BrokenLimitUp => f.limits().broken.clone(),
             S::ConsecutiveLimitUp => {
-                let lu = &f.limits().limit_up;
-                let k = pv("n") as usize;
-                let mut run = 0usize;
-                lu.iter()
-                    .map(|&u| {
-                        run = if u { run + 1 } else { 0 };
-                        run >= k
-                    })
-                    .collect()
+                let k = pv("n") as u32;
+                f.limits().consecutive_up.iter().map(|&run| run >= k).collect()
             }
             _ => unreachable!("只核对 ORIGINAL 中的信号"),
         }

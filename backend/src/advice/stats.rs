@@ -191,12 +191,15 @@ pub async fn compute(pool: &PgPool, defs: &[(i64, Definition)]) -> anyhow::Resul
     let sec = market::securities(pool).await?;
     let base_def = Definition::any_stock();
     let warmup = defs.iter().map(|(_, d)| d.warmup()).max().unwrap_or(30) + 5;
+    let lo = start - chrono::Duration::days(calendar_days_for(warmup));
+    // 权威涨跌停池：策略过去表现里的买卖点同样以供应商的名单为准
+    let limits = crate::analysis::limit_pool::LimitPool::load(pool, lo, end).await?;
     let mut accs: Vec<Acc> = defs.iter().map(|_| Acc::default()).collect();
     let mut base = DayAcc::default();
-    prices::for_each_stock(pool, start - chrono::Duration::days(calendar_days_for(warmup)), end, |code, bars| {
+    prices::for_each_stock(pool, lo, end, |code, bars| {
         let Some(meta) = sec.meta.get(code) else { return };
         let Some(first) = bars.iter().position(|b| b.date >= start) else { return };
-        let f = Frame::new(bars, Some(meta));
+        let f = Frame::with_authority(bars, Some(meta), &limits, code);
         for (acc, (_, d)) in accs.iter_mut().zip(defs) {
             let p = points::run(bars, &f, meta, d, first);
             for t in &p.trades {

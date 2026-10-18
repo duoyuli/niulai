@@ -10,6 +10,7 @@ use utoipa_axum::routes;
 
 use super::AppState;
 use crate::analysis::diagnosis::{self, Diagnosis};
+use crate::analysis::limit_pool::LimitPool;
 use crate::analysis::market::{self, Overview, SectorStrength};
 use crate::analysis::prices;
 use crate::analysis::strategy::Definition;
@@ -33,7 +34,14 @@ async fn security_diagnosis(State(s): State<AppState>, Path(code): Path<String>)
         .into_iter()
         .filter_map(|(id, name, v)| serde_json::from_value::<Definition>(v).ok().map(|d| (id, name, d.with_lib(lib.clone()))))
         .collect();
-    diagnosis::diagnose(&bars, meta, &strategies).map(Json).ok_or_else(|| ApiError::NotFound(format!("本地还没有 {code} 的日线")))
+    // 权威涨跌停池：只读这只股票在诊断窗口内的记录
+    let codes = [code.clone()];
+    let limits = if let (Some(first), Some(last)) = (bars.first(), bars.last()) {
+        LimitPool::load_for(&s.pool, &codes, first.date, last.date).await?
+    } else {
+        LimitPool::empty()
+    };
+    diagnosis::diagnose(&bars, meta, &strategies, Some((&limits, &code))).map(Json).ok_or_else(|| ApiError::NotFound(format!("本地还没有 {code} 的日线")))
 }
 
 #[derive(Deserialize, IntoParams)]
