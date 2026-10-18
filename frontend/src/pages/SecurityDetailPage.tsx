@@ -7,7 +7,6 @@ import { useListSignals } from "../api/generated/signal/signal";
 import { useCatalog, useListStrategies } from "../api/generated/strategy/strategy";
 import { COST_DEFAULTS, CostFields, costParams, Loaded, Result, RulesNote } from "../components/backtest";
 import { DiagnosisCard } from "../components/DiagnosisCard";
-import { SINGLE_STOCK_ESTIMATE, SINGLE_STOCK_ESTIMATE_BASIS } from "../components/longTask";
 import { MaControls } from "../components/MaControls";
 import { OverlayPicker, useOverlayParam, useOverlays } from "../components/overlays";
 import { PriceChart } from "../components/PriceChart";
@@ -205,13 +204,10 @@ function StockBacktest({ thscode }: { thscode: string }) {
             <Segmented value={s.years} options={RANGES} onChange={(years) => set({ years })} />
           </div>
           <CostFields s={s} set={set} />
-          <span className="pb-2 text-xs text-zinc-500" title={SINGLE_STOCK_ESTIMATE_BASIS}>
-            {SINGLE_STOCK_ESTIMATE}
-          </span>
         </div>
       </Card>
       {strategyId === 0 ? (
-        <Loaded query={ma} pending="正在计算（这只股票通常几十毫秒）">
+        <Loaded query={ma}>
           {(d) => (
             <Result
               label={`${d.fast} 日 / ${d.slow} 日均线交叉`}
@@ -224,7 +220,7 @@ function StockBacktest({ thscode }: { thscode: string }) {
           )}
         </Loaded>
       ) : (
-        <Loaded query={st} pending="正在计算（这只股票通常几十毫秒）">
+        <Loaded query={st}>
           {(d) => (
             <Result
               label={`策略「${d.strategy_name}」`}

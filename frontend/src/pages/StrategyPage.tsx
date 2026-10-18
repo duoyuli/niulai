@@ -1,14 +1,8 @@
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { getPortfolioBacktestQueryKey, usePortfolioBacktest } from "../api/generated/backtest/backtest";
-import type {
-  Explained,
-  PortfolioBacktestParams,
-  ScreenResults,
-  StoredHit,
-  StrategyItem,
-} from "../api/generated/model";
+import { usePortfolioBacktest } from "../api/generated/backtest/backtest";
+import type { Explained, ScreenResults, StoredHit, StrategyItem } from "../api/generated/model";
 import {
   useDeleteStrategy,
   useGetStrategy,
@@ -16,8 +10,15 @@ import {
   useRunScreening,
   useUpdateStrategy,
 } from "../api/generated/strategy/strategy";
-import { COST_DEFAULTS, CostFields, costParams, NumberField, PortfolioView, RulesNote } from "../components/backtest";
-import { PORTFOLIO_ESTIMATE_BASIS, portfolioEstimate, TaskRunning, useElapsedSeconds } from "../components/longTask";
+import {
+  COST_DEFAULTS,
+  CostFields,
+  costParams,
+  Loaded,
+  NumberField,
+  PortfolioView,
+  RulesNote,
+} from "../components/backtest";
 import {
   Badge,
   buttonClass,
@@ -224,39 +225,11 @@ function Picks({ id, st, date, onDate }: { id: number; st: StrategyItem; date: s
 
 function History({ id }: { id: number }) {
   const [s, set] = useSearchState({ range: "3", positions: "5", ...COST_DEFAULTS, log: "" });
-  const qc = useQueryClient();
-  // 只有点「开始回测」时才把参数固定下来：改区间、持仓数、费率不会自动重算
-  const form: PortfolioBacktestParams = {
-    strategy_id: id,
-    start: rangeStart(s.range),
-    max_positions: Number(s.positions) || 5,
-    ...costParams(s),
-  };
-  const [run, setRun] = useState<PortfolioBacktestParams | null>(null);
-  const query = usePortfolioBacktest(run ?? form, {
-    query: {
-      enabled: run !== null,
-      staleTime: 5 * 60_000,
-      placeholderData: keepPreviousData,
-      retry: false,
-      refetchOnWindowFocus: false,
-    },
-  });
-  const changed = run !== null && JSON.stringify(run) !== JSON.stringify(form);
-  const running = run !== null && query.isFetching;
-  const seconds = useElapsedSeconds(running);
-  const start = () => {
-    // 参数没变时再点一次，就是按同一组参数重算（不走缓存）
-    if (run && !changed) {
-      void query.refetch();
-      return;
-    }
-    setRun(form);
-  };
-  const cancel = () => {
-    if (run) void qc.cancelQueries({ queryKey: getPortfolioBacktestQueryKey(run) });
-    setRun(null);
-  };
+  const [go, setGo] = useState(false);
+  const query = usePortfolioBacktest(
+    { strategy_id: id, start: rangeStart(s.range), max_positions: Number(s.positions) || 5, ...costParams(s) },
+    { query: { enabled: go, staleTime: 5 * 60_000, placeholderData: keepPreviousData, retry: false } },
+  );
   return (
     <>
       <Card>
@@ -274,43 +247,20 @@ function History({ id }: { id: number }) {
           />
           <CostFields s={s} set={set} />
         </div>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          {running ? (
-            <TaskRunning text="正在逐只计算全市场几年的日线" seconds={seconds} onCancel={cancel} />
-          ) : (
-            <>
-              <button type="button" className={buttonClass()} onClick={start}>
-                {run && changed ? "按新参数重新计算" : run ? "重新回测" : "开始回测"}
-              </button>
-              <span className="text-xs text-zinc-500" title={PORTFOLIO_ESTIMATE_BASIS}>
-                {portfolioEstimate(s.range)}
-              </span>
-            </>
-          )}
-        </div>
-        {changed && !running && (
-          <p className="mt-2 text-xs text-amber-600">
-            参数已改，下面显示的还是上一次按旧参数算的结果；点上面的按钮按新参数重新计算。
-          </p>
-        )}
-        {run === null && (
-          <p className="mt-2 text-xs text-zinc-500">
-            回测会把全市场几年的日线算一遍，点「开始回测」再算；算的时候可以取消。
-          </p>
+        {!go && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button type="button" className={buttonClass()} onClick={() => setGo(true)}>
+              开始回测
+            </button>
+            <span className="text-xs text-zinc-500">要把全市场几年的日线算一遍，通常需要几秒到十几秒</span>
+          </div>
         )}
       </Card>
-      {run !== null &&
-        (query.error && !running ? (
-          <Card>
-            <ErrorState error={query.error} onRetry={() => query.refetch()} />
-          </Card>
-        ) : query.data !== undefined ? (
-          <PortfolioView data={query.data} log={s.log === "1"} onLog={(v) => set({ log: v ? "1" : "" })} />
-        ) : running ? null : (
-          <Card>
-            <Spinner label="正在逐只计算全市场的日线" />
-          </Card>
-        ))}
+      {go && (
+        <Loaded query={query} pending="正在逐只计算全市场的日线">
+          {(d) => <PortfolioView data={d} log={s.log === "1"} onLog={(v) => set({ log: v ? "1" : "" })} />}
+        </Loaded>
+      )}
       <RulesNote
         items={[
           "每个交易日收盘后用策略选股，下一个交易日开盘买入；同一天候选太多时按策略的排序先买靠前的。买点用和每日巡检、K 线买卖点同一套规则（从回测开始日空仓起步）。",
