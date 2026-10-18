@@ -147,6 +147,27 @@ export function Segmented<V extends string>({
   );
 }
 
+/** 小问号：鼠标移上去（或用键盘聚焦）显示一段说明 */
+export function HelpTip({ children, label = "说明" }: { children: ReactNode; label?: string }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <button
+        type="button"
+        aria-label={label}
+        className="ml-1 flex size-4 cursor-help items-center justify-center rounded-full border border-zinc-300 text-[10px] leading-none text-zinc-500 hover:border-zinc-500 hover:text-zinc-800 dark:border-zinc-600 dark:hover:text-zinc-200"
+      >
+        ?
+      </button>
+      <span
+        role="tooltip"
+        className="invisible absolute top-full left-0 z-30 mt-1 w-80 max-w-[80vw] rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-relaxed font-normal text-zinc-700 opacity-0 shadow-lg transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+      >
+        {children}
+      </span>
+    </span>
+  );
+}
+
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     // biome-ignore lint/a11y/noLabelWithoutControl: 控件通过 children 传入

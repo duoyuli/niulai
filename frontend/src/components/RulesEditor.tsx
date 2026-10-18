@@ -3,7 +3,7 @@ import { useRulesGuide } from "../api/generated/accounts/accounts";
 import type { Rules, RulesBacktest, StrategyQuality, WeakMarket } from "../api/generated/model";
 import { WEAK_MARKET } from "../lib/accounts";
 import { fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
-import { Field, inputClass, QueryView } from "./ui";
+import { Field, HelpTip, inputClass, QueryView } from "./ui";
 
 /** 后端总是返回完整的规则（缺的字段按稳健型补齐） */
 export type FullRules = Required<Rules>;
@@ -136,7 +136,23 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 </div>
                 <div className="mt-3 flex items-baseline justify-between gap-2 text-xs text-zinc-500">
                   <span>
-                    参考的策略（右边是过去 3 年比随便买多涨多少）：
+                    参考的策略（右边是过去 3 年比随便买多涨多少
+                    <HelpTip label="「随便买」是什么">
+                      <span className="block font-medium">「随便买」是一个对照组</span>
+                      <span className="mt-1 block">
+                        把过去 3 年里每一只正常交易的股票、每一个交易日都当成一次买入，看买入后 20
+                        个交易日平均涨多少，相当于闭着眼睛随便哪天买随便哪只。
+                      </span>
+                      <span className="mt-1 block">
+                        策略的数字 = 它的买点之后 20 个交易日的平均涨跌 − 随便买的平均涨跌。比如买点之后平均涨
+                        3%、随便买平均涨 1%，就是多涨 2 个百分点；负数说明照着它挑还不如闭眼买。
+                      </span>
+                      <span className="mt-1 block text-zinc-500">
+                        正常交易指排除 ST、股价低于 2 元、成交额不到 5000 万、上市不满 60 个交易日的。统一看 20
+                        个交易日、不扣费用，是平均数，不代表以后；每周用最新数据重算。
+                      </span>
+                    </HelpTip>
+                    ）：
                     {picked === null ? "现在是全部参考，以后新增的策略也自动参考。" : `现在勾了 ${picked.length} 个。`}
                   </span>
                   <span className="flex shrink-0 gap-3">
