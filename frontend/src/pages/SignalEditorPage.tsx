@@ -175,7 +175,7 @@ function Editor({ catalog, initial, editing }: { catalog: Catalog; initial: Draf
           type="button"
           className={buttonClass("ghost")}
           disabled={def.conditions.length === 0}
-          title="不保存，先看看今天哪些股票满足、过去出现后表现如何"
+          title="不保存，先看看今天哪些股票满足；下面的过去表现要单独点「计算过去表现」"
           onClick={() => setTried(structuredClone(def))}
         >
           {tried && !stale ? "已试算" : "试一试"}
