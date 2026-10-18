@@ -168,13 +168,25 @@ export function HelpTip({ children, label = "说明" }: { children: ReactNode; l
   );
 }
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+/** 表单项：标签和控件。hint 是一句简短提示（鼠标悬停）；help 是较长的说明，显示成标签后面的小问号 */
+export function Field({
+  label,
+  children,
+  hint,
+  help,
+}: {
+  label: string;
+  children: ReactNode;
+  hint?: string;
+  help?: ReactNode;
+}) {
   return (
     // biome-ignore lint/a11y/noLabelWithoutControl: 控件通过 children 传入
     <label className="flex flex-col gap-1 text-xs text-zinc-500">
-      <span title={hint}>
+      <span title={hint} className="inline-flex items-center">
         {label}
         {hint && <span className="ml-1 cursor-help text-zinc-400">ⓘ</span>}
+        {help && <HelpTip>{help}</HelpTip>}
       </span>
       {children}
     </label>
