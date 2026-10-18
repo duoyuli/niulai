@@ -136,11 +136,6 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
         {adjust !== "qfq" && (
           <p className="text-xs text-zinc-500">指标和信号按等比前复权价计算，切换回「等比前复权」后画在 K 线上。</p>
         )}
-        {overlays.some((a) => a.startsWith("strategy:")) && (
-          <p className="text-xs text-zinc-500">
-            策略买卖点从所选区间起点空仓算起，不扣费用、不考虑资金；「只看强势板块」不生效（它只在每日巡检和预览里生效）。
-          </p>
-        )}
       </div>
       {bars.error ? (
         <ErrorState error={bars.error} onRetry={() => bars.refetch()} />
@@ -241,7 +236,6 @@ function StockBacktest({ thscode }: { thscode: string }) {
           "只做多，买入时用全部可用资金、按每手 100 股买；卖出时全部卖出。剩余不够一手的钱留作现金。",
           "开盘就一字涨停买不进、一字跌停卖不出时，顺延到下一个交易日。",
           "信号按等比前复权价判断；买卖和市值按交易所实际价格计算。现金分红（税前）计入现金、不再买入，送转股按比例增加股数，不参与配股。",
-          "从回测开始日空仓起步。策略的买卖点和每日巡检、K 线买卖点用同一套规则；「只看强势板块」只在每日巡检和预览里生效，这里不生效。",
           "对比「一直拿着不动」：同样的钱在区间第一天开盘全部买入，一直拿到最后，不计手续费。",
         ]}
       />
