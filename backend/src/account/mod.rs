@@ -5,6 +5,7 @@
 //! 规则见 docs/domains/accounts.md。
 
 pub mod corp;
+pub mod ledger;
 pub mod lots;
 pub mod paste;
 pub mod rules;
@@ -125,6 +126,10 @@ pub struct Trade {
     pub fee: f64,
     pub source: TradeSource,
     pub note: String,
+    /// 这一笔卖出实现了多少盈亏：卖出净回款（扣费用）− 卖出股数 × 卖出时的平均成本；不是卖出、或没填成本价时为空
+    pub realized_pnl: Option<f64>,
+    /// 撤销的时间；空表示这笔流水有效
+    pub reversed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -134,6 +139,8 @@ pub enum AccountError {
     Invalid(String),
     #[error("账户不存在")]
     NotFound,
+    #[error("流水不存在")]
+    TradeNotFound,
     #[error("已经有叫「{0}」的账户了")]
     Taken(String),
     #[error(transparent)]
@@ -351,9 +358,12 @@ pub async fn positions(pool: &PgPool, account_id: i64) -> Result<Vec<Position>> 
         .collect())
 }
 
-/// 最近一次持仓或现金的变动（流水），用于提醒核对
+/// 最近一次持仓或现金的变动（流水），用于提醒核对；已撤销的流水不算
 pub async fn last_change(pool: &PgPool, account_id: i64) -> Result<Option<DateTime<Utc>>> {
-    Ok(sqlx::query_scalar("SELECT max(created_at) FROM app.account_trade WHERE account_id = $1").bind(account_id).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar("SELECT max(created_at) FROM app.account_trade WHERE account_id = $1 AND reversed_at IS NULL")
+        .bind(account_id)
+        .fetch_one(pool)
+        .await?)
 }
 
 /// 锁住账户（同一账户的变动排队），返回现金
@@ -510,6 +520,168 @@ async fn account_fees(tx: &mut Transaction<'_, Postgres>, account_id: i64) -> Re
     Ok(Fees { commission_rate, min_commission })
 }
 
+type LedgerRow = (i64, NaiveDate, String, Option<String>, Option<i64>, Option<f64>, f64);
+/// 撤销时读的那行流水：(类型, 股票, 股数, 价格, 现金变化, 来源, 撤销时间)
+type UndoRow = (String, Option<String>, Option<i64>, Option<f64>, f64, String, Option<DateTime<Utc>>);
+
+/// 一只股票（`code` 为空时是这个账户所有股票）的全部有效流水，按流水编号从早到晚。
+/// 已撤销的流水不再参与回放；只有持仓相关的流水有股票代码，现金流水不在这里取。
+async fn ledger_rows<'e, E>(executor: E, account_id: i64, code: Option<&str>) -> Result<Vec<(String, ledger::Entry)>>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
+    let rows: Vec<LedgerRow> = sqlx::query_as(
+        "SELECT trade_id, trade_date, kind, thscode, shares, price::float8, amount::float8
+         FROM app.account_trade
+         WHERE account_id = $1 AND reversed_at IS NULL AND thscode IS NOT NULL AND ($2::text IS NULL OR thscode = $2)
+         ORDER BY trade_id",
+    )
+    .bind(account_id)
+    .bind(code)
+    .fetch_all(executor)
+    .await?;
+    rows.into_iter()
+        .map(|(trade_id, trade_date, kind, thscode, shares, price, amount)| {
+            Ok((thscode.unwrap_or_default(), ledger::Entry { trade_id, kind: parse_enum(&kind)?, trade_date, shares, price, amount }))
+        })
+        .collect::<anyhow::Result<_>>()
+        .map_err(AccountError::Internal)
+}
+
+/// 从流水重算的已实现盈亏
+pub struct Realized {
+    /// 已经卖出的部分赚或亏了多少；全部卖出都能算出成本价时才有值，没有卖出时是 0
+    pub total: Option<f64>,
+    /// 卖出流水编号 → 这一笔的盈亏
+    pub sell_pnls: HashMap<i64, f64>,
+}
+
+/// 已实现盈亏：把每只股票的有效流水按 [ledger] 的口径回放一遍，卖出不改变平均成本。
+/// 不单独存表，撤销或补记流水后自然跟着变。
+pub async fn realized(pool: &PgPool, account_id: i64) -> Result<Realized> {
+    let rows = ledger_rows(pool, account_id, None).await?;
+    let mut by_code: HashMap<String, Vec<ledger::Entry>> = HashMap::new();
+    for (code, e) in rows {
+        by_code.entry(code).or_default().push(e);
+    }
+    let (mut total, mut sell_pnls) = (0.0, HashMap::new());
+    let mut complete = true;
+    for (code, entries) in by_code {
+        let r = match ledger::replay(&entries) {
+            Ok(r) => r,
+            // 正常记的账不会对不上；旧数据或手工改过数据库时，宁可显示算不出，也不显示错的数字
+            Err(e) => {
+                tracing::warn!(account_id, code, error = ?e, "回放流水失败，已实现盈亏按算不出处理");
+                complete = false;
+                continue;
+            }
+        };
+        match r.realized_pnl {
+            Some(v) => total += v,
+            None => complete = false,
+        }
+        for s in r.sell_pnls {
+            match s.pnl {
+                Some(p) => {
+                    sell_pnls.insert(s.trade_id, p);
+                }
+                None => complete = false,
+            }
+        }
+    }
+    Ok(Realized { total: complete.then(|| round2(total)), sell_pnls })
+}
+
+// @project-doc docs/domains/accounts.md#undo
+/// 撤销（红冲）一条手动记的流水：标成已撤销，在同一个事务里把现金和这只股票的持仓、成本重算一遍。
+/// 已实现盈亏是从剩下的流水算的，所以也跟着变，不会留下和流水对不上的持仓。
+///
+/// 只能撤销手动记的买入、卖出、转入、转出；按建议执行、自动记账、校准的流水不在这里撤销（见文档）。
+/// 撤销后如果后面已经卖出过、或者已经按这笔记过分红送转，会前后对不上，这时拒绝并提示去校准。
+pub async fn undo_trade(pool: &PgPool, user_id: i64, account_id: i64, trade_id: i64) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    let cash = lock(&mut tx, user_id, account_id).await?;
+    let row: Option<UndoRow> = sqlx::query_as(
+        "SELECT kind, thscode, shares, price::float8, amount::float8, source, reversed_at
+         FROM app.account_trade WHERE account_id = $1 AND trade_id = $2 FOR UPDATE",
+    )
+    .bind(account_id)
+    .bind(trade_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((kind, thscode, _shares, _price, amount, source, reversed_at)) = row else { return Err(AccountError::TradeNotFound) };
+    let kind: TradeKind = parse_enum(&kind)?;
+    let source: TradeSource = parse_enum(&source)?;
+    if reversed_at.is_some() {
+        return invalid("这一笔已经撤销过了");
+    }
+    if source != TradeSource::User {
+        let why = match source {
+            TradeSource::Advice => "按建议执行的流水不能在这里撤销；在持仓页校准可以改回现金和持仓",
+            TradeSource::CorpAction => "分红送转是系统按公告自动记的，不能单独撤销；金额不对时校准现金",
+            TradeSource::User => unreachable!(),
+        };
+        return invalid(why);
+    }
+    if !matches!(kind, TradeKind::Buy | TradeKind::Sell | TradeKind::CashIn | TradeKind::CashOut) {
+        return invalid("校准流水不能单独撤销：把持仓和现金重新校准一次就行");
+    }
+    let amount = round2(amount);
+    let new_cash = round2(cash - amount);
+    if new_cash < -0.005 {
+        return invalid(format!("撤销这笔流水要扣回 ¥{amount:.2}，现金只有 ¥{cash:.2}，不够。先转入现金，或在持仓页校准现金"));
+    }
+    if let Some(code) = thscode.as_deref() {
+        let rows = ledger_rows(&mut *tx, account_id, Some(code)).await?;
+        let entries: Vec<ledger::Entry> = rows.into_iter().filter_map(|(_, e)| (e.trade_id != trade_id).then_some(e)).collect();
+        let replay = ledger::replay(&entries).map_err(|e| {
+            let at = entries.iter().find(|x| x.trade_id == e.trade_id()).map(|x| x.trade_date.to_string()).unwrap_or_default();
+            AccountError::Invalid(format!(
+                "撤销后，{code} 在 {at} 的持仓或分红送转会前后对不上（这笔流水当时支撑着后面的卖出或分红送转），不能撤销。可以在持仓页校准"
+            ))
+        })?;
+        let now = crate::time::today_cn();
+        let existing: Option<i32> =
+            sqlx::query_scalar("SELECT 1 FROM app.position WHERE account_id = $1 AND thscode = $2 FOR UPDATE").bind(account_id).bind(code).fetch_optional(&mut *tx).await?;
+        if replay.shares == 0 {
+            sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2").bind(account_id).bind(code).execute(&mut *tx).await?;
+        } else if existing.is_some() {
+            sqlx::query(
+                "UPDATE app.position SET shares = $3, cost_price = round($4::float8::numeric, 4), since = $5 WHERE account_id = $1 AND thscode = $2",
+            )
+            .bind(account_id)
+            .bind(code)
+            .bind(replay.shares)
+            .bind(replay.cost_price)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            // 撤销把持仓清空的卖出后要把持仓恢复：买入日按剩下的买入流水恢复，买入依据的策略恢复不了
+            sqlx::query(
+                "INSERT INTO app.position (account_id, thscode, shares, cost_price, opened_on, strategy_id, since)
+                 VALUES ($1, $2, $3, round($4::float8::numeric, 4), $5, NULL, $6)",
+            )
+            .bind(account_id)
+            .bind(code)
+            .bind(replay.shares)
+            .bind(replay.cost_price)
+            .bind(replay.opened_on)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+    sqlx::query("UPDATE app.account_trade SET reversed_at = now() WHERE account_id = $1 AND trade_id = $2")
+        .bind(account_id)
+        .bind(trade_id)
+        .execute(&mut *tx)
+        .await?;
+    add_cash(&mut tx, account_id, -amount).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// 校准：把持仓和现金整体换成用户填的（例如照着券商 App 抄一遍）。和原来不同的地方各记一条「校准」流水
 pub async fn calibrate(pool: &PgPool, user_id: i64, account_id: i64, cash: f64, list: &[PositionInput]) -> Result<()> {
     let cash = validate_money(cash, "现金")?;
@@ -598,13 +770,15 @@ async fn positions_tx(tx: &mut Transaction<'_, Postgres>, account_id: i64) -> Re
         .collect())
 }
 
-type TradeRow = (i64, String, NaiveDate, Option<String>, Option<String>, Option<i64>, Option<f64>, f64, f64, String, String, DateTime<Utc>);
+type TradeRow = (i64, String, NaiveDate, Option<String>, Option<String>, Option<i64>, Option<f64>, f64, f64, String, String, Option<DateTime<Utc>>, DateTime<Utc>);
 
-/// 流水，新的在前
+/// 流水，新的在前；已撤销的也列出来（标着撤销时间），方便核对
 pub async fn trades(pool: &PgPool, user_id: i64, account_id: i64, limit: i64) -> Result<Vec<Trade>> {
     get(pool, user_id, account_id).await?;
+    let realized = realized(pool, account_id).await?;
     let rows: Vec<TradeRow> = sqlx::query_as(
-        "SELECT t.trade_id, t.kind, t.trade_date, t.thscode, s.name, t.shares, t.price::float8, t.amount::float8, t.fee::float8, t.source, t.note, t.created_at
+        "SELECT t.trade_id, t.kind, t.trade_date, t.thscode, s.name, t.shares, t.price::float8, t.amount::float8, t.fee::float8, t.source, t.note,
+                t.reversed_at, t.created_at
          FROM app.account_trade t LEFT JOIN ref.security s USING (thscode)
          WHERE t.account_id = $1 ORDER BY t.trade_id DESC LIMIT $2",
     )
@@ -613,8 +787,23 @@ pub async fn trades(pool: &PgPool, user_id: i64, account_id: i64, limit: i64) ->
     .fetch_all(pool)
     .await?;
     rows.into_iter()
-        .map(|(trade_id, kind, trade_date, thscode, name, shares, price, amount, fee, source, note, created_at)| {
-            Ok(Trade { trade_id, kind: parse_enum(&kind)?, trade_date, thscode, name, shares, price, amount, fee, source: parse_enum(&source)?, note, created_at })
+        .map(|(trade_id, kind, trade_date, thscode, name, shares, price, amount, fee, source, note, reversed_at, created_at)| {
+            Ok(Trade {
+                trade_id,
+                kind: parse_enum(&kind)?,
+                trade_date,
+                thscode,
+                name,
+                shares,
+                price,
+                amount,
+                fee,
+                source: parse_enum(&source)?,
+                note,
+                realized_pnl: realized.sell_pnls.get(&trade_id).copied(),
+                reversed_at,
+                created_at,
+            })
         })
         .collect::<anyhow::Result<_>>()
         .map_err(AccountError::Internal)

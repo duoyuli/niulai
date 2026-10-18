@@ -968,6 +968,68 @@
         }
       }
     },
+    "/accounts/{account_id}/trades/{trade_id}": {
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "撤销一条手动记的流水（红冲）：现金和持仓、成本、已实现盈亏重新算一遍。按建议执行、自动记账、校准的流水不能单独撤销",
+        "operationId": "undo_trade",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "trade_id",
+            "in": "path",
+            "description": "流水编号",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已撤销，返回重算后的账户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "不是手动流水、已经撤销过，或撤销后现金、持仓会变成负数",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户或流水不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/login": {
       "post": {
         "tags": [
@@ -4187,6 +4249,14 @@
             "type": "integer",
             "minimum": 0
           },
+          "realized_pnl": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "已实现盈亏（元）：已经卖出的部分，按卖出时的平均成本算，含买卖费用；有卖出没填成本价时为空"
+          },
           "total_assets": {
             "type": "number",
             "format": "double"
@@ -4237,6 +4307,22 @@
               "null"
             ],
             "format": "double"
+          },
+          "realized_pnl": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "这一笔卖出实现了多少盈亏：卖出净回款（扣费用）− 卖出股数 × 卖出时的平均成本；不是卖出、或没填成本价时为空"
+          },
+          "reversed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "撤销的时间；空表示这笔流水有效"
           },
           "shares": {
             "type": [
