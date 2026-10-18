@@ -41,7 +41,12 @@ pub struct Catalog {
 /// 可用的指标、信号和内置模板
 #[utoipa::path(get, path = "/strategies/catalog", tag = "strategy", responses((status = 200, description = "成功", body = Catalog)))]
 async fn catalog() -> Json<Catalog> {
-    Json(Catalog { indicators: indicators::CATALOG.to_vec(), signals: signals::CATALOG.to_vec(), templates: templates(), default_universe: Universe::default() })
+    Json(Catalog {
+        indicators: indicators::CATALOG.to_vec(),
+        signals: signals::CATALOG.to_vec(),
+        templates: templates(),
+        default_universe: Universe::default(),
+    })
 }
 
 /// 策略的白话说明：股票池、买入条件、卖出规则
@@ -108,7 +113,18 @@ pub struct StrategyItem {
     pub updated_at: DateTime<Utc>,
 }
 
-type StrategyRow = (i64, String, String, bool, bool, Option<String>, bool, serde_json::Value, DateTime<Utc>, i32);
+type StrategyRow = (
+    i64,
+    String,
+    String,
+    bool,
+    bool,
+    Option<String>,
+    bool,
+    serde_json::Value,
+    DateTime<Utc>,
+    i32,
+);
 
 async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem>> {
     let rows: Vec<StrategyRow> = sqlx::query_as(
@@ -132,13 +148,45 @@ async fn load_items(s: &AppState, id: Option<i64>) -> ApiResult<Vec<StrategyItem
     .await?;
     let lib = signal_lib::load(&s.pool).await?;
     let mut out = vec![];
-    for (strategy_id, name, description, screening, show_on_today, template, builtin, v, updated_at, _sort_order) in rows {
-        let definition: Definition = serde_json::from_value::<Definition>(v).map_err(|e| ApiError::Internal(e.into()))?.with_lib(lib.clone());
-        let latest = latest
-            .iter()
-            .find(|l| l.0 == strategy_id)
-            .map(|&(_, trade_date, matched, hits, new_hits, sells, holdings)| LatestRun { trade_date, matched, hits, new_hits, sells, holdings });
-        out.push(StrategyItem { strategy_id, name, description, screening, show_on_today, template, builtin, explained: explain(&definition), definition, latest, updated_at });
+    for (
+        strategy_id,
+        name,
+        description,
+        screening,
+        show_on_today,
+        template,
+        builtin,
+        v,
+        updated_at,
+        _sort_order,
+    ) in rows
+    {
+        let definition: Definition = serde_json::from_value::<Definition>(v)
+            .map_err(|e| ApiError::Internal(e.into()))?
+            .with_lib(lib.clone());
+        let latest = latest.iter().find(|l| l.0 == strategy_id).map(
+            |&(_, trade_date, matched, hits, new_hits, sells, holdings)| LatestRun {
+                trade_date,
+                matched,
+                hits,
+                new_hits,
+                sells,
+                holdings,
+            },
+        );
+        out.push(StrategyItem {
+            strategy_id,
+            name,
+            description,
+            screening,
+            show_on_today,
+            template,
+            builtin,
+            explained: explain(&definition),
+            definition,
+            latest,
+            updated_at,
+        });
     }
     Ok(out)
 }
@@ -159,14 +207,19 @@ pub struct StrategyOrderInput {
 #[utoipa::path(put, path = "/strategies/order", tag = "strategy", request_body = StrategyOrderInput,
     responses((status = 204, description = "顺序已保存"),
               (status = 400, description = "必须提供全部策略且不能重复", body = crate::error::ErrorBody)))]
-async fn reorder_strategies(State(s): State<AppState>, Json(input): Json<StrategyOrderInput>) -> ApiResult<StatusCode> {
+async fn reorder_strategies(
+    State(s): State<AppState>,
+    Json(input): Json<StrategyOrderInput>,
+) -> ApiResult<StatusCode> {
     let all: Vec<i64> = sqlx::query_scalar("SELECT strategy_id FROM app.strategy")
         .fetch_all(&s.pool)
         .await?;
     let want: HashSet<i64> = input.strategy_ids.iter().copied().collect();
     let have: HashSet<i64> = all.iter().copied().collect();
     if want.len() != input.strategy_ids.len() || want != have {
-        return Err(ApiError::BadRequest("策略顺序必须包含全部策略，且不能重复".into()));
+        return Err(ApiError::BadRequest(
+            "策略顺序必须包含全部策略，且不能重复".into(),
+        ));
     }
     let mut tx = s.pool.begin().await?;
     for (order, strategy_id) in input.strategy_ids.iter().enumerate() {
@@ -208,13 +261,21 @@ async fn check(s: &AppState, input: &StrategyInput) -> ApiResult<()> {
     }
     // 条件里可能引用自定义信号：带上信号库再校验
     let lib = signal_lib::load(&s.pool).await?;
-    input.definition.clone().with_lib(lib).validate().map_err(ApiError::BadRequest)
+    input
+        .definition
+        .clone()
+        .with_lib(lib)
+        .validate()
+        .map_err(ApiError::BadRequest)
 }
 
 /// 新建策略
 #[utoipa::path(post, path = "/strategies", tag = "strategy", request_body = StrategyInput,
     responses((status = 201, description = "已创建", body = StrategyItem), (status = 400, description = "定义不合法", body = crate::error::ErrorBody)))]
-async fn create_strategy(State(s): State<AppState>, Json(input): Json<StrategyInput>) -> ApiResult<(StatusCode, Json<StrategyItem>)> {
+async fn create_strategy(
+    State(s): State<AppState>,
+    Json(input): Json<StrategyInput>,
+) -> ApiResult<(StatusCode, Json<StrategyItem>)> {
     check(&s, &input).await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO app.strategy (name, description, definition, screening, template, show_on_today, sort_order)
@@ -229,15 +290,25 @@ async fn create_strategy(State(s): State<AppState>, Json(input): Json<StrategyIn
     .bind(input.show_on_today)
     .fetch_one(&s.pool)
     .await?;
-    let item = load_items(&s, Some(id)).await?.pop().ok_or_else(|| ApiError::NotFound("策略不存在".into()))?;
+    let item = load_items(&s, Some(id))
+        .await?
+        .pop()
+        .ok_or_else(|| ApiError::NotFound("策略不存在".into()))?;
     Ok((StatusCode::CREATED, Json(item)))
 }
 
 /// 单个策略
 #[utoipa::path(get, path = "/strategies/{strategy_id}", tag = "strategy", params(("strategy_id" = i64, Path)),
     responses((status = 200, description = "成功", body = StrategyItem), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
-async fn get_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<Json<StrategyItem>> {
-    load_items(&s, Some(id)).await?.pop().map(Json).ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))
+async fn get_strategy(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<StrategyItem>> {
+    load_items(&s, Some(id))
+        .await?
+        .pop()
+        .map(Json)
+        .ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))
 }
 
 /// 修改策略。修改后之前的巡检结果保留，下一次巡检起按新定义。内置策略只能改「是否在首页展示」
@@ -246,16 +317,26 @@ async fn get_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResu
               (status = 400, description = "定义不合法", body = crate::error::ErrorBody),
               (status = 404, description = "不存在", body = crate::error::ErrorBody),
               (status = 409, description = "内置策略只能改是否在首页展示", body = crate::error::ErrorBody)))]
-async fn update_strategy(State(s): State<AppState>, Path(id): Path<i64>, Json(input): Json<StrategyInput>) -> ApiResult<Json<StrategyItem>> {
+async fn update_strategy(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Json(input): Json<StrategyInput>,
+) -> ApiResult<Json<StrategyItem>> {
     check(&s, &input).await?;
-    let current = load_items(&s, Some(id)).await?.pop().ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))?;
+    let current = load_items(&s, Some(id))
+        .await?
+        .pop()
+        .ok_or_else(|| ApiError::NotFound(format!("策略不存在：{id}")))?;
     if current.builtin {
         let same = input.name.trim() == current.name
             && input.description.trim() == current.description
             && input.screening
-            && serde_json::to_value(&input.definition).ok() == serde_json::to_value(&current.definition).ok();
+            && serde_json::to_value(&input.definition).ok()
+                == serde_json::to_value(&current.definition).ok();
         if !same {
-            return Err(ApiError::Conflict("内置策略不能修改，可以复制一份再改".into()));
+            return Err(ApiError::Conflict(
+                "内置策略不能修改，可以复制一份再改".into(),
+            ));
         }
     }
     let n = sqlx::query("UPDATE app.strategy SET name = $2, description = $3, definition = $4, screening = $5, show_on_today = $6, updated_at = now() WHERE strategy_id = $1")
@@ -278,11 +359,21 @@ async fn update_strategy(State(s): State<AppState>, Path(id): Path<i64>, Json(in
 #[utoipa::path(delete, path = "/strategies/{strategy_id}", tag = "strategy", params(("strategy_id" = i64, Path)),
     responses((status = 204, description = "已删除"), (status = 409, description = "内置策略不能删除", body = crate::error::ErrorBody)))]
 async fn delete_strategy(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<StatusCode> {
-    let n = sqlx::query("DELETE FROM app.strategy WHERE strategy_id = $1 AND builtin_key IS NULL").bind(id).execute(&s.pool).await?.rows_affected();
+    let n = sqlx::query("DELETE FROM app.strategy WHERE strategy_id = $1 AND builtin_key IS NULL")
+        .bind(id)
+        .execute(&s.pool)
+        .await?
+        .rows_affected();
     if n == 0 {
-        let builtin: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)").bind(id).fetch_one(&s.pool).await?;
+        let builtin: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)")
+                .bind(id)
+                .fetch_one(&s.pool)
+                .await?;
         if builtin {
-            return Err(ApiError::Conflict("内置策略不能删除，可以关掉「在首页展示」".into()));
+            return Err(ApiError::Conflict(
+                "内置策略不能删除，可以关掉「在首页展示」".into(),
+            ));
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -308,12 +399,23 @@ pub struct PreviewResult {
 /// 试运行：用这份定义在某个交易日选股，不保存。全市场计算一次约几秒
 #[utoipa::path(post, path = "/strategies/preview", tag = "strategy", request_body = PreviewInput,
     responses((status = 200, description = "成功", body = PreviewResult), (status = 400, description = "定义不合法或没有日线", body = crate::error::ErrorBody)))]
-async fn preview(State(s): State<AppState>, Json(input): Json<PreviewInput>) -> ApiResult<Json<PreviewResult>> {
+async fn preview(
+    State(s): State<AppState>,
+    Json(input): Json<PreviewInput>,
+) -> ApiResult<Json<PreviewResult>> {
     let definition = input.definition.with_lib(signal_lib::load(&s.pool).await?);
     definition.validate().map_err(ApiError::BadRequest)?;
-    let out = screener::screen(&s.pool, &[&definition], input.date, screener::Mode::Preview).await?.ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;
+    let out = screener::screen(&s.pool, &[&definition], input.date, screener::Mode::Preview)
+        .await?
+        .ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;
     let r = out.results.into_iter().next().expect("一个策略一个结果");
-    Ok(Json(PreviewResult { trade_date: out.trade_date, scanned: out.scanned, matched: r.matched, hits: r.hits, explained: explain(&definition) }))
+    Ok(Json(PreviewResult {
+        trade_date: out.trade_date,
+        scanned: out.scanned,
+        matched: r.matched,
+        hits: r.hits,
+        explained: explain(&definition),
+    }))
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -362,8 +464,16 @@ pub struct ScreenResults {
 /// 某个策略某个交易日的巡检结果
 #[utoipa::path(get, path = "/strategies/{strategy_id}/results", tag = "strategy", params(("strategy_id" = i64, Path), ResultsQuery),
     responses((status = 200, description = "成功", body = ScreenResults), (status = 404, description = "策略不存在", body = crate::error::ErrorBody)))]
-async fn results(State(s): State<AppState>, Path(id): Path<i64>, Query(q): Query<ResultsQuery>) -> ApiResult<Json<ScreenResults>> {
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)").bind(id).fetch_one(&s.pool).await?;
+async fn results(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Query(q): Query<ResultsQuery>,
+) -> ApiResult<Json<ScreenResults>> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)")
+            .bind(id)
+            .fetch_one(&s.pool)
+            .await?;
     if !exists {
         return Err(ApiError::NotFound(format!("策略不存在：{id}")));
     }
@@ -378,7 +488,16 @@ async fn results(State(s): State<AppState>, Path(id): Path<i64>, Query(q): Query
     .fetch_optional(&s.pool)
     .await?;
     let Some((run_id, trade_date, scanned, matched, ran_at)) = run else {
-        return Ok(Json(ScreenResults { trade_date: None, scanned: None, matched: None, ran_at: None, hits: vec![], sells: vec![], holdings: vec![], dates }));
+        return Ok(Json(ScreenResults {
+            trade_date: None,
+            scanned: None,
+            matched: None,
+            ran_at: None,
+            hits: vec![],
+            sells: vec![],
+            holdings: vec![],
+            dates,
+        }));
     };
     let rows = |kind: &'static str| {
         sqlx::query_as::<_, StoredHit>(
@@ -393,8 +512,21 @@ async fn results(State(s): State<AppState>, Path(id): Path<i64>, Query(q): Query
         .bind(kind)
         .fetch_all(&s.pool)
     };
-    let (hits, sells, holdings) = (rows("buy").await?, rows("sell").await?, rows("holding").await?);
-    Ok(Json(ScreenResults { trade_date: Some(trade_date), scanned: Some(scanned), matched: Some(matched), ran_at: Some(ran_at), hits, sells, holdings, dates }))
+    let (hits, sells, holdings) = (
+        rows("buy").await?,
+        rows("sell").await?,
+        rows("holding").await?,
+    );
+    Ok(Json(ScreenResults {
+        trade_date: Some(trade_date),
+        scanned: Some(scanned),
+        matched: Some(matched),
+        ran_at: Some(ran_at),
+        hits,
+        sells,
+        holdings,
+        dates,
+    }))
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -407,6 +539,11 @@ pub struct RunQuery {
 
 /// 立即巡检并保存结果。每个交易日收盘同步完成后会自动执行，这里用于手动补跑或重跑某一天
 #[utoipa::path(post, path = "/screening/run", tag = "strategy", params(RunQuery), responses((status = 200, description = "已完成", body = ScreeningSummary)))]
-async fn run_screening(State(s): State<AppState>, Query(q): Query<RunQuery>) -> ApiResult<Json<ScreeningSummary>> {
-    Ok(Json(screener::run_and_store(&s.pool, q.date, q.strategy_id).await?))
+async fn run_screening(
+    State(s): State<AppState>,
+    Query(q): Query<RunQuery>,
+) -> ApiResult<Json<ScreeningSummary>> {
+    Ok(Json(
+        screener::run_and_store(&s.pool, q.date, q.strategy_id).await?,
+    ))
 }

@@ -100,8 +100,27 @@ impl TaskQueue {
         Ok(n > 0)
     }
 
+    /// Fence side effects after a lease is lost or the task is requeued.
+    pub async fn assert_owned(&self, task_id: i64) -> anyhow::Result<()> {
+        let owned: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM ops.task WHERE task_id = $1 AND locked_by = $2 AND status = 'running')",
+        )
+        .bind(task_id)
+        .bind(&self.worker_id)
+        .fetch_one(&self.pool)
+        .await?;
+        anyhow::ensure!(owned, "任务租约已失效：{task_id}");
+        Ok(())
+    }
+
     /// 任务结束，同时累加所属运行的完成数（运行结束时会按任务表重新统计）
-    pub async fn finish(&self, task: &ClaimedTask, status: Finished, stats: TaskStats, note: Option<&str>) -> anyhow::Result<()> {
+    pub async fn finish(
+        &self,
+        task: &ClaimedTask,
+        status: Finished,
+        stats: TaskStats,
+        note: Option<&str>,
+    ) -> anyhow::Result<()> {
         sqlx::query(
             "WITH t AS (
                UPDATE ops.task SET status = $3, pages = $4, records = $5, changed = $6, last_error = $7, finished_at = now(), locked_by = NULL
@@ -137,7 +156,13 @@ impl TaskQueue {
     }
 
     /// 失败：fatal 或尝试次数用尽时标为 dead，否则标为 failed 并退避
-    pub async fn fail(&self, task: &ClaimedTask, code: Option<i64>, msg: &str, fatal: bool) -> anyhow::Result<()> {
+    pub async fn fail(
+        &self,
+        task: &ClaimedTask,
+        code: Option<i64>,
+        msg: &str,
+        fatal: bool,
+    ) -> anyhow::Result<()> {
         let dead = fatal || task.attempts >= task.max_attempts;
         sqlx::query(
             "WITH t AS (
@@ -159,7 +184,10 @@ impl TaskQueue {
 
     /// 把租约过期的任务放回队列（尝试次数已达上限的标为 dead），返回回收的数量
     pub async fn requeue_stale(&self) -> anyhow::Result<i32> {
-        Ok(sqlx::query_scalar("SELECT ops.requeue_stale($1::interval)").bind(LEASE).fetch_one(&self.pool).await?)
+        Ok(sqlx::query_scalar("SELECT ops.requeue_stale($1::interval)")
+            .bind(LEASE)
+            .fetch_one(&self.pool)
+            .await?)
     }
 
     /// 整个队列是否还有未完成的任务（包括其他执行者正在执行的）

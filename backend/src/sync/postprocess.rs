@@ -13,7 +13,11 @@ const JOB: &str = "adj_rebuild";
 
 /// 返回行情或公司行动是否有变化（有变化时才重算，调用方据此决定是否巡检）
 /// price_datasets：写入影响复权价的表的数据集（[`crate::sync::spec::Registry::writing_to`] 加 [`crate::sync::spec::PRICE_TABLES`]）
-pub async fn after_run(pool: &PgPool, run_id: i64, price_datasets: &[String]) -> anyhow::Result<bool> {
+pub async fn after_run(
+    pool: &PgPool,
+    run_id: i64,
+    price_datasets: &[String],
+) -> anyhow::Result<bool> {
     let changed: i64 = sqlx::query_scalar(
         "SELECT coalesce(sum(changed), 0) FROM ops.task WHERE run_id = $1 AND dataset_id = ANY($2) AND status = 'done'",
     )
@@ -84,9 +88,19 @@ pub async fn recompute_adjustments(pool: &PgPool, run_id: i64) -> anyhow::Result
     .execute(pool)
     .await?
     .rows_affected();
-    sqlx::query("CALL mkt.rebuild_adj_segment($1)").bind(run_id).execute(pool).await?;
+    sqlx::query("CALL mkt.rebuild_adj_segment($1)")
+        .bind(run_id)
+        .execute(pool)
+        .await?;
     // 复权价变了：让依赖它的缓存失效，见 docs/decisions/indicator_compute.md
-    sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = 'adj_factor'").execute(pool).await?;
-    tracing::info!(run_id, derived_trading_days = derived, ms = t.elapsed().as_millis() as u64, "复权因子已重算");
+    sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = 'adj_factor'")
+        .execute(pool)
+        .await?;
+    tracing::info!(
+        run_id,
+        derived_trading_days = derived,
+        ms = t.elapsed().as_millis() as u64,
+        "复权因子已重算"
+    );
     Ok(())
 }

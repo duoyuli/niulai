@@ -56,13 +56,30 @@ type TradeRow = (NaiveDate, Option<String>, Option<i64>, f64, String);
 // @project-doc docs/domains/accounts.md#equity
 /// 重算 `account_id` 从建账户以来的每日净值并 upsert 快照，返回最近 `window` 个交易日的曲线。
 /// `through` 有值时只算到这一天（每日维护传当天的交易日），为空时算到本地最新的收盘日。
-pub async fn refresh(pool: &PgPool, account_id: i64, window: i64, through: Option<NaiveDate>) -> Result<EquityCurve> {
-    let created: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT created_at FROM app.account WHERE account_id = $1").bind(account_id).fetch_optional(pool).await?;
-    let Some(created) = created else { return Err(AccountError::NotFound) };
+pub async fn refresh(
+    pool: &PgPool,
+    account_id: i64,
+    window: i64,
+    through: Option<NaiveDate>,
+) -> Result<EquityCurve> {
+    let created: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT created_at FROM app.account WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some(created) = created else {
+        return Err(AccountError::NotFound);
+    };
     let created = (created + Duration::hours(8)).date_naive();
-    let end: Option<NaiveDate> =
-        sqlx::query_scalar("SELECT max(trade_date) FROM mkt.stock_bar_1d WHERE ($1::date IS NULL OR trade_date <= $1)").bind(through).fetch_one(pool).await?;
-    let Some(end) = end else { return Ok(empty_curve(Some(created))) };
+    let end: Option<NaiveDate> = sqlx::query_scalar(
+        "SELECT max(trade_date) FROM mkt.stock_bar_1d WHERE ($1::date IS NULL OR trade_date <= $1)",
+    )
+    .bind(through)
+    .fetch_one(pool)
+    .await?;
+    let Some(end) = end else {
+        return Ok(empty_curve(Some(created)));
+    };
     let first_trade: Option<NaiveDate> =
         sqlx::query_scalar("SELECT min(trade_date) FROM app.account_trade WHERE account_id = $1 AND reversed_at IS NULL AND trade_date <= $2")
             .bind(account_id)
@@ -104,7 +121,11 @@ pub async fn refresh(pool: &PgPool, account_id: i64, window: i64, through: Optio
             share_events.entry(date).or_default().push((code, n));
         }
     }
-    let held: Vec<String> = sqlx::query_scalar("SELECT thscode FROM app.position WHERE account_id = $1").bind(account_id).fetch_all(pool).await?;
+    let held: Vec<String> =
+        sqlx::query_scalar("SELECT thscode FROM app.position WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_all(pool)
+            .await?;
     codes.extend(held);
     codes.sort();
     codes.dedup();
@@ -128,8 +149,13 @@ pub async fn refresh(pool: &PgPool, account_id: i64, window: i64, through: Optio
     }
 
     // 交易日：优先用日历（ref.trading_day）；测试库或日历还没同步时用日线里出现过的日期
-    let mut days: Vec<NaiveDate> =
-        sqlx::query_scalar("SELECT cal_date FROM ref.trading_day WHERE cal_date BETWEEN $1 AND $2 ORDER BY cal_date").bind(start).bind(end).fetch_all(pool).await?;
+    let mut days: Vec<NaiveDate> = sqlx::query_scalar(
+        "SELECT cal_date FROM ref.trading_day WHERE cal_date BETWEEN $1 AND $2 ORDER BY cal_date",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?;
     if days.is_empty() {
         days = sqlx::query_scalar("SELECT DISTINCT trade_date FROM mkt.stock_bar_1d WHERE trade_date BETWEEN $1 AND $2 ORDER BY trade_date")
             .bind(start)
@@ -141,7 +167,11 @@ pub async fn refresh(pool: &PgPool, account_id: i64, window: i64, through: Optio
         days.push(end);
     }
 
-    let code_pos: HashMap<&str, usize> = codes.iter().enumerate().map(|(i, c)| (c.as_str(), i)).collect();
+    let code_pos: HashMap<&str, usize> = codes
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.as_str(), i))
+        .collect();
     let mut share_lists: Vec<Vec<(NaiveDate, i64)>> = vec![vec![]; codes.len()];
     for (date, list) in &share_events {
         for (code, n) in list {
@@ -151,7 +181,10 @@ pub async fn refresh(pool: &PgPool, account_id: i64, window: i64, through: Optio
         }
     }
     let mut share_iters: Vec<std::iter::Peekable<std::vec::IntoIter<(NaiveDate, i64)>>> =
-        share_lists.into_iter().map(|v| v.into_iter().peekable()).collect();
+        share_lists
+            .into_iter()
+            .map(|v| v.into_iter().peekable())
+            .collect();
     let mut shares = vec![0_i64; codes.len()];
     let mut bar_next = vec![0_usize; codes.len()];
 
@@ -184,7 +217,9 @@ pub async fn refresh(pool: &PgPool, account_id: i64, window: i64, through: Optio
             if shares[i] == 0 {
                 continue;
             }
-            let Some(bars) = series.get(codes[i].as_str()) else { continue };
+            let Some(bars) = series.get(codes[i].as_str()) else {
+                continue;
+            };
             while bar_next[i] < bars.len() && bars[bar_next[i]].0 <= *day {
                 bar_next[i] += 1;
             }
@@ -199,7 +234,13 @@ pub async fn refresh(pool: &PgPool, account_id: i64, window: i64, through: Optio
             // 第一个点没有前一天：拿它和累计净转入比，通常正好是 0（刚建账户）
             None => round2(total_assets - transfer),
         };
-        points.push(AccountEquityPoint { trade_date: *day, cash: round2(cash), market_value: round2(market_value), total_assets, day_pnl });
+        points.push(AccountEquityPoint {
+            trade_date: *day,
+            cash: round2(cash),
+            market_value: round2(market_value),
+            total_assets,
+            day_pnl,
+        });
         transfers.push(round2(transfer));
         prev_total = Some(total_assets);
         pending_transfer = 0.0;
@@ -236,7 +277,12 @@ pub async fn refresh(pool: &PgPool, account_id: i64, window: i64, through: Optio
     let profit_last = last - transfers[transfers.len() - 1];
     let return_pct = (first >= 0.01).then(|| round2((profit_last - profit_first) / first * 100.0));
     let net_transfer = round2(transfers[transfers.len() - 1] - transfers[start_ix]);
-    Ok(EquityCurve { points: shown, return_pct, net_transfer, since })
+    Ok(EquityCurve {
+        points: shown,
+        return_pct,
+        net_transfer,
+        since,
+    })
 }
 
 /// 每天生成建议前给所有账户写一次截至 `through` 的净值快照。打开曲线时会整段重算，这里只负责让快照不断天。
@@ -252,5 +298,10 @@ pub async fn refresh_all(pool: &PgPool, through: NaiveDate) -> anyhow::Result<us
 }
 
 fn empty_curve(since: Option<NaiveDate>) -> EquityCurve {
-    EquityCurve { points: vec![], return_pct: None, net_transfer: 0.0, since }
+    EquityCurve {
+        points: vec![],
+        return_pct: None,
+        net_transfer: 0.0,
+        since,
+    }
 }

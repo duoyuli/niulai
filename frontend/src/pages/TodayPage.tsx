@@ -7,10 +7,10 @@ import { getResultsQueryOptions, useListStrategies } from "../api/generated/stra
 import { useDataStatus } from "../api/generated/system/system";
 import { useListWatchlist } from "../api/generated/watchlist/watchlist";
 import { SignalChip } from "../components/SignalChip";
+import { TodayAccounts } from "../components/TodayAccounts";
 import { Card, Empty, ErrorState, HelpTip, QueryView, Spinner } from "../components/ui";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { dayLabel, fmtInt, fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
-import { TodayAccounts } from "./AccountsPage";
 
 const HOME_WATCHLIST_LIMIT = 6;
 

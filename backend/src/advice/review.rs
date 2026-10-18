@@ -80,7 +80,8 @@ pub async fn review(pool: &PgPool, account_id: i64) -> anyhow::Result<Review> {
     .bind(since)
     .fetch_all(pool)
     .await?;
-    let states: HashMap<(i64, String), String> = states.into_iter().map(|(a, k, s)| ((a, k), s)).collect();
+    let states: HashMap<(i64, String), String> =
+        states.into_iter().map(|(a, k, s)| ((a, k), s)).collect();
     // (交易日, 条目, 处理, 是否和上一份建议重复)
     let mut picked = vec![];
     // 按时间从早到晚：上一份建议里有同一只股票、同一个动作，就是重复的
@@ -88,9 +89,17 @@ pub async fn review(pool: &PgPool, account_id: i64) -> anyhow::Result<Review> {
     for (advice_id, trade_date, v) in rows.into_iter().rev() {
         let a: Advice = serde_json::from_value(v)?;
         let mut now = std::collections::HashSet::new();
-        for it in a.items.into_iter().filter(|i| matches!(i.action, Action::Buy | Action::Sell | Action::Reduce)) {
+        for it in a
+            .items
+            .into_iter()
+            .filter(|i| matches!(i.action, Action::Buy | Action::Sell | Action::Reduce))
+        {
             let state = states.get(&(advice_id, it.key.clone())).cloned();
-            let action = if it.action == Action::Reduce { Action::Sell } else { it.action };
+            let action = if it.action == Action::Reduce {
+                Action::Sell
+            } else {
+                it.action
+            };
             let repeat = prev.contains(&(it.thscode.clone(), action));
             now.insert((it.thscode.clone(), action));
             picked.push((trade_date, it, state, repeat));
@@ -98,7 +107,12 @@ pub async fn review(pool: &PgPool, account_id: i64) -> anyhow::Result<Review> {
         prev = now;
     }
     picked.reverse();
-    let codes: Vec<String> = picked.iter().map(|(_, i, _, _)| i.thscode.clone()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    let codes: Vec<String> = picked
+        .iter()
+        .map(|(_, i, _, _)| i.thscode.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let series: Vec<(String, NaiveDate, f64, f64)> = sqlx::query_as(
         "SELECT thscode, trade_date, open::float8, close::float8 FROM mkt.v_stock_bar_qfq WHERE thscode = ANY($1) AND trade_date >= $2 ORDER BY thscode, trade_date",
     )
@@ -130,11 +144,31 @@ pub async fn review(pool: &PgPool, account_id: i64) -> anyhow::Result<Review> {
                     if buy { buys.push(r) } else { sells.push(r) }
                 }
                 if done {
-                    if buy { buys_done.push(r) } else { sells_done.push(r) }
+                    if buy {
+                        buys_done.push(r)
+                    } else {
+                        sells_done.push(r)
+                    }
                 }
             }
-            ReviewItem { trade_date, action: it.action, thscode: it.thscode, name: it.name, headline: it.headline, state, after_5d_pct: a5, after_10d_pct: a10, after_20d_pct: a20 }
+            ReviewItem {
+                trade_date,
+                action: it.action,
+                thscode: it.thscode,
+                name: it.name,
+                headline: it.headline,
+                state,
+                after_5d_pct: a5,
+                after_10d_pct: a10,
+                after_20d_pct: a20,
+            }
         })
         .collect();
-    Ok(Review { items, buys: group(buys), sells: group(sells), buys_executed: group(buys_done), sells_executed: group(sells_done) })
+    Ok(Review {
+        items,
+        buys: group(buys),
+        sells: group(sells),
+        buys_executed: group(buys_done),
+        sells_executed: group(sells_done),
+    })
 }

@@ -38,7 +38,10 @@ pub struct Executor {
 /// 一个任务的执行结果（失败以 Err 返回）
 enum Outcome {
     Done(TaskStats),
-    Empty { pages: i32, note: Option<String> },
+    Empty {
+        pages: i32,
+        note: Option<String>,
+    },
     Skipped(String),
     /// 只有当天值的数据已经错过，记为失败
     Missed(String),
@@ -47,7 +50,12 @@ enum Outcome {
 }
 
 impl Executor {
-    pub fn new(pool: PgPool, client: Arc<HithinkClient>, registry: Arc<Registry>, worker_id: String) -> Self {
+    pub fn new(
+        pool: PgPool,
+        client: Arc<HithinkClient>,
+        registry: Arc<Registry>,
+        worker_id: String,
+    ) -> Self {
         Executor {
             queue: TaskQueue::new(pool.clone(), worker_id),
             fetcher: Fetcher::new(pool.clone(), client.clone(), registry.backoff_s.clone()),
@@ -60,11 +68,20 @@ impl Executor {
 
     /// 写入影响复权价的表（个股日线、公司行动）的数据集
     fn price_datasets(&self) -> Vec<String> {
-        self.registry.writing_to(&super::spec::PRICE_TABLES).into_iter().map(|d| d.id.clone()).collect()
+        self.registry
+            .writing_to(&super::spec::PRICE_TABLES)
+            .into_iter()
+            .map(|d| d.id.clone())
+            .collect()
     }
 
     /// 循环认领并执行任务，直到收到停止信号；`until_idle` 为真时，整个队列空了就返回
-    pub async fn run_loop(self: Arc<Self>, slot: usize, mut stop: watch::Receiver<bool>, until_idle: bool) -> anyhow::Result<()> {
+    pub async fn run_loop(
+        self: Arc<Self>,
+        slot: usize,
+        mut stop: watch::Receiver<bool>,
+        until_idle: bool,
+    ) -> anyhow::Result<()> {
         // 队列一直有任务时也要定期维护，所以按时间而不是按空闲轮数触发
         let mut last_maintenance: Option<std::time::Instant> = None;
         loop {
@@ -80,7 +97,9 @@ impl Executor {
             // 还没有配置 API Key：不认领任务，等用户在首次登录引导中配置（维护照常进行）
             if !self.client.has_api_key() {
                 if until_idle {
-                    anyhow::bail!("还没有配置 API Key：在网页的首次登录引导中配置，或设置环境变量 HITHINK_FINANCE_API_KEY");
+                    anyhow::bail!(
+                        "还没有配置 API Key：在网页的首次登录引导中配置，或设置环境变量 HITHINK_FINANCE_API_KEY"
+                    );
                 }
                 tokio::select! {
                     _ = tokio::time::sleep(IDLE_POLL) => {}
@@ -122,19 +141,27 @@ impl Executor {
         for run_id in run::stalled(&self.pool).await? {
             self.after_task(run_id).await?;
         }
+        for run_id in run::planned_since_runs(&self.pool).await? {
+            self.commit_planned_since(run_id).await?;
+        }
         for run_id in run::stale_planning(&self.pool).await? {
             if run::fail_planning(&self.pool, run_id).await? {
                 tracing::error!(run_id, "后台规划已中断，运行标为失败");
             }
         }
         for run_id in run::unchained(&self.pool).await? {
-            if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry).continue_chain(run_id).await? {
+            if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry)
+                .continue_chain(run_id)
+                .await?
+            {
                 tracing::warn!(run_id, next, "运行结束后没有接上下一个波次，已补上");
             }
         }
         postprocess::refresh_if_stale(&self.pool, &self.price_datasets()).await?;
         super::retention::prune_if_due(&self.pool).await?;
-        if let Err(e) = crate::analysis::prices::in_background(crate::advice::maintain(&self.pool)).await {
+        if let Err(e) =
+            crate::analysis::prices::in_background(crate::advice::maintain(&self.pool)).await
+        {
             tracing::error!(error = %format!("{e:#}"), "调仓建议的维护失败");
         }
         Ok(())
@@ -143,7 +170,10 @@ impl Executor {
     // @project-doc docs/architecture/sync_pipeline.md#task_lifecycle
     pub async fn process(&self, task: ClaimedTask) -> anyhow::Result<()> {
         let Some(spec) = self.registry.get(&task.dataset_id) else {
-            return self.queue.fail(&task, None, "数据集不在当前注册表中", true).await;
+            return self
+                .queue
+                .fail(&task, None, "数据集不在当前注册表中", true)
+                .await;
         };
         let started = std::time::Instant::now();
         let result = {
@@ -152,17 +182,31 @@ impl Executor {
         };
         match result {
             Ok(Outcome::Done(stats)) => {
-                self.queue.finish(&task, Finished::Done, stats, None).await?;
+                self.queue
+                    .finish(&task, Finished::Done, stats, None)
+                    .await?;
                 tracing::info!(task_id = task.task_id, dataset = %task.dataset_id, part = %task.part_key,
                                pages = stats.pages, records = stats.records, changed = stats.changed,
                                ms = started.elapsed().as_millis() as u64, "任务完成");
             }
             Ok(Outcome::Empty { pages, note }) => {
-                self.queue.finish(&task, Finished::Empty, TaskStats { pages, ..Default::default() }, note.as_deref()).await?
+                self.queue
+                    .finish(
+                        &task,
+                        Finished::Empty,
+                        TaskStats {
+                            pages,
+                            ..Default::default()
+                        },
+                        note.as_deref(),
+                    )
+                    .await?
             }
             Ok(Outcome::Skipped(why)) => {
                 tracing::warn!(task_id = task.task_id, dataset = %task.dataset_id, reason = %why, "任务跳过");
-                self.queue.finish(&task, Finished::Skipped, TaskStats::default(), Some(&why)).await?
+                self.queue
+                    .finish(&task, Finished::Skipped, TaskStats::default(), Some(&why))
+                    .await?
             }
             Ok(Outcome::Missed(why)) => {
                 // 只有当天值的数据错过了：记为失败（dead），在同步页和完整性核对中显示，而不是静默跳过
@@ -197,8 +241,16 @@ impl Executor {
             .fetch_one(&self.pool)
             .await?;
         if changed > 0 {
-            sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = 'limit_pool'").execute(&self.pool).await?;
-            tracing::info!(run_id, changed, "权威涨跌停池有变化，市场概况和信号统计的缓存已失效");
+            sqlx::query(
+                "UPDATE ops.derived_version SET updated_at = now() WHERE name = 'limit_pool'",
+            )
+            .execute(&self.pool)
+            .await?;
+            tracing::info!(
+                run_id,
+                changed,
+                "权威涨跌停池有变化，市场概况和信号统计的缓存已失效"
+            );
         }
         Ok(changed > 0)
     }
@@ -214,7 +266,11 @@ impl Executor {
                 match queue.heartbeat(task_id).await {
                     Ok(true) => {}
                     Ok(false) => {
-                        tracing::warn!(task_id, worker = queue.worker_id(), "任务已不属于本执行者，停止续租");
+                        tracing::warn!(
+                            task_id,
+                            worker = queue.worker_id(),
+                            "任务已不属于本执行者，停止续租"
+                        );
                         return;
                     }
                     Err(e) => tracing::warn!(task_id, error = %e, "续租失败"),
@@ -235,8 +291,15 @@ impl Executor {
         }
 
         let empty = Map::new();
-        let vars = task.params.get("vars").and_then(Value::as_object).unwrap_or(&empty);
-        if let Some(d) = vars.get("date").and_then(Value::as_str).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        let vars = task
+            .params
+            .get("vars")
+            .and_then(Value::as_object)
+            .unwrap_or(&empty);
+        if let Some(d) = vars
+            .get("date")
+            .and_then(Value::as_str)
+            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
             && let Some(why) = calendar::stale_partition_date(&self.pool, spec, d).await?
         {
             return Ok(Outcome::Skipped(why));
@@ -245,34 +308,82 @@ impl Executor {
             .params
             .get("query")
             .and_then(Value::as_object)
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), template::value_to_string(v))).collect())
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), template::value_to_string(v)))
+                    .collect()
+            })
             .unwrap_or_default();
-        let target = Target { task_id: task.task_id, part_key: &task.part_key, spec };
+        let target = Target {
+            task_id: task.task_id,
+            part_key: &task.part_key,
+            spec,
+        };
         let fetched = self.fetcher.fetch(&target, &query).await?;
         if fetched.records.is_empty() {
-            return Ok(Outcome::Empty { pages: fetched.pages, note: fetched.empty_note });
+            return Ok(Outcome::Empty {
+                pages: fetched.pages,
+                note: fetched.empty_note,
+            });
         }
 
         let trade_date = task.trade_date.map(|d| d.to_string());
         let rows = records::build_rows(spec, vars, &fetched.records, trade_date.as_deref())?;
-        let mut changed = if spec.store_record { records::store(&self.pool, &spec.id, task.task_id, &rows).await? } else { 0 };
-        let ctx = sinks::SinkContext { dataset_id: &spec.id, run_id: task.run_id, trade_date: task.trade_date, vars };
+        let mut tx = self.pool.begin().await?;
+        let owned = sqlx::query_scalar::<_, i32>(
+            "SELECT 1 FROM ops.task WHERE task_id = $1 AND locked_by = $2 AND status = 'running' FOR UPDATE",
+        )
+        .bind(task.task_id)
+        .bind(self.queue.worker_id())
+        .fetch_optional(&mut *tx)
+        .await?;
+        anyhow::ensure!(owned.is_some(), "任务租约已失效：{}", task.task_id);
+        let mut changed = if spec.store_record {
+            records::store_in_tx(
+                &mut tx,
+                &spec.id,
+                task.task_id,
+                self.queue.worker_id(),
+                &rows,
+            )
+            .await?
+        } else {
+            0
+        };
+        let ctx = sinks::SinkContext {
+            dataset_id: &spec.id,
+            run_id: task.run_id,
+            trade_date: task.trade_date,
+            vars,
+        };
         for sink in &spec.sink {
-            let n = sinks::apply(&self.pool, sink, &ctx, &rows).await.with_context(|| format!("写入 {sink}"))?;
+            let n = sinks::apply_in_tx(&mut tx, sink, &ctx, &rows)
+                .await
+                .with_context(|| format!("写入 {sink}"))?;
             if !spec.store_record {
                 changed += n;
             }
         }
-        cursor::advance(&self.pool, spec, task.task_id, vars).await?;
-        Ok(Outcome::Done(TaskStats { pages: fetched.pages, records: rows.len(), changed }))
+        cursor::advance_in_tx(&mut tx, spec, task.task_id, vars).await?;
+        tx.commit().await?;
+        Ok(Outcome::Done(TaskStats {
+            pages: fetched.pages,
+            records: rows.len(),
+            changed,
+        }))
     }
 
     // @project-doc docs/architecture/sync_pipeline.md#postprocess
     /// 运行的所有任务都结束后，先规划下一个波次，再执行后续计算。只有结束运行的那个执行者会走到这里。
     /// 先接续：后续计算失败或进程中途退出，也不会让后面的波次停掉；万一接续本身失败，定期维护会重试（[`run::unchained`]）
     async fn after_task(&self, run_id: i64) -> anyhow::Result<()> {
-        let Some(status) = run::try_complete(&self.pool, run_id).await? else { return Ok(()) };
+        let Some(status) = run::try_complete(&self.pool, run_id).await? else {
+            return Ok(());
+        };
         tracing::info!(run_id, %status, "运行结束，开始后处理");
+        if status == "succeeded" {
+            self.commit_planned_since(run_id).await?;
+        }
         // 权威涨跌停池只写 raw.record、没有类型化表，不在 PRICE_TABLES 里；单独统计它的变化来更新版本号。
         // 更新失败不影响运行状态，只写日志（下次有变化的运行还会再更新）
         let pool_changed = match self.mark_limit_pool_changed(run_id).await {
@@ -282,13 +393,17 @@ impl Executor {
                 false
             }
         };
-        if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry).continue_chain(run_id).await? {
+        if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry)
+            .continue_chain(run_id)
+            .await?
+        {
             tracing::info!(run_id, next, "已规划下一个波次");
         }
         // 行情有变化时，按最新交易日执行每日巡检，再为每个账户生成调仓建议；失败不影响同步。
         // 只有涨跌停池变了（例如当天的名单比行情晚到）也重做一次：之前的巡检用的是自算的涨停，名单到了以名单为准。
         // 已经处理过的建议不会被替换（refresh_all 只替换没处理过的）
-        let price_changed = postprocess::after_run(&self.pool, run_id, &self.price_datasets()).await?;
+        let price_changed =
+            postprocess::after_run(&self.pool, run_id, &self.price_datasets()).await?;
         if price_changed || pool_changed {
             let pool = &self.pool;
             crate::analysis::prices::in_background(async {
@@ -304,6 +419,13 @@ impl Executor {
             .await;
         }
         Ok(())
+    }
+
+    async fn commit_planned_since(&self, run_id: i64) -> anyhow::Result<()> {
+        for (dataset, at) in run::planned_since_marks(&self.pool, run_id).await? {
+            cursor::save_planned_since(&self.pool, &dataset, at).await?;
+        }
+        run::clear_planned_since_marks(&self.pool, run_id).await
     }
 }
 

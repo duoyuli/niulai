@@ -22,7 +22,8 @@ pub async fn pool(url: &str, max_connections: u32) -> anyhow::Result<PgPool> {
         .after_connect(|conn, _| {
             Box::pin(async move {
                 // 审计：TIME_ZONE 是代码里的常量
-                conn.execute(AssertSqlSafe(format!("SET TIME ZONE '{TIME_ZONE}'"))).await?;
+                conn.execute(AssertSqlSafe(format!("SET TIME ZONE '{TIME_ZONE}'")))
+                    .await?;
                 Ok(())
             })
         })
@@ -38,9 +39,16 @@ pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
     let mut m = sqlx::migrate!("./migrations");
     m.set_ignore_missing(true);
     let known = m.iter().map(|x| x.version).max().unwrap_or(0);
-    let applied: Option<i64> = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations").fetch_one(pool).await.unwrap_or(None);
+    let applied: Option<i64> = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(None);
     if let Some(v) = applied.filter(|v| *v > known) {
-        tracing::warn!(database = v, binary = known, "数据库执行过比当前版本更新的迁移，可能是升级失败后换回了旧版本；请尽快升级到新版本");
+        tracing::warn!(
+            database = v,
+            binary = known,
+            "数据库执行过比当前版本更新的迁移，可能是升级失败后换回了旧版本；请尽快升级到新版本"
+        );
     }
     m.run(pool).await?;
     Ok(())

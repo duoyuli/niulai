@@ -12,7 +12,9 @@ use crate::error::{ApiError, ApiResult};
 use crate::setup::{self, KeySource, SetupError};
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(get_setup)).routes(routes!(put_api_key))
+    OpenApiRouter::new()
+        .routes(routes!(get_setup))
+        .routes(routes!(put_api_key))
 }
 
 #[derive(Serialize, ToSchema, Clone, Copy)]
@@ -70,7 +72,10 @@ pub struct ApiKeySaved {
               (status = 400, description = "Key 为空或无效", body = crate::error::ErrorBody),
               (status = 409, description = "Key 由环境变量提供，不能在网页上修改", body = crate::error::ErrorBody),
               (status = 503, description = "暂时连不上同花顺接口，无法验证", body = crate::error::ErrorBody)))]
-async fn put_api_key(State(s): State<AppState>, Json(body): Json<ApiKeyInput>) -> ApiResult<Json<ApiKeySaved>> {
+async fn put_api_key(
+    State(s): State<AppState>,
+    Json(body): Json<ApiKeyInput>,
+) -> ApiResult<Json<ApiKeySaved>> {
     match setup::configure_api_key(&s.engine, &body.api_key).await {
         Ok(backfill_run_id) => Ok(Json(ApiKeySaved { backfill_run_id })),
         Err(e @ SetupError::FromEnv) => Err(ApiError::Conflict(e.to_string())),

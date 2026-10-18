@@ -52,12 +52,20 @@ impl IntoResponse for ApiError {
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, "bad_request", m.clone()),
             ApiError::Unauthorized(m) => (StatusCode::UNAUTHORIZED, "unauthorized", m.clone()),
             ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, "forbidden", m.clone()),
-            ApiError::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, "too_many_requests", m.clone()),
+            ApiError::TooManyRequests(m) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_requests",
+                m.clone(),
+            ),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, "conflict", m.clone()),
             ApiError::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable", m.clone()),
             ApiError::Internal(e) => {
                 tracing::error!(error = ?e, "internal error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal", "服务器内部错误".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "服务器内部错误".to_string(),
+                )
             }
         };
         (status, Json(ErrorBody { code, message })).into_response()

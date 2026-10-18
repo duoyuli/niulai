@@ -92,19 +92,32 @@ fn default_true() -> bool {
 
 impl Settings {
     pub fn load() -> anyhow::Result<Self> {
-        let mut vars = find_dotenv().map(|p| read_dotenv(&p)).transpose()?.unwrap_or_default();
+        let mut vars = find_dotenv()
+            .map(|p| read_dotenv(&p))
+            .transpose()?
+            .unwrap_or_default();
         vars.extend(std::env::vars());
 
         let mut settings: Settings = config::Config::builder()
-            .add_source(config::Environment::default().source(Some(vars.clone())).try_parsing(true))
             .add_source(
-                config::Environment::with_prefix("NIULAI").source(Some(vars)).try_parsing(true),
+                config::Environment::default()
+                    .source(Some(vars.clone()))
+                    .try_parsing(true),
+            )
+            .add_source(
+                config::Environment::with_prefix("NIULAI")
+                    .source(Some(vars))
+                    .try_parsing(true),
             )
             .build()?
             .try_deserialize()
             .context("读取配置失败：需要 DATABASE_URL")?;
         // 空值（例如 .env 中写了 HITHINK_FINANCE_API_KEY= 但没填）按未配置处理
-        settings.hithink_finance_api_key = settings.hithink_finance_api_key.take().map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+        settings.hithink_finance_api_key = settings
+            .hithink_finance_api_key
+            .take()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
         settings.validate()?;
         Ok(settings)
     }

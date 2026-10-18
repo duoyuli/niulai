@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
+use crate::account::history::{self, HistorySeries};
 use crate::account::lots::{Fees, STAMP_TAX_RATE, round2};
 use crate::account::rules::{Preset, Rules, WeakMarket};
-use crate::account::history::{self, HistorySeries};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef};
 use crate::analysis::market::{self, calendar_days_for};
 use crate::analysis::points;
@@ -199,13 +199,19 @@ pub async fn run(
         .unwrap_or(30)
         .max(rules.trend_ma)
         + 5;
-    let history_start = rules.history_check.as_ref().and_then(|c| c.windows.iter().map(|w| w.start(start)).min()).unwrap_or(edge_from);
+    let history_start = rules
+        .history_check
+        .as_ref()
+        .and_then(|c| c.windows.iter().map(|w| w.start(start)).min())
+        .unwrap_or(edge_from);
     let lo = edge_from.min(history_start) - chrono::Duration::days(calendar_days_for(warmup));
     // 权威涨跌停池：参考值回测里的买卖点同样以供应商的名单为准
     let limits = crate::analysis::limit_pool::LimitPool::load(pool, lo, end).await?;
     let events = if rules.history_check.is_some() {
         prices::corp_events_for_window(pool, lo, end).await?
-    } else { HashMap::new() };
+    } else {
+        HashMap::new()
+    };
     let mut raw: Vec<(Vec<NaiveDate>, Stock)> = vec![];
     let mut ew = crate::analysis::portfolio::EqualWeight::default();
     // 每天：收盘站上 20 日均线的股票数、当天有日线的股票数
@@ -223,7 +229,10 @@ pub async fn run(
         let n = first.map_or(0, |f0| bars.len() - f0);
         let mut buy = vec![0u64; n];
         for (k, d) in defs.iter().enumerate() {
-            let history_series = rules.history_check.as_ref().map(|_| HistorySeries::new(bars, &f, meta, d));
+            let history_series = rules
+                .history_check
+                .as_ref()
+                .map(|_| HistorySeries::new(bars, &f, meta, d));
             for t in points::run(bars, &f, meta, d, first_edge).trades {
                 let Ok(s) = bars.binary_search_by_key(&t.signal_date, |b| b.date) else {
                     continue;
@@ -233,8 +242,15 @@ pub async fn run(
                     && !f.is_st(s)
                 {
                     if let (Some(check), Some(series)) = (&rules.history_check, &history_series) {
-                        let returns = series.evaluate(bars, events.get(code).map(Vec::as_slice).unwrap_or(&[]), &check.windows, t.signal_date);
-                        if !history::passes(check, &returns, t.signal_date) { continue; }
+                        let returns = series.evaluate(
+                            bars,
+                            events.get(code).map(Vec::as_slice).unwrap_or(&[]),
+                            &check.windows,
+                            t.signal_date,
+                        );
+                        if !history::passes(check, &returns, t.signal_date) {
+                            continue;
+                        }
                     }
                     buy[s - f0] |= 1 << k;
                 }

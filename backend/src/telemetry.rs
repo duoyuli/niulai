@@ -21,7 +21,13 @@ struct ShanghaiTime;
 impl FormatTime for ShanghaiTime {
     fn format_time(&self, w: &mut Writer<'_>) -> fmt::Result {
         let cn = FixedOffset::east_opt(8 * 3600).expect("+08:00");
-        write!(w, "{}", Utc::now().with_timezone(&cn).format("%Y-%m-%dT%H:%M:%S%.3f%:z"))
+        write!(
+            w,
+            "{}",
+            Utc::now()
+                .with_timezone(&cn)
+                .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+        )
     }
 }
 
@@ -30,7 +36,10 @@ pub fn init() {
     STARTED.get_or_init(Instant::now);
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,sqlx=warn,tower_http=info"));
-    let builder = tracing_subscriber::fmt().with_env_filter(filter).with_target(false).with_timer(ShanghaiTime);
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_timer(ShanghaiTime);
     if std::env::var("NIULAI_LOG_FORMAT").as_deref() == Ok("json") {
         builder.json().init();
     } else {

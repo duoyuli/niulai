@@ -25,7 +25,10 @@ pub enum KeySource {
 
 /// 网页中保存的 Key
 pub async fn stored_api_key(pool: &sqlx::PgPool) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar("SELECT value FROM app.setting WHERE name = $1").bind(SETTING).fetch_optional(pool).await
+    sqlx::query_scalar("SELECT value FROM app.setting WHERE name = $1")
+        .bind(SETTING)
+        .fetch_optional(pool)
+        .await
 }
 
 /// 当前生效的 Key 的来源，以及只露出末尾 4 位的提示
@@ -48,12 +51,16 @@ fn hint(key: &str) -> String {
 
 /// 是否已经规划过回补（任何一次）
 pub async fn backfill_planned(pool: &sqlx::PgPool) -> sqlx::Result<bool> {
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ops.run WHERE kind = 'backfill')").fetch_one(pool).await
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ops.run WHERE kind = 'backfill')")
+        .fetch_one(pool)
+        .await
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
-    #[error("API Key 由环境变量 HITHINK_FINANCE_API_KEY 提供，要更换请修改部署配置（deploy/.env）后重启")]
+    #[error(
+        "API Key 由环境变量 HITHINK_FINANCE_API_KEY 提供，要更换请修改部署配置（deploy/.env）后重启"
+    )]
     FromEnv,
     #[error("{0}")]
     Invalid(String),
@@ -106,7 +113,17 @@ pub async fn configure_api_key(engine: &Engine, key: &str) -> Result<Option<i64>
     }
     let priorities: Vec<String> = INITIAL_PRIORITIES.iter().map(|p| p.to_string()).collect();
     let specs = engine.select(&[], &priorities)?;
-    let (run_id, _) = engine.planner().plan_run(RunKind::Backfill, &specs, PlanOptions { trigger: Some("setup".into()), ..Default::default() }).await?;
+    let (run_id, _) = engine
+        .planner()
+        .plan_run(
+            RunKind::Backfill,
+            &specs,
+            PlanOptions {
+                trigger: Some("setup".into()),
+                ..Default::default()
+            },
+        )
+        .await?;
     tracing::info!(run_id, "已规划首次全量回补");
     Ok(Some(run_id))
 }

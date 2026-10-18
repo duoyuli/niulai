@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use niulai::config::Settings;
+use niulai::server::{self, ServeOptions};
 use niulai::sync::run::RunKind;
 use niulai::sync::{Engine, planner, postprocess, scheduler};
-use niulai::server::{self, ServeOptions};
 use niulai::{api, db, telemetry};
 
 #[derive(Parser)]
@@ -114,8 +114,18 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     telemetry::init();
-    if let Cmd::Upgrader { upgrade_dir, deploy_dir, socket } = cli.cmd {
-        return niulai::upgrader::run(niulai::upgrader::Options { upgrade_dir, deploy_dir, socket }).await;
+    if let Cmd::Upgrader {
+        upgrade_dir,
+        deploy_dir,
+        socket,
+    } = cli.cmd
+    {
+        return niulai::upgrader::run(niulai::upgrader::Options {
+            upgrade_dir,
+            deploy_dir,
+            socket,
+        })
+        .await;
     }
     let settings = Settings::load()?;
     let pool = db::connect(&settings).await?;
@@ -128,26 +138,58 @@ async fn main() -> anyhow::Result<()> {
     let engine = Engine::new(settings, pool).await?;
     match cli.cmd {
         Cmd::Migrate | Cmd::Openapi | Cmd::Upgrader { .. } => unreachable!(),
-        Cmd::Serve { no_api, no_worker, no_scheduler } => {
-            let opts = ServeOptions { api: !no_api, worker: !no_worker, scheduler: !no_scheduler && engine.settings.scheduler_enabled };
+        Cmd::Serve {
+            no_api,
+            no_worker,
+            no_scheduler,
+        } => {
+            let opts = ServeOptions {
+                api: !no_api,
+                worker: !no_worker,
+                scheduler: !no_scheduler && engine.settings.scheduler_enabled,
+            };
             server::serve(engine, opts).await?;
         }
         Cmd::Registry => {
             for d in &engine.registry.datasets {
-                println!("{:<4} {:<5} {:<42} {}", d.priority, if d.enabled { "on" } else { "off" }, d.id, d.endpoint);
+                println!(
+                    "{:<4} {:<5} {:<42} {}",
+                    d.priority,
+                    if d.enabled { "on" } else { "off" },
+                    d.id,
+                    d.endpoint
+                );
             }
-            println!("共 {} 个数据集，已同步到 ops.dataset", engine.registry.datasets.len());
+            println!(
+                "共 {} 个数据集，已同步到 ops.dataset",
+                engine.registry.datasets.len()
+            );
         }
-        Cmd::Plan { kind, datasets, priorities, thscodes } => {
+        Cmd::Plan {
+            kind,
+            datasets,
+            priorities,
+            thscodes,
+        } => {
             let specs = engine.select(&datasets, &priorities)?;
-            let opts = planner::PlanOptions { only_thscodes: thscodes, trigger: Some("cli".into()), ..Default::default() };
-            let (run_id, summary) = engine.planner().plan_run(kind.parse()?, &specs, opts).await?;
+            let opts = planner::PlanOptions {
+                only_thscodes: thscodes,
+                trigger: Some("cli".into()),
+                ..Default::default()
+            };
+            let (run_id, summary) = engine
+                .planner()
+                .plan_run(kind.parse()?, &specs, opts)
+                .await?;
             for (id, n) in &summary {
                 println!("{n:>8}  {id}");
             }
             println!("run_id = {run_id}（第一个波次；后续波次在前一个结束后自动规划）");
         }
-        Cmd::Work { until_idle, concurrency } => work(engine, until_idle, concurrency).await?,
+        Cmd::Work {
+            until_idle,
+            concurrency,
+        } => work(engine, until_idle, concurrency).await?,
         Cmd::Daily => {
             let today = niulai::time::today_cn();
             let specs: Vec<_> = engine
@@ -156,13 +198,31 @@ async fn main() -> anyhow::Result<()> {
                 .iter()
                 .filter(|d| d.enabled && scheduler::due_daily(d.schedule, today))
                 .collect();
-            let (run_id, summary) = engine.planner().plan_run(RunKind::Incremental, &specs, planner::PlanOptions { trade_date: Some(today), trigger: Some("cli".into()), ..Default::default() }).await?;
-            println!("run_id = {run_id}，{} 个数据集，{} 个任务", summary.len(), summary.iter().map(|(_, n)| n).sum::<usize>());
+            let (run_id, summary) = engine
+                .planner()
+                .plan_run(
+                    RunKind::Incremental,
+                    &specs,
+                    planner::PlanOptions {
+                        trade_date: Some(today),
+                        trigger: Some("cli".into()),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            println!(
+                "run_id = {run_id}，{} 个数据集，{} 个任务",
+                summary.len(),
+                summary.iter().map(|(_, n)| n).sum::<usize>()
+            );
         }
         Cmd::Check => match niulai::sync::check::run(&engine, "cli").await? {
             Some(id) => {
                 let s = niulai::sync::check::status(&engine.pool).await?;
-                println!("check_id = {id}\n{}", serde_json::to_string_pretty(&s.last.and_then(|l| l.result))?);
+                println!(
+                    "check_id = {id}\n{}",
+                    serde_json::to_string_pretty(&s.last.and_then(|l| l.result))?
+                );
             }
             None => println!("正在核检"),
         },
@@ -173,20 +233,41 @@ async fn main() -> anyhow::Result<()> {
         Cmd::User { cmd: UserCmd::List } => {
             for u in niulai::auth::list(&engine.pool).await? {
                 let state = if u.disabled { "已停用" } else { "" };
-                println!("{:>4} {:<7} {:<24} {state}", u.user_id, u.role.key(), u.username);
+                println!(
+                    "{:>4} {:<7} {:<24} {state}",
+                    u.user_id,
+                    u.role.key(),
+                    u.username
+                );
             }
         }
-        Cmd::User { cmd: UserCmd::ResetPassword { username } } => {
-            let user = niulai::auth::find_by_name(&engine.pool, &username).await?.ok_or_else(|| anyhow::anyhow!("没有用户「{username}」"))?;
+        Cmd::User {
+            cmd: UserCmd::ResetPassword { username },
+        } => {
+            let user = niulai::auth::find_by_name(&engine.pool, &username)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("没有用户「{username}」"))?;
             let password = niulai::auth::generate_password()?;
             niulai::auth::set_password(&engine.pool, user.user_id, &password, false).await?;
             if user.disabled {
                 niulai::auth::update(&engine.pool, user.user_id, user.role, false).await?;
             }
-            println!("已重置「{}」的密码：{password}\n登录后请立即修改。", user.username);
+            println!(
+                "已重置「{}」的密码：{password}\n登录后请立即修改。",
+                user.username
+            );
         }
         Cmd::Status { limit } => {
-            type RunRow = (i64, String, String, i32, i32, i32, chrono::DateTime<chrono::Utc>, serde_json::Value);
+            type RunRow = (
+                i64,
+                String,
+                String,
+                i32,
+                i32,
+                i32,
+                chrono::DateTime<chrono::Utc>,
+                serde_json::Value,
+            );
             let rows: Vec<RunRow> = sqlx::query_as(
                 "SELECT run_id, kind, status, tasks_total, tasks_done, tasks_failed, started_at, params FROM ops.run ORDER BY run_id DESC LIMIT $1",
             )
@@ -194,15 +275,25 @@ async fn main() -> anyhow::Result<()> {
             .fetch_all(&engine.pool)
             .await?;
             for (id, kind, status, total, done, failed, started, params) in rows {
-                let ds = params.get("datasets").and_then(|v| v.as_array()).map_or(0, Vec::len);
-                println!("{id:>5} {kind:<11} {status:<9} {done:>6}/{total:<6} failed={failed:<4} datasets={ds:<3} {}", started.format("%m-%d %H:%M:%S"));
+                let ds = params
+                    .get("datasets")
+                    .and_then(|v| v.as_array())
+                    .map_or(0, Vec::len);
+                println!(
+                    "{id:>5} {kind:<11} {status:<9} {done:>6}/{total:<6} failed={failed:<4} datasets={ds:<3} {}",
+                    started.format("%m-%d %H:%M:%S")
+                );
             }
         }
     }
     Ok(())
 }
 
-async fn work(engine: Arc<Engine>, until_idle: bool, concurrency: Option<usize>) -> anyhow::Result<()> {
+async fn work(
+    engine: Arc<Engine>,
+    until_idle: bool,
+    concurrency: Option<usize>,
+) -> anyhow::Result<()> {
     let _lock = engine.lock_executor().await?;
     let (tx, rx) = tokio::sync::watch::channel(false);
     let n = concurrency.unwrap_or(engine.settings.worker_concurrency);

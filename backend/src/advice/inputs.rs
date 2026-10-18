@@ -4,14 +4,15 @@
 use std::collections::{BTreeMap, HashMap};
 
 use chrono::{Datelike, NaiveDate, Weekday};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 use super::generate::{
     CandidateIn, HoldingIn, Input, MarketIn, Pick, Snapshot, StrategyIn, StrategyRef,
 };
-use crate::account::{self, Account};
 use crate::account::history::{HistoryReturn, HistorySeries};
 use crate::account::rules::{HistoryWindow, Rules};
+use crate::account::{self, Account};
 use crate::analysis::diagnosis::{self, Verdict};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef, StockMeta};
 use crate::analysis::limit_pool::LimitPool;
@@ -36,6 +37,7 @@ pub struct Shared {
     /// 参加巡检的策略（候选股的来源），按编号
     screening: Vec<(i64, String)>,
     names: HashMap<i64, String>,
+    definitions: HashMap<i64, serde_json::Value>,
     /// 当天买点的权威涨跌停池（区间覆盖每只股票要读的日线）
     limits: LimitPool,
     /// 当天的买点：(策略, 股票, 命中条件, 成交额)
@@ -47,6 +49,22 @@ pub struct Shared {
 /// 参加巡检的策略最近一次巡检的交易日：建议跟着它走
 pub async fn latest_screen_date(pool: &PgPool) -> sqlx::Result<Option<NaiveDate>> {
     sqlx::query_scalar("SELECT max(r.trade_date) FROM app.screen_run r JOIN app.strategy s USING (strategy_id) WHERE s.screening").fetch_one(pool).await
+}
+
+/// Whether every currently enabled screening strategy has a result for a date.
+pub async fn screening_complete(pool: &PgPool, date: NaiveDate) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM app.strategy WHERE screening)
+                AND NOT EXISTS (
+                    SELECT 1 FROM app.strategy s
+                    WHERE s.screening AND NOT EXISTS (
+                        SELECT 1 FROM app.screen_run r WHERE r.strategy_id = s.strategy_id AND r.trade_date = $1
+                    )
+                )",
+    )
+    .bind(date)
+    .fetch_one(pool)
+    .await
 }
 
 /// 交易日之后的下一个交易日：本地日历有就用，没有时取下一个工作日
@@ -74,6 +92,9 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
     let Some(trade_date) = latest_screen_date(pool).await? else {
         return Ok(None);
     };
+    if !screening_complete(pool, trade_date).await? {
+        return Ok(None);
+    }
     let next_date = next_trading_day(pool, trade_date).await?;
     let market = market::overview(pool, Some(trade_date))
         .await?
@@ -91,6 +112,14 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
             .await?
             .into_iter()
             .collect();
+    let definitions: HashMap<i64, serde_json::Value> =
+        sqlx::query_as::<_, (i64, serde_json::Value)>(
+            "SELECT strategy_id, definition FROM app.strategy",
+        )
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .collect();
     let screening: Vec<(i64, String)> = sqlx::query_as(
         "SELECT strategy_id, name FROM app.strategy WHERE screening ORDER BY sort_order, strategy_id",
     )
@@ -99,7 +128,9 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
     let ids: Vec<i64> = screening.iter().map(|(id, _)| *id).collect();
     let rows: Vec<HitRow> = sqlx::query_as(
         "SELECT r.strategy_id, h.thscode, h.reasons, (h.metrics->>'amount')::float8 FROM app.screen_hit h JOIN app.screen_run r USING (run_id)
-         WHERE r.trade_date = $1 AND h.kind = 'buy' AND r.strategy_id = ANY($2)",
+         JOIN app.strategy s USING (strategy_id)
+         WHERE r.trade_date = $1 AND h.kind = 'buy' AND r.strategy_id = ANY($2)
+         ORDER BY s.sort_order, r.strategy_id, h.thscode",
     )
     .bind(trade_date)
     .bind(&ids)
@@ -110,27 +141,52 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
         .map(|(id, code, r, amount)| (id, code, r.0, amount.unwrap_or(0.0)))
         .collect();
     // 只有启用回看的账户所选策略的候选需要长历史；同一股票只读取一次。
-    let account_rules: Vec<sqlx::types::Json<Rules>> = sqlx::query_scalar("SELECT rules FROM app.account")
-        .fetch_all(pool).await?;
+    let account_rules: Vec<sqlx::types::Json<Rules>> =
+        sqlx::query_scalar("SELECT rules FROM app.account")
+            .fetch_all(pool)
+            .await?;
     let defs = screener::screening_strategies(pool).await?;
-    let checked: Vec<_> = defs.iter().filter(|(id, _)| account_rules.iter().any(|r| r.history_check.is_some() && r.uses(*id))).collect();
+    let checked: Vec<_> = defs
+        .iter()
+        .filter(|(id, _)| {
+            account_rules
+                .iter()
+                .any(|r| r.history_check.is_some() && r.uses(*id))
+        })
+        .collect();
     let mut history = HashMap::new();
     if !checked.is_empty() {
         let warmup = checked.iter().map(|(_, d)| d.warmup()).max().unwrap_or(30) + 5;
-        let start = HistoryWindow::FiveYears.start(trade_date) - chrono::Duration::days(market::calendar_days_for(warmup));
+        let start = HistoryWindow::FiveYears.start(trade_date)
+            - chrono::Duration::days(market::calendar_days_for(warmup));
         let history_limits = LimitPool::load(pool, start, trade_date).await?;
-        let codes: std::collections::BTreeSet<_> = hits.iter().filter(|(id, _, _, _)| checked.iter().any(|(sid, _)| sid == id)).map(|(_, code, _, _)| code).collect();
+        let codes: std::collections::BTreeSet<_> = hits
+            .iter()
+            .filter(|(id, _, _, _)| checked.iter().any(|(sid, _)| sid == id))
+            .map(|(_, code, _, _)| code)
+            .collect();
         for code in codes {
-            let Some(meta) = sec.meta.get(code) else { continue };
+            let Some(meta) = sec.meta.get(code) else {
+                continue;
+            };
             let bars = prices::stock_bars_between(pool, code, start, trade_date).await?;
             let events = prices::corp_events(pool, code, Some(trade_date)).await?;
             let st = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
             prices::run_cpu(|| {
-                let frame = Frame::with_authority_and_st_history(&bars, Some(meta), &history_limits, code, st);
+                let frame = Frame::with_authority_and_st_history(
+                    &bars,
+                    Some(meta),
+                    &history_limits,
+                    code,
+                    st,
+                );
                 for (id, def) in &checked {
                     if hits.iter().any(|(sid, c, _, _)| sid == id && c == code) {
                         let series = HistorySeries::new(&bars, &frame, meta, def);
-                        history.insert((*id, code.clone()), series.evaluate(&bars, &events, &HistoryWindow::ALL, trade_date));
+                        history.insert(
+                            (*id, code.clone()),
+                            series.evaluate(&bars, &events, &HistoryWindow::ALL, trade_date),
+                        );
                     }
                 }
             });
@@ -150,6 +206,7 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
         sec,
         screening,
         names,
+        definitions,
         limits,
         hits,
         delisted,
@@ -328,7 +385,11 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             e.0.push(Pick {
                 strategy_id: *id,
                 reasons: reasons.clone(),
-                history: sh.history.get(&(*id, code.clone())).cloned().unwrap_or_default(),
+                history: sh
+                    .history
+                    .get(&(*id, code.clone()))
+                    .cloned()
+                    .unwrap_or_default(),
             });
         }
     }
@@ -338,7 +399,9 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         .collect();
     let mut history_rejected = 0;
     pre.retain_mut(|(code, picks, _)| {
-        if positions.iter().any(|p| p.thscode == *code) { return false; }
+        if positions.iter().any(|p| p.thscode == *code) {
+            return false;
+        }
         let before = picks.len();
         picks.retain(|p| p.eligible(&rules, sh.trade_date));
         let enough = picks.len() >= rules.min_picks as usize;
@@ -383,6 +446,11 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         .map(|(id, name)| StrategyIn {
             strategy_id: *id,
             name: name.clone(),
+            definition_hash: sh
+                .definitions
+                .get(id)
+                .map(definition_hash)
+                .unwrap_or_default(),
         })
         .collect();
     Ok(Input {
@@ -398,4 +466,11 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         strategies,
         streaks: streaks(pool, acc.account_id, sh.trade_date).await?,
     })
+}
+
+fn definition_hash(value: &serde_json::Value) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_default();
+    let digest = Sha256::digest(bytes);
+    let encoded: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    format!("sha256:{encoded}")
 }

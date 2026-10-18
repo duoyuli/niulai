@@ -104,10 +104,23 @@ pub fn ma_cross(closes: &[f64], fast: usize, slow: usize) -> Vec<Option<MaRow>> 
     let f = sma(closes, fast);
     let s = sma(closes, slow);
     let start = slow.saturating_sub(1).min(closes.len());
-    let pairs: Vec<(f64, f64)> = (start..closes.len()).map(|i| (f[i].unwrap_or(f64::NAN), s[i].unwrap_or(f64::NAN))).collect();
+    let pairs: Vec<(f64, f64)> = (start..closes.len())
+        .map(|i| (f[i].unwrap_or(f64::NAN), s[i].unwrap_or(f64::NAN)))
+        .collect();
     let signals = cross_signals(&pairs);
     let mut out = vec![None; start];
-    out.extend(pairs.into_iter().zip(signals).map(|((ma_fast, ma_slow), signal)| Some(MaRow { ma_fast, ma_slow, signal })));
+    out.extend(
+        pairs
+            .into_iter()
+            .zip(signals)
+            .map(|((ma_fast, ma_slow), signal)| {
+                Some(MaRow {
+                    ma_fast,
+                    ma_slow,
+                    signal,
+                })
+            }),
+    );
     out
 }
 
@@ -117,18 +130,38 @@ mod tests {
 
     #[test]
     fn crosses_ignore_equal_days_and_float_noise() {
-        let s = [(1.0, 2.0), (2.0, 2.0), (3.0, 2.0), (3.0, 3.0 + 1e-16), (1.0, 3.0)];
-        assert_eq!(cross_signals(&s), vec![None, None, Some(CrossSignal::Golden), None, Some(CrossSignal::Death)]);
+        let s = [
+            (1.0, 2.0),
+            (2.0, 2.0),
+            (3.0, 2.0),
+            (3.0, 3.0 + 1e-16),
+            (1.0, 3.0),
+        ];
+        assert_eq!(
+            cross_signals(&s),
+            vec![
+                None,
+                None,
+                Some(CrossSignal::Golden),
+                None,
+                Some(CrossSignal::Death)
+            ]
+        );
     }
 
     #[test]
     fn sma_matches_direct_average() {
-        let v: Vec<f64> = (0..5000).map(|i| 1000.0 + ((i * 7919) % 613) as f64 * 0.37).collect();
+        let v: Vec<f64> = (0..5000)
+            .map(|i| 1000.0 + ((i * 7919) % 613) as f64 * 0.37)
+            .collect();
         let m = sma(&v, 30);
         assert!(m[28].is_none());
         for i in 29..v.len() {
             let direct = v[i + 1 - 30..=i].iter().sum::<f64>() / 30.0;
-            assert!((m[i].unwrap() - direct).abs() / direct < 1e-13, "第 {i} 个点误差过大");
+            assert!(
+                (m[i].unwrap() - direct).abs() / direct < 1e-13,
+                "第 {i} 个点误差过大"
+            );
         }
     }
 
@@ -139,6 +172,9 @@ mod tests {
         assert!(rows[0].is_none() && rows[1].is_none());
         let sigs: Vec<_> = rows.iter().flatten().map(|r| r.signal).collect();
         // 快线 3.5 2.5 2.5 4 6.5，慢线 4 3 2.67 3.33 5.33：第 6 根上穿
-        assert_eq!(sigs, vec![None, None, None, Some(CrossSignal::Golden), None]);
+        assert_eq!(
+            sigs,
+            vec![None, None, None, Some(CrossSignal::Golden), None]
+        );
     }
 }

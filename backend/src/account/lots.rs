@@ -20,7 +20,10 @@ pub fn lot_rule(board: &str) -> LotRule {
     match board {
         "star" => LotRule { min: 200, step: 1 },
         "bse" => LotRule { min: 100, step: 1 },
-        _ => LotRule { min: 100, step: 100 },
+        _ => LotRule {
+            min: 100,
+            step: 100,
+        },
     }
 }
 
@@ -81,17 +84,32 @@ pub fn round2(v: f64) -> f64 {
 mod tests {
     use super::*;
 
-    const FEES: Fees = Fees { commission_rate: 0.00025, min_commission: 5.0 };
+    const FEES: Fees = Fees {
+        commission_rate: 0.00025,
+        min_commission: 5.0,
+    };
 
     #[test]
     fn rounds_to_board_lots_within_budget() {
         let main = lot_rule("main");
-        assert_eq!(max_buy_shares(main, 15_800.0, 79.0, &FEES), 100, "200 股要 15,800 元加 5 元佣金，超过预算");
+        assert_eq!(
+            max_buy_shares(main, 15_800.0, 79.0, &FEES),
+            100,
+            "200 股要 15,800 元加 5 元佣金，超过预算"
+        );
         assert_eq!(max_buy_shares(main, 15_810.0, 79.0, &FEES), 200);
         assert_eq!(max_buy_shares(main, 7_000.0, 79.0, &FEES), 0, "不够一手");
         let star = lot_rule("star");
-        assert_eq!(max_buy_shares(star, 10_000.0, 60.0, &FEES), 0, "科创板至少 200 股：166 股不够");
-        assert_eq!(max_buy_shares(star, 10_000.0, 40.0, &FEES), 249, "超过 200 股后按 1 股递增");
+        assert_eq!(
+            max_buy_shares(star, 10_000.0, 60.0, &FEES),
+            0,
+            "科创板至少 200 股：166 股不够"
+        );
+        assert_eq!(
+            max_buy_shares(star, 10_000.0, 40.0, &FEES),
+            249,
+            "超过 200 股后按 1 股递增"
+        );
         assert_eq!(max_buy_shares(star, 10_000.0, 30.0, &FEES), 333);
         assert_eq!(max_buy_shares(lot_rule("bse"), 2_000.0, 10.0, &FEES), 199);
     }
@@ -103,7 +121,11 @@ mod tests {
         let main = lot_rule("main");
         assert_eq!(reduce_shares(main, 1_030, 450), 500, "向上取整到整百");
         assert_eq!(reduce_shares(main, 1_030, 0), 0);
-        assert_eq!(reduce_shares(main, 1_030, 2_000), 1_030, "全部卖出时零股一起卖");
+        assert_eq!(
+            reduce_shares(main, 1_030, 2_000),
+            1_030,
+            "全部卖出时零股一起卖"
+        );
         assert_eq!(reduce_shares(lot_rule("star"), 500, 123), 123);
     }
 }

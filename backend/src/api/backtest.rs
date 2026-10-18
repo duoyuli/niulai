@@ -31,7 +31,6 @@ pub struct BacktestCosts {
     pub stamp_tax_rate: f64,
 }
 
-
 fn rate(v: Option<f64>, default: f64, name: &str) -> ApiResult<f64> {
     let v = v.unwrap_or(default);
     if !(0.0..=0.01).contains(&v) {

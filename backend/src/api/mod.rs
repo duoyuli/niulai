@@ -2,13 +2,13 @@
 
 pub mod accounts;
 pub mod auth;
+pub mod backtest;
+pub mod insight;
 pub mod market;
 pub mod metrics;
 pub mod setup;
 pub mod signal;
 pub mod strategy;
-pub mod backtest;
-pub mod insight;
 pub mod sync;
 pub mod system;
 pub mod users;
@@ -88,12 +88,21 @@ pub fn router(engine: Arc<Engine>) -> Router {
     let request_id = HeaderName::from_static("x-request-id");
     let web_dir = state.engine.settings.web_dir.clone();
     let api = api
-        .route("/openapi.json", axum::routing::get(move || async move { Json(openapi.as_ref().clone()) }))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), auth::require_login))
+        .route(
+            "/openapi.json",
+            axum::routing::get(move || async move { Json(openapi.as_ref().clone()) }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_login,
+        ))
         // 指标接口不经过登录：它自己校验 NIULAI_METRICS_TOKEN，方便外部监控服务读取
         .route("/metrics", axum::routing::get(metrics::handler))
         // 放在最后，前面所有接口（包括指标本身）的请求都会被计数
-        .layer(axum::middleware::from_fn_with_state(state.metrics.clone(), metrics::track));
+        .layer(axum::middleware::from_fn_with_state(
+            state.metrics.clone(),
+            metrics::track,
+        ));
     let app = Router::new().nest("/api/v1", api);
     let app = match web_dir {
         Some(dir) => app.fallback_service(web::service(&dir)),
@@ -134,7 +143,11 @@ fn routes() -> OpenApiRouter<AppState> {
 }
 
 pub fn openapi_json() -> String {
-    routes().split_for_parts().1.to_pretty_json().unwrap_or_default()
+    routes()
+        .split_for_parts()
+        .1
+        .to_pretty_json()
+        .unwrap_or_default()
 }
 
 #[derive(Serialize, ToSchema)]

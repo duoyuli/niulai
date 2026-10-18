@@ -97,6 +97,27 @@ async fn current_id(
 /// 为所有账户生成最新交易日的建议。`replace` 为 true 时（巡检刚重跑过、策略表现刚统计完）连已有的一起重新生成，
 /// 但用户已经处理过某一条（执行或不做）的保留，免得建议在手上变了
 pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> {
+    if !replace {
+        let Some(trade_date) = inputs::latest_screen_date(pool).await? else {
+            return Ok(0);
+        };
+        let needed: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM app.account a
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM app.advice x
+                    WHERE x.account_id = a.account_id AND x.trade_date = $1 AND x.superseded_by IS NULL
+                )
+            )",
+        )
+        .bind(trade_date)
+        .fetch_one(pool)
+        .await?;
+        if !needed {
+            account::corp::apply(pool, trade_date).await?;
+            return Ok(0);
+        }
+    }
     let Some(sh) = inputs::shared(pool).await? else {
         return Ok(0);
     };
@@ -134,8 +155,14 @@ pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> 
 pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
     let latest_bar = crate::analysis::market::resolve_date(pool, None).await?;
     let screened = inputs::latest_screen_date(pool).await?;
-    if latest_bar.is_some()
-        && screened < latest_bar
+    let needs_screen = match latest_bar {
+        Some(latest) => match screened {
+            Some(d) if d == latest => !inputs::screening_complete(pool, latest).await?,
+            _ => true,
+        },
+        None => false,
+    };
+    if needs_screen
         && crate::sync::scheduler::claim(pool, "builtin_screen", crate::time::today_cn(), "day")
             .await?
     {

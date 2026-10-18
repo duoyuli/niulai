@@ -46,7 +46,13 @@ impl Engine {
     pub async fn new(settings: Settings, pool: PgPool) -> anyhow::Result<Arc<Self>> {
         let registry = Registry::load(&settings.datasets_file()?)?;
         registry::sync_to_db(&pool, &registry).await?;
-        let _ = audit::CORE_DATASETS.set(registry.writing_to(&spec::PRICE_TABLES).iter().map(|d| d.id.clone()).collect());
+        let _ = audit::CORE_DATASETS.set(
+            registry
+                .writing_to(&spec::PRICE_TABLES)
+                .iter()
+                .map(|d| d.id.clone())
+                .collect(),
+        );
         crate::analysis::screener::sync_builtin_strategies(&pool).await?;
         crate::auth::init_first_admin(&pool, &settings).await?;
         let limiter = RateLimiter::new(settings.rate_limit_rps);
@@ -58,13 +64,32 @@ impl Engine {
         if api_key.is_none() {
             tracing::warn!("还没有配置 API Key：同步暂停，打开网页按引导配置");
         }
-        tracing::info!(datasets = registry.datasets.len(), rps = settings.rate_limit_rps, "同步引擎已初始化");
-        let client = HithinkClient::new(&settings.vendor_base_url, api_key.as_deref(), Duration::from_secs(settings.http_timeout_s), limiter)?;
-        Ok(Arc::new(Engine { settings, pool, client: Arc::new(client), registry: Arc::new(registry) }))
+        tracing::info!(
+            datasets = registry.datasets.len(),
+            rps = settings.rate_limit_rps,
+            "同步引擎已初始化"
+        );
+        let client = HithinkClient::new(
+            &settings.vendor_base_url,
+            api_key.as_deref(),
+            Duration::from_secs(settings.http_timeout_s),
+            limiter,
+        )?;
+        Ok(Arc::new(Engine {
+            settings,
+            pool,
+            client: Arc::new(client),
+            registry: Arc::new(registry),
+        }))
     }
 
     pub fn executor(&self, worker_id: String) -> Arc<executor::Executor> {
-        Arc::new(executor::Executor::new(self.pool.clone(), self.client.clone(), self.registry.clone(), worker_id))
+        Arc::new(executor::Executor::new(
+            self.pool.clone(),
+            self.client.clone(),
+            self.registry.clone(),
+            worker_id,
+        ))
     }
 
     // @project-doc docs/architecture/sync_pipeline.md#rate_limit
@@ -73,7 +98,9 @@ impl Engine {
     pub async fn lock_executor(&self) -> anyhow::Result<ExecutorLock> {
         match self.try_lock_executor().await? {
             Some(lock) => Ok(lock),
-            None => anyhow::bail!("另一个 niulai 进程（serve 或 work）正在执行同步任务，同一时刻只能有一个。先停止它，或用 `niulai serve --no-worker`"),
+            None => anyhow::bail!(
+                "另一个 niulai 进程（serve 或 work）正在执行同步任务，同一时刻只能有一个。先停止它，或用 `niulai serve --no-worker`"
+            ),
         }
     }
 
@@ -81,7 +108,10 @@ impl Engine {
     pub async fn try_lock_executor(&self) -> anyhow::Result<Option<ExecutorLock>> {
         // 会话级 advisory lock 跟着连接走：用一个脱离连接池的独立连接持有，连接关闭（进程退出）时自动释放
         let mut conn = self.pool.acquire().await?.detach();
-        let got: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('niulai.executor'))").fetch_one(&mut conn).await?;
+        let got: bool =
+            sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('niulai.executor'))")
+                .fetch_one(&mut conn)
+                .await?;
         Ok(got.then_some(ExecutorLock(conn)))
     }
 
@@ -90,11 +120,27 @@ impl Engine {
     }
 
     /// 按 ID 或优先级选择数据集。ids 为空时，按 priorities 选择已开启的数据集。
-    pub fn select(&self, ids: &[String], priorities: &[String]) -> anyhow::Result<Vec<&spec::DatasetSpec>> {
+    pub fn select(
+        &self,
+        ids: &[String],
+        priorities: &[String],
+    ) -> anyhow::Result<Vec<&spec::DatasetSpec>> {
         if !ids.is_empty() {
-            return ids.iter().map(|id| self.registry.get(id).ok_or_else(|| anyhow::anyhow!("未知的数据集：{id}"))).collect();
+            return ids
+                .iter()
+                .map(|id| {
+                    self.registry
+                        .get(id)
+                        .ok_or_else(|| anyhow::anyhow!("未知的数据集：{id}"))
+                })
+                .collect();
         }
-        Ok(self.registry.datasets.iter().filter(|d| d.enabled && (priorities.is_empty() || priorities.contains(&d.priority))).collect())
+        Ok(self
+            .registry
+            .datasets
+            .iter()
+            .filter(|d| d.enabled && (priorities.is_empty() || priorities.contains(&d.priority)))
+            .collect())
     }
 }
 
@@ -105,9 +151,12 @@ impl ExecutorLock {
     /// 确认持锁的连接还在。连接断了（数据库重启、网络中断）锁已经被数据库释放，别的进程可能接手，
     /// 这时要停止执行任务，否则两个进程同时请求，限速翻倍
     pub async fn alive(&mut self) -> anyhow::Result<()> {
-        tokio::time::timeout(Duration::from_secs(10), sqlx::query("SELECT 1").execute(&mut self.0))
-            .await
-            .map_err(|_| anyhow::anyhow!("10 秒没有响应"))??;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            sqlx::query("SELECT 1").execute(&mut self.0),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("10 秒没有响应"))??;
         Ok(())
     }
 }

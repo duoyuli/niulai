@@ -6,7 +6,7 @@
 use anyhow::bail;
 use chrono::NaiveDate;
 use serde_json::{Map, Value, json};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use super::records::RecordRow;
 
@@ -25,8 +25,31 @@ fn rows_json(rows: &[RecordRow]) -> Value {
 }
 
 /// 按 (sink, 数据集) 选择投影；同一张表的不同来源（例如历史接口与快照）写法不同
-pub async fn apply(pool: &PgPool, sink: &str, ctx: &SinkContext<'_>, rows: &[RecordRow]) -> anyhow::Result<usize> {
-    if matches!((sink, ctx.dataset_id), ("mkt.stock_bar_1d", "a_share.bar_1d") | ("mkt.stock_bar_1d", "a_share.snapshot") | ("mkt.index_bar_1d", "index.bar_1d") | ("mkt.index_bar_1d", "index.snapshot")) {
+pub async fn apply(
+    pool: &PgPool,
+    sink: &str,
+    ctx: &SinkContext<'_>,
+    rows: &[RecordRow],
+) -> anyhow::Result<usize> {
+    let mut tx = pool.begin().await?;
+    let n = apply_in_tx(&mut tx, sink, ctx, rows).await?;
+    tx.commit().await?;
+    Ok(n)
+}
+
+pub async fn apply_in_tx(
+    conn: &mut PgConnection,
+    sink: &str,
+    ctx: &SinkContext<'_>,
+    rows: &[RecordRow],
+) -> anyhow::Result<usize> {
+    if matches!(
+        (sink, ctx.dataset_id),
+        ("mkt.stock_bar_1d", "a_share.bar_1d")
+            | ("mkt.stock_bar_1d", "a_share.snapshot")
+            | ("mkt.index_bar_1d", "index.bar_1d")
+            | ("mkt.index_bar_1d", "index.snapshot")
+    ) {
         log_bad_bar_rows(ctx, rows);
     }
     let data = rows_json(rows);
@@ -35,19 +58,35 @@ pub async fn apply(pool: &PgPool, sink: &str, ctx: &SinkContext<'_>, rows: &[Rec
     let ds = ctx.dataset_id;
     let var = |k: &str| ctx.vars.get(k).and_then(Value::as_str).map(str::to_string);
     let n = match (sink, ds) {
-        ("ref.security", "meta.tickers") => security(pool, &data, trade_date, var("asset_type").as_deref()).await?,
-        ("ref.index_info", "meta.tickers") | ("ref.index_info", "index.ths_catalog") => {
-            index_info(pool, &data, trade_date, var("tag").as_deref()).await?
+        ("ref.security", "meta.tickers") => {
+            security(conn, &data, trade_date, var("asset_type").as_deref()).await?
         }
-        ("ref.trading_day", _) => sqlx::query(TRADING_DAY).bind(&data).execute(pool).await?.rows_affected() as usize,
-        ("mkt.stock_bar_1d", "a_share.bar_1d") => exec(pool, STOCK_BAR_HIST, &data, run_id).await?,
-        ("mkt.stock_bar_1d", "a_share.snapshot") => exec_dated(pool, STOCK_BAR_SNAPSHOT, &data, run_id, trade_date).await?,
-        ("mkt.index_bar_1d", "index.bar_1d") => exec(pool, INDEX_BAR_HIST, &data, run_id).await?,
-        ("mkt.index_bar_1d", "index.snapshot") => exec_dated(pool, INDEX_BAR_SNAPSHOT, &data, run_id, trade_date).await?,
-        ("mkt.corp_action", "a_share.corp_action_dump") => corp_action(pool, &data, run_id).await?,
-        ("ref.index_member", "index.members") => index_member(pool, &data, trade_date, var("thscode").as_deref()).await?,
-        ("fin.valuation_1d", "a_share.valuation") => exec_dated(pool, VALUATION, &data, run_id, trade_date).await?,
-        ("fin.valuation_1d", "a_share.auction_final") => exec_dated(pool, FLOAT_CAP, &data, run_id, trade_date).await?,
+        ("ref.index_info", "meta.tickers") | ("ref.index_info", "index.ths_catalog") => {
+            index_info(conn, &data, trade_date, var("tag").as_deref()).await?
+        }
+        ("ref.trading_day", _) => sqlx::query(TRADING_DAY)
+            .bind(&data)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected() as usize,
+        ("mkt.stock_bar_1d", "a_share.bar_1d") => exec(conn, STOCK_BAR_HIST, &data, run_id).await?,
+        ("mkt.stock_bar_1d", "a_share.snapshot") => {
+            exec_dated(conn, STOCK_BAR_SNAPSHOT, &data, run_id, trade_date).await?
+        }
+        ("mkt.index_bar_1d", "index.bar_1d") => exec(conn, INDEX_BAR_HIST, &data, run_id).await?,
+        ("mkt.index_bar_1d", "index.snapshot") => {
+            exec_dated(conn, INDEX_BAR_SNAPSHOT, &data, run_id, trade_date).await?
+        }
+        ("mkt.corp_action", "a_share.corp_action_dump") => corp_action(conn, &data, run_id).await?,
+        ("ref.index_member", "index.members") => {
+            index_member(conn, &data, trade_date, var("thscode").as_deref()).await?
+        }
+        ("fin.valuation_1d", "a_share.valuation") => {
+            exec_dated(conn, VALUATION, &data, run_id, trade_date).await?
+        }
+        ("fin.valuation_1d", "a_share.auction_final") => {
+            exec_dated(conn, FLOAT_CAP, &data, run_id, trade_date).await?
+        }
         (s, d) => bail!("没有为数据集 {d} 实现 sink {s}"),
     };
     Ok(n)
@@ -73,16 +112,42 @@ fn log_bad_bar_rows(ctx: &SinkContext<'_>, rows: &[RecordRow]) {
 }
 
 fn number(v: &Value) -> Option<f64> {
-    v.as_f64().or_else(|| v.as_str()?.parse::<f64>().ok()).filter(|n| n.is_finite())
+    v.as_f64()
+        .or_else(|| v.as_str()?.parse::<f64>().ok())
+        .filter(|n| n.is_finite())
 }
 
-async fn exec(pool: &PgPool, sql: &'static str, data: &Value, run_id: i64) -> anyhow::Result<usize> {
-    Ok(sqlx::query(sql).bind(data).bind(run_id).execute(pool).await?.rows_affected() as usize)
+async fn exec(
+    conn: &mut PgConnection,
+    sql: &'static str,
+    data: &Value,
+    run_id: i64,
+) -> anyhow::Result<usize> {
+    Ok(sqlx::query(sql)
+        .bind(data)
+        .bind(run_id)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected() as usize)
 }
 
-async fn exec_dated(pool: &PgPool, sql: &'static str, data: &Value, run_id: i64, trade_date: Option<NaiveDate>) -> anyhow::Result<usize> {
-    let Some(d) = trade_date else { bail!("快照类数据需要运行的交易日") };
-    Ok(sqlx::query(sql).bind(data).bind(run_id).bind(d).execute(pool).await?.rows_affected() as usize)
+async fn exec_dated(
+    conn: &mut PgConnection,
+    sql: &'static str,
+    data: &Value,
+    run_id: i64,
+    trade_date: Option<NaiveDate>,
+) -> anyhow::Result<usize> {
+    let Some(d) = trade_date else {
+        bail!("快照类数据需要运行的交易日")
+    };
+    Ok(sqlx::query(sql)
+        .bind(data)
+        .bind(run_id)
+        .bind(d)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected() as usize)
 }
 
 const TRADING_DAY: &str = "
@@ -164,7 +229,7 @@ ON CONFLICT (thscode, trade_date) DO UPDATE SET float_market_cap = EXCLUDED.floa
 
 // @project-doc docs/domains/price_adjustment.md#corp_action_rules
 /// 全市场导出文件里的公司行动（含配股字段），按 (证券, 除权日, 源顺序) 覆盖
-async fn corp_action(pool: &PgPool, data: &Value, run_id: i64) -> anyhow::Result<usize> {
+async fn corp_action(conn: &mut PgConnection, data: &Value, run_id: i64) -> anyhow::Result<usize> {
     let res = sqlx::query(
         "INSERT INTO mkt.corp_action AS t (thscode, ex_date, seq, cash_div, bonus_ratio, rights_ratio, rights_price, source, run_id)
          SELECT e->>'thscode', ops.ms_to_cn_date((e->'p'->>'ex_date_ms')::bigint), (e->>'seq')::smallint,
@@ -180,21 +245,25 @@ async fn corp_action(pool: &PgPool, data: &Value, run_id: i64) -> anyhow::Result
     )
     .bind(data)
     .bind(run_id)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(res.rows_affected() as usize)
 }
 
 // @project-doc docs/domains/market_data_rules.md#security_lifecycle
-async fn security(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>, asset_type: Option<&str>) -> anyhow::Result<usize> {
+async fn security(
+    conn: &mut PgConnection,
+    data: &Value,
+    trade_date: Option<NaiveDate>,
+    asset_type: Option<&str>,
+) -> anyhow::Result<usize> {
     if asset_type != Some("a-share") {
         return Ok(0);
     }
     let today = trade_date.unwrap_or_else(crate::time::today_cn);
-    let mut tx = pool.begin().await?;
     // CREATE TABLE AS 不能带绑定参数，所以先建表再插入
     sqlx::query("CREATE TEMP TABLE _sec (thscode TEXT PRIMARY KEY, ticker TEXT, name TEXT, exchange TEXT, list_date DATE) ON COMMIT DROP")
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     sqlx::query(
         "INSERT INTO _sec
@@ -203,7 +272,7 @@ async fn security(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>, as
          FROM jsonb_array_elements($1) e WHERE e->'p'->>'asset_type' = 'a-share' AND e->'p'->>'exchange' IN ('SH', 'SZ', 'BJ')",
     )
     .bind(data)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     let n = sqlx::query(
         "INSERT INTO ref.security AS t (thscode, ticker, name, exchange, board, list_date, first_seen, last_seen)
@@ -215,7 +284,7 @@ async fn security(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>, as
            SET name = EXCLUDED.name, list_date = EXCLUDED.list_date, last_seen = EXCLUDED.last_seen, delisted_on = NULL, updated_at = now()",
     )
     .bind(today)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?
     .rows_affected();
     // 简称变化（含 ST 戴帽摘帽）：关闭旧区间，打开新区间
@@ -224,7 +293,7 @@ async fn security(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>, as
          FROM _sec s WHERE s.thscode = h.thscode AND h.valid_to IS NULL AND h.name <> s.name AND h.valid_from < $1",
     )
     .bind(today)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     sqlx::query(
         "INSERT INTO ref.security_name_hist (thscode, name, valid_from)
@@ -233,21 +302,27 @@ async fn security(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>, as
          ON CONFLICT (thscode, valid_from) DO UPDATE SET name = EXCLUDED.name, valid_to = NULL",
     )
     .bind(today)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     // 本次完整列表里不再出现的证券，推断为退市（列表过短时不推断，防止接口异常导致误判）
-    let listed: i64 = sqlx::query_scalar("SELECT count(*) FROM _sec").fetch_one(&mut *tx).await?;
+    let listed: i64 = sqlx::query_scalar("SELECT count(*) FROM _sec")
+        .fetch_one(&mut *conn)
+        .await?;
     if listed > 3000 {
         sqlx::query("UPDATE ref.security SET delisted_on = last_seen + 1, updated_at = now() WHERE last_seen < $1 AND delisted_on IS NULL")
             .bind(today)
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await?;
     }
-    tx.commit().await?;
     Ok(n as usize)
 }
 
-async fn index_info(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>, tag: Option<&str>) -> anyhow::Result<usize> {
+async fn index_info(
+    conn: &mut PgConnection,
+    data: &Value,
+    trade_date: Option<NaiveDate>,
+    tag: Option<&str>,
+) -> anyhow::Result<usize> {
     let today = trade_date.unwrap_or_else(crate::time::today_cn);
     // 同花顺目录带有分类（tag）；代码表里的指数只补齐缺少的条目，不改已有分类
     let res = sqlx::query(
@@ -263,23 +338,37 @@ async fn index_info(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>, 
     .bind(data)
     .bind(tag)
     .bind(today)
-    .execute(pool)
+        .execute(&mut *conn)
     .await?;
     Ok(res.rows_affected() as usize)
 }
 
-async fn index_member(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>, index_code: Option<&str>) -> anyhow::Result<usize> {
-    let Some(index_code) = index_code else { bail!("index.members 任务缺少 thscode") };
+async fn index_member(
+    conn: &mut PgConnection,
+    data: &Value,
+    trade_date: Option<NaiveDate>,
+    index_code: Option<&str>,
+) -> anyhow::Result<usize> {
+    let Some(index_code) = index_code else {
+        bail!("index.members 任务缺少 thscode")
+    };
     let today = trade_date.unwrap_or_else(crate::time::today_cn);
-    let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO ref.index_info (thscode, name, category, first_seen, last_seen) VALUES ($1, $1, 'unknown', $2, $2) ON CONFLICT DO NOTHING")
         .bind(index_code)
         .bind(today)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     let codes: Vec<String> = data
         .as_array()
-        .map(|a| a.iter().filter_map(|e| e.pointer("/p/thscode").and_then(Value::as_str).map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    e.pointer("/p/thscode")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
         .unwrap_or_default();
     // 已退出成分的：关闭区间
     let closed = sqlx::query(
@@ -288,7 +377,7 @@ async fn index_member(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>
     .bind(index_code)
     .bind(today)
     .bind(&codes)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?
     .rows_affected();
     // 新进入成分的：打开区间
@@ -301,9 +390,8 @@ async fn index_member(pool: &PgPool, data: &Value, trade_date: Option<NaiveDate>
     .bind(index_code)
     .bind(today)
     .bind(&codes)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?
     .rows_affected();
-    tx.commit().await?;
     Ok((closed + opened) as usize)
 }

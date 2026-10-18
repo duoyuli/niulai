@@ -59,6 +59,9 @@ mod tests {
     fn window_bounds_are_local_midnight() {
         assert_eq!(cn_date_start_ms(d("2026-10-15")), 1_791_993_600_000);
         assert_eq!(cn_date_end_ms(d("2026-10-15")), 1_792_079_999_999);
-        assert_eq!(ms_to_cn_date(cn_date_start_ms(d("2021-04-29"))), Some(d("2021-04-29")));
+        assert_eq!(
+            ms_to_cn_date(cn_date_start_ms(d("2021-04-29"))),
+            Some(d("2021-04-29"))
+        );
     }
 }

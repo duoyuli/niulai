@@ -10,8 +10,11 @@ use super::strategy::{CustomSignal, SignalDef, SignalLib};
 
 /// 全部自定义信号；定义无法解析的跳过并记日志
 pub async fn load(pool: &PgPool) -> sqlx::Result<SignalLib> {
-    let rows: Vec<(i64, String, bool, serde_json::Value)> =
-        sqlx::query_as("SELECT signal_id, name, bullish, definition FROM app.signal ORDER BY signal_id").fetch_all(pool).await?;
+    let rows: Vec<(i64, String, bool, serde_json::Value)> = sqlx::query_as(
+        "SELECT signal_id, name, bullish, definition FROM app.signal ORDER BY signal_id",
+    )
+    .fetch_all(pool)
+    .await?;
     let mut map = BTreeMap::new();
     for (id, name, bullish, v) in rows {
         match serde_json::from_value::<SignalDef>(v) {

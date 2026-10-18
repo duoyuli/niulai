@@ -101,9 +101,18 @@ pub struct SyncHealth {
 async fn due_days(engine: &Engine) -> anyhow::Result<Vec<NaiveDate>> {
     let now = now_cn();
     let at = super::scheduler::load_times(engine).await?.daily_at()?;
-    let last = if now.time() >= at { now.date() } else { now.date().pred_opt().unwrap_or(now.date()) };
-    let first: Option<NaiveDate> = sqlx::query_scalar("SELECT min(trade_date) FROM ops.run WHERE kind = 'incremental'").fetch_one(&engine.pool).await?;
-    let Some(first) = first else { return Ok(vec![]) };
+    let last = if now.time() >= at {
+        now.date()
+    } else {
+        now.date().pred_opt().unwrap_or(now.date())
+    };
+    let first: Option<NaiveDate> =
+        sqlx::query_scalar("SELECT min(trade_date) FROM ops.run WHERE kind = 'incremental'")
+            .fetch_one(&engine.pool)
+            .await?;
+    let Some(first) = first else {
+        return Ok(vec![]);
+    };
     let mut days: Vec<NaiveDate> = sqlx::query_scalar(
         "SELECT cal_date FROM ref.trading_day WHERE cal_date BETWEEN $1 AND $2 ORDER BY cal_date DESC LIMIT $3",
     )
@@ -117,7 +126,11 @@ async fn due_days(engine: &Engine) -> anyhow::Result<Vec<NaiveDate>> {
 }
 
 fn daily_specs(registry: &Registry) -> Vec<&DatasetSpec> {
-    registry.datasets.iter().filter(|d| d.enabled && d.schedule == Schedule::Daily).collect()
+    registry
+        .datasets
+        .iter()
+        .filter(|d| d.enabled && d.schedule == Schedule::Daily)
+        .collect()
 }
 
 /// 每日数据集每天的任务结果，按分区汇总：同一个分区在任何一次运行中成功过就算成功
@@ -125,7 +138,9 @@ type DayRow = (String, NaiveDate, i64, i64, i64, i64, Option<String>);
 
 // @project-doc docs/architecture/sync_pipeline.md#audit
 /// 核对缺口
-pub async fn gaps(engine: &Engine) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, BTreeMap<NaiveDate, Vec<String>>)> {
+pub async fn gaps(
+    engine: &Engine,
+) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, BTreeMap<NaiveDate, Vec<String>>)> {
     let days = due_days(engine).await?;
     let specs = daily_specs(&engine.registry);
     let ids: Vec<String> = specs.iter().map(|s| s.id.clone()).collect();
@@ -151,7 +166,8 @@ pub async fn gaps(engine: &Engine) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, 
     .bind(&ids)
     .fetch_all(&engine.pool)
     .await?;
-    let found: BTreeMap<(String, NaiveDate), DayRow> = rows.into_iter().map(|r| ((r.0.clone(), r.1), r)).collect();
+    let found: BTreeMap<(String, NaiveDate), DayRow> =
+        rows.into_iter().map(|r| ((r.0.clone(), r.1), r)).collect();
 
     // 只有当天值的数据，在供应商还停在这个交易日时（例如周末、下一个交易日开盘前）仍然取得到
     // 查询和同步任务共用限速，同步繁忙时可能要排队：最多等 2 秒，没等到就当作不知道（后台查完会进缓存）
@@ -166,13 +182,24 @@ pub async fn gaps(engine: &Engine) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, 
     for &d in &days {
         for s in &specs {
             let recoverable = !s.trade_date_guard || s.recover_with.is_some() || current == Some(d);
-            let gap = |kind, message: String| Gap { trade_date: d, dataset_id: s.id.clone(), title: s.title.clone(), kind, message, recoverable };
+            let gap = |kind, message: String| Gap {
+                trade_date: d,
+                dataset_id: s.id.clone(),
+                title: s.title.clone(),
+                kind,
+                message,
+                recoverable,
+            };
             match found.get(&(s.id.clone(), d)) {
                 None => out.push(gap(GapKind::NotRun, "这一天没有同步".into())),
                 Some(&(_, _, _, _, dead, skipped, ref err)) => {
                     let err = err.clone().unwrap_or_default();
                     if dead > 0 {
-                        let kind = if err.starts_with("已错过") { GapKind::Missed } else { GapKind::Failed };
+                        let kind = if err.starts_with("已错过") {
+                            GapKind::Missed
+                        } else {
+                            GapKind::Failed
+                        };
                         out.push(gap(kind, format!("{dead} 个任务失败：{err}")));
                     } else if skipped > 0 && !err.contains("不是交易日") {
                         out.push(gap(GapKind::NotRun, format!("被跳过：{err}")));
@@ -213,7 +240,11 @@ pub async fn gaps(engine: &Engine) -> anyhow::Result<(Vec<NaiveDate>, Vec<Gap>, 
             missing_bars.insert(d, codes);
         }
     }
-    out.sort_by(|a, b| b.trade_date.cmp(&a.trade_date).then_with(|| a.dataset_id.cmp(&b.dataset_id)));
+    out.sort_by(|a, b| {
+        b.trade_date
+            .cmp(&a.trade_date)
+            .then_with(|| a.dataset_id.cmp(&b.dataset_id))
+    });
     Ok((days, out, missing_bars))
 }
 
@@ -268,7 +299,9 @@ pub static CORE_DATASETS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock
 /// 核心数据的首次回补还剩多少个任务；0 表示核心数据已经齐了。回补期间日线只有一部分股票、一部分年份，
 /// 这时生成的运营建议和大盘统计不可信，所以运营建议等它完成再生成（见 `advice::inputs::shared`）
 pub async fn core_backfill_left(pool: &PgPool) -> anyhow::Result<i64> {
-    let Some(ids) = CORE_DATASETS.get() else { return Ok(0) };
+    let Some(ids) = CORE_DATASETS.get() else {
+        return Ok(0);
+    };
     Ok(sqlx::query_scalar(
         "SELECT count(*) FROM ops.task t JOIN ops.run r USING (run_id)
          WHERE r.kind = 'backfill' AND r.status = 'running' AND t.dataset_id = ANY($1) AND t.status IN ('pending', 'running', 'failed')",
@@ -294,16 +327,37 @@ pub struct DataStatus {
 pub async fn data_status(pool: &PgPool) -> anyhow::Result<DataStatus> {
     let core_left = core_backfill_left(pool).await?;
     let backfill = backfill(pool).await?;
-    let per_hour: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.api_call WHERE called_at > now() - interval '1 hour'").fetch_one(pool).await?;
+    let per_hour: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ops.api_call WHERE called_at > now() - interval '1 hour'",
+    )
+    .fetch_one(pool)
+    .await?;
     let message = if core_left > 0 {
-        let eta = if per_hour > 0 { format!("，按现在的速度大约还要 {:.1} 小时", core_left as f64 / per_hour as f64) } else { String::new() };
-        format!("正在准备核心数据（全市场的历史日线），还有 {core_left} 批{eta}。准备好之前，首页的大盘统计只包括已经下载的股票，运营建议先不生成")
+        let eta = if per_hour > 0 {
+            format!(
+                "，按现在的速度大约还要 {:.1} 小时",
+                core_left as f64 / per_hour as f64
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            "正在准备核心数据（全市场的历史日线），还有 {core_left} 批{eta}。准备好之前，首页的大盘统计只包括已经下载的股票，运营建议先不生成"
+        )
     } else if let Some(b) = &backfill {
-        format!("核心数据已就绪；其他数据还在补（{} / {}），不影响运营建议", b.done, b.total)
+        format!(
+            "核心数据已就绪；其他数据还在补（{} / {}），不影响运营建议",
+            b.done, b.total
+        )
     } else {
         "数据已就绪".to_string()
     };
-    Ok(DataStatus { core_ready: core_left == 0, core_left, backfill, message })
+    Ok(DataStatus {
+        core_ready: core_left == 0,
+        core_left,
+        backfill,
+        message,
+    })
 }
 
 async fn backfill(pool: &PgPool) -> anyhow::Result<Option<BackfillProgress>> {
@@ -312,10 +366,20 @@ async fn backfill(pool: &PgPool) -> anyhow::Result<Option<BackfillProgress>> {
     )
     .fetch_one(pool)
     .await?;
-    let (Some(total), Some(done)) = (total, done) else { return Ok(None) };
-    let per_hour: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.api_call WHERE called_at > now() - interval '1 hour'").fetch_one(pool).await?;
+    let (Some(total), Some(done)) = (total, done) else {
+        return Ok(None);
+    };
+    let per_hour: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ops.api_call WHERE called_at > now() - interval '1 hour'",
+    )
+    .fetch_one(pool)
+    .await?;
     let left = (total - done).max(0);
-    Ok(Some(BackfillProgress { done, total, eta_hours: (per_hour > 0).then(|| left as f64 / per_hour as f64) }))
+    Ok(Some(BackfillProgress {
+        done,
+        total,
+        eta_hours: (per_hour > 0).then(|| left as f64 / per_hour as f64),
+    }))
 }
 
 /// 同步页顶部的状态：最近一个交易日的数据是否就绪、缺口、失败、回补进度
@@ -323,7 +387,10 @@ pub async fn health(engine: &Engine) -> anyhow::Result<SyncHealth> {
     let (days, gaps, _) = gaps(engine).await?;
     let latest = days.last().copied();
     // 每日数据还在同步：定时同步中每日数据集的任务还没结束；补偿任务单独说明
-    let daily: Vec<String> = daily_specs(&engine.registry).iter().map(|s| s.id.clone()).collect();
+    let daily: Vec<String> = daily_specs(&engine.registry)
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
     let (daily_open, repair_open): (bool, i64) = sqlx::query_as(
         "SELECT EXISTS (SELECT 1 FROM ops.task t JOIN ops.run r USING (run_id)
                         WHERE r.kind = 'incremental' AND t.dataset_id = ANY($1) AND t.status IN ('pending', 'running', 'failed')),
@@ -332,17 +399,30 @@ pub async fn health(engine: &Engine) -> anyhow::Result<SyncHealth> {
     .bind(&daily)
     .fetch_one(&engine.pool)
     .await?;
-    let latest_gaps: Vec<&Gap> = gaps.iter().filter(|g| Some(g.trade_date) == latest).collect();
+    let latest_gaps: Vec<&Gap> = gaps
+        .iter()
+        .filter(|g| Some(g.trade_date) == latest)
+        .collect();
     let (daily_state, mut message) = match latest {
-        None => (DailyState::NotStarted, "还没有开始每日同步：首次回补期间，每天 18:00 照常同步当天的数据".to_string()),
+        None => (
+            DailyState::NotStarted,
+            "还没有开始每日同步：首次回补期间，每天 18:00 照常同步当天的数据".to_string(),
+        ),
         Some(d) if daily_open => (DailyState::Running, format!("正在同步 {d} 的数据")),
         Some(d) if latest_gaps.is_empty() => (DailyState::Ready, format!("{d} 的数据已就绪")),
-        Some(d) => (DailyState::Incomplete, format!("{d} 有 {} 项数据缺失", latest_gaps.len())),
+        Some(d) => (
+            DailyState::Incomplete,
+            format!("{d} 有 {} 项数据缺失", latest_gaps.len()),
+        ),
     };
     if repair_open > 0 {
         message.push_str(&format!("；正在补齐缺口，还有 {repair_open} 个任务"));
     }
-    let last_repair_at: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT fired_at FROM ops.scheduler WHERE job = 'repair'").fetch_optional(&engine.pool).await?.flatten();
+    let last_repair_at: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT fired_at FROM ops.scheduler WHERE job = 'repair'")
+            .fetch_optional(&engine.pool)
+            .await?
+            .flatten();
     Ok(SyncHealth {
         latest_trade_date: latest,
         daily_state,
@@ -377,7 +457,12 @@ async fn clear_stale(engine: &Engine) -> anyhow::Result<u64> {
     .await?;
     let mut cleared = 0;
     for (id, dataset, date) in rows {
-        let (Some(spec), Ok(d)) = (engine.registry.get(&dataset), NaiveDate::parse_from_str(&date, "%Y-%m-%d")) else { continue };
+        let (Some(spec), Ok(d)) = (
+            engine.registry.get(&dataset),
+            NaiveDate::parse_from_str(&date, "%Y-%m-%d"),
+        ) else {
+            continue;
+        };
         if let Some(why) = super::calendar::stale_partition_date(&engine.pool, spec, d).await? {
             cleared += sqlx::query("UPDATE ops.task SET status = 'skipped', last_error = $2 WHERE task_id = $1 AND status = 'dead'")
                 .bind(id)
@@ -399,9 +484,14 @@ pub async fn auto_repair(engine: &Engine, today: NaiveDate) -> anyhow::Result<()
         return Ok(());
     }
     let days = due_days(engine).await?;
-    let Some(&latest) = days.last() else { return Ok(()) };
+    let Some(&latest) = days.last() else {
+        return Ok(());
+    };
     // 最近一个交易日的每日同步还没发起（例如今天还没到 18:00 就已是今天）时不补，等调度器先跑
-    let fired: Option<NaiveDate> = sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'daily'").fetch_optional(&engine.pool).await?;
+    let fired: Option<NaiveDate> =
+        sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'daily'")
+            .fetch_optional(&engine.pool)
+            .await?;
     if fired.is_none_or(|f| f < latest) || latest > today {
         return Ok(());
     }
@@ -419,7 +509,10 @@ const MAX_REPAIRS: i16 = 3;
 /// 补偿：能重新取的缺口规划补偿运行；重试用尽的临时失败重新排队
 pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
     let (_, gaps, missing_bars) = gaps(engine).await?;
-    let mut summary = RepairSummary { unrecoverable: gaps.iter().filter(|g| !g.recoverable).count(), ..Default::default() };
+    let mut summary = RepairSummary {
+        unrecoverable: gaps.iter().filter(|g| !g.recoverable).count(),
+        ..Default::default()
+    };
 
     // 每个要补的数据集，补到哪些交易日；个股日线只补缺的股票
     let mut targets: BTreeMap<String, BTreeSet<NaiveDate>> = BTreeMap::new();
@@ -427,21 +520,42 @@ pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
     let bar_id = engine.registry.stock_bar_history().map(|s| s.id.clone());
     for g in gaps.iter().filter(|g| g.recoverable) {
         let spec = engine.registry.get(&g.dataset_id);
-        let target = spec.and_then(|s| s.recover_with.clone()).unwrap_or_else(|| g.dataset_id.clone());
+        let target = spec
+            .and_then(|s| s.recover_with.clone())
+            .unwrap_or_else(|| g.dataset_id.clone());
         if Some(&target) == bar_id.as_ref() && g.kind != GapKind::Incomplete {
             whole_bars = true;
         }
         targets.entry(target).or_default().insert(g.trade_date);
     }
     for (id, dates) in targets {
-        let Some(spec) = engine.registry.get(&id).filter(|s| s.enabled) else { continue };
+        let Some(spec) = engine.registry.get(&id).filter(|s| s.enabled) else {
+            continue;
+        };
         let latest = *dates.iter().max().expect("至少一个日期");
         let only_thscodes: Vec<String> = if Some(&id) == bar_id.as_ref() && !whole_bars {
-            dates.iter().flat_map(|d| missing_bars.get(d).cloned().unwrap_or_default()).collect::<BTreeSet<_>>().into_iter().collect()
+            dates
+                .iter()
+                .flat_map(|d| missing_bars.get(d).cloned().unwrap_or_default())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
         } else {
             vec![]
         };
-        let (run_id, _) = engine.planner().plan_run(RunKind::Repair, &[spec], PlanOptions { trade_date: Some(latest), only_thscodes, trigger: Some("repair".into()), ..Default::default() }).await?;
+        let (run_id, _) = engine
+            .planner()
+            .plan_run(
+                RunKind::Repair,
+                &[spec],
+                PlanOptions {
+                    trade_date: Some(latest),
+                    only_thscodes,
+                    trigger: Some("repair".into()),
+                    ..Default::default()
+                },
+            )
+            .await?;
         summary.runs.push(run_id);
     }
 

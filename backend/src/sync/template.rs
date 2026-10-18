@@ -33,9 +33,10 @@ impl Scope<'_> {
             return Some(Value::String(v.clone()));
         }
         if let Some(rec) = self.record
-            && let Some(v) = path_get(rec, name) {
-                return Some(v.clone());
-            }
+            && let Some(v) = path_get(rec, name)
+        {
+            return Some(v.clone());
+        }
         self.part.get(name).cloned()
     }
 }
@@ -68,7 +69,10 @@ fn to_date(v: &Value) -> anyhow::Result<String> {
         _ => None,
     }
     .with_context(|| format!("无法把 {v} 转换为日期"))?;
-    Ok(ms_to_cn_date(ms).context("时间戳超出范围")?.format("%Y-%m-%d").to_string())
+    Ok(ms_to_cn_date(ms)
+        .context("时间戳超出范围")?
+        .format("%Y-%m-%d")
+        .to_string())
 }
 
 // @project-doc docs/interfaces/dataset_registry.md#keys_and_templates
@@ -77,10 +81,17 @@ pub fn render(template: &str, scope: &Scope) -> anyhow::Result<String> {
     let mut rest = template;
     while let Some(start) = rest.find('{') {
         out.push_str(&rest[..start]);
-        let end = rest[start..].find('}').map(|e| start + e).with_context(|| format!("模板缺少 }}：{template}"))?;
+        let end = rest[start..]
+            .find('}')
+            .map(|e| start + e)
+            .with_context(|| format!("模板缺少 }}：{template}"))?;
         let token = &rest[start + 1..end];
-        let (name, fmt) = token.split_once(':').map_or((token, None), |(n, f)| (n, Some(f)));
-        let value = scope.lookup(name).with_context(|| format!("模板变量不存在：{{{token}}}（模板 {template}）"))?;
+        let (name, fmt) = token
+            .split_once(':')
+            .map_or((token, None), |(n, f)| (n, Some(f)));
+        let value = scope
+            .lookup(name)
+            .with_context(|| format!("模板变量不存在：{{{token}}}（模板 {template}）"))?;
         match fmt {
             None => out.push_str(&value_to_string(&value)),
             Some("date") => out.push_str(&to_date(&value)?),
@@ -97,7 +108,9 @@ pub fn variables(template: &str) -> Vec<&str> {
     let mut out = vec![];
     let mut rest = template;
     while let Some(start) = rest.find('{') {
-        let Some(end) = rest[start..].find('}') else { break };
+        let Some(end) = rest[start..].find('}') else {
+            break;
+        };
         let token = &rest[start + 1..start + end];
         out.push(token.split(':').next().unwrap_or(token));
         rest = &rest[start + end + 1..];
@@ -112,12 +125,27 @@ mod tests {
 
     #[test]
     fn renders_keys_from_part_record_and_run() {
-        let part = json!({"thscode": "600519.SH", "date": "2026-10-14"}).as_object().unwrap().clone();
-        let rec = json!({"date_ms": 1_791_993_600_000_i64, "rank": 3, "x": {"y": "z"}, "pct": 9.99});
+        let part = json!({"thscode": "600519.SH", "date": "2026-10-14"})
+            .as_object()
+            .unwrap()
+            .clone();
+        let rec =
+            json!({"date_ms": 1_791_993_600_000_i64, "rank": 3, "x": {"y": "z"}, "pct": 9.99});
         let extra = [("_seq", "1".to_string())];
-        let scope = Scope { part: &part, record: Some(&rec), run_trade_date: Some("2026-10-15"), extra: &extra };
-        assert_eq!(render("{_part.thscode}|{date_ms:date}", &scope).unwrap(), "600519.SH|2026-10-15");
-        assert_eq!(render("{_run.trade_date}|{rank}|{x.y}|{_seq}", &scope).unwrap(), "2026-10-15|3|z|1");
+        let scope = Scope {
+            part: &part,
+            record: Some(&rec),
+            run_trade_date: Some("2026-10-15"),
+            extra: &extra,
+        };
+        assert_eq!(
+            render("{_part.thscode}|{date_ms:date}", &scope).unwrap(),
+            "600519.SH|2026-10-15"
+        );
+        assert_eq!(
+            render("{_run.trade_date}|{rank}|{x.y}|{_seq}", &scope).unwrap(),
+            "2026-10-15|3|z|1"
+        );
         assert_eq!(render("{pct}", &scope).unwrap(), "9.99");
         assert!(render("{missing}", &scope).is_err());
     }
@@ -126,12 +154,23 @@ mod tests {
     fn date_format_accepts_compact_and_iso_strings() {
         let part = Map::new();
         let rec = json!({"a": "20261014", "b": "2026-10-14"});
-        let scope = Scope { part: &part, record: Some(&rec), run_trade_date: None, extra: &[] };
-        assert_eq!(render("{a:date}/{b:date}", &scope).unwrap(), "2026-10-14/2026-10-14");
+        let scope = Scope {
+            part: &part,
+            record: Some(&rec),
+            run_trade_date: None,
+            extra: &[],
+        };
+        assert_eq!(
+            render("{a:date}/{b:date}", &scope).unwrap(),
+            "2026-10-14/2026-10-14"
+        );
     }
 
     #[test]
     fn lists_variables() {
-        assert_eq!(variables("{thscode}|{start_ms}-{end_ms:date}"), vec!["thscode", "start_ms", "end_ms"]);
+        assert_eq!(
+            variables("{thscode}|{start_ms}-{end_ms:date}"),
+            vec!["thscode", "start_ms", "end_ms"]
+        );
     }
 }

@@ -83,8 +83,14 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
             }
         }
     };
-    if tokio::time::timeout(SHUTDOWN_DEADLINE, drain).await.is_err() {
-        tracing::warn!(seconds = SHUTDOWN_DEADLINE.as_secs(), "停机等待超时，取消还没结束的组件");
+    if tokio::time::timeout(SHUTDOWN_DEADLINE, drain)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            seconds = SHUTDOWN_DEADLINE.as_secs(),
+            "停机等待超时，取消还没结束的组件"
+        );
         set.abort_all();
     }
     match failure {
@@ -106,8 +112,12 @@ async fn run_workers(engine: Arc<Engine>, mut stop: watch::Receiver<bool>) -> an
         }
         match engine.try_lock_executor().await {
             Ok(Some(lock)) => break lock,
-            Ok(None) => tracing::warn!("另一个 niulai 进程正在执行同步任务，本进程先只提供 API，30 秒后再试"),
-            Err(e) => tracing::warn!(error = %format!("{e:#}"), "取执行同步任务的独占权失败，30 秒后再试"),
+            Ok(None) => tracing::warn!(
+                "另一个 niulai 进程正在执行同步任务，本进程先只提供 API，30 秒后再试"
+            ),
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "取执行同步任务的独占权失败，30 秒后再试")
+            }
         }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(30)) => {}
@@ -169,7 +179,8 @@ fn describe_result(done: Result<Component, JoinError>) -> Result<&'static str, S
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("注册 SIGTERM");
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("注册 SIGTERM");
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {}
             _ = term.recv() => {}
@@ -189,7 +200,10 @@ mod tests {
         set.spawn(async { ("调度器", Ok(())) });
         assert_eq!(describe(set.join_next().await.unwrap()), "调度器提前结束");
         set.spawn(async { ("执行循环", Err(anyhow::anyhow!("连不上数据库"))) });
-        assert_eq!(describe(set.join_next().await.unwrap()), "执行循环：连不上数据库");
+        assert_eq!(
+            describe(set.join_next().await.unwrap()),
+            "执行循环：连不上数据库"
+        );
         set.spawn(async {
             if std::hint::black_box(true) {
                 panic!("出错了");

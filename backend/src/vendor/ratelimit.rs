@@ -16,7 +16,10 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(rps: u32) -> Self {
-        RateLimiter { rps, window: Mutex::new(VecDeque::new()) }
+        RateLimiter {
+            rps,
+            window: Mutex::new(VecDeque::new()),
+        }
     }
 
     /// 等待直到允许发出一次请求
@@ -25,7 +28,10 @@ impl RateLimiter {
             let wait = {
                 let mut q = self.window.lock().await;
                 let now = Instant::now();
-                while q.front().is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(1)) {
+                while q
+                    .front()
+                    .is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(1))
+                {
                     q.pop_front();
                 }
                 if q.len() < self.rps as usize {

@@ -112,7 +112,9 @@ impl TradeSource {
 }
 
 fn parse_enum<T: serde::de::DeserializeOwned>(s: &str) -> anyhow::Result<T> {
-    Ok(serde_json::from_value(serde_json::Value::String(s.to_string()))?)
+    Ok(serde_json::from_value(serde_json::Value::String(
+        s.to_string(),
+    ))?)
 }
 
 #[derive(Serialize, ToSchema, Clone, Debug)]
@@ -218,16 +220,43 @@ pub struct TradeInput {
     pub note: String,
 }
 
-type AccountRow = (i64, String, serde_json::Value, f64, f64, f64, String, Option<DateTime<Utc>>, DateTime<Utc>, DateTime<Utc>);
+type AccountRow = (
+    i64,
+    String,
+    serde_json::Value,
+    f64,
+    f64,
+    f64,
+    String,
+    Option<DateTime<Utc>>,
+    DateTime<Utc>,
+    DateTime<Utc>,
+);
 const ACCOUNT_COLS: &str = "account_id, name, rules, cash::float8, commission_rate::float8, min_commission::float8, note, checked_at, created_at, updated_at";
 
-fn account((account_id, name, rules, cash, commission_rate, min_commission, note, checked_at, created_at, updated_at): AccountRow) -> anyhow::Result<Account> {
+fn account(
+    (
+        account_id,
+        name,
+        rules,
+        cash,
+        commission_rate,
+        min_commission,
+        note,
+        checked_at,
+        created_at,
+        updated_at,
+    ): AccountRow,
+) -> anyhow::Result<Account> {
     Ok(Account {
         account_id,
         name,
         rules: serde_json::from_value(rules)?,
         cash,
-        fees: Fees { commission_rate, min_commission },
+        fees: Fees {
+            commission_rate,
+            min_commission,
+        },
         note,
         checked_at,
         created_at,
@@ -251,6 +280,13 @@ fn validate_money(v: f64, what: &str) -> Result<f64> {
     Ok(round2(v))
 }
 
+fn validate_fee(v: f64) -> Result<f64> {
+    if !v.is_finite() || v < 0.0 || v > 1e8 {
+        return invalid("费用应为 0 到 1 亿元之间的有限数值");
+    }
+    Ok(round2(v))
+}
+
 fn validate_fees(f: &Fees) -> Result<()> {
     if !(0.0..=0.003).contains(&f.commission_rate) || !(0.0..=100.0).contains(&f.min_commission) {
         return invalid("佣金率应在 0 到千分之 3 之间，最低佣金在 0 到 100 元之间");
@@ -260,26 +296,42 @@ fn validate_fees(f: &Fees) -> Result<()> {
 
 pub async fn list(pool: &PgPool, user_id: i64) -> Result<Vec<Account>> {
     // 审计：ACCOUNT_COLS 是本文件中的常量列名
-    let rows: Vec<AccountRow> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {ACCOUNT_COLS} FROM app.account WHERE user_id = $1 ORDER BY account_id"))).bind(user_id).fetch_all(pool).await?;
-    Ok(rows.into_iter().map(account).collect::<anyhow::Result<_>>()?)
+    let rows: Vec<AccountRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {ACCOUNT_COLS} FROM app.account WHERE user_id = $1 ORDER BY account_id"
+    )))
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(account)
+        .collect::<anyhow::Result<_>>()?)
 }
 
 pub async fn get(pool: &PgPool, user_id: i64, account_id: i64) -> Result<Account> {
     // 审计：ACCOUNT_COLS 是本文件中的常量列名
-    let row: Option<AccountRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {ACCOUNT_COLS} FROM app.account WHERE user_id = $1 AND account_id = $2")))
-        .bind(user_id)
-        .bind(account_id)
-        .fetch_optional(pool)
-        .await?;
+    let row: Option<AccountRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {ACCOUNT_COLS} FROM app.account WHERE user_id = $1 AND account_id = $2"
+    )))
+    .bind(user_id)
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await?;
     row.map(account).transpose()?.ok_or(AccountError::NotFound)
 }
 
 /// 全部账户（后台每天生成建议用，不按用户过滤）
 pub async fn all(pool: &PgPool) -> Result<Vec<Account>> {
     // 审计：ACCOUNT_COLS 是本文件中的常量列名
-    let rows: Vec<AccountRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {ACCOUNT_COLS} FROM app.account ORDER BY account_id"))).fetch_all(pool).await?;
-    Ok(rows.into_iter().map(account).collect::<anyhow::Result<_>>()?)
+    let rows: Vec<AccountRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {ACCOUNT_COLS} FROM app.account ORDER BY account_id"
+    )))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(account)
+        .collect::<anyhow::Result<_>>()?)
 }
 
 pub async fn create(pool: &PgPool, user_id: i64, input: &NewAccount) -> Result<Account> {
@@ -287,15 +339,26 @@ pub async fn create(pool: &PgPool, user_id: i64, input: &NewAccount) -> Result<A
     let cash = validate_money(input.cash, "现金")?;
     let mut tx = pool.begin().await?;
     // 锁住这个用户，两个请求同时建账户时数量也不会超
-    sqlx::query("SELECT 1 FROM app.user WHERE user_id = $1 FOR UPDATE").bind(user_id).execute(&mut *tx).await?;
-    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app.account WHERE user_id = $1").bind(user_id).fetch_one(&mut *tx).await?;
+    sqlx::query("SELECT 1 FROM app.user WHERE user_id = $1 FOR UPDATE")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app.account WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
     if n >= MAX_ACCOUNTS {
         return invalid(format!("每人最多 {MAX_ACCOUNTS} 个账户"));
     }
-    let strategy_ids: Vec<i64> = sqlx::query_scalar("SELECT strategy_id FROM app.strategy WHERE screening ORDER BY sort_order, strategy_id")
-        .fetch_all(&mut *tx)
-        .await?;
-    let rules = Rules { strategies: Some(strategy_ids), ..Rules::default() };
+    let strategy_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT strategy_id FROM app.strategy WHERE screening ORDER BY sort_order, strategy_id",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let rules = Rules {
+        strategies: Some(strategy_ids),
+        ..Rules::default()
+    };
     let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO app.account (user_id, name, rules, cash, note) VALUES ($1, $2, $3, round($4::float8::numeric, 2), $5)
          ON CONFLICT (user_id, lower(name)) DO NOTHING RETURNING account_id",
@@ -307,15 +370,35 @@ pub async fn create(pool: &PgPool, user_id: i64, input: &NewAccount) -> Result<A
     .bind(input.note.trim())
     .fetch_optional(&mut *tx)
     .await?;
-    let Some(id) = id else { return Err(AccountError::Taken(name)) };
+    let Some(id) = id else {
+        return Err(AccountError::Taken(name));
+    };
     if cash > 0.0 {
-        insert_trade(&mut tx, id, TradeKind::CashIn, crate::time::today_cn(), None, None, None, cash, 0.0, TradeSource::User, "建账户时的现金").await?;
+        insert_trade(
+            &mut tx,
+            id,
+            TradeKind::CashIn,
+            crate::time::today_cn(),
+            None,
+            None,
+            None,
+            cash,
+            0.0,
+            TradeSource::User,
+            "建账户时的现金",
+        )
+        .await?;
     }
     tx.commit().await?;
     get(pool, user_id, id).await
 }
 
-pub async fn update(pool: &PgPool, user_id: i64, account_id: i64, input: &AccountUpdate) -> Result<Account> {
+pub async fn update(
+    pool: &PgPool,
+    user_id: i64,
+    account_id: i64,
+    input: &AccountUpdate,
+) -> Result<Account> {
     let name = validate_name(&input.name)?;
     validate_fees(&input.fees)?;
     input.rules.validate().map_err(AccountError::Invalid)?;
@@ -341,16 +424,43 @@ pub async fn update(pool: &PgPool, user_id: i64, account_id: i64, input: &Accoun
 }
 
 pub async fn delete(pool: &PgPool, user_id: i64, account_id: i64) -> Result<()> {
-    let n = sqlx::query("DELETE FROM app.account WHERE user_id = $1 AND account_id = $2").bind(user_id).bind(account_id).execute(pool).await?.rows_affected();
-    if n == 0 { Err(AccountError::NotFound) } else { Ok(()) }
+    let n = sqlx::query("DELETE FROM app.account WHERE user_id = $1 AND account_id = $2")
+        .bind(user_id)
+        .bind(account_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        Err(AccountError::NotFound)
+    } else {
+        Ok(())
+    }
 }
 
 pub async fn mark_checked(pool: &PgPool, user_id: i64, account_id: i64) -> Result<()> {
-    let n = sqlx::query("UPDATE app.account SET checked_at = now() WHERE user_id = $1 AND account_id = $2").bind(user_id).bind(account_id).execute(pool).await?.rows_affected();
-    if n == 0 { Err(AccountError::NotFound) } else { Ok(()) }
+    let n = sqlx::query(
+        "UPDATE app.account SET checked_at = now() WHERE user_id = $1 AND account_id = $2",
+    )
+    .bind(user_id)
+    .bind(account_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        Err(AccountError::NotFound)
+    } else {
+        Ok(())
+    }
 }
 
-type PositionRow = (String, i64, Option<f64>, Option<NaiveDate>, Option<i64>, NaiveDate);
+type PositionRow = (
+    String,
+    i64,
+    Option<f64>,
+    Option<NaiveDate>,
+    Option<i64>,
+    NaiveDate,
+);
 /// 已有持仓的 (股数, 成本价, 买入日, 买入依据的策略)
 type HeldRow = (i64, Option<f64>, Option<NaiveDate>, Option<i64>);
 
@@ -363,7 +473,16 @@ pub async fn positions(pool: &PgPool, account_id: i64) -> Result<Vec<Position>> 
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(thscode, shares, cost_price, opened_on, strategy_id, since)| Position { thscode, shares, cost_price, opened_on, strategy_id, since })
+        .map(
+            |(thscode, shares, cost_price, opened_on, strategy_id, since)| Position {
+                thscode,
+                shares,
+                cost_price,
+                opened_on,
+                strategy_id,
+                since,
+            },
+        )
         .collect())
 }
 
@@ -377,11 +496,13 @@ pub async fn last_change(pool: &PgPool, account_id: i64) -> Result<Option<DateTi
 
 /// 锁住账户（同一账户的变动排队），返回现金
 async fn lock(tx: &mut Transaction<'_, Postgres>, user_id: i64, account_id: i64) -> Result<f64> {
-    let cash: Option<f64> = sqlx::query_scalar("SELECT cash::float8 FROM app.account WHERE user_id = $1 AND account_id = $2 FOR UPDATE")
-        .bind(user_id)
-        .bind(account_id)
-        .fetch_optional(&mut **tx)
-        .await?;
+    let cash: Option<f64> = sqlx::query_scalar(
+        "SELECT cash::float8 FROM app.account WHERE user_id = $1 AND account_id = $2 FOR UPDATE",
+    )
+    .bind(user_id)
+    .bind(account_id)
+    .fetch_optional(&mut **tx)
+    .await?;
     cash.ok_or(AccountError::NotFound)
 }
 
@@ -427,55 +548,176 @@ async fn add_cash(tx: &mut Transaction<'_, Postgres>, account_id: i64, delta: f6
 }
 
 async fn security_board(tx: &mut Transaction<'_, Postgres>, code: &str) -> Result<Option<String>> {
-    Ok(sqlx::query_scalar("SELECT board FROM ref.security WHERE thscode = $1").bind(code).fetch_optional(&mut **tx).await?)
+    Ok(
+        sqlx::query_scalar("SELECT board FROM ref.security WHERE thscode = $1")
+            .bind(code)
+            .fetch_optional(&mut **tx)
+            .await?,
+    )
 }
 
 /// 买入或卖出成交后更新持仓、现金并记流水；返回流水编号。`strategy_id` 是按哪个策略的建议买的
-pub async fn record(pool: &PgPool, user_id: i64, account_id: i64, input: &TradeInput, source: TradeSource, strategy_id: Option<i64>) -> Result<i64> {
-    let date = input.trade_date.unwrap_or_else(crate::time::today_cn);
+pub async fn record(
+    pool: &PgPool,
+    user_id: i64,
+    account_id: i64,
+    input: &TradeInput,
+    source: TradeSource,
+    strategy_id: Option<i64>,
+) -> Result<i64> {
     let mut tx = pool.begin().await?;
     let cash = lock(&mut tx, user_id, account_id).await?;
-    let fees = account_fees(&mut tx, account_id).await?;
+    let id = record_in_tx(&mut tx, account_id, cash, input, source, strategy_id).await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+/// Execute one advice item atomically with its idempotency state.
+pub async fn record_advice(
+    pool: &PgPool,
+    user_id: i64,
+    account_id: i64,
+    advice_id: i64,
+    item_key: &str,
+    input: &TradeInput,
+    strategy_id: Option<i64>,
+) -> Result<i64> {
+    let mut tx = pool.begin().await?;
+    let cash = lock(&mut tx, user_id, account_id).await?;
+    let state: Option<String> = sqlx::query_scalar(
+        "SELECT state FROM app.advice_item_state WHERE advice_id = $1 AND item_key = $2 FOR UPDATE",
+    )
+    .bind(advice_id)
+    .bind(item_key)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if state.as_deref() == Some("executed") {
+        return Err(AccountError::Invalid("这一条已经记过了".into()));
+    }
+    let trade_id = record_in_tx(
+        &mut tx,
+        account_id,
+        cash,
+        input,
+        TradeSource::Advice,
+        strategy_id,
+    )
+    .await?;
+    sqlx::query(
+        "INSERT INTO app.advice_item_state (advice_id, item_key, state, trade_id) VALUES ($1, $2, 'executed', $3)
+         ON CONFLICT (advice_id, item_key) DO UPDATE SET state = 'executed', trade_id = EXCLUDED.trade_id, updated_at = now()",
+    )
+    .bind(advice_id)
+    .bind(item_key)
+    .bind(trade_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(trade_id)
+}
+
+async fn record_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: i64,
+    cash: f64,
+    input: &TradeInput,
+    source: TradeSource,
+    strategy_id: Option<i64>,
+) -> Result<i64> {
+    let date = input.trade_date.unwrap_or_else(crate::time::today_cn);
+    let fees = account_fees(tx, account_id).await?;
+    let supplied_fee = input.fee.map(validate_fee).transpose()?;
+    let strategy_id = match strategy_id {
+        Some(id)
+            if sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)",
+            )
+            .bind(id)
+            .fetch_one(&mut **tx)
+            .await? =>
+        {
+            Some(id)
+        }
+        _ => None,
+    };
     let id = match input.kind {
         TradeKind::CashIn | TradeKind::CashOut => {
-            let amount = input.amount.filter(|a| a.is_finite() && *a > 0.0).ok_or_else(|| AccountError::Invalid("金额要大于 0".into()))?;
+            let amount = input
+                .amount
+                .filter(|a| a.is_finite() && *a > 0.0)
+                .ok_or_else(|| AccountError::Invalid("金额要大于 0".into()))?;
             let amount = validate_money(amount, "金额")?;
-            let delta = if input.kind == TradeKind::CashIn { amount } else { -amount };
+            let delta = if input.kind == TradeKind::CashIn {
+                amount
+            } else {
+                -amount
+            };
             if cash + delta < -0.005 {
                 return invalid(format!("现金只有 ¥{cash:.2}，不够转出 ¥{amount:.2}"));
             }
-            add_cash(&mut tx, account_id, delta).await?;
-            insert_trade(&mut tx, account_id, input.kind, date, None, None, None, delta, 0.0, source, input.note.trim()).await?
+            add_cash(tx, account_id, delta).await?;
+            insert_trade(
+                tx,
+                account_id,
+                input.kind,
+                date,
+                None,
+                None,
+                None,
+                delta,
+                0.0,
+                source,
+                input.note.trim(),
+            )
+            .await?
         }
         TradeKind::Buy | TradeKind::Sell => {
-            let code = input.thscode.as_deref().map(str::trim).filter(|c| !c.is_empty()).ok_or_else(|| AccountError::Invalid("缺少股票代码".into()))?;
-            if security_board(&mut tx, code).await?.is_none() {
+            let code = input
+                .thscode
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .ok_or_else(|| AccountError::Invalid("缺少股票代码".into()))?;
+            if security_board(tx, code).await?.is_none() {
                 return invalid(format!("没有这只股票：{code}"));
             }
-            let shares = input.shares.filter(|n| *n > 0).ok_or_else(|| AccountError::Invalid("股数要大于 0".into()))?;
-            let price = input.price.filter(|p| p.is_finite() && *p > 0.0).ok_or_else(|| AccountError::Invalid("成交价要大于 0".into()))?;
+            let shares = input
+                .shares
+                .filter(|n| *n > 0)
+                .ok_or_else(|| AccountError::Invalid("股数要大于 0".into()))?;
+            let price = input
+                .price
+                .filter(|p| p.is_finite() && *p > 0.0)
+                .ok_or_else(|| AccountError::Invalid("成交价要大于 0".into()))?;
             let gross = round2(shares as f64 * price);
             let current: Option<HeldRow> = sqlx::query_as(
                 "SELECT shares, cost_price::float8, opened_on, strategy_id FROM app.position WHERE account_id = $1 AND thscode = $2 FOR UPDATE",
             )
             .bind(account_id)
             .bind(code)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?;
             if input.kind == TradeKind::Buy {
-                let fee = input.fee.unwrap_or_else(|| fees.buy_fee(gross));
+                let fee = supplied_fee.unwrap_or_else(|| fees.buy_fee(gross));
                 let pay = gross + fee;
                 if pay > cash + 0.005 {
-                    return invalid(format!("现金不够：这笔要 ¥{pay:.2}，现金只有 ¥{cash:.2}。先转入现金，或在持仓页校准现金"));
+                    return invalid(format!(
+                        "现金不够：这笔要 ¥{pay:.2}，现金只有 ¥{cash:.2}。先转入现金，或在持仓页校准现金"
+                    ));
                 }
-                let (old, old_cost, opened, old_strategy) = current.unwrap_or((0, None, None, None));
+                let (old, old_cost, opened, old_strategy) =
+                    current.unwrap_or((0, None, None, None));
                 // 加权平均成本（含费用）；原来没填成本的，加仓后仍不知道整体成本
                 let cost = match (old, old_cost) {
                     (0, _) => Some((pay) / shares as f64),
                     (o, Some(c)) => Some((c * o as f64 + pay) / (o + shares) as f64),
                     (_, None) => None,
                 };
-                let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app.position WHERE account_id = $1").bind(account_id).fetch_one(&mut *tx).await?;
+                let n: i64 =
+                    sqlx::query_scalar("SELECT count(*) FROM app.position WHERE account_id = $1")
+                        .bind(account_id)
+                        .fetch_one(&mut **tx)
+                        .await?;
                 if old == 0 && n as usize >= MAX_POSITIONS {
                     return invalid(format!("每个账户最多 {MAX_POSITIONS} 只持仓"));
                 }
@@ -492,50 +734,102 @@ pub async fn record(pool: &PgPool, user_id: i64, account_id: i64, input: &TradeI
                 .bind(opened.or(Some(date)))
                 .bind(old_strategy.or(strategy_id))
                 .bind(date)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
-                add_cash(&mut tx, account_id, -pay).await?;
-                insert_trade(&mut tx, account_id, TradeKind::Buy, date, Some(code), Some(shares), Some(price), -pay, fee, source, input.note.trim()).await?
+                add_cash(tx, account_id, -pay).await?;
+                insert_trade(
+                    tx,
+                    account_id,
+                    TradeKind::Buy,
+                    date,
+                    Some(code),
+                    Some(shares),
+                    Some(price),
+                    -pay,
+                    fee,
+                    source,
+                    input.note.trim(),
+                )
+                .await?
             } else {
                 let held = current.as_ref().map_or(0, |c| c.0);
                 if shares > held {
                     return invalid(format!("只持有 {held} 股，不能卖 {shares} 股"));
                 }
-                let fee = input.fee.unwrap_or_else(|| fees.sell_fee(gross));
+                let fee = supplied_fee.unwrap_or_else(|| fees.sell_fee(gross));
                 if held == shares {
-                    sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2").bind(account_id).bind(code).execute(&mut *tx).await?;
+                    sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2")
+                        .bind(account_id)
+                        .bind(code)
+                        .execute(&mut **tx)
+                        .await?;
                 } else {
                     sqlx::query("UPDATE app.position SET shares = shares - $3, since = $4 WHERE account_id = $1 AND thscode = $2")
                         .bind(account_id)
                         .bind(code)
                         .bind(shares)
                         .bind(date)
-                        .execute(&mut *tx)
+                        .execute(&mut **tx)
                         .await?;
                 }
-                add_cash(&mut tx, account_id, gross - fee).await?;
-                insert_trade(&mut tx, account_id, TradeKind::Sell, date, Some(code), Some(-shares), Some(price), gross - fee, fee, source, input.note.trim()).await?
+                add_cash(tx, account_id, gross - fee).await?;
+                insert_trade(
+                    tx,
+                    account_id,
+                    TradeKind::Sell,
+                    date,
+                    Some(code),
+                    Some(-shares),
+                    Some(price),
+                    gross - fee,
+                    fee,
+                    source,
+                    input.note.trim(),
+                )
+                .await?
             }
         }
         _ => return invalid("只能记买入、卖出、转入或转出现金"),
     };
-    tx.commit().await?;
     Ok(id)
 }
 
 async fn account_fees(tx: &mut Transaction<'_, Postgres>, account_id: i64) -> Result<Fees> {
     let (commission_rate, min_commission): (f64, f64) =
         sqlx::query_as("SELECT commission_rate::float8, min_commission::float8 FROM app.account WHERE account_id = $1").bind(account_id).fetch_one(&mut **tx).await?;
-    Ok(Fees { commission_rate, min_commission })
+    Ok(Fees {
+        commission_rate,
+        min_commission,
+    })
 }
 
-type LedgerRow = (i64, NaiveDate, String, Option<String>, Option<i64>, Option<f64>, f64);
+type LedgerRow = (
+    i64,
+    NaiveDate,
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<f64>,
+    f64,
+);
 /// 撤销时读的那行流水：(类型, 股票, 股数, 价格, 现金变化, 来源, 撤销时间)
-type UndoRow = (String, Option<String>, Option<i64>, Option<f64>, f64, String, Option<DateTime<Utc>>);
+type UndoRow = (
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<f64>,
+    f64,
+    String,
+    Option<DateTime<Utc>>,
+);
 
 /// 一只股票（`code` 为空时是这个账户所有股票）的全部有效流水，按流水编号从早到晚。
 /// 已撤销的流水不再参与回放；只有持仓相关的流水有股票代码，现金流水不在这里取。
-async fn ledger_rows<'e, E>(executor: E, account_id: i64, code: Option<&str>) -> Result<Vec<(String, ledger::Entry)>>
+async fn ledger_rows<'e, E>(
+    executor: E,
+    account_id: i64,
+    code: Option<&str>,
+) -> Result<Vec<(String, ledger::Entry)>>
 where
     E: sqlx::Executor<'e, Database = Postgres>,
 {
@@ -550,9 +844,21 @@ where
     .fetch_all(executor)
     .await?;
     rows.into_iter()
-        .map(|(trade_id, trade_date, kind, thscode, shares, price, amount)| {
-            Ok((thscode.unwrap_or_default(), ledger::Entry { trade_id, kind: parse_enum(&kind)?, trade_date, shares, price, amount }))
-        })
+        .map(
+            |(trade_id, trade_date, kind, thscode, shares, price, amount)| {
+                Ok((
+                    thscode.unwrap_or_default(),
+                    ledger::Entry {
+                        trade_id,
+                        kind: parse_enum(&kind)?,
+                        trade_date,
+                        shares,
+                        price,
+                        amount,
+                    },
+                ))
+            },
+        )
         .collect::<anyhow::Result<_>>()
         .map_err(AccountError::Internal)
 }
@@ -598,7 +904,10 @@ pub async fn realized(pool: &PgPool, account_id: i64) -> Result<Realized> {
             }
         }
     }
-    Ok(Realized { total: complete.then(|| round2(total)), sell_pnls })
+    Ok(Realized {
+        total: complete.then(|| round2(total)),
+        sell_pnls,
+    })
 }
 
 // @project-doc docs/domains/accounts.md#undo
@@ -618,7 +927,9 @@ pub async fn undo_trade(pool: &PgPool, user_id: i64, account_id: i64, trade_id: 
     .bind(trade_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((kind, thscode, _shares, _price, amount, source, reversed_at)) = row else { return Err(AccountError::TradeNotFound) };
+    let Some((kind, thscode, _shares, _price, amount, source, reversed_at)) = row else {
+        return Err(AccountError::TradeNotFound);
+    };
     let kind: TradeKind = parse_enum(&kind)?;
     let source: TradeSource = parse_enum(&source)?;
     if reversed_at.is_some() {
@@ -627,22 +938,32 @@ pub async fn undo_trade(pool: &PgPool, user_id: i64, account_id: i64, trade_id: 
     if source != TradeSource::User {
         let why = match source {
             TradeSource::Advice => "按建议执行的流水不能在这里撤销；在持仓页校准可以改回现金和持仓",
-            TradeSource::CorpAction => "分红送转、配股认购是系统按公告自动记的，不能单独撤销；金额不对时校准现金",
+            TradeSource::CorpAction => {
+                "分红送转、配股认购是系统按公告自动记的，不能单独撤销；金额不对时校准现金"
+            }
             TradeSource::User => unreachable!(),
         };
         return invalid(why);
     }
-    if !matches!(kind, TradeKind::Buy | TradeKind::Sell | TradeKind::CashIn | TradeKind::CashOut) {
+    if !matches!(
+        kind,
+        TradeKind::Buy | TradeKind::Sell | TradeKind::CashIn | TradeKind::CashOut
+    ) {
         return invalid("校准流水不能单独撤销：把持仓和现金重新校准一次就行");
     }
     let amount = round2(amount);
     let new_cash = round2(cash - amount);
     if new_cash < -0.005 {
-        return invalid(format!("撤销这笔流水要扣回 ¥{amount:.2}，现金只有 ¥{cash:.2}，不够。先转入现金，或在持仓页校准现金"));
+        return invalid(format!(
+            "撤销这笔流水要扣回 ¥{amount:.2}，现金只有 ¥{cash:.2}，不够。先转入现金，或在持仓页校准现金"
+        ));
     }
     if let Some(code) = thscode.as_deref() {
         let rows = ledger_rows(&mut *tx, account_id, Some(code)).await?;
-        let entries: Vec<ledger::Entry> = rows.into_iter().filter_map(|(_, e)| (e.trade_id != trade_id).then_some(e)).collect();
+        let entries: Vec<ledger::Entry> = rows
+            .into_iter()
+            .filter_map(|(_, e)| (e.trade_id != trade_id).then_some(e))
+            .collect();
         let replay = ledger::replay(&entries).map_err(|e| {
             let at = entries.iter().find(|x| x.trade_id == e.trade_id()).map(|x| x.trade_date.to_string()).unwrap_or_default();
             AccountError::Invalid(format!(
@@ -650,10 +971,19 @@ pub async fn undo_trade(pool: &PgPool, user_id: i64, account_id: i64, trade_id: 
             ))
         })?;
         let now = crate::time::today_cn();
-        let existing: Option<i32> =
-            sqlx::query_scalar("SELECT 1 FROM app.position WHERE account_id = $1 AND thscode = $2 FOR UPDATE").bind(account_id).bind(code).fetch_optional(&mut *tx).await?;
+        let existing: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM app.position WHERE account_id = $1 AND thscode = $2 FOR UPDATE",
+        )
+        .bind(account_id)
+        .bind(code)
+        .fetch_optional(&mut *tx)
+        .await?;
         if replay.shares == 0 {
-            sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2").bind(account_id).bind(code).execute(&mut *tx).await?;
+            sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2")
+                .bind(account_id)
+                .bind(code)
+                .execute(&mut *tx)
+                .await?;
         } else if existing.is_some() {
             sqlx::query(
                 "UPDATE app.position SET shares = $3, cost_price = round($4::float8::numeric, 4), since = $5 WHERE account_id = $1 AND thscode = $2",
@@ -681,18 +1011,26 @@ pub async fn undo_trade(pool: &PgPool, user_id: i64, account_id: i64, trade_id: 
             .await?;
         }
     }
-    sqlx::query("UPDATE app.account_trade SET reversed_at = now() WHERE account_id = $1 AND trade_id = $2")
-        .bind(account_id)
-        .bind(trade_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE app.account_trade SET reversed_at = now() WHERE account_id = $1 AND trade_id = $2",
+    )
+    .bind(account_id)
+    .bind(trade_id)
+    .execute(&mut *tx)
+    .await?;
     add_cash(&mut tx, account_id, -amount).await?;
     tx.commit().await?;
     Ok(())
 }
 
 /// 校准：把持仓和现金整体换成用户填的（例如照着券商 App 抄一遍）。和原来不同的地方各记一条「校准」流水
-pub async fn calibrate(pool: &PgPool, user_id: i64, account_id: i64, cash: f64, list: &[PositionInput]) -> Result<()> {
+pub async fn calibrate(
+    pool: &PgPool,
+    user_id: i64,
+    account_id: i64,
+    cash: f64,
+    list: &[PositionInput],
+) -> Result<()> {
     let cash = validate_money(cash, "现金")?;
     if list.len() > MAX_POSITIONS {
         return invalid(format!("每个账户最多 {MAX_POSITIONS} 只持仓"));
@@ -716,12 +1054,18 @@ pub async fn calibrate(pool: &PgPool, user_id: i64, account_id: i64, cash: f64, 
             return invalid(format!("{code} 的成本价要大于 0"));
         }
     }
-    let old: HashMap<String, Position> = positions_tx(&mut tx, account_id).await?.into_iter().map(|p| (p.thscode.clone(), p)).collect();
+    let old: HashMap<String, Position> = positions_tx(&mut tx, account_id)
+        .await?
+        .into_iter()
+        .map(|p| (p.thscode.clone(), p))
+        .collect();
     for p in list {
         let code = p.thscode.trim();
         let before = old.get(code);
         let cost = p.cost_price.map(|c| (c * 10_000.0).round() / 10_000.0);
-        let unchanged = before.is_some_and(|b| b.shares == p.shares && b.cost_price == cost && b.opened_on == p.opened_on);
+        let unchanged = before.is_some_and(|b| {
+            b.shares == p.shares && b.cost_price == cost && b.opened_on == p.opened_on
+        });
         if unchanged {
             continue;
         }
@@ -749,24 +1093,70 @@ pub async fn calibrate(pool: &PgPool, user_id: i64, account_id: i64, cash: f64, 
             Some(b) if delta != 0 => format!("校准：股数 {} → {}", b.shares, p.shares),
             Some(_) => "校准：成本价或买入日".to_string(),
         };
-        insert_trade(&mut tx, account_id, TradeKind::Adjust, today, Some(code), Some(delta), cost, 0.0, 0.0, TradeSource::User, &note).await?;
+        insert_trade(
+            &mut tx,
+            account_id,
+            TradeKind::Adjust,
+            today,
+            Some(code),
+            Some(delta),
+            cost,
+            0.0,
+            0.0,
+            TradeSource::User,
+            &note,
+        )
+        .await?;
     }
     for (code, b) in &old {
         if !list.iter().any(|p| p.thscode.trim() == code) {
-            sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2").bind(account_id).bind(code).execute(&mut *tx).await?;
-            insert_trade(&mut tx, account_id, TradeKind::Adjust, today, Some(code), Some(-b.shares), None, 0.0, 0.0, TradeSource::User, "校准：移除持仓").await?;
+            sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2")
+                .bind(account_id)
+                .bind(code)
+                .execute(&mut *tx)
+                .await?;
+            insert_trade(
+                &mut tx,
+                account_id,
+                TradeKind::Adjust,
+                today,
+                Some(code),
+                Some(-b.shares),
+                None,
+                0.0,
+                0.0,
+                TradeSource::User,
+                "校准：移除持仓",
+            )
+            .await?;
         }
     }
     let delta = round2(cash - old_cash);
     if delta.abs() >= 0.005 {
         add_cash(&mut tx, account_id, delta).await?;
-        insert_trade(&mut tx, account_id, TradeKind::Adjust, today, None, None, None, delta, 0.0, TradeSource::User, &format!("校准：现金 {old_cash:.2} → {cash:.2}")).await?;
+        insert_trade(
+            &mut tx,
+            account_id,
+            TradeKind::Adjust,
+            today,
+            None,
+            None,
+            None,
+            delta,
+            0.0,
+            TradeSource::User,
+            &format!("校准：现金 {old_cash:.2} → {cash:.2}"),
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(())
 }
 
-async fn positions_tx(tx: &mut Transaction<'_, Postgres>, account_id: i64) -> Result<Vec<Position>> {
+async fn positions_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: i64,
+) -> Result<Vec<Position>> {
     let rows: Vec<PositionRow> = sqlx::query_as(
         "SELECT thscode, shares, cost_price::float8, opened_on, strategy_id, since FROM app.position WHERE account_id = $1 FOR UPDATE",
     )
@@ -775,14 +1165,42 @@ async fn positions_tx(tx: &mut Transaction<'_, Postgres>, account_id: i64) -> Re
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(thscode, shares, cost_price, opened_on, strategy_id, since)| Position { thscode, shares, cost_price, opened_on, strategy_id, since })
+        .map(
+            |(thscode, shares, cost_price, opened_on, strategy_id, since)| Position {
+                thscode,
+                shares,
+                cost_price,
+                opened_on,
+                strategy_id,
+                since,
+            },
+        )
         .collect())
 }
 
-type TradeRow = (i64, String, NaiveDate, Option<String>, Option<String>, Option<i64>, Option<f64>, f64, f64, String, String, Option<DateTime<Utc>>, DateTime<Utc>);
+type TradeRow = (
+    i64,
+    String,
+    NaiveDate,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<f64>,
+    f64,
+    f64,
+    String,
+    String,
+    Option<DateTime<Utc>>,
+    DateTime<Utc>,
+);
 
 /// 流水，新的在前；已撤销的也列出来（标着撤销时间），方便核对
-pub async fn trades(pool: &PgPool, user_id: i64, account_id: i64, limit: i64) -> Result<Vec<Trade>> {
+pub async fn trades(
+    pool: &PgPool,
+    user_id: i64,
+    account_id: i64,
+    limit: i64,
+) -> Result<Vec<Trade>> {
     get(pool, user_id, account_id).await?;
     let realized = realized(pool, account_id).await?;
     let rows: Vec<TradeRow> = sqlx::query_as(
@@ -796,10 +1214,10 @@ pub async fn trades(pool: &PgPool, user_id: i64, account_id: i64, limit: i64) ->
     .fetch_all(pool)
     .await?;
     rows.into_iter()
-        .map(|(trade_id, kind, trade_date, thscode, name, shares, price, amount, fee, source, note, reversed_at, created_at)| {
-            Ok(Trade {
+        .map(
+            |(
                 trade_id,
-                kind: parse_enum(&kind)?,
+                kind,
                 trade_date,
                 thscode,
                 name,
@@ -807,13 +1225,29 @@ pub async fn trades(pool: &PgPool, user_id: i64, account_id: i64, limit: i64) ->
                 price,
                 amount,
                 fee,
-                source: parse_enum(&source)?,
+                source,
                 note,
-                realized_pnl: realized.sell_pnls.get(&trade_id).copied(),
                 reversed_at,
                 created_at,
-            })
-        })
+            )| {
+                Ok(Trade {
+                    trade_id,
+                    kind: parse_enum(&kind)?,
+                    trade_date,
+                    thscode,
+                    name,
+                    shares,
+                    price,
+                    amount,
+                    fee,
+                    source: parse_enum(&source)?,
+                    note,
+                    realized_pnl: realized.sell_pnls.get(&trade_id).copied(),
+                    reversed_at,
+                    created_at,
+                })
+            },
+        )
         .collect::<anyhow::Result<_>>()
         .map_err(AccountError::Internal)
 }
@@ -824,10 +1258,23 @@ mod tests {
 
     #[test]
     fn enum_keys_match_serde_names() {
-        for k in [TradeKind::Buy, TradeKind::Sell, TradeKind::Dividend, TradeKind::Bonus, TradeKind::Rights, TradeKind::CashIn, TradeKind::CashOut, TradeKind::Adjust] {
+        for k in [
+            TradeKind::Buy,
+            TradeKind::Sell,
+            TradeKind::Dividend,
+            TradeKind::Bonus,
+            TradeKind::Rights,
+            TradeKind::CashIn,
+            TradeKind::CashOut,
+            TradeKind::Adjust,
+        ] {
             assert_eq!(parse_enum::<TradeKind>(k.key()).unwrap(), k);
         }
-        for s in [TradeSource::User, TradeSource::Advice, TradeSource::CorpAction] {
+        for s in [
+            TradeSource::User,
+            TradeSource::Advice,
+            TradeSource::CorpAction,
+        ] {
             assert_eq!(parse_enum::<TradeSource>(s.key()).unwrap(), s);
         }
     }

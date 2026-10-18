@@ -27,7 +27,10 @@ const RETRY: Duration = Duration::from_secs(3600);
 pub async fn dump(docker: &Docker, pg_id: &str, file: &Path) -> anyhow::Result<u64> {
     let tmp = file.with_extension("tmp");
     let script = "set -e; f=$(mktemp); trap 'rm -f \"$f\"' EXIT; pg_dump -U niulai -Fc niulai > \"$f\"; pg_restore --list \"$f\" > /dev/null; cat \"$f\"";
-    let (code, stderr) = match docker.exec_to_file(pg_id, &["sh", "-c", script], &tmp).await {
+    let (code, stderr) = match docker
+        .exec_to_file(pg_id, &["sh", "-c", script], &tmp)
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_file(&tmp);
@@ -39,7 +42,10 @@ pub async fn dump(docker: &Docker, pg_id: &str, file: &Path) -> anyhow::Result<u
         bail!("导出或校验失败（退出码 {code}）：{}", stderr.trim());
     }
     // pg_dump 自定义格式的文件以 PGDMP 开头
-    let head = std::fs::read(&tmp).ok().map(|b| b.starts_with(b"PGDMP")).unwrap_or(false);
+    let head = std::fs::read(&tmp)
+        .ok()
+        .map(|b| b.starts_with(b"PGDMP"))
+        .unwrap_or(false);
     if !head {
         let _ = std::fs::remove_file(&tmp);
         bail!("备份文件不完整");
@@ -51,7 +57,12 @@ pub async fn dump(docker: &Docker, pg_id: &str, file: &Path) -> anyhow::Result<u
 /// 只保留某一类备份中最新的 keep 份（按修改时间：升级前备份的文件名里有版本号，按名字排不准）
 pub fn prune(dir: &Path, prefix: &str, keep: usize) {
     let mut files = list(dir, prefix);
-    files.sort_by_key(|p| (std::fs::metadata(p).and_then(|m| m.modified()).ok(), p.clone()));
+    files.sort_by_key(|p| {
+        (
+            std::fs::metadata(p).and_then(|m| m.modified()).ok(),
+            p.clone(),
+        )
+    });
     let n = files.len().saturating_sub(keep);
     for f in &files[..n] {
         let _ = std::fs::remove_file(f);
@@ -59,9 +70,15 @@ pub fn prune(dir: &Path, prefix: &str, keep: usize) {
 }
 
 fn list(dir: &Path, prefix: &str) -> Vec<PathBuf> {
-    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return vec![];
+    };
     rd.filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(prefix) && n.ends_with(".dump")))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(prefix) && n.ends_with(".dump"))
+        })
         .collect()
 }
 
@@ -78,7 +95,10 @@ pub fn latest_daily(dir: &Path) -> Option<NaiveDateTime> {
 }
 
 fn newest(dir: &Path) -> Option<(PathBuf, NaiveDateTime)> {
-    list(dir, DAILY_PREFIX).into_iter().filter_map(|p| time_of(&p, DAILY_PREFIX).map(|t| (p, t))).max_by_key(|(_, t)| *t)
+    list(dir, DAILY_PREFIX)
+        .into_iter()
+        .filter_map(|p| time_of(&p, DAILY_PREFIX).map(|t| (p, t)))
+        .max_by_key(|(_, t)| *t)
 }
 
 /// 现在要不要做每日备份：今天到点了还没做，或者最近一份已经超过 30 小时（服务停过、到点时在升级等）
@@ -86,7 +106,9 @@ pub fn due(now: NaiveDateTime, latest: Option<NaiveDateTime>) -> bool {
     let at = NaiveTime::from_hms_opt(BACKUP_AT.0, BACKUP_AT.1, 0).expect("合法的时间");
     match latest {
         None => true,
-        Some(l) => (now.time() >= at && l.date() < now.date()) || now - l > chrono::Duration::hours(30),
+        Some(l) => {
+            (now.time() >= at && l.date() < now.date()) || now - l > chrono::Duration::hours(30)
+        }
     }
 }
 
@@ -106,7 +128,10 @@ impl Daily {
         if !due(now, latest_daily(dir)) {
             return;
         }
-        let file = dir.join(format!("{DAILY_PREFIX}{}.dump", now.format("%Y%m%d-%H%M%S")));
+        let file = dir.join(format!(
+            "{DAILY_PREFIX}{}.dump",
+            now.format("%Y%m%d-%H%M%S")
+        ));
         let started = Instant::now();
         let res = async {
             std::fs::create_dir_all(dir)?;
@@ -157,10 +182,22 @@ mod tests {
     #[test]
     fn backs_up_once_a_day_after_the_hour() {
         assert!(due(t("2026-10-18 01:00"), None), "从没备份过：马上做");
-        assert!(!due(t("2026-10-18 01:00"), Some(t("2026-10-17 03:30"))), "还没到点");
-        assert!(due(t("2026-10-18 03:31"), Some(t("2026-10-17 03:30"))), "到点了，今天还没做");
-        assert!(!due(t("2026-10-18 23:00"), Some(t("2026-10-18 03:31"))), "今天做过了");
-        assert!(due(t("2026-10-18 02:00"), Some(t("2026-10-16 18:00"))), "太久没做（停过机）：不等到点");
+        assert!(
+            !due(t("2026-10-18 01:00"), Some(t("2026-10-17 03:30"))),
+            "还没到点"
+        );
+        assert!(
+            due(t("2026-10-18 03:31"), Some(t("2026-10-17 03:30"))),
+            "到点了，今天还没做"
+        );
+        assert!(
+            !due(t("2026-10-18 23:00"), Some(t("2026-10-18 03:31"))),
+            "今天做过了"
+        );
+        assert!(
+            due(t("2026-10-18 02:00"), Some(t("2026-10-16 18:00"))),
+            "太久没做（停过机）：不等到点"
+        );
     }
 
     #[test]
@@ -168,9 +205,17 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("niulai-backup-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for d in 10..=20 {
-            std::fs::write(dir.join(format!("{DAILY_PREFIX}202610{d}-033000.dump")), "x").unwrap();
+            std::fs::write(
+                dir.join(format!("{DAILY_PREFIX}202610{d}-033000.dump")),
+                "x",
+            )
+            .unwrap();
         }
-        std::fs::write(dir.join(format!("{UPGRADE_PREFIX}2026.10.18-20261018-100000.dump")), "x").unwrap();
+        std::fs::write(
+            dir.join(format!("{UPGRADE_PREFIX}2026.10.18-20261018-100000.dump")),
+            "x",
+        )
+        .unwrap();
         prune(&dir, DAILY_PREFIX, 3);
         assert_eq!(list(&dir, DAILY_PREFIX).len(), 3);
         assert_eq!(list(&dir, UPGRADE_PREFIX).len(), 1, "升级前的备份不受影响");

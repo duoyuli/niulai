@@ -36,28 +36,41 @@ async fn sync_health(State(s): State<AppState>) -> ApiResult<Json<crate::sync::a
 
 /// 立即兜底补偿：能重新取的缺口规划补偿运行，供应商暂时不可用导致的失败重新排队。每天每日同步结束后也会自动执行一次
 #[utoipa::path(post, path = "/sync/repair", tag = "sync", responses((status = 202, description = "已规划补偿", body = crate::sync::audit::RepairSummary)))]
-async fn sync_repair(State(s): State<AppState>) -> ApiResult<(StatusCode, Json<crate::sync::audit::RepairSummary>)> {
-    Ok((StatusCode::ACCEPTED, Json(crate::sync::audit::repair(&s.engine).await?)))
+async fn sync_repair(
+    State(s): State<AppState>,
+) -> ApiResult<(StatusCode, Json<crate::sync::audit::RepairSummary>)> {
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(crate::sync::audit::repair(&s.engine).await?),
+    ))
 }
 
 /// 同步计划：每日、每周、每月、财报季各在什么时候同步、包括哪些数据、下次和上次同步。时间都是上海时间
 #[utoipa::path(get, path = "/sync/schedule", tag = "sync", responses((status = 200, description = "成功", body = crate::sync::scheduler::SyncSchedule)))]
-async fn get_schedule(State(s): State<AppState>) -> ApiResult<Json<crate::sync::scheduler::SyncSchedule>> {
+async fn get_schedule(
+    State(s): State<AppState>,
+) -> ApiResult<Json<crate::sync::scheduler::SyncSchedule>> {
     Ok(Json(crate::sync::scheduler::overview(&s.engine).await?))
 }
 
 /// 修改同步时间（上海时间），下一次检查（30 秒内）起生效
 #[utoipa::path(put, path = "/sync/schedule", tag = "sync", request_body = crate::sync::scheduler::ScheduleTimes,
     responses((status = 200, description = "已保存", body = crate::sync::scheduler::SyncSchedule), (status = 400, description = "时间格式不对", body = crate::error::ErrorBody)))]
-async fn update_schedule(State(s): State<AppState>, Json(body): Json<crate::sync::scheduler::ScheduleTimes>) -> ApiResult<Json<crate::sync::scheduler::SyncSchedule>> {
-    body.validate().map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
+async fn update_schedule(
+    State(s): State<AppState>,
+    Json(body): Json<crate::sync::scheduler::ScheduleTimes>,
+) -> ApiResult<Json<crate::sync::scheduler::SyncSchedule>> {
+    body.validate()
+        .map_err(|e| ApiError::BadRequest(format!("{e:#}")))?;
     crate::sync::scheduler::save_times(&s.pool, &body).await?;
     Ok(Json(crate::sync::scheduler::overview(&s.engine).await?))
 }
 
 /// 数据核检：最近一次核检的结果（每个数据集查了多少、新发现、已补回、确认停牌、仍缺），以及还缺数据的证券
 #[utoipa::path(get, path = "/sync/check", tag = "sync", responses((status = 200, description = "成功", body = crate::sync::check::DataCheckStatus)))]
-async fn data_check_status(State(s): State<AppState>) -> ApiResult<Json<crate::sync::check::DataCheckStatus>> {
+async fn data_check_status(
+    State(s): State<AppState>,
+) -> ApiResult<Json<crate::sync::check::DataCheckStatus>> {
     Ok(Json(crate::sync::check::status(&s.pool).await?))
 }
 
@@ -102,7 +115,18 @@ pub struct DatasetStatus {
     pub backfill_done: i64,
 }
 
-type DatasetRow = (String, String, String, String, bool, Option<DateTime<Utc>>, i64, i64, i64, i64);
+type DatasetRow = (
+    String,
+    String,
+    String,
+    String,
+    bool,
+    Option<DateTime<Utc>>,
+    i64,
+    i64,
+    i64,
+    i64,
+);
 
 /// 数据集列表及同步状态
 #[utoipa::path(get, path = "/datasets", tag = "sync", responses((status = 200, description = "成功", body = [DatasetStatus])))]
@@ -132,14 +156,8 @@ async fn list_datasets(State(s): State<AppState>) -> ApiResult<Json<Vec<DatasetS
     let reg = &s.engine.registry;
     let out = rows
         .into_iter()
-        .map(|(dataset_id, domain, endpoint, priority, enabled, last_done_at, open_tasks, dead_tasks, backfill_total, backfill_done)| {
-            let spec = reg.get(&dataset_id);
-            DatasetStatus {
-                title: spec.map_or_else(|| dataset_id.clone(), |s| s.title.clone()),
-                category: spec.map_or_else(|| "其他".into(), |s| s.category.clone()),
-                summary: spec.map(|s| s.summary.clone()).unwrap_or_default(),
-                schedule: spec.map_or("daily", |s| s.schedule.key()).into(),
-                only_current: spec.is_some_and(|s| s.trade_date_guard && s.recover_with.is_none()),
+        .map(
+            |(
                 dataset_id,
                 domain,
                 endpoint,
@@ -150,8 +168,28 @@ async fn list_datasets(State(s): State<AppState>) -> ApiResult<Json<Vec<DatasetS
                 dead_tasks,
                 backfill_total,
                 backfill_done,
-            }
-        })
+            )| {
+                let spec = reg.get(&dataset_id);
+                DatasetStatus {
+                    title: spec.map_or_else(|| dataset_id.clone(), |s| s.title.clone()),
+                    category: spec.map_or_else(|| "其他".into(), |s| s.category.clone()),
+                    summary: spec.map(|s| s.summary.clone()).unwrap_or_default(),
+                    schedule: spec.map_or("daily", |s| s.schedule.key()).into(),
+                    only_current: spec
+                        .is_some_and(|s| s.trade_date_guard && s.recover_with.is_none()),
+                    dataset_id,
+                    domain,
+                    endpoint,
+                    priority,
+                    enabled,
+                    last_done_at,
+                    open_tasks,
+                    dead_tasks,
+                    backfill_total,
+                    backfill_done,
+                }
+            },
+        )
         .collect();
     Ok(Json(out))
 }
@@ -179,7 +217,11 @@ pub struct RecordItem {
 /// 通用记录查询：任何已同步数据集的原始记录（字段保持供应商原样）
 #[utoipa::path(get, path = "/datasets/{dataset_id}/records", tag = "sync", params(("dataset_id" = String, Path, description = "例：special.limit_up_pool"), RecordQuery),
     responses((status = 200, description = "成功", body = [RecordItem]), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
-async fn dataset_records(State(s): State<AppState>, Path(id): Path<String>, Query(q): Query<RecordQuery>) -> ApiResult<Json<Vec<RecordItem>>> {
+async fn dataset_records(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<RecordQuery>,
+) -> ApiResult<Json<Vec<RecordItem>>> {
     if s.engine.registry.get(&id).is_none() {
         return Err(ApiError::NotFound(format!("未知的数据集：{id}")));
     }
@@ -225,11 +267,16 @@ const RUN_COLUMNS: &str = "run_id, kind, trade_date, status, tasks_total, tasks_
 
 /// 最近的同步运行
 #[utoipa::path(get, path = "/sync/runs", tag = "sync", params(RunListQuery), responses((status = 200, description = "成功", body = [RunSummary])))]
-async fn list_runs(State(s): State<AppState>, Query(q): Query<RunListQuery>) -> ApiResult<Json<Vec<RunSummary>>> {
-    let rows = sqlx::query_as(AssertSqlSafe(format!("SELECT {RUN_COLUMNS} FROM ops.run ORDER BY run_id DESC LIMIT $1")))
-        .bind(q.limit.unwrap_or(20).clamp(1, 200))
-        .fetch_all(&s.pool)
-        .await?;
+async fn list_runs(
+    State(s): State<AppState>,
+    Query(q): Query<RunListQuery>,
+) -> ApiResult<Json<Vec<RunSummary>>> {
+    let rows = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT {RUN_COLUMNS} FROM ops.run ORDER BY run_id DESC LIMIT $1"
+    )))
+    .bind(q.limit.unwrap_or(20).clamp(1, 200))
+    .fetch_all(&s.pool)
+    .await?;
     Ok(Json(rows))
 }
 
@@ -264,16 +311,33 @@ pub struct PlannedDataset {
 /// 发起一次同步运行。先返回运行编号，任务规划在后台完成，避免首次大回补占住 HTTP 请求。
 #[utoipa::path(post, path = "/sync/runs", tag = "sync", request_body = CreateRun,
     responses((status = 202, description = "已规划，任务由执行循环执行", body = CreatedRun), (status = 400, description = "参数不合法", body = crate::error::ErrorBody)))]
-async fn create_run(State(s): State<AppState>, Json(body): Json<CreateRun>) -> ApiResult<(StatusCode, Json<CreatedRun>)> {
-    let kind: RunKind = body.kind.parse().map_err(|e: anyhow::Error| ApiError::BadRequest(e.to_string()))?;
-    let specs = s.engine.select(&body.datasets, &body.priorities).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+async fn create_run(
+    State(s): State<AppState>,
+    Json(body): Json<CreateRun>,
+) -> ApiResult<(StatusCode, Json<CreatedRun>)> {
+    let kind: RunKind = body
+        .kind
+        .parse()
+        .map_err(|e: anyhow::Error| ApiError::BadRequest(e.to_string()))?;
+    let specs = s
+        .engine
+        .select(&body.datasets, &body.priorities)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     if specs.is_empty() {
         return Err(ApiError::BadRequest("没有选中任何数据集".into()));
     }
     let job = s
         .engine
         .planner()
-        .create_planning_job(kind, &specs, planner::PlanOptions { only_thscodes: body.thscodes, trigger: Some("manual".into()), ..Default::default() })
+        .create_planning_job(
+            kind,
+            &specs,
+            planner::PlanOptions {
+                only_thscodes: body.thscodes,
+                trigger: Some("manual".into()),
+                ..Default::default()
+            },
+        )
         .await?;
     let run_id = job.run_id;
     let engine = s.engine.clone();
@@ -282,7 +346,13 @@ async fn create_run(State(s): State<AppState>, Json(body): Json<CreateRun>) -> A
             tracing::error!(run_id, error = %format!("{e:#}"), "后台规划同步运行失败");
         }
     });
-    Ok((StatusCode::ACCEPTED, Json(CreatedRun { run_id, planned: vec![] })))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CreatedRun {
+            run_id,
+            planned: vec![],
+        }),
+    ))
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -340,11 +410,13 @@ pub struct RunDetail {
 #[utoipa::path(get, path = "/sync/runs/{run_id}", tag = "sync", params(("run_id" = i64, Path)),
     responses((status = 200, description = "成功", body = RunDetail), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
 async fn get_run(State(s): State<AppState>, Path(run_id): Path<i64>) -> ApiResult<Json<RunDetail>> {
-    let root: i64 = sqlx::query_scalar("SELECT coalesce((params->>'root_run')::bigint, run_id) FROM ops.run WHERE run_id = $1")
-        .bind(run_id)
-        .fetch_optional(&s.pool)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("运行不存在：{run_id}")))?;
+    let root: i64 = sqlx::query_scalar(
+        "SELECT coalesce((params->>'root_run')::bigint, run_id) FROM ops.run WHERE run_id = $1",
+    )
+    .bind(run_id)
+    .fetch_optional(&s.pool)
+    .await?
+    .ok_or_else(|| ApiError::NotFound(format!("运行不存在：{run_id}")))?;
     let waves: Vec<RunSummary> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT {RUN_COLUMNS} FROM ops.run WHERE run_id = $1 OR (params->>'root_run')::bigint = $1 ORDER BY run_id"
     )))
@@ -372,11 +444,34 @@ async fn get_run(State(s): State<AppState>, Path(run_id): Path<i64>) -> ApiResul
     .fetch_all(&s.pool)
     .await?;
 
-    let list = |v: &Value, k: &str| -> Vec<Value> { v.get(k).and_then(Value::as_array).cloned().unwrap_or_default() };
-    let names = |v: Vec<Value>| -> Vec<String> { v.into_iter().filter_map(|x| x.as_str().map(String::from)).collect() };
-    let planned: Vec<String> = waves.iter().flat_map(|w| names(list(&w.params, "datasets"))).collect();
-    let waiting: Vec<Vec<String>> = waves.last().map(|w| list(&w.params, "pending_waves").into_iter().map(|x| names(x.as_array().cloned().unwrap_or_default())).collect()).unwrap_or_default();
-    let missing: Vec<String> = planned.into_iter().filter(|d| !progress.iter().any(|p| &p.dataset_id == d)).collect();
+    let list = |v: &Value, k: &str| -> Vec<Value> {
+        v.get(k)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let names = |v: Vec<Value>| -> Vec<String> {
+        v.into_iter()
+            .filter_map(|x| x.as_str().map(String::from))
+            .collect()
+    };
+    let planned: Vec<String> = waves
+        .iter()
+        .flat_map(|w| names(list(&w.params, "datasets")))
+        .collect();
+    let waiting: Vec<Vec<String>> = waves
+        .last()
+        .map(|w| {
+            list(&w.params, "pending_waves")
+                .into_iter()
+                .map(|x| names(x.as_array().cloned().unwrap_or_default()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let missing: Vec<String> = planned
+        .into_iter()
+        .filter(|d| !progress.iter().any(|p| &p.dataset_id == d))
+        .collect();
     // 这些数据集同一部分已经在别的同步里排队：找出那次同步（第一批的编号）
     let queued: Vec<(String, i64)> = sqlx::query_as(
         "SELECT t.dataset_id, min(coalesce((r.params->>'root_run')::bigint, r.run_id))
@@ -390,8 +485,21 @@ async fn get_run(State(s): State<AppState>, Path(run_id): Path<i64>) -> ApiResul
     .await?;
     let without_tasks = missing
         .into_iter()
-        .map(|d| DatasetWithoutTasks { queued_in: queued.iter().find(|(q, _)| *q == d).map(|(_, r)| *r), dataset_id: d })
+        .map(|d| DatasetWithoutTasks {
+            queued_in: queued.iter().find(|(q, _)| *q == d).map(|(_, r)| *r),
+            dataset_id: d,
+        })
         .collect();
-    let run = waves.first().cloned().ok_or_else(|| ApiError::NotFound(format!("运行不存在：{run_id}")))?;
-    Ok(Json(RunDetail { run, waves, waiting, progress, without_tasks, failures }))
+    let run = waves
+        .first()
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound(format!("运行不存在：{run_id}")))?;
+    Ok(Json(RunDetail {
+        run,
+        waves,
+        waiting,
+        progress,
+        without_tasks,
+        failures,
+    }))
 }

@@ -13,6 +13,8 @@
 <a id="fields"></a>
 ## 字段
 
+注册表在启动时校验分区大小、窗口长度、`records` 路径、sink 名称、`from_dataset` 来源和依赖环。非法配置会阻止服务启动，避免把错误延迟到规划或执行阶段。
+
 文件有两个顶层键：`defaults`（默认值）和 `datasets`（数据集列表）。程序启动时解析并校验整个文件：未知的分区类型、分页方式、调度类型、重复的 ID 都会让启动失败，不会等到执行时才发现。
 
 `defaults` 中被程序读取的键：`paging`、`incremental`、`schedule`，以及 `retry.max_attempts`（任务最大尝试次数，默认 4）和 `retry.backoff_s`（单次请求的退避秒数，默认 2、8、30）。

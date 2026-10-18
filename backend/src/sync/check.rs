@@ -24,7 +24,6 @@ use super::run::RunKind;
 use super::spec::{DatasetSpec, Partition};
 use crate::time::today_cn;
 
-
 /// 进程内同时只做一次核检
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -69,22 +68,32 @@ pub async fn run(engine: &Engine, trigger: &str) -> anyhow::Result<Option<i64>> 
 
 async fn run_locked(engine: &Engine, trigger: &str) -> anyhow::Result<i64> {
     let end: Option<NaiveDate> =
-        sqlx::query_scalar("SELECT max(cal_date) FROM ref.trading_day WHERE cal_date < $1").bind(today_cn()).fetch_one(&engine.pool).await?;
+        sqlx::query_scalar("SELECT max(cal_date) FROM ref.trading_day WHERE cal_date < $1")
+            .bind(today_cn())
+            .fetch_one(&engine.pool)
+            .await?;
     // 上一次核检没有做完（程序中途退出）：记下来，页面上不再显示为进行中
     sqlx::query("UPDATE ops.data_check SET finished_at = now(), error = '没有做完：程序中途退出了' WHERE finished_at IS NULL")
         .execute(&engine.pool)
         .await?;
-    let check_id: i64 = sqlx::query_scalar("INSERT INTO ops.data_check (trigger, end_date) VALUES ($1, $2) RETURNING check_id")
-        .bind(trigger)
-        .bind(end)
-        .fetch_one(&engine.pool)
-        .await?;
+    let check_id: i64 = sqlx::query_scalar(
+        "INSERT INTO ops.data_check (trigger, end_date) VALUES ($1, $2) RETURNING check_id",
+    )
+    .bind(trigger)
+    .bind(end)
+    .fetch_one(&engine.pool)
+    .await?;
     let started = std::time::Instant::now();
     let mut results = vec![];
     let mut error = None;
     if let Some(end) = end {
         // 核检的是按证券和时间窗口取历史日线的数据集（个股日线、指数日线），由配置的分区和 sink 决定
-        for (spec, table) in engine.registry.bar_histories().into_iter().filter(|(s, _)| s.enabled) {
+        for (spec, table) in engine
+            .registry
+            .bar_histories()
+            .into_iter()
+            .filter(|(s, _)| s.enabled)
+        {
             let id = &spec.id;
             match check_dataset(engine, spec, table, end).await {
                 Ok(r) => results.push(r),
@@ -105,9 +114,20 @@ async fn run_locked(engine: &Engine, trigger: &str) -> anyhow::Result<i64> {
     Ok(check_id)
 }
 
-async fn check_dataset(engine: &Engine, spec: &DatasetSpec, table: &str, end: NaiveDate) -> anyhow::Result<CheckResult> {
+async fn check_dataset(
+    engine: &Engine,
+    spec: &DatasetSpec,
+    table: &str,
+    end: NaiveDate,
+) -> anyhow::Result<CheckResult> {
     let pool = &engine.pool;
-    let Partition::SecurityWindow { universe, floor, start_from_list_date, .. } = &spec.partition else {
+    let Partition::SecurityWindow {
+        universe,
+        floor,
+        start_from_list_date,
+        ..
+    } = &spec.partition
+    else {
         anyhow::bail!("{} 不是按证券和时间窗口同步的数据集", spec.id);
     };
     let floor = floor.resolve(today_cn());
@@ -215,8 +235,15 @@ async fn check_dataset(engine: &Engine, spec: &DatasetSpec, table: &str, end: Na
     let (refetch_run, refetch_tasks) = if windows.is_empty() {
         (None, 0)
     } else {
-        let opts = PlanOptions { windows: windows.clone(), trigger: Some("data_check".into()), ..Default::default() };
-        let (run_id, summary) = engine.planner().plan_run(RunKind::Repair, &[spec], opts).await?;
+        let opts = PlanOptions {
+            windows: windows.clone(),
+            trigger: Some("data_check".into()),
+            ..Default::default()
+        };
+        let (run_id, summary) = engine
+            .planner()
+            .plan_run(RunKind::Repair, &[spec], opts)
+            .await?;
         let wcodes: Vec<&str> = todo.iter().map(|(c, _)| c.as_str()).collect();
         let wdates: Vec<NaiveDate> = todo.iter().map(|(_, d)| *d).collect();
         sqlx::query(
@@ -232,10 +259,12 @@ async fn check_dataset(engine: &Engine, spec: &DatasetSpec, table: &str, end: Na
         (Some(run_id), summary.iter().map(|(_, n)| *n as i64).sum())
     };
 
-    let counts: Vec<(String, i64)> = sqlx::query_as("SELECT status, count(*) FROM ops.bar_gap WHERE dataset_id = $1 GROUP BY status")
-        .bind(&spec.id)
-        .fetch_all(pool)
-        .await?;
+    let counts: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT status, count(*) FROM ops.bar_gap WHERE dataset_id = $1 GROUP BY status",
+    )
+    .bind(&spec.id)
+    .fetch_all(pool)
+    .await?;
     let count = |s: &str| counts.iter().find(|(k, _)| k == s).map_or(0, |(_, n)| *n);
     Ok(CheckResult {
         dataset_id: spec.id.clone(),
@@ -263,7 +292,10 @@ pub fn merge_windows(gaps: &[(String, NaiveDate)]) -> Vec<Window> {
         w.0 = w.0.min(*d);
         w.1 = w.1.max(*d);
     }
-    by_code.into_iter().map(|(c, (lo, hi))| (c.to_string(), lo, hi)).collect()
+    by_code
+        .into_iter()
+        .map(|(c, (lo, hi))| (c.to_string(), lo, hi))
+        .collect()
 }
 
 /// 定时核检：每周同步全部结束后一次；之后重取的运行结束了，再核检一次确认结果（至少隔 10 分钟）
@@ -271,7 +303,9 @@ pub async fn auto(engine: &Engine) -> anyhow::Result<()> {
     if is_running() {
         return Ok(());
     }
-    if weekly_finished(&engine.pool).await? && super::scheduler::claim(&engine.pool, "data_check", today_cn(), "week").await? {
+    if weekly_finished(&engine.pool).await?
+        && super::scheduler::claim(&engine.pool, "data_check", today_cn(), "week").await?
+    {
         run(engine, "weekly").await?;
         return Ok(());
     }
@@ -301,7 +335,11 @@ async fn weekly_finished(pool: &PgPool) -> anyhow::Result<bool> {
             .bind(root)
             .fetch_all(pool)
             .await?;
-    let more = waves.last().and_then(|(_, p)| p.get("pending_waves")).and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty());
+    let more = waves
+        .last()
+        .and_then(|(_, p)| p.get("pending_waves"))
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| !a.is_empty());
     Ok(!waves.is_empty() && !more && waves.iter().all(|(s, _)| s != "running"))
 }
 
@@ -356,7 +394,11 @@ pub async fn status(pool: &PgPool) -> anyhow::Result<DataCheckStatus> {
     )
     .fetch_all(pool)
     .await?;
-    Ok(DataCheckStatus { running: is_running(), last, open })
+    Ok(DataCheckStatus {
+        running: is_running(),
+        last,
+        open,
+    })
 }
 
 #[cfg(test)]

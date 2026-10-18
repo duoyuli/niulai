@@ -1072,16 +1072,31 @@ mod tests {
 
     #[test]
     fn default_ma_cross_template_uses_fifteen_and_thirty_days() {
-        let t = templates().into_iter().find(|t| t.key == "ma_cross_15_30").expect("均线交叉模板");
+        let t = templates()
+            .into_iter()
+            .find(|t| t.key == "ma_cross_15_30")
+            .expect("均线交叉模板");
         let v = serde_json::to_value(t.definition).unwrap();
         assert_eq!(v["all"][0]["kind"], "compare");
-        assert_eq!(v["all"][0]["left"], serde_json::json!({"id": "ma", "n": 15}));
+        assert_eq!(
+            v["all"][0]["left"],
+            serde_json::json!({"id": "ma", "n": 15})
+        );
         assert_eq!(v["all"][0]["op"], "crosses_above");
-        assert_eq!(v["all"][0]["right"], serde_json::json!({"id": "ma", "n": 30}));
+        assert_eq!(
+            v["all"][0]["right"],
+            serde_json::json!({"id": "ma", "n": 30})
+        );
         assert_eq!(v["exit"]["any"][0]["kind"], "compare");
-        assert_eq!(v["exit"]["any"][0]["left"], serde_json::json!({"id": "ma", "n": 15}));
+        assert_eq!(
+            v["exit"]["any"][0]["left"],
+            serde_json::json!({"id": "ma", "n": 15})
+        );
         assert_eq!(v["exit"]["any"][0]["op"], "crosses_below");
-        assert_eq!(v["exit"]["any"][0]["right"], serde_json::json!({"id": "ma", "n": 30}));
+        assert_eq!(
+            v["exit"]["any"][0]["right"],
+            serde_json::json!({"id": "ma", "n": 30})
+        );
         assert!(v["exit"]["stop_loss_pct"].is_null());
         assert!(v["exit"]["max_hold_days"].is_null());
     }

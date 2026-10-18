@@ -72,20 +72,32 @@ impl LimitPool {
 
     /// 登记一天的涨停。连板数缺失或为 0 时按 1 处理
     pub fn push_up(&mut self, code: &str, date: NaiveDate, continue_day_cnt: u32) {
-        self.by_code.entry(code.to_string()).or_default().up.push((date, continue_day_cnt.max(1)));
+        self.by_code
+            .entry(code.to_string())
+            .or_default()
+            .up
+            .push((date, continue_day_cnt.max(1)));
         self.up.include(date);
         self.up_days.insert(date);
     }
 
     /// 登记一天的跌停
     pub fn push_down(&mut self, code: &str, date: NaiveDate) {
-        self.by_code.entry(code.to_string()).or_default().down.push(date);
+        self.by_code
+            .entry(code.to_string())
+            .or_default()
+            .down
+            .push(date);
         self.down.include(date);
     }
 
     /// 登记一天的炸板
     pub fn push_broken(&mut self, code: &str, date: NaiveDate) {
-        self.by_code.entry(code.to_string()).or_default().broken.push(date);
+        self.by_code
+            .entry(code.to_string())
+            .or_default()
+            .broken
+            .push(date);
         self.broken.include(date);
     }
 
@@ -105,17 +117,35 @@ impl LimitPool {
     }
 
     /// 指定股票在 lo 到 hi（含）之间的权威数据。单只股票、自选股这类查询用这个，只读需要的行
-    pub async fn load_for(pool: &PgPool, codes: &[String], lo: NaiveDate, hi: NaiveDate) -> sqlx::Result<Self> {
+    pub async fn load_for(
+        pool: &PgPool,
+        codes: &[String],
+        lo: NaiveDate,
+        hi: NaiveDate,
+    ) -> sqlx::Result<Self> {
         Self::load_inner(pool, Some(codes), lo, hi).await
     }
 
-    async fn load_inner(pool: &PgPool, codes: Option<&[String]>, lo: NaiveDate, hi: NaiveDate) -> sqlx::Result<Self> {
+    async fn load_inner(
+        pool: &PgPool,
+        codes: Option<&[String]>,
+        lo: NaiveDate,
+        hi: NaiveDate,
+    ) -> sqlx::Result<Self> {
         let mut out = Self::empty();
         // 覆盖边界是整个数据集的最小、最大日期：查询窗口外的日期也要知道能不能以池为准。
         // 分成单条 min、max 查询，能直接走 (dataset_id, obs_date) 索引
         let bounds = |dataset: &'static str| async move {
-            let from: Option<NaiveDate> = sqlx::query_scalar("SELECT min(obs_date) FROM raw.record WHERE dataset_id = $1").bind(dataset).fetch_one(pool).await?;
-            let through: Option<NaiveDate> = sqlx::query_scalar("SELECT max(obs_date) FROM raw.record WHERE dataset_id = $1").bind(dataset).fetch_one(pool).await?;
+            let from: Option<NaiveDate> =
+                sqlx::query_scalar("SELECT min(obs_date) FROM raw.record WHERE dataset_id = $1")
+                    .bind(dataset)
+                    .fetch_one(pool)
+                    .await?;
+            let through: Option<NaiveDate> =
+                sqlx::query_scalar("SELECT max(obs_date) FROM raw.record WHERE dataset_id = $1")
+                    .bind(dataset)
+                    .fetch_one(pool)
+                    .await?;
             Ok::<Coverage, sqlx::Error>(Coverage { from, through })
         };
         out.up = bounds(UP).await?;
@@ -136,13 +166,22 @@ impl LimitPool {
             .collect();
         // 只取判断需要的列：连板数按文本取回、在 Rust 里解析，不传输整条 payload（几万行时差别明显）
         // 审计：只拼接了本文件中的常量条件；日期和股票代码都是绑定参数
-        let filter = if codes.is_some() { "AND thscode = ANY($4)" } else { "" };
+        let filter = if codes.is_some() {
+            "AND thscode = ANY($4)"
+        } else {
+            ""
+        };
         let sql = format!(
             "SELECT thscode, dataset_id, obs_date, payload ->> 'continue_day_cnt' FROM raw.record
              WHERE dataset_id = ANY($1) AND obs_date BETWEEN $2 AND $3 AND thscode IS NOT NULL {filter}
              ORDER BY thscode, obs_date"
         );
-        let mut q = sqlx::query_as::<_, (String, String, NaiveDate, Option<String>)>(sqlx::AssertSqlSafe(sql)).bind(&DATASETS[..]).bind(lo).bind(hi);
+        let mut q = sqlx::query_as::<_, (String, String, NaiveDate, Option<String>)>(
+            sqlx::AssertSqlSafe(sql),
+        )
+        .bind(&DATASETS[..])
+        .bind(lo)
+        .bind(hi);
         if let Some(codes) = codes {
             q = q.bind(codes);
         }
@@ -153,10 +192,18 @@ impl LimitPool {
     }
 
     /// 解析一行 `raw.record`：涨停池取连板数（缺失、不是数字时按 1），跌停、炸板只看日期
-    fn push_row(&mut self, code: &str, dataset: &str, date: NaiveDate, continue_day_cnt: Option<&str>) {
+    fn push_row(
+        &mut self,
+        code: &str,
+        dataset: &str,
+        date: NaiveDate,
+        continue_day_cnt: Option<&str>,
+    ) {
         match dataset {
             UP => {
-                let n = continue_day_cnt.and_then(|v| v.parse::<u32>().ok()).unwrap_or(1);
+                let n = continue_day_cnt
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(1);
                 self.push_up(code, date, n);
             }
             DOWN => self.push_down(code, date),
@@ -177,7 +224,10 @@ pub struct CacheVersions {
 impl CacheVersions {
     pub async fn load(pool: &PgPool) -> sqlx::Result<Self> {
         let rows: Vec<(String, DateTime<Utc>)> =
-            sqlx::query_as("SELECT name, updated_at FROM ops.derived_version WHERE name = ANY($1)").bind(&["adj_factor", "limit_pool"][..]).fetch_all(pool).await?;
+            sqlx::query_as("SELECT name, updated_at FROM ops.derived_version WHERE name = ANY($1)")
+                .bind(&["adj_factor", "limit_pool"][..])
+                .fetch_all(pool)
+                .await?;
         let mut v = Self::default();
         for (name, at) in rows {
             match name.as_str() {
@@ -200,11 +250,20 @@ mod tests {
 
     #[test]
     fn coverage_boundaries() {
-        let c = Coverage { from: Some(d(1)), through: Some(d(20)) };
+        let c = Coverage {
+            from: Some(d(1)),
+            through: Some(d(20)),
+        };
         assert!(c.covers(d(1)) && c.covers(d(20)), "边界包含在内");
         assert!(!c.covers(d(21)) && !c.covers(NaiveDate::from_ymd_opt(2026, 9, 30).unwrap()));
-        assert!(!Coverage::default().covers(d(1)), "池还没有数据时什么日期都不覆盖");
-        let one = Coverage { from: Some(d(5)), through: Some(d(5)) };
+        assert!(
+            !Coverage::default().covers(d(1)),
+            "池还没有数据时什么日期都不覆盖"
+        );
+        let one = Coverage {
+            from: Some(d(5)),
+            through: Some(d(5)),
+        };
         assert!(one.covers(d(5)) && !one.covers(d(6)));
     }
 
@@ -238,6 +297,14 @@ mod tests {
         for day in [1, 3, 5] {
             p.push_row("600519.SH", UP, d(day), Some(&day.to_string()));
         }
-        assert_eq!(p.code("600519.SH").unwrap().up.iter().map(|(day, _)| *day).collect::<Vec<_>>(), vec![d(1), d(3), d(5)]);
+        assert_eq!(
+            p.code("600519.SH")
+                .unwrap()
+                .up
+                .iter()
+                .map(|(day, _)| *day)
+                .collect::<Vec<_>>(),
+            vec![d(1), d(3), d(5)]
+        );
     }
 }

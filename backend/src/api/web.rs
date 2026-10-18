@@ -29,12 +29,21 @@ pub fn service(dir: &Path) -> BoxCloneSyncService<Request<Body>, Response, Infal
                 return Ok(ApiError::NotFound(format!("接口不存在：{path}")).into_response());
             }
             let is_asset = path.starts_with("/assets/");
-            let mut res = if is_asset { assets.oneshot(req).await.into_response() } else { spa.oneshot(req).await.into_response() };
+            let mut res = if is_asset {
+                assets.oneshot(req).await.into_response()
+            } else {
+                spa.oneshot(req).await.into_response()
+            };
             if is_asset && !res.status().is_success() {
                 return Ok(res);
             }
-            let cache = if is_asset { "public, max-age=31536000, immutable" } else { "no-cache" };
-            res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+            let cache = if is_asset {
+                "public, max-age=31536000, immutable"
+            } else {
+                "no-cache"
+            };
+            res.headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
             Ok(res)
         }
     }))

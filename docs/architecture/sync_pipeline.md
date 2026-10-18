@@ -66,9 +66,9 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 规划时先创建第一个波次的 planning 运行，其余波次写入该运行的 `params.pending_waves`；API 返回运行编号后，后台再展开任务。后台规划每 30 秒刷新 `params.planning_heartbeat`，规划完成并写入全部任务后清除 planning 标记和心跳，执行者不会把空任务运行提前结束。维护按心跳超过 10 分钟判断规划是否中断，避免把正常但很慢的首次大回补误判为失败。一个波次的全部任务结束后，执行器先规划下一个波次，再做 [运行结束后的计算](#postprocess)，新运行的 `params.root_run` 指向第一个波次。接续时在创建新运行的同一个事务里清空前一个运行的 `pending_waves`（条件 UPDATE），所以下一个波次只会规划一次。结束 2 分钟以上、`pending_waves` 仍不为空的运行（接续时出错或进程退出）由执行循环每分钟的维护补上。某个波次规划出 0 个任务时，立即结束该运行并规划下一个波次。
 
-规划一个波次时，先算出所有数据集的任务，再在一个事务里创建运行、写入全部任务和任务总数。所以执行者看到一个运行时，它的任务已经齐全；否则前几个数据集的任务做完、后面的还在规划时，运行会被误判为已结束，下一个波次会提前开始。某个数据集规划失败（例如 universe 查询出错）时只记录错误，不影响同一波次的其他数据集。
+规划一个波次时，先算出所有数据集的任务，再在一个事务里创建运行、写入全部任务和任务总数。所以执行者看到一个运行时，它的任务已经齐全；否则前几个数据集的任务做完、后面的还在规划时，运行会被误判为已结束，下一个波次会提前开始。某个数据集规划失败（例如 universe 查询出错）时保留其他数据集的任务，但运行会记录 planning error，并在任务结束后显示为 `partial`，不能把未规划的数据集误报为成功。
 
-`from_dataset` 分区的增量规划只看上次规划之后变化的来源记录。读取来源记录之前先记下数据库时刻，任务写入成功后再把这个时刻存为游标（`ops.cursor` 中 `part_key = '_plan'`）。读取期间变化的记录下次还会被规划，不会漏掉。
+`from_dataset` 分区的增量规划只看上次成功确认之后变化的来源记录。读取来源记录之前先记下数据库时刻，任务写入成功后把它保存到运行的 `planned_since_marks`；只有该运行全部任务成功后才提交到 `ops.cursor` 的 `part_key = '_plan'`。读取期间变化的记录下次还会被规划，失败运行不会把来源记录标记为已处理。
 
 规划的选项有两个：
 - `trade_date`：运行对应的交易日，默认今天，快照类数据集用它作主键的一部分。
@@ -122,13 +122,17 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 一个任务的执行步骤：
 1. 配置了 `trade_date_guard` 的数据集，在请求之前先做交易日校验，见 [交易日校验](../domains/market_data_rules.md#trade_date_guard)。
-2. 取出任务的 `params.query`（已展开的请求参数），按配置的分页方式逐页请求。翻页在以下任一条件满足时停止：响应中 `data.pagination.has_next` 为 false；已到 `data.pagination.pages`；返回条数少于页大小；已翻满 10,000 页。全市场导出（`records: parquet`）先取预签名链接再下载 Parquet，下载失败时重新签名，最多 3 次。
-3. 按 `records` 路径取出记录，按主键模板生成 `rkey`、`thscode`、`obs_date`，见 [主键与模板](../interfaces/dataset_registry.md#keys_and_templates)。
+2. 取出任务的 `params.query`（已展开的请求参数），按配置的分页方式逐页请求。翻页在以下任一条件满足时停止：响应中 `data.pagination.has_next` 为 false；已到 `data.pagination.pages`；返回条数少于页大小。翻满 10,000 页但接口仍表示有下一页时任务失败，避免静默截断。全市场导出（`records: parquet`）先取预签名链接再下载 Parquet，下载失败时重新签名，最多 3 次。
+3. 按 `records` 路径取出记录。路径缺失或类型不是数组/对象时任务失败；路径存在但值为 `null` 才按空结果处理。按主键模板生成 `rkey`、`thscode`、`obs_date`，见 [主键与模板](../interfaces/dataset_registry.md#keys_and_templates)。
 4. `store_record` 为 true（默认）时，每 2,000 条调用一次 `raw.upsert_records`：值未变化只刷新 `last_seen_at`，值变化时先把旧值写入 `raw.record_version`。
 5. 依次执行配置中的每个 `sink`，写入类型化表。所有 sink 都是幂等的 UPSERT。
-6. 推进进度游标 `ops.cursor`：`security_window` 分区按证券记录已同步到的窗口末日，`trading_day` 分区记录已同步到的日期；只前进不后退。增量规划从游标往后算。
+6. 推进进度游标 `ops.cursor`：`security_window` 分区按证券记录连续成功的窗口末日，`trading_day` 分区记录连续成功的日期；只沿连续成功前沿前进。增量规划从游标往后算。
+
+raw 记录、类型化 sink 和游标在同一个任务事务中写入；事务开始时锁定并确认当前任务租约，租约失效的 worker 不能提交这组副作用。
 
 任务的 `records` 是返回的记录数，`changed` 是新增或值变化的记录数（`store_record` 为 false 时是 sink 写入的行数）。
+
+游标按连续成功前沿推进：并发窗口或交易日任务只能在前面的窗口已经成功（`done` 或 `empty`）时继续推进；后面的任务先完成不会越过仍待重试的前置任务。租约失效后，执行器在取数和每个写入边界重新确认任务仍归当前 worker 所有，失去租约的 worker 不应继续产生新的副作用。
 
 <a id="postprocess"></a>
 ## 运行结束后的计算
@@ -233,7 +237,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 
 全市场计算（巡检、市场概况、信号统计、回测）同时最多 2 个，多出来的排队；后台的巡检、调仓建议和每周统计另有一个槽位（`prices::in_background`），页面上同时开几个回测也不会让它们排不上。
 
-限速在进程内：每次请求前检查最近 1 秒内的请求数，达到 `NIULAI_RATE_LIMIT_RPS`（默认 2）时等到最早那次请求满 1 秒。`niulai plan`、`niulai daily` 规划时偶尔请求几次接口，不取锁，会与执行循环短暂叠加。为什么不用 Redis 跨进程限速，见 [ADR：限速在进程内](../decisions/in_process_rate_limit.md)。
+限速在进程内：每次请求前检查最近 1 秒内的请求数，达到 `NIULAI_RATE_LIMIT_RPS`（默认 2）时等到最早那次请求满 1 秒。`niulai plan`、`niulai daily` 规划时偶尔请求几次接口，不取锁，会与执行循环短暂叠加。全市场计算按 128 只证券一批读取，数据库事务在 CPU 计算前提交，避免长时间占用连接和快照。为什么不用 Redis 跨进程限速，见 [ADR：限速在进程内](../decisions/in_process_rate_limit.md)。
 
 单个进程同时执行的任务数由 `NIULAI_WORKER_CONCURRENCY`（默认 3）控制。实测每秒 2 次、并发 3 的强度下没有触发供应商限流，实际吞吐约每秒 1.7 次。
 

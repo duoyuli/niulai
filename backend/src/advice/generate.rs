@@ -100,6 +100,9 @@ pub struct CandidateIn {
 pub struct StrategyIn {
     pub strategy_id: i64,
     pub name: String,
+    /// 生成建议时使用的策略定义 hash，便于历史结果重放和解释。
+    #[serde(default)]
+    pub definition_hash: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -1160,14 +1163,17 @@ mod tests {
                 StrategyIn {
                     strategy_id: 1,
                     name: "放量突破".into(),
+                    definition_hash: "test-1".into(),
                 },
                 StrategyIn {
                     strategy_id: 2,
                     name: "MACD 金叉".into(),
+                    definition_hash: "test-2".into(),
                 },
                 StrategyIn {
                     strategy_id: 3,
                     name: "回踩 20 日均线".into(),
+                    definition_hash: "test-3".into(),
                 },
             ],
             streaks: BTreeMap::new(),

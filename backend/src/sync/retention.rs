@@ -33,7 +33,12 @@ pub async fn prune_if_due(pool: &PgPool) -> anyhow::Result<()> {
         return Ok(());
     }
     let p = prune(pool).await?;
-    tracing::info!(tasks = p.tasks, api_calls = p.api_calls, advice = p.advice, "已清理过期的任务、调用日志和被取代的建议");
+    tracing::info!(
+        tasks = p.tasks,
+        api_calls = p.api_calls,
+        advice = p.advice,
+        "已清理过期的任务、调用日志和被取代的建议"
+    );
     Ok(())
 }
 
@@ -86,7 +91,12 @@ pub async fn prune(pool: &PgPool) -> anyhow::Result<Pruned> {
 async fn batched(pool: &PgPool, sql: &'static str, days: i32) -> anyhow::Result<u64> {
     let mut total = 0;
     loop {
-        let n = sqlx::query(sql).bind(days).bind(BATCH).execute(pool).await?.rows_affected();
+        let n = sqlx::query(sql)
+            .bind(days)
+            .bind(BATCH)
+            .execute(pool)
+            .await?
+            .rows_affected();
         total += n;
         if n < BATCH as u64 {
             return Ok(total);

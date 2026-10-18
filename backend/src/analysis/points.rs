@@ -57,9 +57,13 @@ pub struct Points {
 fn exit_text(d: &Definition, f: &Frame, k: usize, reason: ExitReason) -> String {
     let r = &d.exit;
     match reason {
-        ExitReason::Signal => d.exit_reason_text(f, k).unwrap_or_else(|| "卖出条件".into()),
+        ExitReason::Signal => d
+            .exit_reason_text(f, k)
+            .unwrap_or_else(|| "卖出条件".into()),
         ExitReason::StopLoss => format!("亏损达到 {}% 止损", r.stop_loss_pct.unwrap_or_default()),
-        ExitReason::TakeProfit => format!("盈利达到 {}% 止盈", r.take_profit_pct.unwrap_or_default()),
+        ExitReason::TakeProfit => {
+            format!("盈利达到 {}% 止盈", r.take_profit_pct.unwrap_or_default())
+        }
         ExitReason::MaxHold => format!("持有满 {} 个交易日", r.max_hold_days.unwrap_or_default()),
     }
 }
@@ -78,7 +82,11 @@ pub fn run(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, from:
     let mut pending_sell: Option<(usize, ExitReason)> = None;
     for k in from..bars.len() {
         // 开盘：执行昨天收盘后下的单。一字板全天一个价格，按前复权价和前一天比较，买不进、卖不出时顺延
-        let prev = if k > 0 { bars[k - 1].q_close } else { bars[k].q_open };
+        let prev = if k > 0 {
+            bars[k - 1].q_close
+        } else {
+            bars[k].q_open
+        };
         let one_price = bars[k].high == bars[k].low;
         if let Some(i) = pending_buy
             && !(one_price && bars[k].q_open > prev)
@@ -148,7 +156,10 @@ pub fn run(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, from:
     }
     let today = match (pending_buy, pending_sell, holding) {
         (Some(_), _, None) => Today::Buy,
-        (_, Some((s, reason)), Some(_)) => Today::Sell { reason, text: exit_text(d, f, s, reason) },
+        (_, Some((s, reason)), Some(_)) => Today::Sell {
+            reason,
+            text: exit_text(d, f, s, reason),
+        },
         (_, _, Some(_)) => Today::Holding,
         _ => Today::Flat,
     };
@@ -167,10 +178,16 @@ mod tests {
     #[test]
     fn buys_on_signal_and_sells_on_exit_rule_next_open() {
         // 先跌后涨再跌：收盘价上穿 3 日均线买入，下穿时卖出
-        let closes = [10.0, 9.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 10.0, 9.0, 8.0, 7.0];
+        let closes = [
+            10.0, 9.0, 8.0, 7.0, 8.0, 9.0, 10.0, 11.0, 10.0, 9.0, 8.0, 7.0,
+        ];
         let b = bars_from(&closes);
         let f = Frame::new(&b, None);
-        let meta = StockMeta { board: "main".into(), is_st: false, list_date: None };
+        let meta = StockMeta {
+            board: "main".into(),
+            is_st: false,
+            list_date: None,
+        };
         let d = def(serde_json::json!({
             "universe": {"exclude_st": false},
             "all": [{"kind": "compare", "left": {"id": "close"}, "op": "crosses_above", "right": {"id": "ma", "n": 3}}],
@@ -179,7 +196,11 @@ mod tests {
         let p = run(&b, &f, &meta, &d, 0);
         assert_eq!(p.trades.len(), 1);
         let t = &p.trades[0];
-        assert_eq!((t.signal_date, t.entry_date), (b[4].date, b[5].date), "信号当天收盘后知道，第二天开盘买入");
+        assert_eq!(
+            (t.signal_date, t.entry_date),
+            (b[4].date, b[5].date),
+            "信号当天收盘后知道，第二天开盘买入"
+        );
         assert_eq!(t.exit_reason, Some(ExitReason::Signal));
         assert_eq!(t.exit_text.as_deref(), Some("收盘价下穿 3 日均线"));
         assert_eq!(p.today, Today::Flat);
@@ -197,36 +218,59 @@ mod tests {
     fn stop_loss_and_ignore_buys_while_holding() {
         let closes = [10.0, 10.0, 10.0, 11.0, 9.0, 8.0, 8.0, 8.0];
         let b = bars_from(&closes);
-        let meta = StockMeta { board: "main".into(), is_st: false, list_date: None };
+        let meta = StockMeta {
+            board: "main".into(),
+            is_st: false,
+            list_date: None,
+        };
         let d = def(serde_json::json!({
             "universe": {"exclude_st": false},
             "all": [{"kind": "compare", "left": {"id": "close"}, "op": ">", "right": {"value": 0}}],
             "exit": {"stop_loss_pct": 15}
         }));
         let p = run(&b, &Frame::new(&b, None), &meta, &d, 0);
-        assert_eq!(p.trades[0].exit_reason, Some(ExitReason::StopLoss), "{:?}", p.trades);
+        assert_eq!(
+            p.trades[0].exit_reason,
+            Some(ExitReason::StopLoss),
+            "{:?}",
+            p.trades
+        );
         assert_eq!(p.trades[0].exit_text.as_deref(), Some("亏损达到 15% 止损"));
         // 每天都满足买入条件，但持有期间不重复买
-        assert!(p.trades.windows(2).all(|w| w[0].exit_date.is_some_and(|x| x <= w[1].entry_date)));
+        assert!(
+            p.trades
+                .windows(2)
+                .all(|w| w[0].exit_date.is_some_and(|x| x <= w[1].entry_date))
+        );
     }
 
     /// 随机日线，夹着一字涨停和一字跌停
     fn random_bars(n: usize, seed: u64) -> Vec<DailyBar> {
         let mut x = seed;
         let mut rnd = || {
-            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (x >> 33) as f64 / (1u64 << 31) as f64
         };
         let mut c = 10.0;
-        let closes: Vec<f64> = (0..n).map(|_| {
-            c *= 1.0 + (rnd() - 0.5) * 0.08;
-            (c * 100.0).round() / 100.0
-        }).collect();
+        let closes: Vec<f64> = (0..n)
+            .map(|_| {
+                c *= 1.0 + (rnd() - 0.5) * 0.08;
+                (c * 100.0).round() / 100.0
+            })
+            .collect();
         let mut b = bars_from(&closes);
         for i in 1..b.len() {
             let r = rnd();
             let prev = b[i - 1].q_close;
-            let price = if r < 0.05 { Some(prev * 1.1) } else if r < 0.1 { Some(prev * 0.9) } else { None };
+            let price = if r < 0.05 {
+                Some(prev * 1.1)
+            } else if r < 0.1 {
+                Some(prev * 0.9)
+            } else {
+                None
+            };
             let bar = &mut b[i];
             match price {
                 Some(p) => (bar.open, bar.high, bar.low, bar.close) = (p, p, p, p),
@@ -236,7 +280,8 @@ mod tests {
                     bar.low = bar.close.min(bar.open) * 0.99;
                 }
             }
-            (bar.q_open, bar.q_high, bar.q_low, bar.q_close) = (bar.open, bar.high, bar.low, bar.close);
+            (bar.q_open, bar.q_high, bar.q_low, bar.q_close) =
+                (bar.open, bar.high, bar.low, bar.close);
         }
         b
     }
@@ -244,7 +289,11 @@ mod tests {
     #[test]
     fn same_trades_as_single_stock_backtest() {
         use crate::analysis::backtest::{self, Costs, Params, Risk, Signals};
-        let meta = StockMeta { board: "main".into(), is_st: false, list_date: None };
+        let meta = StockMeta {
+            board: "main".into(),
+            is_st: false,
+            list_date: None,
+        };
         let d = def(serde_json::json!({
             "universe": {"exclude_st": false},
             "all": [{"kind": "compare", "left": {"id": "close"}, "op": "crosses_above", "right": {"id": "ma", "n": 5}}],
@@ -255,13 +304,41 @@ mod tests {
             let b = random_bars(500, seed);
             let f = Frame::new(&b, None);
             let p = run(&b, &f, &meta, &d, 0);
-            let entry: Vec<bool> = (0..b.len()).map(|i| d.in_universe(&f, &meta, i) && d.matches(&f, i)).collect();
+            let entry: Vec<bool> = (0..b.len())
+                .map(|i| d.in_universe(&f, &meta, i) && d.matches(&f, i))
+                .collect();
             let exit: Vec<bool> = (0..b.len()).map(|i| d.exit_signal(&f, i)).collect();
-            let risk = Risk { stop_loss_pct: d.exit.stop_loss_pct, take_profit_pct: d.exit.take_profit_pct, max_hold_days: d.exit.max_hold_days };
-            let params = Params { start: None, capital: 1e12, costs: Costs::default(), risk };
-            let bt = backtest::run(&b, &[], &Signals { entry: &entry, exit: &exit }, &params).unwrap();
-            let ours: Vec<_> = p.trades.iter().map(|t| (t.entry_date, t.exit_date, t.exit_reason)).collect();
-            let theirs: Vec<_> = bt.trades.iter().map(|t| (t.entry_date, t.exit_date, t.exit_reason)).collect();
+            let risk = Risk {
+                stop_loss_pct: d.exit.stop_loss_pct,
+                take_profit_pct: d.exit.take_profit_pct,
+                max_hold_days: d.exit.max_hold_days,
+            };
+            let params = Params {
+                start: None,
+                capital: 1e12,
+                costs: Costs::default(),
+                risk,
+            };
+            let bt = backtest::run(
+                &b,
+                &[],
+                &Signals {
+                    entry: &entry,
+                    exit: &exit,
+                },
+                &params,
+            )
+            .unwrap();
+            let ours: Vec<_> = p
+                .trades
+                .iter()
+                .map(|t| (t.entry_date, t.exit_date, t.exit_reason))
+                .collect();
+            let theirs: Vec<_> = bt
+                .trades
+                .iter()
+                .map(|t| (t.entry_date, t.exit_date, t.exit_reason))
+                .collect();
             assert!(ours.len() > 10, "seed {seed} 交易太少");
             assert_eq!(ours, theirs, "seed {seed}");
         }

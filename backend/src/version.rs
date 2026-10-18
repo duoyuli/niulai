@@ -9,10 +9,17 @@ pub type Version = (u64, u64, u64, u64);
 pub fn parse(v: &str) -> Option<Version> {
     let parts: Vec<&str> = v.split('.').collect();
     let widths_ok = matches!(parts.as_slice(), [y, m, d] | [y, m, d, _] if y.len() == 4 && m.len() == 2 && d.len() == 2);
-    if !widths_ok || parts.iter().any(|p| p.is_empty() || !p.chars().all(|c| c.is_ascii_digit())) {
+    if !widths_ok
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || !p.chars().all(|c| c.is_ascii_digit()))
+    {
         return None;
     }
-    let n: Vec<u64> = parts.iter().map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    let n: Vec<u64> = parts
+        .iter()
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
     let date_ok = (1..=12).contains(&n[1]) && (1..=31).contains(&n[2]);
     date_ok.then(|| (n[0], n[1], n[2], n.get(3).copied().unwrap_or(0)))
 }
@@ -28,7 +35,18 @@ mod tests {
         assert!(parse("2026.10.18") < parse("2026.10.18.1"));
         assert!(parse("2026.10.18.9") < parse("2026.10.18.10"));
         assert!(parse("2026.10.18.1") < parse("2026.10.19"));
-        for bad in ["1.5.0", "2026.1.8", "2026.13.01", "2026.10", "2026.10.18.1.1", "2026.10.18-rc.1", "2026.10.18;id", "", "a.b.c", "+202.10.18"] {
+        for bad in [
+            "1.5.0",
+            "2026.1.8",
+            "2026.13.01",
+            "2026.10",
+            "2026.10.18.1.1",
+            "2026.10.18-rc.1",
+            "2026.10.18;id",
+            "",
+            "a.b.c",
+            "+202.10.18",
+        ] {
             assert_eq!(parse(bad), None, "{bad}");
         }
     }

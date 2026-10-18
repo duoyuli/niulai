@@ -32,7 +32,8 @@ impl Metrics {
         if status >= 500 {
             self.errors.fetch_add(1, Ordering::Relaxed);
         }
-        self.micros.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+        self.micros
+            .fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
     }
 
     pub fn requests(&self) -> u64 {
@@ -60,7 +61,11 @@ pub async fn track(State(metrics): State<Arc<Metrics>>, req: Request, next: Next
 fn expected_token() -> Option<&'static str> {
     static TOKEN: OnceLock<Option<String>> = OnceLock::new();
     TOKEN
-        .get_or_init(|| std::env::var("NIULAI_METRICS_TOKEN").ok().filter(|t| !t.trim().is_empty()))
+        .get_or_init(|| {
+            std::env::var("NIULAI_METRICS_TOKEN")
+                .ok()
+                .filter(|t| !t.trim().is_empty())
+        })
         .as_deref()
 }
 
@@ -76,41 +81,79 @@ fn token_matches(expected: &str, given: &str) -> bool {
 /// 请求头 `Authorization: Bearer <token>` 里的令牌
 fn given_token(headers: &HeaderMap) -> Option<String> {
     let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")).map(|t| t.trim().to_string())
+    v.strip_prefix("Bearer ")
+        .or_else(|| v.strip_prefix("bearer "))
+        .map(|t| t.trim().to_string())
 }
 
 pub async fn handler(State(s): State<AppState>, headers: HeaderMap) -> Response {
     let Some(expected) = expected_token() else {
-        return (StatusCode::NOT_FOUND, "没有启用监控指标：在环境变量里设置 NIULAI_METRICS_TOKEN 后可用\n").into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            "没有启用监控指标：在环境变量里设置 NIULAI_METRICS_TOKEN 后可用\n",
+        )
+            .into_response();
     };
     let ok = given_token(&headers).is_some_and(|t| token_matches(expected, &t));
     if !ok {
         return (StatusCode::UNAUTHORIZED, "监控指标的令牌不对\n").into_response();
     }
-    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.task WHERE status IN ('pending', 'failed')")
-        .fetch_one(&s.pool)
-        .await
-        .unwrap_or(-1);
-    let body = format(&s.metrics, super::system::current_version(), uptime(), pending, s.pool.size(), s.pool.num_idle());
-    ([(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")], body).into_response()
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM ops.task WHERE status IN ('pending', 'failed')")
+            .fetch_one(&s.pool)
+            .await
+            .unwrap_or(-1);
+    let body = format(
+        &s.metrics,
+        super::system::current_version(),
+        uptime(),
+        pending,
+        s.pool.size(),
+        s.pool.num_idle(),
+    );
+    (
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response()
 }
 
 /// Prometheus 文本格式。测试直接检查每一行，避免指标名拼错
-pub fn format(metrics: &Metrics, version: &str, uptime: Duration, pending: i64, db_size: u32, db_idle: usize) -> String {
+pub fn format(
+    metrics: &Metrics,
+    version: &str,
+    uptime: Duration,
+    pending: i64,
+    db_size: u32,
+    db_idle: usize,
+) -> String {
     let requests = metrics.requests();
     let mut out = String::with_capacity(1024);
     out.push_str("# HELP niulai_up 1 表示进程正在运行\n# TYPE niulai_up gauge\nniulai_up 1\n");
     out.push_str("# HELP niulai_info 版本信息\n# TYPE niulai_info gauge\n");
-    out.push_str(&format!("niulai_info{{version=\"{}\"}} 1\n", escape_label(version)));
-    out.push_str("# HELP niulai_uptime_seconds 进程已运行的秒数\n# TYPE niulai_uptime_seconds gauge\n");
+    out.push_str(&format!(
+        "niulai_info{{version=\"{}\"}} 1\n",
+        escape_label(version)
+    ));
+    out.push_str(
+        "# HELP niulai_uptime_seconds 进程已运行的秒数\n# TYPE niulai_uptime_seconds gauge\n",
+    );
     out.push_str(&format!("niulai_uptime_seconds {}\n", uptime.as_secs_f64()));
     out.push_str("# HELP niulai_http_requests_total 处理过的 API 请求数\n# TYPE niulai_http_requests_total counter\n");
     out.push_str(&format!("niulai_http_requests_total {requests}\n"));
     out.push_str("# HELP niulai_http_errors_total 返回 5xx 的请求数\n# TYPE niulai_http_errors_total counter\n");
     out.push_str(&format!("niulai_http_errors_total {}\n", metrics.errors()));
     out.push_str("# HELP niulai_http_request_duration_seconds API 请求累计耗时\n# TYPE niulai_http_request_duration_seconds summary\n");
-    out.push_str(&format!("niulai_http_request_duration_seconds_sum {:.6}\n", metrics.micros() as f64 / 1e6));
-    out.push_str(&format!("niulai_http_request_duration_seconds_count {requests}\n"));
+    out.push_str(&format!(
+        "niulai_http_request_duration_seconds_sum {:.6}\n",
+        metrics.micros() as f64 / 1e6
+    ));
+    out.push_str(&format!(
+        "niulai_http_request_duration_seconds_count {requests}\n"
+    ));
     out.push_str("# HELP niulai_sync_pending_tasks 等待执行的任务数（含等待重试的）\n# TYPE niulai_sync_pending_tasks gauge\n");
     out.push_str(&format!("niulai_sync_pending_tasks {pending}\n"));
     out.push_str("# HELP niulai_db_pool_connections 数据库连接池里的连接数\n# TYPE niulai_db_pool_connections gauge\n");
@@ -118,13 +161,18 @@ pub fn format(metrics: &Metrics, version: &str, uptime: Duration, pending: i64, 
     out.push_str("# HELP niulai_db_pool_idle 其中空闲的连接数\n# TYPE niulai_db_pool_idle gauge\n");
     out.push_str(&format!("niulai_db_pool_idle {}\n", db_idle as u32));
     out.push_str("# HELP niulai_scrape_time_seconds 生成这些指标的 Unix 时间\n# TYPE niulai_scrape_time_seconds gauge\n");
-    out.push_str(&format!("niulai_scrape_time_seconds {}\n", chrono::Utc::now().timestamp()));
+    out.push_str(&format!(
+        "niulai_scrape_time_seconds {}\n",
+        chrono::Utc::now().timestamp()
+    ));
     out
 }
 
 /// 标签值里的反斜杠、双引号和换行要转义，否则 Prometheus 解析失败
 fn escape_label(v: &str) -> String {
-    v.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+    v.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 #[cfg(test)]

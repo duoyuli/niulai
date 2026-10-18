@@ -15,12 +15,15 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
-use crate::version::parse;
 use crate::error::{ApiError, ApiResult};
+use crate::version::parse;
 
 /// 构建时写入的版本号（CI 用 git 标签，例如 v2026.10.18）；本机编译的是 dev
 pub fn current_version() -> &'static str {
-    option_env!("NIULAI_VERSION").map(|v| v.trim_start_matches('v')).filter(|v| !v.is_empty()).unwrap_or("dev")
+    option_env!("NIULAI_VERSION")
+        .map(|v| v.trim_start_matches('v'))
+        .filter(|v| !v.is_empty())
+        .unwrap_or("dev")
 }
 
 /// 多久查一次 GitHub 上的最新版本
@@ -31,7 +34,10 @@ const RETRY_AFTER: Duration = Duration::from_secs(30 * 60);
 const HEARTBEAT_FRESH_SECS: i64 = 30;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(version)).routes(routes!(upgrade)).routes(routes!(data_status))
+    OpenApiRouter::new()
+        .routes(routes!(version))
+        .routes(routes!(upgrade))
+        .routes(routes!(data_status))
 }
 
 /// 缓存的最新版本
@@ -147,13 +153,21 @@ async fn data_status(State(s): State<AppState>) -> ApiResult<Json<crate::sync::a
 /// 当前版本、最新版本和一键升级的状态
 #[utoipa::path(get, path = "/system/version", tag = "system", params(VersionQuery),
     responses((status = 200, description = "成功", body = VersionInfo)))]
-async fn version(State(s): State<AppState>, me: super::auth::CurrentUser, Query(q): Query<VersionQuery>) -> Json<VersionInfo> {
+async fn version(
+    State(s): State<AppState>,
+    me: super::auth::CurrentUser,
+    Query(q): Query<VersionQuery>,
+) -> Json<VersionInfo> {
     let checked = latest(&s, q.refresh).await;
     let current = current_version();
     let latest = checked.as_ref().and_then(|c| c.latest.clone());
-    let has_update = matches!((parse(current), latest.as_deref().and_then(parse)), (Some(a), Some(b)) if b > a);
+    let has_update =
+        matches!((parse(current), latest.as_deref().and_then(parse)), (Some(a), Some(b)) if b > a);
     let repo = &s.engine.settings.update_repo;
-    let changes_url = latest.as_ref().filter(|_| has_update).map(|l| format!("https://github.com/{repo}/compare/v{current}...v{l}"));
+    let changes_url = latest
+        .as_ref()
+        .filter(|_| has_update)
+        .map(|l| format!("https://github.com/{repo}/compare/v{current}...v{l}"));
     Json(VersionInfo {
         current: current.into(),
         latest,
@@ -163,7 +177,15 @@ async fn version(State(s): State<AppState>, me: super::auth::CurrentUser, Query(
         changes_url,
         upgrade: upgrade_status(s.engine.settings.upgrade_dir.as_deref()),
         // 备份的文件名和失败原因只给管理员看
-        backup: if me.role == crate::auth::Role::Admin { s.engine.settings.upgrade_dir.as_deref().and_then(backup_status) } else { None },
+        backup: if me.role == crate::auth::Role::Admin {
+            s.engine
+                .settings
+                .upgrade_dir
+                .as_deref()
+                .and_then(backup_status)
+        } else {
+            None
+        },
     })
 }
 
@@ -171,9 +193,13 @@ async fn version(State(s): State<AppState>, me: super::auth::CurrentUser, Query(
 const BACKUP_STALE_SECS: i64 = 36 * 3600;
 
 fn backup_status(dir: &Path) -> Option<BackupStatus> {
-    let mut b: BackupStatus = serde_json::from_str(&std::fs::read_to_string(dir.join("backup")).ok()?).ok()?;
+    let mut b: BackupStatus =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("backup")).ok()?).ok()?;
     let now = chrono::Utc::now().timestamp();
-    b.stale = b.latest.as_ref().is_none_or(|l| now - l.at > BACKUP_STALE_SECS);
+    b.stale = b
+        .latest
+        .as_ref()
+        .is_none_or(|l| now - l.at > BACKUP_STALE_SECS);
     Some(b)
 }
 
@@ -188,30 +214,50 @@ pub struct UpgradeInput {
     responses((status = 202, description = "已提交", body = UpgradeStatus),
               (status = 400, description = "版本号不合法", body = crate::error::ErrorBody),
               (status = 409, description = "不能升级：没有运行 upgrader、已是最新或正在升级", body = crate::error::ErrorBody)))]
-async fn upgrade(State(s): State<AppState>, Json(input): Json<UpgradeInput>) -> ApiResult<(StatusCode, Json<UpgradeStatus>)> {
+async fn upgrade(
+    State(s): State<AppState>,
+    Json(input): Json<UpgradeInput>,
+) -> ApiResult<(StatusCode, Json<UpgradeStatus>)> {
     let Some(dir) = s.engine.settings.upgrade_dir.as_deref() else {
         return Err(ApiError::Conflict("这个部署没有启用一键升级".into()));
     };
     let status = upgrade_status(Some(dir));
     if !status.available {
-        return Err(ApiError::Conflict("升级助手（upgrader 容器）没有运行，见运维手册的「一键升级」".into()));
+        return Err(ApiError::Conflict(
+            "升级助手（upgrader 容器）没有运行，见运维手册的「一键升级」".into(),
+        ));
     }
-    if matches!(status.state, UpgradeState::Requested | UpgradeState::Running) {
+    if matches!(
+        status.state,
+        UpgradeState::Requested | UpgradeState::Running
+    ) {
         return Err(ApiError::Conflict("正在升级，请等它完成".into()));
     }
-    let target = match input.version.map(|v| v.trim().trim_start_matches('v').to_string()).filter(|v| !v.is_empty()) {
+    let target = match input
+        .version
+        .map(|v| v.trim().trim_start_matches('v').to_string())
+        .filter(|v| !v.is_empty())
+    {
         Some(v) => v,
-        None => latest(&s, true).await.and_then(|c| c.latest).ok_or_else(|| ApiError::Conflict("查不到最新版本".into()))?,
+        None => latest(&s, true)
+            .await
+            .and_then(|c| c.latest)
+            .ok_or_else(|| ApiError::Conflict("查不到最新版本".into()))?,
     };
     let Some(want) = parse(&target) else {
         return Err(ApiError::BadRequest(format!("版本号不合法：{target}")));
     };
     if parse(current_version()).is_some_and(|cur| want <= cur) {
-        return Err(ApiError::Conflict(format!("当前已是 {}，不需要升级到 {target}", current_version())));
+        return Err(ApiError::Conflict(format!(
+            "当前已是 {}，不需要升级到 {target}",
+            current_version()
+        )));
     }
     // 先写临时文件再改名，upgrader 不会读到写了一半的内容
     let tmp = dir.join("request.tmp");
-    std::fs::write(&tmp, &target).and_then(|_| std::fs::rename(&tmp, dir.join("request"))).map_err(anyhow::Error::from)?;
+    std::fs::write(&tmp, &target)
+        .and_then(|_| std::fs::rename(&tmp, dir.join("request")))
+        .map_err(anyhow::Error::from)?;
     tracing::info!(target = %target, "已提交一键升级");
     Ok((StatusCode::ACCEPTED, Json(upgrade_status(Some(dir)))))
 }
@@ -223,17 +269,34 @@ async fn latest(s: &AppState, refresh: bool) -> Option<Checked> {
         return None;
     }
     let mut cache = s.latest.inner.lock().await;
-    let fresh = cache.as_ref().is_some_and(|c| c.at.elapsed() < if c.error.is_some() { RETRY_AFTER } else { CHECK_EVERY });
+    let fresh = cache.as_ref().is_some_and(|c| {
+        c.at.elapsed()
+            < if c.error.is_some() {
+                RETRY_AFTER
+            } else {
+                CHECK_EVERY
+            }
+    });
     if fresh && !refresh {
         return cache.clone();
     }
     let checked_at = chrono::Utc::now();
     let next = match fetch_latest(repo).await {
-        Ok(latest) => Checked { at: Instant::now(), checked_at, latest, error: None },
+        Ok(latest) => Checked {
+            at: Instant::now(),
+            checked_at,
+            latest,
+            error: None,
+        },
         Err(e) => {
             tracing::warn!(error = %e, "查询最新版本失败");
             let previous = cache.as_ref().and_then(|c| c.latest.clone());
-            Checked { at: Instant::now(), checked_at, latest: previous, error: Some(format!("查询 GitHub 失败：{e}")) }
+            Checked {
+                at: Instant::now(),
+                checked_at,
+                latest: previous,
+                error: Some(format!("查询 GitHub 失败：{e}")),
+            }
         }
     };
     *cache = Some(next.clone());
@@ -248,9 +311,14 @@ struct Tag {
 /// 可以升级到的最新正式版本（vYYYY.MM.DD[.N]，见 [`crate::version`]）：GitHub 上的标签，并且镜像已经构建好、能从 GHCR 拉取。
 /// 推送标签后 CI 要几分钟才把镜像推上去，这期间不提示新版本，避免一键升级拉取镜像失败
 async fn fetch_latest(repo: &str) -> anyhow::Result<Option<String>> {
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).user_agent(concat!("niulai/", env!("CARGO_PKG_VERSION"))).build()?;
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent(concat!("niulai/", env!("CARGO_PKG_VERSION")))
+        .build()?;
     let tags: Vec<Tag> = http
-        .get(format!("https://api.github.com/repos/{repo}/tags?per_page=100"))
+        .get(format!(
+            "https://api.github.com/repos/{repo}/tags?per_page=100"
+        ))
         .header("accept", "application/vnd.github+json")
         .send()
         .await?
@@ -258,7 +326,10 @@ async fn fetch_latest(repo: &str) -> anyhow::Result<Option<String>> {
         .json()
         .await?;
     // 从新到旧最多看 3 个：最新的还在构建时，退回上一个
-    for v in versions_desc(tags.iter().map(|t| t.name.as_str())).into_iter().take(3) {
+    for v in versions_desc(tags.iter().map(|t| t.name.as_str()))
+        .into_iter()
+        .take(3)
+    {
         if image_published(&http, repo, &v).await? {
             return Ok(Some(v));
         }
@@ -267,13 +338,25 @@ async fn fetch_latest(repo: &str) -> anyhow::Result<Option<String>> {
 }
 
 /// GHCR 上有没有这个版本的镜像（匿名拉取令牌 + 查询清单）
-async fn image_published(http: &reqwest::Client, repo: &str, version: &str) -> anyhow::Result<bool> {
+async fn image_published(
+    http: &reqwest::Client,
+    repo: &str,
+    version: &str,
+) -> anyhow::Result<bool> {
     let repo = repo.to_lowercase();
     #[derive(Deserialize)]
     struct Token {
         token: String,
     }
-    let token: Token = http.get(format!("https://ghcr.io/token?scope=repository:{repo}:pull")).send().await?.error_for_status()?.json().await?;
+    let token: Token = http
+        .get(format!(
+            "https://ghcr.io/token?scope=repository:{repo}:pull"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     let resp = http
         .head(format!("https://ghcr.io/v2/{repo}/manifests/{version}"))
         .bearer_auth(token.token)
@@ -292,11 +375,13 @@ async fn image_published(http: &reqwest::Client, repo: &str, version: &str) -> a
 
 /// 正式版本号，从新到旧
 fn versions_desc<'a>(tags: impl Iterator<Item = &'a str>) -> Vec<String> {
-    let mut v: Vec<_> = tags.filter_map(|t| t.strip_prefix('v')).filter_map(|v| parse(v).map(|p| (p, v.to_string()))).collect();
+    let mut v: Vec<_> = tags
+        .filter_map(|t| t.strip_prefix('v'))
+        .filter_map(|v| parse(v).map(|p| (p, v.to_string())))
+        .collect();
     v.sort_by_key(|x| std::cmp::Reverse(x.0));
     v.into_iter().map(|(_, v)| v).collect()
 }
-
 
 #[derive(Deserialize)]
 struct StatusFile {
@@ -312,10 +397,20 @@ struct StatusFile {
 }
 
 fn upgrade_status(dir: Option<&Path>) -> UpgradeStatus {
-    let none = UpgradeStatus { available: false, state: UpgradeState::Idle, target: None, message: None, updated_at: None, log_tail: None, steps: vec![] };
+    let none = UpgradeStatus {
+        available: false,
+        state: UpgradeState::Idle,
+        target: None,
+        message: None,
+        updated_at: None,
+        log_tail: None,
+        steps: vec![],
+    };
     let Some(dir) = dir else { return none };
     let now = chrono::Utc::now().timestamp();
-    let heartbeat = std::fs::read_to_string(dir.join("heartbeat")).ok().and_then(|s| s.trim().parse::<i64>().ok());
+    let heartbeat = std::fs::read_to_string(dir.join("heartbeat"))
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok());
     let available = heartbeat.is_some_and(|t| (now - t).abs() <= HEARTBEAT_FRESH_SECS);
     let mut st = UpgradeStatus { available, ..none };
     if let Ok(v) = std::fs::read_to_string(dir.join("request")) {
@@ -324,7 +419,10 @@ fn upgrade_status(dir: Option<&Path>) -> UpgradeStatus {
         st.message = Some("等待升级助手接手".into());
         return st;
     }
-    let Some(f) = std::fs::read_to_string(dir.join("status")).ok().and_then(|s| serde_json::from_str::<StatusFile>(&s).ok()) else {
+    let Some(f) = std::fs::read_to_string(dir.join("status"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<StatusFile>(&s).ok())
+    else {
         return st;
     };
     st.state = f.state;
@@ -333,7 +431,9 @@ fn upgrade_status(dir: Option<&Path>) -> UpgradeStatus {
     st.updated_at = chrono::DateTime::from_timestamp(f.at, 0);
     st.steps = f.steps;
     if f.state == UpgradeState::Failed {
-        st.log_tail = std::fs::read_to_string(dir.join("log")).ok().map(|l| tail(&l, 20));
+        st.log_tail = std::fs::read_to_string(dir.join("log"))
+            .ok()
+            .map(|l| tail(&l, 20));
     }
     st
 }
@@ -349,8 +449,23 @@ mod tests {
 
     #[test]
     fn picks_newest_stable_tag() {
-        let tags = ["v1.5.0", "v2026.10.18", "v2026.10.18.1", "v2026.10.09", "v2026.10.18-rc.1", "latest", "v1.2"];
-        assert_eq!(versions_desc(tags.into_iter()), vec!["2026.10.18.1".to_string(), "2026.10.18".into(), "2026.10.09".into()]);
+        let tags = [
+            "v1.5.0",
+            "v2026.10.18",
+            "v2026.10.18.1",
+            "v2026.10.09",
+            "v2026.10.18-rc.1",
+            "latest",
+            "v1.2",
+        ];
+        assert_eq!(
+            versions_desc(tags.into_iter()),
+            vec![
+                "2026.10.18.1".to_string(),
+                "2026.10.18".into(),
+                "2026.10.09".into()
+            ]
+        );
         assert_eq!(parse("dev"), None);
     }
 
@@ -359,13 +474,28 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("niulai_upgrade_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(!upgrade_status(Some(&dir)).available, "没有心跳");
-        std::fs::write(dir.join("heartbeat"), chrono::Utc::now().timestamp().to_string()).unwrap();
+        std::fs::write(
+            dir.join("heartbeat"),
+            chrono::Utc::now().timestamp().to_string(),
+        )
+        .unwrap();
         let st = upgrade_status(Some(&dir));
         assert!(st.available && st.state == UpgradeState::Idle);
-        std::fs::write(dir.join("status"), r#"{"state":"failed","target":"2026.10.18","message":"拉取镜像失败","at":1}"#).unwrap();
-        std::fs::write(dir.join("log"), (1..=30).map(|i| format!("line {i}\n")).collect::<String>()).unwrap();
+        std::fs::write(
+            dir.join("status"),
+            r#"{"state":"failed","target":"2026.10.18","message":"拉取镜像失败","at":1}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("log"),
+            (1..=30).map(|i| format!("line {i}\n")).collect::<String>(),
+        )
+        .unwrap();
         let st = upgrade_status(Some(&dir));
-        assert_eq!((st.state, st.target.as_deref()), (UpgradeState::Failed, Some("2026.10.18")));
+        assert_eq!(
+            (st.state, st.target.as_deref()),
+            (UpgradeState::Failed, Some("2026.10.18"))
+        );
         assert!(st.log_tail.unwrap().starts_with("line 11"));
         assert!(st.steps.is_empty(), "状态里没有步骤时为空");
         // 新版本的升级助手写出每一步的进度
@@ -376,7 +506,14 @@ mod tests {
         .unwrap();
         let st = upgrade_status(Some(&dir));
         assert_eq!(st.steps.len(), 2);
-        assert_eq!((st.steps[0].state.as_str(), st.steps[0].detail.as_str(), st.steps[1].detail.as_str()), ("running", "45%", ""));
+        assert_eq!(
+            (
+                st.steps[0].state.as_str(),
+                st.steps[0].detail.as_str(),
+                st.steps[1].detail.as_str()
+            ),
+            ("running", "45%", "")
+        );
         std::fs::write(dir.join("request"), "2026.10.19").unwrap();
         assert_eq!(upgrade_status(Some(&dir)).state, UpgradeState::Requested);
         std::fs::write(dir.join("heartbeat"), "1").unwrap();

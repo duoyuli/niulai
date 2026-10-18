@@ -74,7 +74,10 @@ impl ReplayError {
 // @project-doc docs/domains/accounts.md#undo
 /// 回放同一只股票的有效流水（按流水编号从早到晚）
 pub fn replay(entries: &[Entry]) -> Result<Replay, ReplayError> {
-    let mut out = Replay { realized_pnl: Some(0.0), ..Replay::default() };
+    let mut out = Replay {
+        realized_pnl: Some(0.0),
+        ..Replay::default()
+    };
     for e in entries {
         match e.kind {
             TradeKind::Buy => {
@@ -87,7 +90,8 @@ pub fn replay(entries: &[Entry]) -> Result<Replay, ReplayError> {
                     out.opened_on = Some(e.trade_date);
                     Some(round4(pay / n as f64))
                 } else {
-                    out.cost_price.map(|c| round4((c * out.shares as f64 + pay) / (out.shares + n) as f64))
+                    out.cost_price
+                        .map(|c| round4((c * out.shares as f64 + pay) / (out.shares + n) as f64))
                 };
                 out.shares += n;
             }
@@ -98,10 +102,14 @@ pub fn replay(entries: &[Entry]) -> Result<Replay, ReplayError> {
                     continue;
                 }
                 if out.shares <= 0 {
-                    return Err(ReplayError::HoldingGone { trade_id: e.trade_id });
+                    return Err(ReplayError::HoldingGone {
+                        trade_id: e.trade_id,
+                    });
                 }
                 let pay = -e.amount;
-                out.cost_price = out.cost_price.map(|c| round4((c * out.shares as f64 + pay) / (out.shares + n) as f64));
+                out.cost_price = out
+                    .cost_price
+                    .map(|c| round4((c * out.shares as f64 + pay) / (out.shares + n) as f64));
                 out.shares += n;
             }
             TradeKind::Sell => {
@@ -110,7 +118,9 @@ pub fn replay(entries: &[Entry]) -> Result<Replay, ReplayError> {
                     continue;
                 }
                 if n > out.shares {
-                    return Err(ReplayError::Oversold { trade_id: e.trade_id });
+                    return Err(ReplayError::Oversold {
+                        trade_id: e.trade_id,
+                    });
                 }
                 let pnl = out.cost_price.map(|c| round2(e.amount - c * n as f64));
                 if pnl.is_none() {
@@ -119,7 +129,10 @@ pub fn replay(entries: &[Entry]) -> Result<Replay, ReplayError> {
                 } else if let Some(total) = &mut out.realized_pnl {
                     *total += pnl.unwrap_or(0.0);
                 }
-                out.sell_pnls.push(SellPnl { trade_id: e.trade_id, pnl });
+                out.sell_pnls.push(SellPnl {
+                    trade_id: e.trade_id,
+                    pnl,
+                });
                 out.shares -= n;
                 if out.shares == 0 {
                     // 卖完时持仓行删除，成本价和买入日也一起清掉
@@ -129,10 +142,14 @@ pub fn replay(entries: &[Entry]) -> Result<Replay, ReplayError> {
             }
             TradeKind::Dividend => {
                 if out.shares <= 0 {
-                    return Err(ReplayError::HoldingGone { trade_id: e.trade_id });
+                    return Err(ReplayError::HoldingGone {
+                        trade_id: e.trade_id,
+                    });
                 }
                 if let Some(c) = out.cost_price {
-                    out.cost_price = Some(round4(((c * out.shares as f64 - e.amount) / out.shares as f64).max(0.0001)));
+                    out.cost_price = Some(round4(
+                        ((c * out.shares as f64 - e.amount) / out.shares as f64).max(0.0001),
+                    ));
                 }
             }
             TradeKind::Bonus => {
@@ -141,10 +158,14 @@ pub fn replay(entries: &[Entry]) -> Result<Replay, ReplayError> {
                     continue;
                 }
                 if out.shares <= 0 {
-                    return Err(ReplayError::HoldingGone { trade_id: e.trade_id });
+                    return Err(ReplayError::HoldingGone {
+                        trade_id: e.trade_id,
+                    });
                 }
                 let new_shares = out.shares + bonus;
-                out.cost_price = out.cost_price.map(|c| round4((c * out.shares as f64 / new_shares as f64).max(0.0001)));
+                out.cost_price = out
+                    .cost_price
+                    .map(|c| round4((c * out.shares as f64 / new_shares as f64).max(0.0001)));
                 out.shares = new_shares;
             }
             TradeKind::Adjust => {
@@ -188,8 +209,22 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 1, day).unwrap()
     }
 
-    fn entry(trade_id: i64, kind: TradeKind, date: NaiveDate, shares: Option<i64>, price: Option<f64>, amount: f64) -> Entry {
-        Entry { trade_id, kind, trade_date: date, shares, price, amount }
+    fn entry(
+        trade_id: i64,
+        kind: TradeKind,
+        date: NaiveDate,
+        shares: Option<i64>,
+        price: Option<f64>,
+        amount: f64,
+    ) -> Entry {
+        Entry {
+            trade_id,
+            kind,
+            trade_date: date,
+            shares,
+            price,
+            amount,
+        }
     }
 
     #[test]
@@ -204,7 +239,13 @@ mod tests {
         assert_eq!(r.shares, 1_500);
         assert_eq!(r.cost_price, Some(24.005), "卖出不改变平均成本");
         assert_eq!(r.realized_pnl, Some(2_986.25));
-        assert_eq!(r.sell_pnls, vec![SellPnl { trade_id: 3, pnl: Some(2_986.25) }]);
+        assert_eq!(
+            r.sell_pnls,
+            vec![SellPnl {
+                trade_id: 3,
+                pnl: Some(2_986.25)
+            }]
+        );
         assert_eq!(r.opened_on, Some(d(2)));
         assert!(!r.missing_cost);
     }
@@ -233,7 +274,10 @@ mod tests {
         assert_eq!(r.shares, 1_300);
         assert_eq!(r.cost_price, Some(20.0077));
         // 配股要有持仓才能认购：撤销支撑它的买入以后就对不上了
-        assert_eq!(replay(&[rights]), Err(ReplayError::HoldingGone { trade_id: 2 }));
+        assert_eq!(
+            replay(&[rights]),
+            Err(ReplayError::HoldingGone { trade_id: 2 })
+        );
     }
 
     #[test]
@@ -247,7 +291,10 @@ mod tests {
     #[test]
     fn dividend_needs_the_buy_that_was_removed() {
         let dividend = entry(2, TradeKind::Dividend, d(5), None, Some(0.2), 200.0);
-        assert_eq!(replay(&[dividend]), Err(ReplayError::HoldingGone { trade_id: 2 }));
+        assert_eq!(
+            replay(&[dividend]),
+            Err(ReplayError::HoldingGone { trade_id: 2 })
+        );
     }
 
     #[test]
@@ -289,6 +336,10 @@ mod tests {
         assert_eq!(r.shares, 500);
         assert_eq!(r.cost_price, Some(26.01));
         assert_eq!(r.opened_on, Some(d(6)));
-        assert_eq!(r.realized_pnl, Some(978.0), "卖出净回款 23,983 − 成本 23,005");
+        assert_eq!(
+            r.realized_pnl,
+            Some(978.0),
+            "卖出净回款 23,983 − 成本 23,005"
+        );
     }
 }

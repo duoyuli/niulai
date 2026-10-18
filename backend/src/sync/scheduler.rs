@@ -32,7 +32,9 @@ const SETTING: &str = "sync_schedule";
 
 pub async fn run(engine: Arc<Engine>, mut stop: watch::Receiver<bool>) -> anyhow::Result<()> {
     match load_times(&engine).await {
-        Ok(times) => tracing::info!(daily = %times.daily_time, weekly = %times.weekly_rule(), "调度器已启动（上海时间）"),
+        Ok(times) => {
+            tracing::info!(daily = %times.daily_time, weekly = %times.weekly_rule(), "调度器已启动（上海时间）")
+        }
         // 读不到时照常运行：每次检查都会重新读取
         Err(e) => tracing::warn!(error = %format!("{e:#}"), "调度器已启动，同步时间暂时读不到"),
     }
@@ -82,7 +84,11 @@ pub struct ScheduleTimes {
 impl ScheduleTimes {
     /// 网页上没有改过时：每个交易日 18:00（收盘后 3 小时，当天数据基本都已出齐），每周六 08:00（周末供应商空闲，不和每日同步抢请求额度）
     fn defaults() -> Self {
-        ScheduleTimes { daily_time: "18:00".into(), weekly_weekday: 6, weekly_time: "08:00".into() }
+        ScheduleTimes {
+            daily_time: "18:00".into(),
+            weekly_weekday: 6,
+            weekly_time: "08:00".into(),
+        }
     }
 
     pub fn daily_at(&self) -> anyhow::Result<NaiveTime> {
@@ -108,7 +114,11 @@ impl ScheduleTimes {
     }
 
     fn weekly_rule(&self) -> String {
-        format!("每{} {}", weekday_name(self.weekly_weekday), self.weekly_time)
+        format!(
+            "每{} {}",
+            weekday_name(self.weekly_weekday),
+            self.weekly_time
+        )
     }
 }
 
@@ -117,12 +127,18 @@ fn parse_hm(s: &str) -> Option<NaiveTime> {
 }
 
 fn weekday_name(n: u8) -> &'static str {
-    ["周一", "周二", "周三", "周四", "周五", "周六", "周日"].get(usize::from(n.max(1)) - 1).copied().unwrap_or("周六")
+    ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        .get(usize::from(n.max(1)) - 1)
+        .copied()
+        .unwrap_or("周六")
 }
 
 /// 读取同步时间：网页上保存的优先，没有或无法解析时用默认值
 pub async fn load_times(engine: &Engine) -> anyhow::Result<ScheduleTimes> {
-    let saved: Option<String> = sqlx::query_scalar("SELECT value FROM app.setting WHERE name = $1").bind(SETTING).fetch_optional(&engine.pool).await?;
+    let saved: Option<String> = sqlx::query_scalar("SELECT value FROM app.setting WHERE name = $1")
+        .bind(SETTING)
+        .fetch_optional(&engine.pool)
+        .await?;
     Ok(saved
         .and_then(|v| serde_json::from_str::<ScheduleTimes>(&v).ok())
         .filter(|t| t.validate().is_ok())
@@ -171,11 +187,19 @@ pub fn due_weekly(schedule: Schedule, today: NaiveDate, monthly: bool) -> bool {
 }
 
 /// 抢占前作业的水位。抢到之后规划失败时恢复它，下一次检查会重试，不会因为一次数据库抖动丢掉这个周期
-struct Mark(Vec<(String, NaiveDate, Option<i64>, DateTime<Utc>)>, Vec<String>);
+struct Mark(
+    Vec<(String, NaiveDate, Option<i64>, DateTime<Utc>)>,
+    Vec<String>,
+);
 
 async fn mark(pool: &PgPool, jobs: &[&str]) -> anyhow::Result<Mark> {
     let jobs: Vec<String> = jobs.iter().map(|j| j.to_string()).collect();
-    let rows = sqlx::query_as("SELECT job, last_fired, run_id, fired_at FROM ops.scheduler WHERE job = ANY($1)").bind(&jobs).fetch_all(pool).await?;
+    let rows = sqlx::query_as(
+        "SELECT job, last_fired, run_id, fired_at FROM ops.scheduler WHERE job = ANY($1)",
+    )
+    .bind(&jobs)
+    .fetch_all(pool)
+    .await?;
     Ok(Mark(rows, jobs))
 }
 
@@ -204,7 +228,12 @@ impl Mark {
 }
 
 /// 每个周期只有一个调用者能把 last_fired 推进到新周期，返回 true 的那个负责触发
-pub(crate) async fn claim(pool: &PgPool, job: &str, today: NaiveDate, period: &str) -> anyhow::Result<bool> {
+pub(crate) async fn claim(
+    pool: &PgPool,
+    job: &str,
+    today: NaiveDate,
+    period: &str,
+) -> anyhow::Result<bool> {
     let sql = format!(
         "INSERT INTO ops.scheduler (job, last_fired) VALUES ($1, $2)
          ON CONFLICT (job) DO UPDATE SET last_fired = EXCLUDED.last_fired, fired_at = now()
@@ -212,7 +241,12 @@ pub(crate) async fn claim(pool: &PgPool, job: &str, today: NaiveDate, period: &s
          RETURNING job"
     );
     // 审计：period 只会是代码中的 day / week / month
-    Ok(sqlx::query_scalar::<_, String>(AssertSqlSafe(sql)).bind(job).bind(today).fetch_optional(pool).await?.is_some())
+    Ok(sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
+        .bind(job)
+        .bind(today)
+        .fetch_optional(pool)
+        .await?
+        .is_some())
 }
 
 /// 抢占一个定时时刻：上次触发早于这个时刻时，只有一个调用者能成功。
@@ -236,7 +270,11 @@ async fn claim_slot(pool: &PgPool, job: &str, slot: NaiveDateTime) -> anyhow::Re
 pub fn last_weekly_slot(now: NaiveDateTime, weekday: Weekday, at: NaiveTime) -> NaiveDateTime {
     let back = (now.weekday().num_days_from_monday() + 7 - weekday.num_days_from_monday()) % 7;
     let slot = (now.date() - chrono::Duration::days(i64::from(back))).and_time(at);
-    if slot > now { slot - chrono::Duration::days(7) } else { slot }
+    if slot > now {
+        slot - chrono::Duration::days(7)
+    } else {
+        slot
+    }
 }
 
 async fn tick(engine: &Engine) -> anyhow::Result<()> {
@@ -269,17 +307,37 @@ async fn fire_daily(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
         tracing::info!(%today, "非交易日，跳过");
         return Ok(());
     }
-    let due: Vec<&DatasetSpec> = engine.registry.datasets.iter().filter(|d| d.enabled && due_daily(d.schedule, today)).collect();
-    let opts = planner::PlanOptions { trade_date: Some(today), trigger: Some("daily".into()), ..Default::default() };
-    let (run_id, summary) = engine.planner().plan_run(RunKind::Incremental, &due, opts).await?;
-    sqlx::query("UPDATE ops.scheduler SET run_id = $2 WHERE job = $1").bind("daily").bind(run_id).execute(&engine.pool).await?;
+    let due: Vec<&DatasetSpec> = engine
+        .registry
+        .datasets
+        .iter()
+        .filter(|d| d.enabled && due_daily(d.schedule, today))
+        .collect();
+    let opts = planner::PlanOptions {
+        trade_date: Some(today),
+        trigger: Some("daily".into()),
+        ..Default::default()
+    };
+    let (run_id, summary) = engine
+        .planner()
+        .plan_run(RunKind::Incremental, &due, opts)
+        .await?;
+    sqlx::query("UPDATE ops.scheduler SET run_id = $2 WHERE job = $1")
+        .bind("daily")
+        .bind(run_id)
+        .execute(&engine.pool)
+        .await?;
     let tasks: usize = summary.iter().map(|(_, n)| n).sum();
     tracing::info!(run_id, datasets = due.len(), tasks, "每日同步已规划");
     Ok(())
 }
 
 /// 每周：到了每周的时刻、这个时刻还没触发过就触发，不论是不是交易日。服务停机错过时，启动后立即补上
-async fn weekly_tick(engine: &Engine, times: &ScheduleTimes, now: NaiveDateTime) -> anyhow::Result<()> {
+async fn weekly_tick(
+    engine: &Engine,
+    times: &ScheduleTimes,
+    now: NaiveDateTime,
+) -> anyhow::Result<()> {
     let slot = last_weekly_slot(now, times.weekday()?, times.weekly_at()?);
     let before = mark(&engine.pool, &["weekly", "monthly"]).await?;
     if !claim_slot(&engine.pool, "weekly", slot).await? {
@@ -296,14 +354,41 @@ async fn fire_weekly(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
     let monthly = claim(&engine.pool, "monthly", today, "month").await?;
     // 运行的交易日取最近一个交易日：按天积累的数据（例如指数成分）记在这一天
     let trade_date: Option<NaiveDate> =
-        sqlx::query_scalar("SELECT max(cal_date) FROM ref.trading_day WHERE cal_date <= $1").bind(today).fetch_one(&engine.pool).await?;
-    let due: Vec<&DatasetSpec> = engine.registry.datasets.iter().filter(|d| d.enabled && due_weekly(d.schedule, today, monthly)).collect();
+        sqlx::query_scalar("SELECT max(cal_date) FROM ref.trading_day WHERE cal_date <= $1")
+            .bind(today)
+            .fetch_one(&engine.pool)
+            .await?;
+    let due: Vec<&DatasetSpec> = engine
+        .registry
+        .datasets
+        .iter()
+        .filter(|d| d.enabled && due_weekly(d.schedule, today, monthly))
+        .collect();
     let trigger = if monthly { "weekly+monthly" } else { "weekly" };
-    let opts = planner::PlanOptions { trade_date: Some(trade_date.unwrap_or(today)), trigger: Some(trigger.into()), ..Default::default() };
-    let (run_id, summary) = engine.planner().plan_run(RunKind::Incremental, &due, opts).await?;
-    sqlx::query("UPDATE ops.scheduler SET run_id = $1 WHERE job = 'weekly' OR (job = 'monthly' AND $2)").bind(run_id).bind(monthly).execute(&engine.pool).await?;
+    let opts = planner::PlanOptions {
+        trade_date: Some(trade_date.unwrap_or(today)),
+        trigger: Some(trigger.into()),
+        ..Default::default()
+    };
+    let (run_id, summary) = engine
+        .planner()
+        .plan_run(RunKind::Incremental, &due, opts)
+        .await?;
+    sqlx::query(
+        "UPDATE ops.scheduler SET run_id = $1 WHERE job = 'weekly' OR (job = 'monthly' AND $2)",
+    )
+    .bind(run_id)
+    .bind(monthly)
+    .execute(&engine.pool)
+    .await?;
     let tasks: usize = summary.iter().map(|(_, n)| n).sum();
-    tracing::info!(run_id, datasets = due.len(), tasks, monthly, "每周同步已规划");
+    tracing::info!(
+        run_id,
+        datasets = due.len(),
+        tasks,
+        monthly,
+        "每周同步已规划"
+    );
     Ok(())
 }
 
@@ -311,13 +396,18 @@ async fn fire_weekly(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
 /// 只补每日数据集；只有当天值的数据能不能取到由交易日校验决定，取不到时记为「已错过」。
 /// 只往前看一个交易日：更早的日子，只有当天值的数据已经无法获取，其余数据由每周同步和完整性核对补齐
 async fn catch_up(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
-    let prev: Option<NaiveDate> = sqlx::query_scalar("SELECT max(cal_date) FROM ref.trading_day WHERE cal_date < $1 AND cal_date >= $1 - 10")
-        .bind(today)
-        .fetch_one(&engine.pool)
-        .await?;
+    let prev: Option<NaiveDate> = sqlx::query_scalar(
+        "SELECT max(cal_date) FROM ref.trading_day WHERE cal_date < $1 AND cal_date >= $1 - 10",
+    )
+    .bind(today)
+    .fetch_one(&engine.pool)
+    .await?;
     let Some(prev) = prev else { return Ok(()) };
     // 系统还没开始每日同步（例如刚部署、还在首次回补）时不补
-    let last: Option<NaiveDate> = sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'daily'").fetch_optional(&engine.pool).await?;
+    let last: Option<NaiveDate> =
+        sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'daily'")
+            .fetch_optional(&engine.pool)
+            .await?;
     if last.is_none_or(|l| l >= prev) {
         return Ok(());
     }
@@ -325,9 +415,22 @@ async fn catch_up(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
     if !claim(&engine.pool, "daily", prev, "day").await? {
         return Ok(());
     }
-    let due: Vec<&DatasetSpec> = engine.registry.datasets.iter().filter(|d| d.enabled && due_daily(d.schedule, prev)).collect();
-    let opts = planner::PlanOptions { trade_date: Some(prev), trigger: Some("catch_up".into()), ..Default::default() };
-    let (run_id, summary) = match engine.planner().plan_run(RunKind::Incremental, &due, opts).await {
+    let due: Vec<&DatasetSpec> = engine
+        .registry
+        .datasets
+        .iter()
+        .filter(|d| d.enabled && due_daily(d.schedule, prev))
+        .collect();
+    let opts = planner::PlanOptions {
+        trade_date: Some(prev),
+        trigger: Some("catch_up".into()),
+        ..Default::default()
+    };
+    let (run_id, summary) = match engine
+        .planner()
+        .plan_run(RunKind::Incremental, &due, opts)
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             before.restore(&engine.pool).await;
@@ -347,7 +450,12 @@ async fn is_trading_day(engine: &Engine, today: NaiveDate) -> anyhow::Result<boo
             // 日历取不到时退回本地记录；本地也没有，就按交易日处理（执行快照类任务时还会再校验）
             tracing::warn!(error = %format!("{e:#}"), "获取交易日历失败，使用本地记录");
             let known = calendar::is_known_trading_day(&engine.pool, today).await?;
-            let any = sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM ref.trading_day WHERE cal_date >= $1)").bind(today).fetch_one(&engine.pool).await?;
+            let any = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM ref.trading_day WHERE cal_date >= $1)",
+            )
+            .bind(today)
+            .fetch_one(&engine.pool)
+            .await?;
             Ok(known || !any)
         }
     }
@@ -383,31 +491,70 @@ pub async fn overview(engine: &Engine) -> anyhow::Result<SyncSchedule> {
     let now = now_cn();
     let (daily_at, weekly_at, weekday) = (times.daily_at()?, times.weekly_at()?, times.weekday()?);
 
-    let fired_today: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ops.scheduler WHERE job = 'daily' AND last_fired >= $1)")
-        .bind(now.date())
-        .fetch_one(&engine.pool)
-        .await?;
-    let from = if now.time() < daily_at && !fired_today { now.date() } else { now.date() + chrono::Duration::days(1) };
-    let next_daily = next_trading_day(&engine.pool, from).await?.and_time(daily_at);
+    let fired_today: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM ops.scheduler WHERE job = 'daily' AND last_fired >= $1)",
+    )
+    .bind(now.date())
+    .fetch_one(&engine.pool)
+    .await?;
+    let from = if now.time() < daily_at && !fired_today {
+        now.date()
+    } else {
+        now.date() + chrono::Duration::days(1)
+    };
+    let next_daily = next_trading_day(&engine.pool, from)
+        .await?
+        .and_time(daily_at);
     let next_weekly = last_weekly_slot(now, weekday, weekly_at) + chrono::Duration::days(7);
-    let monthly_fired: Option<NaiveDate> = sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'monthly'").fetch_optional(&engine.pool).await?;
+    let monthly_fired: Option<NaiveDate> =
+        sqlx::query_scalar("SELECT last_fired FROM ops.scheduler WHERE job = 'monthly'")
+            .fetch_optional(&engine.pool)
+            .await?;
     let mut next_monthly = next_weekly;
-    while monthly_fired.is_some_and(|m| (m.year(), m.month()) == (next_monthly.year(), next_monthly.month())) {
+    while monthly_fired
+        .is_some_and(|m| (m.year(), m.month()) == (next_monthly.year(), next_monthly.month()))
+    {
         next_monthly += chrono::Duration::days(7);
     }
-    let next_season = if in_report_season(next_daily.date()) && next_daily < next_weekly { next_daily } else { next_weekly };
+    let next_season = if in_report_season(next_daily.date()) && next_daily < next_weekly {
+        next_daily
+    } else {
+        next_weekly
+    };
     let weekly_rule = times.weekly_rule();
 
     let mut plans = vec![];
     for plan in Schedule::ALL {
         let (rule, next, job) = match plan {
-            Schedule::Daily => (format!("每个交易日 {}", times.daily_time), Some(next_daily), Some("daily")),
+            Schedule::Daily => (
+                format!("每个交易日 {}", times.daily_time),
+                Some(next_daily),
+                Some("daily"),
+            ),
             Schedule::Weekly => (weekly_rule.clone(), Some(next_weekly), Some("weekly")),
-            Schedule::Monthly => (format!("每月第一次每周同步时（当月第一个{} {}）", weekday_name(times.weekly_weekday), times.weekly_time), Some(next_monthly), Some("monthly")),
-            Schedule::ReportSeason => ("1、4、7、8、10 月随每日同步，其余月份随每周同步".to_string(), Some(next_season), None),
+            Schedule::Monthly => (
+                format!(
+                    "每月第一次每周同步时（当月第一个{} {}）",
+                    weekday_name(times.weekly_weekday),
+                    times.weekly_time
+                ),
+                Some(next_monthly),
+                Some("monthly"),
+            ),
+            Schedule::ReportSeason => (
+                "1、4、7、8、10 月随每日同步，其余月份随每周同步".to_string(),
+                Some(next_season),
+                None,
+            ),
             Schedule::Manual => ("不自动同步，需要时手动发起".to_string(), None, None),
         };
-        let datasets: Vec<String> = engine.registry.datasets.iter().filter(|d| d.enabled && d.schedule == plan).map(|d| d.id.clone()).collect();
+        let datasets: Vec<String> = engine
+            .registry
+            .datasets
+            .iter()
+            .filter(|d| d.enabled && d.schedule == plan)
+            .map(|d| d.id.clone())
+            .collect();
         let (last_at, last_run_id, last_status) = match job {
             Some(job) => last_fired(&engine.pool, job).await?,
             None => (None, None, None),
@@ -428,7 +575,11 @@ pub async fn overview(engine: &Engine) -> anyhow::Result<SyncSchedule> {
 
 /// 不早于 from 的第一个交易日：本地日历没有覆盖到时按周一到周五算
 async fn next_trading_day(pool: &PgPool, from: NaiveDate) -> anyhow::Result<NaiveDate> {
-    let known: Option<NaiveDate> = sqlx::query_scalar("SELECT min(cal_date) FROM ref.trading_day WHERE cal_date >= $1").bind(from).fetch_one(pool).await?;
+    let known: Option<NaiveDate> =
+        sqlx::query_scalar("SELECT min(cal_date) FROM ref.trading_day WHERE cal_date >= $1")
+            .bind(from)
+            .fetch_one(pool)
+            .await?;
     if let Some(d) = known {
         return Ok(d);
     }
@@ -442,8 +593,14 @@ async fn next_trading_day(pool: &PgPool, from: NaiveDate) -> anyhow::Result<Naiv
 type LastFired = (Option<DateTime<Utc>>, Option<i64>, Option<String>);
 
 async fn last_fired(pool: &PgPool, job: &str) -> anyhow::Result<LastFired> {
-    let row: Option<(DateTime<Utc>, Option<i64>)> = sqlx::query_as("SELECT fired_at, run_id FROM ops.scheduler WHERE job = $1").bind(job).fetch_optional(pool).await?;
-    let Some((at, run_id)) = row else { return Ok((None, None, None)) };
+    let row: Option<(DateTime<Utc>, Option<i64>)> =
+        sqlx::query_as("SELECT fired_at, run_id FROM ops.scheduler WHERE job = $1")
+            .bind(job)
+            .fetch_optional(pool)
+            .await?;
+    let Some((at, run_id)) = row else {
+        return Ok((None, None, None));
+    };
     let status = match run_id {
         Some(id) => sqlx::query_scalar(
             "SELECT CASE WHEN bool_or(status = 'running') THEN 'running' WHEN bool_or(status = 'partial') THEN 'partial' ELSE 'succeeded' END
@@ -483,16 +640,35 @@ mod tests {
     fn weekly_slot_is_the_latest_one_not_after_now() {
         let t = NaiveTime::from_hms_opt(8, 0, 0).unwrap();
         // 2026-10-17 是周六
-        assert_eq!(last_weekly_slot(at("2026-10-17 09:00"), Weekday::Sat, t), at("2026-10-17 08:00"));
-        assert_eq!(last_weekly_slot(at("2026-10-17 07:59"), Weekday::Sat, t), at("2026-10-10 08:00"));
-        assert_eq!(last_weekly_slot(at("2026-10-17 08:00"), Weekday::Sat, t), at("2026-10-17 08:00"));
-        assert_eq!(last_weekly_slot(at("2026-10-19 10:00"), Weekday::Sat, t), at("2026-10-17 08:00"));
-        assert_eq!(last_weekly_slot(at("2026-10-19 10:00"), Weekday::Mon, t), at("2026-10-19 08:00"));
+        assert_eq!(
+            last_weekly_slot(at("2026-10-17 09:00"), Weekday::Sat, t),
+            at("2026-10-17 08:00")
+        );
+        assert_eq!(
+            last_weekly_slot(at("2026-10-17 07:59"), Weekday::Sat, t),
+            at("2026-10-10 08:00")
+        );
+        assert_eq!(
+            last_weekly_slot(at("2026-10-17 08:00"), Weekday::Sat, t),
+            at("2026-10-17 08:00")
+        );
+        assert_eq!(
+            last_weekly_slot(at("2026-10-19 10:00"), Weekday::Sat, t),
+            at("2026-10-17 08:00")
+        );
+        assert_eq!(
+            last_weekly_slot(at("2026-10-19 10:00"), Weekday::Mon, t),
+            at("2026-10-19 08:00")
+        );
     }
 
     #[test]
     fn times_are_validated() {
-        let t = |d: &str, w: u8, wt: &str| ScheduleTimes { daily_time: d.into(), weekly_weekday: w, weekly_time: wt.into() };
+        let t = |d: &str, w: u8, wt: &str| ScheduleTimes {
+            daily_time: d.into(),
+            weekly_weekday: w,
+            weekly_time: wt.into(),
+        };
         assert!(t("18:00", 6, "08:00").validate().is_ok());
         assert!(t("25:00", 6, "08:00").validate().is_err());
         assert!(t("18:00", 0, "08:00").validate().is_err());

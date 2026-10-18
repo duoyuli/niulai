@@ -9,7 +9,9 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 use serde_json::{Value, json};
 
-use super::{Progress, STOP_TIMEOUT_SECS, Upgrade, builtin_db, create_body_for, set_env_line, write_in_place};
+use super::{
+    Progress, STOP_TIMEOUT_SECS, Upgrade, builtin_db, create_body_for, set_env_line, write_in_place,
+};
 
 /// 已经做过的部署迁移
 const STATE_FILE: &str = ".niulai-migrations";
@@ -20,14 +22,16 @@ const STATE_FILE: &str = ".niulai-migrations";
 /// 资源上限和容器的安全选项不在这里做：升级助手重建容器时沿用原容器的启动参数（见 `create_body`），
 /// 只改 compose.yml 不会让运行中的容器生效，要用户执行 `docker compose up -d` 重建；内存上限还取决于服务器大小，
 /// 猜错会让数据库被强制杀掉。手动步骤见 docs/operations/runbook.md#resource_limits。
-const MIGRATIONS: &[(&str, &str)] = &[(DATA_DIR, "数据库数据从 Docker 卷移到部署目录 data/postgres")];
+const MIGRATIONS: &[(&str, &str)] =
+    &[(DATA_DIR, "数据库数据从 Docker 卷移到部署目录 data/postgres")];
 
 const DATA_DIR: &str = "2026-10-17-postgres-data-dir";
 /// 数据库容器里数据目录的挂载点（postgres 18 镜像）
 const PG_TARGET: &str = "/var/lib/postgresql";
 /// 改动前 compose.yml 中数据库挂载的写法，和改动后的写法
 const OLD_COMPOSE_LINE: &str = "volumes: [pgdata:/var/lib/postgresql]";
-const NEW_COMPOSE_LINE: &str = "volumes: [\"${POSTGRES_DATA:-./data/postgres}:/var/lib/postgresql\"]";
+const NEW_COMPOSE_LINE: &str =
+    "volumes: [\"${POSTGRES_DATA:-./data/postgres}:/var/lib/postgresql\"]";
 
 /// 一个迁移的结果
 enum Outcome {
@@ -47,20 +51,38 @@ impl Upgrade<'_> {
 
     fn record(&self, id: &str, result: &str, note: &str) {
         use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(self.deploy.join(STATE_FILE)) {
-            let _ = writeln!(f, "{id} {result} {} {}", crate::time::now_cn().format("%Y-%m-%dT%H:%M:%S"), note.replace('\n', " "));
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.deploy.join(STATE_FILE))
+        {
+            let _ = writeln!(
+                f,
+                "{id} {result} {} {}",
+                crate::time::now_cn().format("%Y-%m-%dT%H:%M:%S"),
+                note.replace('\n', " ")
+            );
         }
     }
 
     pub(super) fn migrations_pending(&self) -> bool {
         let applied = self.applied();
-        MIGRATIONS.iter().any(|(id, _)| !applied.iter().any(|a| a == id))
+        MIGRATIONS
+            .iter()
+            .any(|(id, _)| !applied.iter().any(|a| a == id))
     }
 
     /// 做完还没做过的部署迁移，进度写在 migrate 这一步。backed_up：这次升级已经备份过数据库
-    pub(super) async fn run_deploy_migrations(&self, p: &Progress<'_>, backed_up: bool) -> anyhow::Result<()> {
+    pub(super) async fn run_deploy_migrations(
+        &self,
+        p: &Progress<'_>,
+        backed_up: bool,
+    ) -> anyhow::Result<()> {
         let applied = self.applied();
-        let todo: Vec<_> = MIGRATIONS.iter().filter(|(id, _)| !applied.iter().any(|a| a == id)).collect();
+        let todo: Vec<_> = MIGRATIONS
+            .iter()
+            .filter(|(id, _)| !applied.iter().any(|a| a == id))
+            .collect();
         if todo.is_empty() {
             p.skip("migrate", "没有需要做的");
             return Ok(());
@@ -93,35 +115,54 @@ impl Upgrade<'_> {
 
     // @project-doc docs/operations/runbook.md#deploy_migrations
     /// 数据库数据从 Docker 卷 pgdata 移到部署目录下的 data/postgres：删除容器、docker compose down -v 都不会再丢数据
-    async fn migrate_data_dir(&self, p: &Progress<'_>, title: &str, backed_up: bool) -> anyhow::Result<Outcome> {
+    async fn migrate_data_dir(
+        &self,
+        p: &Progress<'_>,
+        title: &str,
+        backed_up: bool,
+    ) -> anyhow::Result<Outcome> {
         let step = |detail: &str| p.running("migrate", &format!("{title}：{detail}"));
         let niulai = self.find("niulai").await?;
         if !builtin_db(&niulai) {
             return Ok(Outcome::Skipped("用的不是内置数据库".into()));
         }
         let pg = self.find("postgres").await?;
-        let Some(mount) = pg["Mounts"].as_array().into_iter().flatten().find(|m| m["Destination"] == PG_TARGET) else {
+        let Some(mount) = pg["Mounts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|m| m["Destination"] == PG_TARGET)
+        else {
             return Ok(Outcome::Skipped("数据库容器没有挂载数据目录".into()));
         };
         if mount["Type"] != "volume" {
             return Ok(Outcome::Skipped("数据已经在宿主机目录中".into()));
         }
-        let volume = mount["Name"].as_str().context("数据卷没有名字")?.to_string();
+        let volume = mount["Name"]
+            .as_str()
+            .context("数据卷没有名字")?
+            .to_string();
         let compose_path = self.deploy.join("compose.yml");
         let compose = std::fs::read_to_string(&compose_path).context("读不到 compose.yml")?;
         let Some(new_compose) = rewrite_compose(&compose) else {
-            return Ok(Outcome::Skipped(format!("compose.yml 中数据库的挂载改过（找不到「{OLD_COMPOSE_LINE}」），请按运维手册手动迁移")));
+            return Ok(Outcome::Skipped(format!(
+                "compose.yml 中数据库的挂载改过（找不到「{OLD_COMPOSE_LINE}」），请按运维手册手动迁移"
+            )));
         };
         let host_deploy = host_deploy_dir(self.me).context("找不到部署目录在宿主机上的路径")?;
         let host_data = format!("{}/data/postgres", host_deploy.trim_end_matches('/'));
         let local_data = self.deploy.join("data/postgres");
         if local_data.read_dir().is_ok_and(|mut d| d.next().is_some()) {
-            return Ok(Outcome::Skipped("部署目录的 data/postgres 已经有文件，没有覆盖".into()));
+            return Ok(Outcome::Skipped(
+                "部署目录的 data/postgres 已经有文件，没有覆盖".into(),
+            ));
         }
 
         if !backed_up {
             step("备份数据库");
-            self.backup("data-dir").await.context("备份数据库失败，没有迁移")?;
+            self.backup("data-dir")
+                .await
+                .context("备份数据库失败，没有迁移")?;
         }
         step("停止服务");
         let niulai_id = niulai["Id"].as_str().unwrap_or_default().to_string();
@@ -130,7 +171,10 @@ impl Upgrade<'_> {
         self.docker.stop(&pg_id, 60).await?;
 
         step("复制数据（几 GB 要一两分钟）");
-        let image = pg["Config"]["Image"].as_str().unwrap_or("postgres:18.6").to_string();
+        let image = pg["Config"]["Image"]
+            .as_str()
+            .unwrap_or("postgres:18.6")
+            .to_string();
         if let Err(e) = self.copy_volume(&image, &volume, &host_data).await {
             let _ = std::fs::remove_dir_all(&local_data);
             self.restart_both(&pg_id, &niulai_id).await;
@@ -142,7 +186,10 @@ impl Upgrade<'_> {
         let env_before = std::fs::read_to_string(&env_path).ok();
         write_in_place(&compose_path, &new_compose)?;
         if let Some(text) = &env_before {
-            write_in_place(&env_path, &set_env_line(text, "POSTGRES_DATA", "./data/postgres"))?;
+            write_in_place(
+                &env_path,
+                &set_env_line(text, "POSTGRES_DATA", "./data/postgres"),
+            )?;
         }
 
         step("用新的数据目录启动数据库");
@@ -153,14 +200,19 @@ impl Upgrade<'_> {
             if let Some(text) = &env_before {
                 let _ = write_in_place(&env_path, text);
             }
-            let failed = self.deploy.join(format!("data/postgres.failed-{}", crate::time::now_cn().format("%Y%m%d%H%M%S")));
+            let failed = self.deploy.join(format!(
+                "data/postgres.failed-{}",
+                crate::time::now_cn().format("%Y%m%d%H%M%S")
+            ));
             let _ = std::fs::rename(&local_data, failed);
             let _ = self.docker.start(&niulai_id).await;
             return Err(e.context("数据库用新的数据目录没有启动，已换回原来的 Docker 卷"));
         }
         step("启动 niulai");
         self.docker.start(&niulai_id).await?;
-        Ok(Outcome::Done(format!("原来的 Docker 卷 {volume} 保留未删，确认数据没问题后可以 docker volume rm {volume}")))
+        Ok(Outcome::Done(format!(
+            "原来的 Docker 卷 {volume} 保留未删，确认数据没问题后可以 docker volume rm {volume}"
+        )))
     }
 
     async fn restart_both(&self, pg: &str, niulai: &str) {
@@ -188,7 +240,10 @@ impl Upgrade<'_> {
             "Cmd": [script],
             "HostConfig": { "Binds": [format!("{volume}:/from:ro"), format!("{host_dir}:/to")] },
         });
-        let id = self.docker.create(&format!("{}-migrate-data", self.project), &body).await?;
+        let id = self
+            .docker
+            .create(&format!("{}-migrate-data", self.project), &body)
+            .await?;
         let result = async {
             self.docker.start(&id).await?;
             let code = self.docker.wait(&id).await?;
@@ -207,7 +262,12 @@ impl Upgrade<'_> {
 
 /// 部署目录（upgrader 里的 /deploy）在宿主机上的路径
 fn host_deploy_dir(me: &Value) -> Option<String> {
-    me["Mounts"].as_array()?.iter().find(|m| m["Destination"] == "/deploy")?["Source"].as_str().map(str::to_string)
+    me["Mounts"]
+        .as_array()?
+        .iter()
+        .find(|m| m["Destination"] == "/deploy")?["Source"]
+        .as_str()
+        .map(str::to_string)
 }
 
 /// compose.yml 中数据库的挂载换成可配置的数据目录；找不到原来的写法（改过）时返回 None
@@ -235,7 +295,10 @@ pub fn with_data_bind(mut body: Value, host_dir: &str) -> Value {
         m.retain(|m| m["Target"] != PG_TARGET);
     }
     let mut binds: Vec<Value> = hc["Binds"].as_array().cloned().unwrap_or_default();
-    binds.retain(|b| b.as_str().is_none_or(|b| b.split(':').nth(1) != Some(PG_TARGET)));
+    binds.retain(|b| {
+        b.as_str()
+            .is_none_or(|b| b.split(':').nth(1) != Some(PG_TARGET))
+    });
     binds.push(json!(format!("{host_dir}:{PG_TARGET}")));
     hc["Binds"] = json!(binds);
     body
@@ -253,17 +316,36 @@ mod tests {
     async fn real_docker_data_dir_migration() {
         use std::process::Command;
         let project = format!("niulaimig{}", std::process::id());
-        let dir = std::fs::canonicalize(std::env::temp_dir()).unwrap().join(&project);
+        let dir = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(&project);
         std::fs::create_dir_all(&dir).unwrap();
         let compose = "services:\n  postgres:\n    image: postgres:18.6\n    environment: {POSTGRES_USER: niulai, POSTGRES_DB: niulai, POSTGRES_PASSWORD: niulai}\n    volumes: [pgdata:/var/lib/postgresql]\n    healthcheck: {test: [CMD, pg_isready, -U, niulai, -d, niulai], interval: 2s, retries: 30}\n  niulai:\n    image: postgres:18.6\n    init: true\n    entrypoint: [sleep, infinity]\n    env_file: .env\n    depends_on: {postgres: {condition: service_healthy}}\nvolumes:\n  pgdata:\n";
         std::fs::write(dir.join("compose.yml"), compose).unwrap();
-        std::fs::write(dir.join(".env"), "DATABASE_URL=postgres://niulai:niulai@postgres:5432/niulai\n").unwrap();
+        std::fs::write(
+            dir.join(".env"),
+            "DATABASE_URL=postgres://niulai:niulai@postgres:5432/niulai\n",
+        )
+        .unwrap();
         let dc = |args: &[&str]| {
-            let out = Command::new("docker").args(["compose", "-p", &project]).args(args).current_dir(&dir).output().unwrap();
-            assert!(out.status.success(), "docker compose {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            let out = Command::new("docker")
+                .args(["compose", "-p", &project])
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "docker compose {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
             String::from_utf8_lossy(&out.stdout).into_owned()
         };
-        let psql = |sql: &str| dc(&["exec", "-T", "postgres", "psql", "-U", "niulai", "-d", "niulai", "-Atc", sql]);
+        let psql = |sql: &str| {
+            dc(&[
+                "exec", "-T", "postgres", "psql", "-U", "niulai", "-d", "niulai", "-Atc", sql,
+            ])
+        };
         dc(&["up", "-d", "--wait"]);
         psql("CREATE TABLE t (v text); INSERT INTO t VALUES ('还在')");
 
@@ -272,8 +354,15 @@ mod tests {
         let upgrade_dir = dir.join("upgrade");
         std::fs::create_dir_all(&upgrade_dir).unwrap();
         let files = super::super::Files { dir: upgrade_dir };
-        let me = json!({ "Mounts": [{ "Destination": "/deploy", "Source": dir.to_string_lossy() }] });
-        let up = Upgrade { docker: &docker, files: &files, deploy: &dir, project: &project, me: &me };
+        let me =
+            json!({ "Mounts": [{ "Destination": "/deploy", "Source": dir.to_string_lossy() }] });
+        let up = Upgrade {
+            docker: &docker,
+            files: &files,
+            deploy: &dir,
+            project: &project,
+            me: &me,
+        };
         assert!(up.migrations_pending());
         let p = Progress::new(&files, "", &[("migrate", "部署迁移")]);
         let result = up.run_deploy_migrations(&p, false).await;
@@ -281,24 +370,63 @@ mod tests {
         let check = || -> Result<(), String> {
             result.as_ref().map_err(|e| format!("{e:#}"))?;
             let row = psql("SELECT v FROM t");
-            if row.trim() != "还在" { return Err(format!("数据不对：{row}")) }
+            if row.trim() != "还在" {
+                return Err(format!("数据不对：{row}"));
+            }
             let c = std::fs::read_to_string(dir.join("compose.yml")).unwrap();
-            if !c.contains(NEW_COMPOSE_LINE) { return Err("compose.yml 没改".into()) }
-            if !std::fs::read_to_string(dir.join(".env")).unwrap().contains("POSTGRES_DATA=./data/postgres") { return Err(".env 没改".into()) }
-            if !dir.join("data/postgres/18").exists() { return Err("data/postgres 里没有数据".into()) }
-            if !std::fs::read_to_string(dir.join(STATE_FILE)).unwrap().starts_with(DATA_DIR) { return Err("没记下迁移".into()) }
-            if !std::fs::read_dir(dir.join("backups")).map(|d| d.count() == 1).unwrap_or(false) { return Err("没有备份".into()) }
+            if !c.contains(NEW_COMPOSE_LINE) {
+                return Err("compose.yml 没改".into());
+            }
+            if !std::fs::read_to_string(dir.join(".env"))
+                .unwrap()
+                .contains("POSTGRES_DATA=./data/postgres")
+            {
+                return Err(".env 没改".into());
+            }
+            if !dir.join("data/postgres/18").exists() {
+                return Err("data/postgres 里没有数据".into());
+            }
+            if !std::fs::read_to_string(dir.join(STATE_FILE))
+                .unwrap()
+                .starts_with(DATA_DIR)
+            {
+                return Err("没记下迁移".into());
+            }
+            if !std::fs::read_dir(dir.join("backups"))
+                .map(|d| d.count() == 1)
+                .unwrap_or(false)
+            {
+                return Err("没有备份".into());
+            }
             // 之后按新的 compose.yml 重建，还是这份数据；再迁移一次不做任何事
             dc(&["up", "-d", "--wait"]);
             let row = psql("SELECT v FROM t");
-            if row.trim() != "还在" { return Err(format!("compose up 之后数据不对：{row}")) }
-            if up.migrations_pending() { return Err("迁移应该只做一次".into()) }
+            if row.trim() != "还在" {
+                return Err(format!("compose up 之后数据不对：{row}"));
+            }
+            if up.migrations_pending() {
+                return Err("迁移应该只做一次".into());
+            }
             Ok(())
         };
         let outcome = check();
-        let _ = Command::new("docker").args(["compose", "-p", &project, "down", "-v"]).current_dir(&dir).output();
+        let _ = Command::new("docker")
+            .args(["compose", "-p", &project, "down", "-v"])
+            .current_dir(&dir)
+            .output();
         // 数据目录里的文件属于容器里的 postgres 用户，用容器删
-        let _ = Command::new("docker").args(["run", "--rm", "-v", &format!("{}:/d", dir.display()), "postgres:18.6", "rm", "-rf", "/d/data"]).output();
+        let _ = Command::new("docker")
+            .args([
+                "run",
+                "--rm",
+                "-v",
+                &format!("{}:/d", dir.display()),
+                "postgres:18.6",
+                "rm",
+                "-rf",
+                "/d/data",
+            ])
+            .output();
         let _ = std::fs::remove_dir_all(&dir);
         outcome.unwrap();
     }
@@ -307,9 +435,18 @@ mod tests {
     fn compose_line_is_rewritten_only_when_unchanged() {
         let old = "services:\n  postgres:\n    volumes: [pgdata:/var/lib/postgresql]\n    restart: unless-stopped\n";
         let new = rewrite_compose(old).unwrap();
-        assert!(new.contains("    volumes: [\"${POSTGRES_DATA:-./data/postgres}:/var/lib/postgresql\"]\n"), "{new}");
+        assert!(
+            new.contains(
+                "    volumes: [\"${POSTGRES_DATA:-./data/postgres}:/var/lib/postgresql\"]\n"
+            ),
+            "{new}"
+        );
         assert!(new.ends_with("restart: unless-stopped\n"));
-        assert_eq!(rewrite_compose("    volumes: [/srv/pg:/var/lib/postgresql]\n"), None, "改过的不动");
+        assert_eq!(
+            rewrite_compose("    volumes: [/srv/pg:/var/lib/postgresql]\n"),
+            None,
+            "改过的不动"
+        );
         assert_eq!(rewrite_compose(&new), None, "已经迁移过的不再改");
     }
 
@@ -320,8 +457,19 @@ mod tests {
             "Binds": ["/a:/b"]
         }});
         let b = with_data_bind(body, "/opt/niulai/data/postgres");
-        assert_eq!(b["HostConfig"]["Mounts"], json!([{ "Type": "volume", "Source": "x", "Target": "/other" }]));
-        assert_eq!(b["HostConfig"]["Binds"], json!(["/a:/b", "/opt/niulai/data/postgres:/var/lib/postgresql"]));
-        assert_eq!(host_deploy_dir(&json!({ "Mounts": [{ "Destination": "/deploy", "Source": "/opt/niulai" }] })), Some("/opt/niulai".into()));
+        assert_eq!(
+            b["HostConfig"]["Mounts"],
+            json!([{ "Type": "volume", "Source": "x", "Target": "/other" }])
+        );
+        assert_eq!(
+            b["HostConfig"]["Binds"],
+            json!(["/a:/b", "/opt/niulai/data/postgres:/var/lib/postgresql"])
+        );
+        assert_eq!(
+            host_deploy_dir(
+                &json!({ "Mounts": [{ "Destination": "/deploy", "Source": "/opt/niulai" }] })
+            ),
+            Some("/opt/niulai".into())
+        );
     }
 }

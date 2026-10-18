@@ -15,7 +15,10 @@ use crate::auth::{self, Role, User};
 use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(list_users, add_user)).routes(routes!(update_user)).routes(routes!(reset_password))
+    OpenApiRouter::new()
+        .routes(routes!(list_users, add_user))
+        .routes(routes!(update_user))
+        .routes(routes!(reset_password))
 }
 
 /// 全部用户
@@ -50,11 +53,25 @@ pub struct UserWithPassword {
     responses((status = 201, description = "已添加", body = UserWithPassword),
               (status = 400, description = "用户名或密码不合法", body = crate::error::ErrorBody),
               (status = 409, description = "用户名已经有人用了", body = crate::error::ErrorBody)))]
-async fn add_user(State(s): State<AppState>, Json(input): Json<NewUser>) -> ApiResult<(StatusCode, Json<UserWithPassword>)> {
+async fn add_user(
+    State(s): State<AppState>,
+    Json(input): Json<NewUser>,
+) -> ApiResult<(StatusCode, Json<UserWithPassword>)> {
     let (password, generated) = password_or_generated(input.password)?;
     let user = auth::create(&s.pool, &input.username, &password, input.role).await?;
-    tracing::info!(user_id = user.user_id, username = user.username, role = user.role.key(), "已添加用户");
-    Ok((StatusCode::CREATED, Json(UserWithPassword { user, generated_password: generated })))
+    tracing::info!(
+        user_id = user.user_id,
+        username = user.username,
+        role = user.role.key(),
+        "已添加用户"
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(UserWithPassword {
+            user,
+            generated_password: generated,
+        }),
+    ))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -70,12 +87,23 @@ pub struct UserUpdate {
     responses((status = 200, description = "已修改", body = User),
               (status = 400, description = "不能修改自己，或会没有可以登录的管理员", body = crate::error::ErrorBody),
               (status = 404, description = "用户不存在", body = crate::error::ErrorBody)))]
-async fn update_user(State(s): State<AppState>, me: CurrentUser, Path(user_id): Path<i64>, Json(input): Json<UserUpdate>) -> ApiResult<Json<User>> {
+async fn update_user(
+    State(s): State<AppState>,
+    me: CurrentUser,
+    Path(user_id): Path<i64>,
+    Json(input): Json<UserUpdate>,
+) -> ApiResult<Json<User>> {
     if user_id == me.user_id {
         return Err(ApiError::BadRequest("不能修改自己的角色或停用自己".into()));
     }
     let user = auth::update(&s.pool, user_id, input.role, input.disabled).await?;
-    tracing::info!(user_id, role = user.role.key(), disabled = user.disabled, by = me.user_id, "已修改用户");
+    tracing::info!(
+        user_id,
+        role = user.role.key(),
+        disabled = user.disabled,
+        by = me.user_id,
+        "已修改用户"
+    );
     Ok(Json(user))
 }
 
@@ -97,14 +125,23 @@ pub struct ResetResult {
     responses((status = 200, description = "已重置", body = ResetResult),
               (status = 400, description = "密码太短，或想重置自己的密码", body = crate::error::ErrorBody),
               (status = 404, description = "用户不存在", body = crate::error::ErrorBody)))]
-async fn reset_password(State(s): State<AppState>, me: CurrentUser, Path(user_id): Path<i64>, Json(input): Json<PasswordReset>) -> ApiResult<Json<ResetResult>> {
+async fn reset_password(
+    State(s): State<AppState>,
+    me: CurrentUser,
+    Path(user_id): Path<i64>,
+    Json(input): Json<PasswordReset>,
+) -> ApiResult<Json<ResetResult>> {
     if user_id == me.user_id {
-        return Err(ApiError::BadRequest("改自己的密码请到「我的」页面，需要输入现在的密码".into()));
+        return Err(ApiError::BadRequest(
+            "改自己的密码请到「我的」页面，需要输入现在的密码".into(),
+        ));
     }
     let (password, generated) = password_or_generated(input.password)?;
     auth::set_password(&s.pool, user_id, &password, false).await?;
     tracing::info!(user_id, by = me.user_id, "已重置密码");
-    Ok(Json(ResetResult { generated_password: generated }))
+    Ok(Json(ResetResult {
+        generated_password: generated,
+    }))
 }
 
 /// 填了密码就用填的，没填就生成一个（同时返回给调用方）

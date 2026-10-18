@@ -69,12 +69,23 @@ pub struct User {
 }
 
 type UserRow = (i64, String, String, bool, bool, DateTime<Utc>, String);
-const USER_COLS: &str = "user_id, username, role, disabled, must_change_password, created_at, password_hash";
+const USER_COLS: &str =
+    "user_id, username, role, disabled, must_change_password, created_at, password_hash";
 
 impl TryFrom<UserRow> for User {
     type Error = anyhow::Error;
-    fn try_from((user_id, username, role, disabled, must_change_password, created_at, password_hash): UserRow) -> anyhow::Result<Self> {
-        Ok(User { user_id, username, role: Role::parse(&role)?, disabled, must_change_password, created_at, password_hash })
+    fn try_from(
+        (user_id, username, role, disabled, must_change_password, created_at, password_hash): UserRow,
+    ) -> anyhow::Result<Self> {
+        Ok(User {
+            user_id,
+            username,
+            role: Role::parse(&role)?,
+            disabled,
+            must_change_password,
+            created_at,
+            password_hash,
+        })
     }
 }
 
@@ -107,14 +118,20 @@ pub fn generate_password() -> anyhow::Result<String> {
     let mut buf = [0u8; GENERATED_PASSWORD_LEN];
     getrandom::fill(&mut buf).map_err(|e| anyhow::anyhow!("取随机数失败：{e}"))?;
     // 256 不是字母表长度的整数倍，取模有极小的偏差，对 12 位密码可以忽略
-    Ok(buf.iter().map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char).collect())
+    Ok(buf
+        .iter()
+        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .collect())
 }
 
 /// Argon2id 哈希要几十毫秒的 CPU，放到阻塞线程上
 pub async fn hash_password(pw: &str) -> anyhow::Result<String> {
     let pw = pw.to_string();
     tokio::task::spawn_blocking(move || {
-        Argon2::default().hash_password(pw.as_bytes()).map(|h| h.to_string()).map_err(|e| anyhow::anyhow!("密码哈希失败：{e}"))
+        Argon2::default()
+            .hash_password(pw.as_bytes())
+            .map(|h| h.to_string())
+            .map_err(|e| anyhow::anyhow!("密码哈希失败：{e}"))
     })
     .await?
 }
@@ -125,7 +142,9 @@ pub async fn verify_password(hash: &str, pw: &str) -> bool {
     tokio::task::spawn_blocking(move || {
         let real = PasswordHash::new(&hash).ok();
         let target = real.clone().unwrap_or_else(|| dummy_hash().clone());
-        let ok = Argon2::default().verify_password(pw.as_bytes(), &target).is_ok();
+        let ok = Argon2::default()
+            .verify_password(pw.as_bytes(), &target)
+            .is_ok();
         ok && real.is_some()
     })
     .await
@@ -134,15 +153,22 @@ pub async fn verify_password(hash: &str, pw: &str) -> bool {
 
 fn dummy_hash() -> &'static PasswordHash {
     static H: std::sync::OnceLock<PasswordHash> = std::sync::OnceLock::new();
-    H.get_or_init(|| Argon2::default().hash_password(b"niulai-dummy").expect("固定输入的哈希不会失败"))
+    H.get_or_init(|| {
+        Argon2::default()
+            .hash_password(b"niulai-dummy")
+            .expect("固定输入的哈希不会失败")
+    })
 }
 
 /// 还没有密码的第一个管理员：用配置里的账号密码设置。默认密码登录后页面提醒修改
 pub async fn init_first_admin(pool: &PgPool, settings: &Settings) -> anyhow::Result<()> {
     let pending: Option<i64> =
         sqlx::query_scalar("SELECT user_id FROM app.user WHERE role = 'admin' AND password_hash = '' ORDER BY user_id LIMIT 1").fetch_optional(pool).await?;
-    let Some(user_id) = pending else { return Ok(()) };
-    let username = validate_username(&settings.admin_user).map_err(|e| anyhow::anyhow!("NIULAI_ADMIN_USER 不合法：{e}"))?;
+    let Some(user_id) = pending else {
+        return Ok(());
+    };
+    let username = validate_username(&settings.admin_user)
+        .map_err(|e| anyhow::anyhow!("NIULAI_ADMIN_USER 不合法：{e}"))?;
     let hash = hash_password(&settings.admin_password).await?;
     let is_default = settings.admin_password == DEFAULT_ADMIN_PASSWORD;
     sqlx::query("UPDATE app.user SET username = $2, password_hash = $3, must_change_password = $4, updated_at = now() WHERE user_id = $1 AND password_hash = ''")
@@ -153,7 +179,10 @@ pub async fn init_first_admin(pool: &PgPool, settings: &Settings) -> anyhow::Res
         .execute(pool)
         .await?;
     if is_default {
-        tracing::warn!(username, "已创建第一个管理员，密码是默认的 niulai，请登录后立即修改");
+        tracing::warn!(
+            username,
+            "已创建第一个管理员，密码是默认的 niulai，请登录后立即修改"
+        );
     } else {
         tracing::info!(username, "已用配置的账号密码创建第一个管理员");
     }
@@ -162,20 +191,33 @@ pub async fn init_first_admin(pool: &PgPool, settings: &Settings) -> anyhow::Res
 
 pub async fn find(pool: &PgPool, user_id: i64) -> anyhow::Result<Option<User>> {
     // 审计：USER_COLS 是本文件中的常量列名
-    let row: Option<UserRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {USER_COLS} FROM app.user WHERE user_id = $1"))).bind(user_id).fetch_optional(pool).await?;
+    let row: Option<UserRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {USER_COLS} FROM app.user WHERE user_id = $1"
+    )))
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
     row.map(User::try_from).transpose()
 }
 
 pub async fn find_by_name(pool: &PgPool, username: &str) -> anyhow::Result<Option<User>> {
     // 审计：USER_COLS 是本文件中的常量列名
-    let row: Option<UserRow> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {USER_COLS} FROM app.user WHERE lower(username) = lower($1)"))).bind(username.trim()).fetch_optional(pool).await?;
+    let row: Option<UserRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {USER_COLS} FROM app.user WHERE lower(username) = lower($1)"
+    )))
+    .bind(username.trim())
+    .fetch_optional(pool)
+    .await?;
     row.map(User::try_from).transpose()
 }
 
 pub async fn list(pool: &PgPool) -> anyhow::Result<Vec<User>> {
     // 审计：USER_COLS 是本文件中的常量列名
-    let rows: Vec<UserRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {USER_COLS} FROM app.user ORDER BY user_id"))).fetch_all(pool).await?;
+    let rows: Vec<UserRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {USER_COLS} FROM app.user ORDER BY user_id"
+    )))
+    .fetch_all(pool)
+    .await?;
     rows.into_iter().map(User::try_from).collect()
 }
 
@@ -198,7 +240,12 @@ impl From<sqlx::Error> for UserError {
 }
 
 /// 添加用户。密码是管理员设置的，本人登录后提醒修改
-pub async fn create(pool: &PgPool, username: &str, password: &str, role: Role) -> Result<User, UserError> {
+pub async fn create(
+    pool: &PgPool,
+    username: &str,
+    password: &str,
+    role: Role,
+) -> Result<User, UserError> {
     let username = validate_username(username).map_err(UserError::Invalid)?;
     validate_password(password).map_err(UserError::Invalid)?;
     let hash = hash_password(password).await?;
@@ -212,11 +259,18 @@ pub async fn create(pool: &PgPool, username: &str, password: &str, role: Role) -
     .bind(role.key())
     .fetch_optional(pool)
     .await?;
-    row.map(User::try_from).transpose()?.ok_or(UserError::Taken(username))
+    row.map(User::try_from)
+        .transpose()?
+        .ok_or(UserError::Taken(username))
 }
 
 /// 设置密码。`by_self` 为 false 表示管理员重置，本人登录后提醒修改
-pub async fn set_password(pool: &PgPool, user_id: i64, password: &str, by_self: bool) -> Result<(), UserError> {
+pub async fn set_password(
+    pool: &PgPool,
+    user_id: i64,
+    password: &str,
+    by_self: bool,
+) -> Result<(), UserError> {
     validate_password(password).map_err(UserError::Invalid)?;
     let hash = hash_password(password).await?;
     let n = sqlx::query("UPDATE app.user SET password_hash = $2, must_change_password = $3, updated_at = now() WHERE user_id = $1")
@@ -226,14 +280,26 @@ pub async fn set_password(pool: &PgPool, user_id: i64, password: &str, by_self: 
         .execute(pool)
         .await?
         .rows_affected();
-    if n == 0 { Err(UserError::NotFound) } else { Ok(()) }
+    if n == 0 {
+        Err(UserError::NotFound)
+    } else {
+        Ok(())
+    }
 }
 
 /// 修改角色或停用。至少要留一个没有停用的管理员，避免谁都进不了管理功能
-pub async fn update(pool: &PgPool, user_id: i64, role: Role, disabled: bool) -> Result<User, UserError> {
+pub async fn update(
+    pool: &PgPool,
+    user_id: i64,
+    role: Role,
+    disabled: bool,
+) -> Result<User, UserError> {
     let mut tx = pool.begin().await?;
     // 锁住全部管理员，两个请求同时降级两个管理员时也能判断对
-    let admins: Vec<(i64, bool)> = sqlx::query_as("SELECT user_id, disabled FROM app.user WHERE role = 'admin' FOR UPDATE").fetch_all(&mut *tx).await?;
+    let admins: Vec<(i64, bool)> =
+        sqlx::query_as("SELECT user_id, disabled FROM app.user WHERE role = 'admin' FOR UPDATE")
+            .fetch_all(&mut *tx)
+            .await?;
     let others_active = admins.iter().any(|(id, off)| *id != user_id && !off);
     let stays_admin = role == Role::Admin && !disabled;
     if admins.iter().any(|(id, _)| *id == user_id) && !stays_admin && !others_active {
@@ -248,14 +314,25 @@ pub async fn update(pool: &PgPool, user_id: i64, role: Role, disabled: bool) -> 
     .bind(disabled)
     .fetch_optional(&mut *tx)
     .await?;
-    let user = row.map(User::try_from).transpose()?.ok_or(UserError::NotFound)?;
+    let user = row
+        .map(User::try_from)
+        .transpose()?
+        .ok_or(UserError::NotFound)?;
     tx.commit().await?;
     Ok(user)
 }
 
 /// 登录状态的签名：用户编号、过期时间、密码哈希。密码哈希含随机盐，改密码（哪怕改成一样的）后旧签名都对不上
 pub fn sign_session(secret: &[u8], user: &User, expires: i64) -> String {
-    format!("{}.{expires}.{}", user.user_id, to_hex(&session_mac(secret, user.user_id, &user.password_hash, expires).finalize().into_bytes()))
+    format!(
+        "{}.{expires}.{}",
+        user.user_id,
+        to_hex(
+            &session_mac(secret, user.user_id, &user.password_hash, expires)
+                .finalize()
+                .into_bytes()
+        )
+    )
 }
 
 /// 解析 Cookie 中的登录状态，返回用户编号和过期时间；签名要拿到用户之后用 `session_valid` 核对
@@ -268,7 +345,12 @@ pub fn parse_session(token: &str) -> Option<(i64, i64, Vec<u8>)> {
 }
 
 pub fn session_valid(secret: &[u8], user: &User, expires: i64, sig: &[u8]) -> bool {
-    !user.disabled && !user.password_hash.is_empty() && expires > Utc::now().timestamp() && session_mac(secret, user.user_id, &user.password_hash, expires).verify_slice(sig).is_ok()
+    !user.disabled
+        && !user.password_hash.is_empty()
+        && expires > Utc::now().timestamp()
+        && session_mac(secret, user.user_id, &user.password_hash, expires)
+            .verify_slice(sig)
+            .is_ok()
 }
 
 fn session_mac(secret: &[u8], user_id: i64, password_hash: &str, expires: i64) -> Hmac<Sha256> {
@@ -285,7 +367,10 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 /// 登录失败计数：同一用户名连续失败 `MAX_FAILURES` 次后暂停 `LOCK_FOR`，放慢猜密码。只在进程内（只有一个 serve 进程）
@@ -307,12 +392,17 @@ impl LoginGuard {
         let mut map = self.failures.lock().expect("登录计数的锁不会中毒");
         // 用户名由请求方决定：过期的记录随手清掉，不让表无限变大
         map.retain(|_, (_, last)| last.elapsed() < LOCK_FOR);
-        let e = map.entry(username.trim().to_lowercase()).or_insert((0, Instant::now()));
+        let e = map
+            .entry(username.trim().to_lowercase())
+            .or_insert((0, Instant::now()));
         *e = (e.0 + 1, Instant::now());
     }
 
     pub fn succeeded(&self, username: &str) {
-        self.failures.lock().expect("登录计数的锁不会中毒").remove(&username.trim().to_lowercase());
+        self.failures
+            .lock()
+            .expect("登录计数的锁不会中毒")
+            .remove(&username.trim().to_lowercase());
     }
 }
 
@@ -321,7 +411,15 @@ mod tests {
     use super::*;
 
     fn user(id: i64, hash: &str) -> User {
-        User { user_id: id, username: "a".into(), role: Role::Member, disabled: false, must_change_password: false, created_at: Utc::now(), password_hash: hash.into() }
+        User {
+            user_id: id,
+            username: "a".into(),
+            role: Role::Member,
+            disabled: false,
+            must_change_password: false,
+            created_at: Utc::now(),
+            password_hash: hash.into(),
+        }
     }
 
     #[test]
@@ -333,12 +431,42 @@ mod tests {
         let (id, e, sig) = parse_session(&token).unwrap();
         assert_eq!((id, e), (7, exp));
         assert!(session_valid(k, &u, e, &sig));
-        assert!(!session_valid(k, &user(7, "$argon2id$v=19$hash-b"), e, &sig), "改了密码，旧的登录状态失效");
-        assert!(!session_valid(k, &user(8, "$argon2id$v=19$hash-a"), e, &sig), "换个用户编号不行");
+        assert!(
+            !session_valid(k, &user(7, "$argon2id$v=19$hash-b"), e, &sig),
+            "改了密码，旧的登录状态失效"
+        );
+        assert!(
+            !session_valid(k, &user(8, "$argon2id$v=19$hash-a"), e, &sig),
+            "换个用户编号不行"
+        );
         assert!(!session_valid(k, &u, e + 1, &sig));
-        assert!(!session_valid(k, &User { disabled: true, ..u.clone() }, e, &sig), "停用后不能登录");
-        assert!(!session_valid(k, &u, Utc::now().timestamp() - 1, &sign_session(k, &u, Utc::now().timestamp() - 1).rsplit('.').next().and_then(from_hex).unwrap()));
-        assert!(parse_session("7.abc.00").is_none() && parse_session("x").is_none() && parse_session("7.1.zz").is_none());
+        assert!(
+            !session_valid(
+                k,
+                &User {
+                    disabled: true,
+                    ..u.clone()
+                },
+                e,
+                &sig
+            ),
+            "停用后不能登录"
+        );
+        assert!(!session_valid(
+            k,
+            &u,
+            Utc::now().timestamp() - 1,
+            &sign_session(k, &u, Utc::now().timestamp() - 1)
+                .rsplit('.')
+                .next()
+                .and_then(from_hex)
+                .unwrap()
+        ));
+        assert!(
+            parse_session("7.abc.00").is_none()
+                && parse_session("x").is_none()
+                && parse_session("7.1.zz").is_none()
+        );
     }
 
     #[tokio::test]
@@ -347,13 +475,20 @@ mod tests {
         assert!(h.starts_with("$argon2id$"));
         assert!(verify_password(&h, "correct horse").await);
         assert!(!verify_password(&h, "wrong").await);
-        assert!(!verify_password("", "").await, "还没有设置密码的用户不能登录");
+        assert!(
+            !verify_password("", "").await,
+            "还没有设置密码的用户不能登录"
+        );
     }
 
     #[test]
     fn validates_names_passwords_and_generates() {
         assert_eq!(validate_username("  妈妈 "), Ok("妈妈".into()));
-        assert!(validate_username("").is_err() && validate_username("a b").is_err() && validate_username(&"x".repeat(33)).is_err());
+        assert!(
+            validate_username("").is_err()
+                && validate_username("a b").is_err()
+                && validate_username(&"x".repeat(33)).is_err()
+        );
         assert!(validate_password("1234567").is_err() && validate_password("12345678").is_ok());
         let p = generate_password().unwrap();
         assert_eq!(p.len(), GENERATED_PASSWORD_LEN);

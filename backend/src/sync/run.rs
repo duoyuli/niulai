@@ -55,7 +55,11 @@ pub struct NewRun<'a> {
 }
 
 pub async fn create(conn: &mut PgConnection, run: &NewRun<'_>) -> anyhow::Result<i64> {
-    let single = if run.datasets.len() == 1 { Some(run.datasets[0].as_str()) } else { None };
+    let single = if run.datasets.len() == 1 {
+        Some(run.datasets[0].as_str())
+    } else {
+        None
+    };
     Ok(sqlx::query_scalar("INSERT INTO ops.run (kind, dataset_id, trade_date, params) VALUES ($1, $2, $3, $4) RETURNING run_id")
         .bind(run.kind.as_str())
         .bind(single)
@@ -69,7 +73,8 @@ pub async fn create(conn: &mut PgConnection, run: &NewRun<'_>) -> anyhow::Result
 pub async fn set_total(conn: &mut PgConnection, run_id: i64, total: usize) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE ops.run SET tasks_total = $2,
-                status = CASE WHEN $2 = 0 THEN 'succeeded' ELSE status END,
+                status = CASE WHEN $2 = 0 AND NOT (params ? 'planning_error') THEN 'succeeded'
+                              WHEN $2 = 0 THEN 'partial' ELSE status END,
                 finished_at = CASE WHEN $2 = 0 THEN now() END
          WHERE run_id = $1",
     )
@@ -96,7 +101,7 @@ pub async fn try_complete(pool: &PgPool, run_id: i64) -> anyhow::Result<Option<S
     Ok(sqlx::query_scalar(
         "UPDATE ops.run r SET
             tasks_done   = s.ok, tasks_failed = s.bad,
-            status       = CASE WHEN s.bad > 0 THEN 'partial' ELSE 'succeeded' END,
+            status       = CASE WHEN s.bad > 0 OR r.params ? 'planning_error' THEN 'partial' ELSE 'succeeded' END,
             finished_at  = now()
          FROM (SELECT count(*) FILTER (WHERE status IN ('done', 'empty', 'skipped')) ok,
                       count(*) FILTER (WHERE status = 'dead') bad
@@ -149,6 +154,38 @@ pub async fn stalled(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
     )
     .fetch_all(pool)
     .await?)
+}
+
+pub async fn planned_since_runs(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT run_id FROM ops.run WHERE status = 'succeeded' AND jsonb_object_length(coalesce(params->'planned_since_marks', '{}'::jsonb)) > 0 ORDER BY run_id",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn planned_since_marks(
+    pool: &PgPool,
+    run_id: i64,
+) -> anyhow::Result<Vec<(String, chrono::DateTime<chrono::Utc>)>> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value FROM ops.run, jsonb_each_text(coalesce(params->'planned_since_marks', '{}'::jsonb)) WHERE run_id = $1",
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(dataset, at)| at.parse().ok().map(|at| (dataset, at)))
+        .collect())
+}
+
+pub async fn clear_planned_since_marks(pool: &PgPool, run_id: i64) -> anyhow::Result<()> {
+    sqlx::query("UPDATE ops.run SET params = params - 'planned_since_marks' WHERE run_id = $1")
+        .bind(run_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// API 后台规划中进程重启后留下的运行：超过 10 分钟仍带 planning 标记就结束为失败。

@@ -758,16 +758,6 @@ async fn execute_item(
         Action::Sell | Action::Reduce => TradeKind::Sell,
         _ => return Err(ApiError::BadRequest("这一条不需要操作".into())),
     };
-    let done: Option<String> = sqlx::query_scalar(
-        "SELECT state FROM app.advice_item_state WHERE advice_id = $1 AND item_key = $2",
-    )
-    .bind(advice_id)
-    .bind(&key)
-    .fetch_optional(&s.pool)
-    .await?;
-    if done.as_deref() == Some("executed") {
-        return Err(ApiError::BadRequest("这一条已经记过了".into()));
-    }
     let price = input
         .price
         .filter(|p| *p > 0.0)
@@ -787,24 +777,7 @@ async fn execute_item(
     } else {
         None
     };
-    let trade_id = account::record(
-        &s.pool,
-        me.user_id,
-        id,
-        &trade,
-        TradeSource::Advice,
-        strategy,
-    )
-    .await?;
-    sqlx::query(
-        "INSERT INTO app.advice_item_state (advice_id, item_key, state, trade_id) VALUES ($1, $2, 'executed', $3)
-         ON CONFLICT (advice_id, item_key) DO UPDATE SET state = 'executed', trade_id = EXCLUDED.trade_id, updated_at = now()",
-    )
-    .bind(advice_id)
-    .bind(&key)
-    .bind(trade_id)
-    .execute(&s.pool)
-    .await?;
+    account::record_advice(&s.pool, me.user_id, id, advice_id, &key, &trade, strategy).await?;
     Ok(Json(advice_response(&s, id, Some(a.trade_date)).await?))
 }
 
