@@ -19,6 +19,7 @@ use super::market::{self, calendar_days_for};
 use super::points;
 use super::prices::{self, DailyBar};
 use super::strategy::Definition;
+use crate::instrument::{AssetType, extension};
 
 /// 回测区间上限：几年的全市场日线逐只计算，区间再长耗时和内存都会明显增加
 pub const MAX_YEARS: i64 = 5;
@@ -99,6 +100,7 @@ pub struct PortfolioOutcome {
 /// 一个信号对应的候选交易
 struct Candidate {
     stock: usize,
+    asset_type: AssetType,
     signal_date: NaiveDate,
     entry_date: NaiveDate,
     entry_q: f64,
@@ -140,6 +142,7 @@ fn candidates(
             };
             Some(Candidate {
                 stock,
+                asset_type: meta.asset_type,
                 signal_date: t.signal_date,
                 entry_date: t.entry_date,
                 entry_q,
@@ -169,14 +172,7 @@ pub async fn run(
     let mut ew = EqualWeight::default();
     let include_stock = d.universe.asset_types.iter().any(|a| a == "stock");
     let include_etf = d.universe.asset_types.iter().any(|a| a == "etf");
-    let costs = if include_etf && !include_stock {
-        Costs {
-            stamp_tax_rate: 0.0,
-            ..p.costs
-        }
-    } else {
-        p.costs
-    };
+    let costs = p.costs;
     let any_asset = Definition::any_assets(d.universe.asset_types.clone());
     prices::for_each_assets(pool, lo, p.end, include_stock, include_etf, |code, bars| {
         let Some(meta) = sec.meta.get(code) else {
@@ -268,7 +264,12 @@ pub async fn run(
                 && date == day
             {
                 let gross = held[k].units * q;
-                let fee = costs.commission(gross) + gross * costs.stamp_tax_rate;
+                let stamp_tax_rate = if extension(c.asset_type).stamp_tax_rate() == 0.0 {
+                    0.0
+                } else {
+                    costs.stamp_tax_rate
+                };
+                let fee = costs.commission(gross) + gross * stamp_tax_rate;
                 fees += fee;
                 cash += gross - fee;
                 trades.push(trade(c, (gross - fee) / held[k].cost - 1.0, true));

@@ -46,7 +46,7 @@
 | `/accounts` | 我的账户：每个账户一张卡片（总资产、当日盈亏、现金、持仓只数、下个交易日的运营建议、核对提醒） | `GET /accounts` |
 | `/accounts/new` | 新建账户，两步：名字；现金和持仓（`PositionsEditor`，可粘贴，可跳过）。规则用默认值，不在主流程里选 | `POST /accounts`、`POST /accounts/{id}/positions/parse`、`PUT /accounts/{id}/positions` |
 | `/accounts/:id` | 一个账户，四个标签：运营（下个交易日的买卖建议、执行、不做、理由和提醒）；持仓；记录；设置（账户名称、勾选策略、至少同时看好的策略数、风控参数、费率和用户主动发起的规则回测） | `GET /accounts/{id}` 及其下的 `advice`、`trades`、`review` 等 |
-| `/strategies` | 策略：每个策略最近一次的买点、卖点、持有中数量，内置策略标「内置」；管理员点击「排序」打开弹窗，在弹窗内拖动策略并点击「保存」后调整显示顺序；可选历史表现过滤；立即巡检、新建（管理员） | `GET /strategies`、`PUT /strategies/order`、`POST /screening/run` |
+| `/strategies` | 策略：每个策略最近一次的买点、卖点、持有中数量，内置策略标「内置」；管理员点击「排序」打开弹窗，在弹窗内拖动策略并点击「保存」后调整显示顺序；立即巡检、新建（管理员） | `GET /strategies`、`PUT /strategies/order`、`POST /screening/run` |
 | `/strategies/:id` | 策略详情：规则的白话；「最新买卖点」按交易日看买点、卖点（原因）、持有中；「过去表现如何」点「开始回测」做全市场组合回测 | `GET` / `PUT` / `DELETE /strategies/{id}`、`/results`、`POST /screening/run`、`GET /backtest/portfolio` |
 | `/strategies/new`、`/:id/edit` | 策略编辑器：从模板或空白开始，股票池、买入条件、排序、卖出规则，可预览；`?signal=<key>` 先放好一个信号 | `GET /strategies/catalog`、`/signals`、`POST /strategies/preview`、`POST` / `PUT /strategies` |
 | `/signals`、`/signals/:key` | 信号列表（我的信号和按分组的内置信号）；详情：怎么判断、怎么看、画在 K 线上、过去表现、今天出现的股票、被哪些策略用 | `GET /signals`、`/signals/{key}`、`POST /signals/today`、`/signals/stats`、`/securities/{thscode}/signal-days`、`GET /securities/{thscode}/indicator` |

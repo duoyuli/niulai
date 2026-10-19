@@ -219,7 +219,7 @@ const ETF_BAR_SNAPSHOT: &str = "
 INSERT INTO mkt.etf_bar_1d AS t (thscode, trade_date, open, high, low, close, volume, amount, pre_close, source, price_basis, run_id)
 SELECT e->>'thscode', $3::date,
        coalesce((e->'p'->>'open_price')::numeric, (e->'p'->>'open')::numeric),
-       coalesce((e->'p'->>'high_price')::numeric, (e->p->>'high')::numeric),
+       coalesce((e->'p'->>'high_price')::numeric, (e->'p'->>'high')::numeric),
        coalesce((e->'p'->>'low_price')::numeric, (e->'p'->>'low')::numeric),
        coalesce((e->'p'->>'last_price')::numeric, (e->'p'->>'close_price')::numeric, (e->'p'->>'close')::numeric),
        round(coalesce((e->'p'->>'volume')::numeric, 0))::bigint,

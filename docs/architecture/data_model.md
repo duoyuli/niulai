@@ -77,7 +77,7 @@
 - `ops.cursor`：每个数据集、每个分区的进度，`state` 是 JSON，例如 `{"synced_to": "2026-10-15"}`。`part_key = '_plan'` 的行是 `from_dataset` 增量规划的时间水位。
 - `ops.api_call`：每次 HTTP 尝试一行，含状态码、供应商 `code`、`request_id`、延迟。表声明为按 `called_at` 的范围分区，但只有默认分区；超过 30 天的行定期清理，见 [定期清理](sync_pipeline.md#retention)。
 - `ops.bar_gap`、`ops.data_check`：数据核检发现的日线缺口（`open` 还缺、`suspended` 确认停牌，补上了就删掉）和每次核检的结果，见 [数据核检](sync_pipeline.md#data_check)。
-- `ops.scheduler`：定时作业最近一次触发的日期和时刻：`daily`（每日同步，也用于判断要不要补发）、`weekly`（按触发时刻 `fired_at` 判断每周时刻有没有触发过）、`monthly`、`repair`（每个交易日一次的兜底补偿）、`data_check`（每周一次的数据核检）、`adj_rebuild`（回补期间定期重算复权）、`prune`（每天一次的 [定期清理](sync_pipeline.md#retention)），见 [定时调度](sync_pipeline.md#scheduling)。
+- `ops.scheduler`：定时作业最近一次触发的日期和时刻：`daily`（每日同步，也用于判断要不要补发）、`weekly`（按触发时刻 `fired_at` 判断每周时刻有没有触发过）、`monthly`、`repair`（每个交易日一次的兜底补偿）、`data_check`（每周一次的数据核检）、`adj_rebuild`（回补期间定期重算复权）、`prune`（每天一次的 [定期清理](sync_pipeline.md#retention)），不再用于账户建议的策略统计或参考值回测，见 [定时调度](sync_pipeline.md#scheduling)。
 - `ops.derived_version`：派生数据最近一次重算完成的时刻。目前只有 `adj_factor` 一行，复权因子重算完成后更新，进程内依赖复权价的缓存以它为版本，见 [ADR：指标在 Rust 中计算](../decisions/indicator_compute.md)。
 - `ops.v_progress`：按运行和数据集汇总任务状态，API 的运行详情使用它。
 

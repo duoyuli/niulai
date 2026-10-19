@@ -321,6 +321,7 @@ mod tests {
                 capital: 1e12,
                 costs: Costs::default(),
                 risk,
+                lot: Default::default(),
             };
             let bt = backtest::run(
                 &b,

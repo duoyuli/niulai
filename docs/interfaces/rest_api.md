@@ -38,11 +38,11 @@
 | `POST /system/upgrade` | 一键升级：把版本号交给 upgrader 容器，返回 202 | 请求体 `{version}`，为空时升级到最新版本；只接受正式版本号（`YYYY.MM.DD`、`YYYY.MM.DD.N`）且高于当前版本；upgrader 没有运行或正在升级时返回 409 |
 | `GET /setup` | 首次登录引导的状态：API Key 是否已配置、来源、末尾 4 位、生成 Key 的网址、是否已规划回补 | 见 [首次登录引导](#setup) |
 | `PUT /setup/api-key` | 验证并保存 API Key，立即生效 | 请求体 `{api_key}`；见 [首次登录引导](#setup) |
-| `GET /securities` | 证券列表 | `q`（代码或名称片段）、`board`；`limit` 默认 50、最大 500；`offset` |
+| `GET /securities` | 证券列表（股票和交易所 ETF，结果带 `asset_type`） | `q`（代码或名称片段）、`board`；`limit` 默认 50、最大 500；`offset` |
 | `GET /securities/{thscode}` | 证券详情：简称历史、本地日线的范围和根数 | 不存在时返回 404 |
-| `GET /securities/{thscode}/fundamentals` | 个股基本面：最近估值历史，以及最近一期利润表、资产负债表、现金流量表和财务指标；报表同时返回披露日期 | `limit` 默认 90、最大 365 |
-| `GET /securities/{thscode}/bars` | 个股日线 | `adjust`（见 [复权参数](#adjust_param)）、`start`、`end`；`limit` 默认 500、最大 10,000，返回范围内**最近**的 N 根，按日期升序 |
-| `GET /backtest/strategy` | 单只股票的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
+| `GET /securities/{thscode}/fundamentals` | 股票的最近估值历史、三张报表和财务指标；ETF 返回行情范围、供应商前复权标记和基金资料；股票报表同时返回披露日期 | `limit` 默认 90、最大 365（ETF 忽略） |
+| `GET /securities/{thscode}/bars` | 个股或 ETF 日线 | `adjust`（见 [复权参数](#adjust_param)；ETF 只支持 `none` / `qfq` / `hfq`）、`start`、`end`；`limit` 默认 500、最大 10,000，返回范围内**最近**的 N 根，按日期升序 |
+| `GET /backtest/strategy` | 单只股票或 ETF 的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
 | `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金和成本同上；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
 | `GET /strategies/catalog` | 指标、内置信号（含白话说明）、模板目录和默认股票池，前端据此生成条件编辑器 | — |
 | `GET /strategies` | 全部策略，含白话说明（`explained`）和最近一次巡检的数量 | — |
@@ -65,7 +65,7 @@
 | `GET /securities/{thscode}/diagnosis` | 个股诊断：四个维度的结论、最近 20 个交易日的信号、关键价位、当天符合的策略 | 规则见 [个股诊断](../domains/strategies.md#diagnosis) |
 | `GET /market/overview` | 市场概况：涨跌家数、涨跌停数、涨跌幅中位数、站上 20 日均线的比例 | `date` 默认最新交易日 |
 | `GET /market/sectors` | 板块强弱排名 | `category`（`industry` 默认 / `cn_concept`）、`days` 默认 5、范围 1 到 60、`date`；规则见 [市场环境](../domains/strategies.md#market) |
-| `GET /market/hot` | 今日热点：权威涨停池按连板高度分组、跌停、炸板、封板率等统计；普通用户可看 | `date` 是截止日期，默认最新交易日；每组和每个列表最多 50 只，全部家数在 `*_total`；数据每周同步，这一天的数据还没同步时 `available` 为 `false`、`note` 用白话说明原因；口径和空态见 [今日热点](../domains/hotspots.md) |
+| `GET /market/hot` | 今日热点：权威涨停池按连板高度分组、跌停、炸板、封板率等统计；普通用户可看 | `date` 是截止日期，默认最新交易日；每组和每个列表最多 50 只，全部家数在 `*_total`；数据按交易日同步，这一天的数据还没同步时 `available` 为 `false`、`note` 用白话说明原因；口径和空态见 [今日热点](../domains/hotspots.md) |
 | `GET /watchlist` | 当前用户的自选股及诊断（每个用户各自一份）：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |

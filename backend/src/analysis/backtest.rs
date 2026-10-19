@@ -12,10 +12,24 @@ use utoipa::ToSchema;
 
 use super::prices::{CorpEvent, DailyBar};
 
-/// 每手股数
-const LOT: i64 = 100;
 /// 回测区间短于这么多自然日时不计算年化收益：时间太短，年化后的数字没有意义
 const MIN_DAYS_FOR_ANNUAL: i64 = 90;
+
+/// 单证券回测的申报单位。由资产扩展提供，默认值保持 A 股主板的 100 股一手。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LotRule {
+    pub min: i64,
+    pub step: i64,
+}
+
+impl Default for LotRule {
+    fn default() -> Self {
+        Self {
+            min: 100,
+            step: 100,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Costs {
@@ -51,6 +65,7 @@ pub struct Params {
     pub capital: f64,
     pub costs: Costs,
     pub risk: Risk,
+    pub lot: LotRule,
 }
 
 /// 风控：持仓期间按收盘价判断，触发后在下一个交易日开盘卖出。涨跌按前复权价计算，含分红送转
@@ -247,16 +262,21 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
                 pending = None;
                 match side {
                     Side::Buy => {
-                        let mut shares = (cash
-                            / (b.open * (1.0 + p.costs.commission_rate))
-                            / LOT as f64)
-                            .floor() as i64
-                            * LOT;
-                        while shares > 0
+                        let mut shares =
+                            (cash / (b.open * (1.0 + p.costs.commission_rate)) / p.lot.step as f64)
+                                .floor() as i64
+                                * p.lot.step;
+                        if shares < p.lot.min {
+                            shares = 0;
+                        }
+                        while shares >= p.lot.min
                             && shares as f64 * b.open + p.costs.commission(shares as f64 * b.open)
                                 > cash
                         {
-                            shares -= LOT;
+                            shares -= p.lot.step;
+                        }
+                        if shares < p.lot.min {
+                            shares = 0;
                         }
                         if shares == 0 {
                             skipped += 1;
@@ -463,6 +483,7 @@ mod tests {
                 stamp_tax_rate: 0.0,
             },
             risk: Risk::default(),
+            lot: LotRule::default(),
         }
     }
 
@@ -478,6 +499,27 @@ mod tests {
             .map(|r| r.is_some_and(|r| r.signal == Some(CrossSignal::Death)))
             .collect();
         (entry, exit)
+    }
+
+    #[test]
+    fn lot_rule_is_used_for_non_main_board_assets() {
+        let b = bars(&[1.0, 1.0, 1.0]);
+        let entry = [true, false, false];
+        let exit = [false; 3];
+        let mut p = params();
+        p.capital = 250.0;
+        p.lot = LotRule { min: 200, step: 1 };
+        let out = run(
+            &b,
+            &[],
+            &Signals {
+                entry: &entry,
+                exit: &exit,
+            },
+            &p,
+        )
+        .expect("有足够历史和资金时应生成回测");
+        assert_eq!(out.trades[0].shares, 250);
     }
 
     /// 2 日均线与 3 日均线交叉的回测

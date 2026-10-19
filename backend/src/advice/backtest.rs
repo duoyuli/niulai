@@ -658,7 +658,7 @@ fn simulate(
     }
 }
 
-/// 三组参考值的回测：每周和策略表现一起重算，存在 `app.preset_stat`
+/// 三组参考值的回测：仅供用户主动研究，结果存在 `app.preset_stat`，不由账户建议流程读取。
 pub async fn refresh_presets(pool: &PgPool) -> anyhow::Result<()> {
     let defs = crate::analysis::screener::screening_strategies(pool).await?;
     for preset in Preset::ALL {

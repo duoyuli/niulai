@@ -4,7 +4,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use super::rules::{HistoryCheck, HistoryWindow};
-use crate::analysis::backtest::{self, Risk, Signals};
+use crate::analysis::backtest::{self, Costs, LotRule, Risk, Signals};
 use crate::analysis::indicators::{Frame, StockMeta};
 use crate::analysis::prices::{CorpEvent, DailyBar};
 use crate::analysis::strategy::Definition;
@@ -38,6 +38,8 @@ pub struct HistorySeries {
     risk: Risk,
     warmup: usize,
     list_date: Option<NaiveDate>,
+    board: String,
+    asset_type: crate::instrument::AssetType,
 }
 
 impl HistorySeries {
@@ -54,6 +56,8 @@ impl HistorySeries {
             },
             warmup: def.warmup() as usize,
             list_date: meta.list_date,
+            board: meta.board.clone(),
+            asset_type: meta.asset_type,
         }
     }
 
@@ -89,8 +93,22 @@ impl HistorySeries {
                         &backtest::Params {
                             start: Some(start),
                             capital: 100_000.0,
-                            costs: backtest::Costs::default(),
+                            costs: if crate::instrument::extension(self.asset_type).stamp_tax_rate()
+                                == 0.0
+                            {
+                                Costs {
+                                    stamp_tax_rate: 0.0,
+                                    ..Costs::default()
+                                }
+                            } else {
+                                Costs::default()
+                            },
                             risk: self.risk,
+                            lot: {
+                                let (min, step) = crate::instrument::extension(self.asset_type)
+                                    .lot_rule(&self.board);
+                                LotRule { min, step }
+                            },
                         },
                     )
                     .map(|o| o.summary.total_return * 100.0)

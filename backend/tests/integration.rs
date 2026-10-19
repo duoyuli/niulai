@@ -467,6 +467,31 @@ async fn etf_domain_sync_and_analysis_path() {
     assert_eq!(bars.len(), 3);
     assert_eq!(bars[2].q_close, 4.35);
 
+    // ETF 快照与历史日线共用同一张事实表；快照应只补当天市场字段，不覆盖已有历史价格。
+    let snapshot = vec![(
+        "item".to_string(),
+        json!({"open_price": 4.36, "high_price": 4.40, "low_price": 4.30, "last_price": 4.38,
+            "prev_price": 4.35, "volume": 1400000.0, "turnover": 6132000.0}),
+    )];
+    let rows = build_rows(
+        reg.get("fund.market_snapshot").unwrap(),
+        &vars,
+        &snapshot,
+        Some("2026-06-29"),
+    )
+    .unwrap();
+    assert_eq!(
+        sinks::apply(
+            &db.pool,
+            "mkt.etf_bar_1d",
+            &sink_ctx(run_id, "fund.market_snapshot", &vars),
+            &rows,
+        )
+        .await
+        .unwrap(),
+        1
+    );
+
     let sec = niulai::analysis::market::securities(&db.pool)
         .await
         .unwrap();
@@ -506,7 +531,7 @@ async fn etf_domain_sync_and_analysis_path() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["bars"].as_array().unwrap().len(), 3);
+    assert_eq!(body["bars"].as_array().unwrap().len(), 4);
     assert_eq!(body["adjust"], "qfq");
     let (status, diagnosis) =
         call(&app, "GET", "/api/v1/securities/510300.SH/diagnosis", None).await;
@@ -2611,8 +2636,9 @@ async fn accounts_positions_and_daily_advice() {
     assert_eq!(st(&r), StatusCode::CREATED, "{v}");
     let acc = v["summary"]["account"]["account_id"].as_i64().unwrap();
     assert_eq!(
-        v["summary"]["account"]["rules"]["stop_loss_pct"], 8.0,
-        "新账户用稳健型的参考值"
+        v["summary"]["account"]["rules"]["protection_stop_loss_pct"],
+        Value::Null,
+        "新账户默认关闭账户保护线"
     );
     assert_eq!(
         v["summary"]["account"]["rules"]["strategies"]
@@ -2642,7 +2668,7 @@ async fn accounts_positions_and_daily_advice() {
             .any(|id| id.as_i64() == Some(later_id)),
         "新策略不能自动加入已有账户"
     );
-    let rules = |stop: f64| json!({"name": "华泰主账户", "fees": {"commission_rate": 0.00025, "min_commission": 5}, "rules": {"stop_loss_pct": stop}});
+    let rules = |stop: f64| json!({"name": "华泰主账户", "fees": {"commission_rate": 0.00025, "min_commission": 5}, "rules": {"protection_stop_loss_pct": stop}});
     let (r, _) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(50.0))).await;
     assert_eq!(st(&r), StatusCode::BAD_REQUEST, "止损线超出范围");
     let mut none = rules(8.0);
@@ -2700,7 +2726,7 @@ async fn accounts_positions_and_daily_advice() {
     .await;
     assert_eq!(st(&r), StatusCode::BAD_REQUEST, "代码不存在");
 
-    // 巡检后生成建议：亏 23%，超过稳健风格的止损线 8%
+    // 巡检后生成建议：亏 23%，超过主动开启的账户保护线 8%
     niulai::analysis::screener::run_and_store(&db.pool, None, None)
         .await
         .unwrap();
@@ -2717,7 +2743,10 @@ async fn accounts_positions_and_daily_advice() {
         .clone();
     assert_eq!(item["action"], "sell", "{item}");
     assert!(
-        item["headline"].as_str().unwrap().contains("超过止损线 8%"),
+        item["headline"]
+            .as_str()
+            .unwrap()
+            .contains("超过账户保护线 8%"),
         "{item}"
     );
     assert!(

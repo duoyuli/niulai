@@ -2,8 +2,8 @@
 //! 以及买点之后 20 个交易日的平均涨跌和同一天「随便买」（默认股票池里当天任意一只）的对比。
 //! 涨跌按能做到的算：买点第二天开盘买入（开盘一字涨停买不进的不算），持有到买点之后第 20 个交易日收盘。
 //! 超额按交易日分组估计误差：同一天的买点涨跌高度相关，不能当成互不相干的样本。
-//! 买卖点用巡检和 K 线上的同一套规则（`points::run`）。全市场 3 年要算十几秒，所以每周统计一次，
-//! 策略定义变了也重算，结果存在 `app.strategy_stat`。规则见 docs/domains/accounts.md#strategy_stats。
+//! 买卖点用巡检和 K 线上的同一套规则（`points::run`）。结果存在 `app.strategy_stat`，由用户主动研究时读取或按需重算，
+//! 不进入账户建议。规则见 docs/domains/accounts.md#strategy_stats。
 
 use std::collections::HashMap;
 

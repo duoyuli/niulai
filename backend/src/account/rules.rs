@@ -108,6 +108,8 @@ pub struct Rules {
     /// 至少留多少现金（占总资产的百分比）
     pub min_cash_pct: f64,
     /// 账户保护线：比成本价亏多少（%）就卖；默认关闭，由账户主动开启
+    /// `stop_loss_pct` 是旧版本字段名，读取时兼容并迁移到保护线。
+    #[serde(alias = "stop_loss_pct")]
     pub protection_stop_loss_pct: Option<f64>,
     pub weak_market: WeakMarket,
     /// 全市场站上 20 日均线的股票比例低于多少（%）算弱市
@@ -324,5 +326,8 @@ mod tests {
             .validate()
             .is_err()
         );
+        let legacy: Rules = serde_json::from_value(serde_json::json!({"stop_loss_pct": 8.0}))
+            .expect("旧账户规则字段仍可读取");
+        assert_eq!(legacy.protection_stop_loss_pct, Some(8.0));
     }
 }

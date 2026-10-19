@@ -10,7 +10,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
-use crate::analysis::backtest::{self, Costs, EquityPoint, Risk, Signals, Summary, Trade};
+use crate::analysis::backtest::{self, Costs, EquityPoint, LotRule, Risk, Signals, Summary, Trade};
 use crate::analysis::indicators::Frame;
 use crate::analysis::limit_pool::LimitPool;
 use crate::analysis::portfolio::{self, PortfolioOutcome};
@@ -207,6 +207,10 @@ async fn strategy_backtest(
         capital,
         costs,
         risk,
+        lot: {
+            let (min, step) = crate::instrument::extension(meta.asset_type).lot_rule(&meta.board);
+            LotRule { min, step }
+        },
     };
     let out = backtest::run(
         &bars,
