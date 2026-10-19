@@ -166,6 +166,41 @@ pub async fn planned_since_runs(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
     .await?)
 }
 
+/// 运行结束后需要由应用层消费的同步完成事件。标记写入 `ops.run.params`，进程重启后可以重放。
+pub async fn pending_sync_events(pool: &PgPool) -> anyhow::Result<Vec<(i64, bool)>> {
+    Ok(sqlx::query_as(
+        "SELECT run_id, coalesce((params->'sync_event_pending'->>'price_changed')::boolean, true)
+         FROM ops.run WHERE params ? 'sync_event_pending' ORDER BY run_id",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn mark_sync_event_pending(
+    pool: &PgPool,
+    run_id: i64,
+    price_changed: bool,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE ops.run SET params = jsonb_set(
+             params, '{sync_event_pending}', jsonb_build_object('price_changed', $2::boolean), true
+         ) WHERE run_id = $1",
+    )
+    .bind(run_id)
+    .bind(price_changed)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn clear_sync_event_pending(pool: &PgPool, run_id: i64) -> anyhow::Result<()> {
+    sqlx::query("UPDATE ops.run SET params = params - 'sync_event_pending' WHERE run_id = $1")
+        .bind(run_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn planned_since_marks(
     pool: &PgPool,
     run_id: i64,

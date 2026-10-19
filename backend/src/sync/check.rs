@@ -306,7 +306,14 @@ pub async fn auto(engine: &Engine) -> anyhow::Result<()> {
     if weekly_finished(&engine.pool).await?
         && super::scheduler::claim(&engine.pool, "data_check", today_cn(), "week").await?
     {
-        run(engine, "weekly").await?;
+        if let Err(e) = run(engine, "weekly").await {
+            if let Err(release_error) =
+                super::scheduler::release_claim(&engine.pool, "data_check", today_cn()).await
+            {
+                tracing::error!(error = %format!("{release_error:#}"), "撤销数据核检调度标记失败");
+            }
+            return Err(e);
+        }
         return Ok(());
     }
     let followup: bool = sqlx::query_scalar(

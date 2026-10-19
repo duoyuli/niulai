@@ -19,6 +19,7 @@ pub async fn run_events(
     pool: PgPool,
     mut stop: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
+    replay_pending_events(&pool).await;
     loop {
         tokio::select! {
             changed = stop.changed() => {
@@ -28,9 +29,12 @@ pub async fn run_events(
             }
             event = events.recv() => match event {
                 Some(DomainEvent::SyncRunCompleted { run_id, price_changed }) => {
-                    handle_sync_run_completed(&pool, run_id, price_changed).await;
+                    if let Err(e) = handle_sync_run_completed(&pool, run_id, price_changed).await {
+                        tracing::error!(run_id, error = %format!("{e:#}"), "同步完成事件处理失败，将在后续维护中重试");
+                    }
                 }
                 Some(DomainEvent::MaintenanceTick) => {
+                    replay_pending_events(&pool).await;
                     if let Err(e) = crate::analysis::prices::in_background(crate::advice::maintain(&pool)).await {
                         tracing::error!(error = %format!("{e:#}"), "调仓建议的维护失败");
                     }
@@ -41,29 +45,39 @@ pub async fn run_events(
     }
 }
 
-async fn handle_sync_run_completed(pool: &PgPool, run_id: i64, price_changed: bool) {
-    let pool_changed = match mark_limit_pool_changed(pool, run_id).await {
-        Ok(changed) => changed,
+async fn handle_sync_run_completed(
+    pool: &PgPool,
+    run_id: i64,
+    price_changed: bool,
+) -> anyhow::Result<()> {
+    let pool_changed = mark_limit_pool_changed(pool, run_id).await?;
+    if !(price_changed || pool_changed) {
+        crate::sync::run::clear_sync_event_pending(pool, run_id).await?;
+        return Ok(());
+    }
+    let analysis_pool = pool.clone();
+    crate::analysis::prices::in_background(async move {
+        crate::analysis::screener::run_and_store(&analysis_pool, None, None).await?;
+        crate::advice::refresh_all(&analysis_pool, true).await
+    })
+    .await?;
+    crate::sync::run::clear_sync_event_pending(pool, run_id).await?;
+    Ok(())
+}
+
+async fn replay_pending_events(pool: &PgPool) {
+    let pending = match crate::sync::run::pending_sync_events(pool).await {
+        Ok(events) => events,
         Err(e) => {
-            tracing::error!(run_id, error = %format!("{e:#}"), "更新权威涨跌停池的版本号失败");
-            false
+            tracing::error!(error = %format!("{e:#}"), "读取待处理同步事件失败");
+            return;
         }
     };
-    if !(price_changed || pool_changed) {
-        return;
-    }
-    let pool = pool.clone();
-    crate::analysis::prices::in_background(async move {
-        match crate::analysis::screener::run_and_store(&pool, None, None).await {
-            Ok(_) => {
-                if let Err(e) = crate::advice::refresh_all(&pool, true).await {
-                    tracing::error!(run_id, error = %format!("{e:#}"), "生成调仓建议失败");
-                }
-            }
-            Err(e) => tracing::error!(run_id, error = %format!("{e:#}"), "每日巡检失败"),
+    for (run_id, price_changed) in pending {
+        if let Err(e) = handle_sync_run_completed(pool, run_id, price_changed).await {
+            tracing::error!(run_id, error = %format!("{e:#}"), "重放同步完成事件失败");
         }
-    })
-    .await;
+    }
 }
 
 async fn mark_limit_pool_changed(pool: &PgPool, run_id: i64) -> anyhow::Result<bool> {

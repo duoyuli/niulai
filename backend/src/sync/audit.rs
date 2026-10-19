@@ -498,7 +498,17 @@ pub async fn auto_repair(engine: &Engine, today: NaiveDate) -> anyhow::Result<()
     if !super::scheduler::claim(&engine.pool, "repair", latest, "day").await? {
         return Ok(());
     }
-    let s = repair(engine).await?;
+    let s = match repair(engine).await {
+        Ok(s) => s,
+        Err(e) => {
+            if let Err(release_error) =
+                super::scheduler::release_claim(&engine.pool, "repair", latest).await
+            {
+                tracing::error!(error = %format!("{release_error:#}"), "撤销补偿调度标记失败");
+            }
+            return Err(e);
+        }
+    };
     tracing::info!(trade_date = %latest, runs = ?s.runs, retried = s.retried, unrecoverable = s.unrecoverable, "兜底补偿完成");
     Ok(())
 }

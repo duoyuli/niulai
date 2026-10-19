@@ -32,7 +32,17 @@ pub async fn prune_if_due(pool: &PgPool) -> anyhow::Result<()> {
     if !super::scheduler::claim(pool, "prune", crate::time::today_cn(), "day").await? {
         return Ok(());
     }
-    let p = prune(pool).await?;
+    let p = match prune(pool).await {
+        Ok(p) => p,
+        Err(e) => {
+            if let Err(release_error) =
+                super::scheduler::release_claim(pool, "prune", crate::time::today_cn()).await
+            {
+                tracing::error!(error = %format!("{release_error:#}"), "撤销清理调度标记失败");
+            }
+            return Err(e);
+        }
+    };
     tracing::info!(
         tasks = p.tasks,
         api_calls = p.api_calls,

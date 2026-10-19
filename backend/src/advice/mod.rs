@@ -167,7 +167,18 @@ pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
             .await?
     {
         tracing::info!("参加巡检的策略在最新交易日还没有巡检，补一次");
-        crate::analysis::screener::run_and_store(pool, None, None).await?;
+        if let Err(e) = crate::analysis::screener::run_and_store(pool, None, None).await {
+            if let Err(release_error) = crate::sync::scheduler::release_claim(
+                pool,
+                "builtin_screen",
+                crate::time::today_cn(),
+            )
+            .await
+            {
+                tracing::error!(error = %format!("{release_error:#}"), "撤销巡检调度标记失败");
+            }
+            return Err(e);
+        }
     }
     refresh_all(pool, false).await?;
     Ok(())

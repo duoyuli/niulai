@@ -72,7 +72,7 @@
 ## 运行状态表
 
 - `ops.dataset`：`datasets.yaml` 的数据库副本。`spec` 保存完整配置，`spec_hash` 用于判断配置是否变化。
-- `ops.run`：运行。`kind` 是 `backfill`（历史回补）、`incremental`（定时同步和手动增量）或 `repair`（兜底补偿，见 [完整性核对与兜底补偿](sync_pipeline.md#audit)）。`params` 中有 `datasets`、`pending_waves`、`root_run`、`only_thscodes`、`trigger`（谁发起的，见 [定时调度](sync_pipeline.md#scheduling)）。
+- `ops.run`：运行。`kind` 是 `backfill`（历史回补）、`incremental`（定时同步和手动增量）或 `repair`（兜底补偿，见 [完整性核对与兜底补偿](sync_pipeline.md#audit)）。`params` 中有 `datasets`、`pending_waves`、`root_run`、`only_thscodes`、`trigger`（谁发起的，见 [定时调度](sync_pipeline.md#scheduling)）；运行结束后的应用事件待处理时还会有 `sync_event_pending`，成功消费后清除，进程重启时可重放。
 - `ops.task`：任务队列，状态机见 [任务生命周期](sync_pipeline.md#task_lifecycle)。`params` 包含 `vars`（分区变量）和 `query`（已展开的请求参数）。部分唯一索引 `task_open_uniq` 保证同一分区同时只有一个未完成任务；部分索引 `task_run_open_idx` 只含未完成任务，用于判断运行是否结束；索引 `task_part_idx`（`dataset_id, part_key, task_id`）用于按分区查最近的任务。结束超过 60 天的任务定期清理，见 [定期清理](sync_pipeline.md#retention)。
 - `ops.cursor`：每个数据集、每个分区的进度，`state` 是 JSON，例如 `{"synced_to": "2026-10-15"}`。`part_key = '_plan'` 的行是 `from_dataset` 增量规划的时间水位。
 - `ops.api_call`：每次 HTTP 尝试一行，含状态码、供应商 `code`、`request_id`、延迟。表声明为按 `called_at` 的范围分区，但只有默认分区；超过 30 天的行定期清理，见 [定期清理](sync_pipeline.md#retention)。

@@ -249,6 +249,16 @@ pub(crate) async fn claim(
         .is_some())
 }
 
+/// 业务动作失败时撤销周期抢占，让下一次维护可以重试。
+pub(crate) async fn release_claim(pool: &PgPool, job: &str, day: NaiveDate) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM ops.scheduler WHERE job = $1 AND last_fired = $2")
+        .bind(job)
+        .bind(day)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// 抢占一个定时时刻：上次触发早于这个时刻时，只有一个调用者能成功。
 /// 第一次（还没有这一行）只记下现在，不触发：刚部署的系统正在做首次回补，不必马上再同步一遍
 async fn claim_slot(pool: &PgPool, job: &str, slot: NaiveDateTime) -> anyhow::Result<bool> {
