@@ -1,6 +1,6 @@
 # niulai 仓库说明
 
-A 股个股诊断工作台：Rust 后端在 `backend/`，React 前端在 `frontend/`，Docker 部署在 `deploy/`。工程文档从 `docs/index.md` 开始，仓库结构见 `docs/project_overview.md`。
+A 股股票和交易所 ETF 诊断工作台：Rust 后端在 `backend/`，React 前端在 `frontend/`，Docker 部署在 `deploy/`。工程文档从 `docs/index.md` 开始，仓库结构见 `docs/project_overview.md`。
 
 ## 常用命令
 

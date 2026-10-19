@@ -33,8 +33,8 @@
 <a id="watchlist"></a>
 ## 自选股诊断
 
-`GET /api/v1/watchlist` 对每只收藏的股票给出快速诊断，实现在 `backend/src/api/watchlist.rs`，均线用 `analysis::ma`：
-- 每只股票取最近 500 根等比前复权日线（约两年），在这个范围内计算均线和状态，判定规则与单只股票相同。最近一次交叉只在这个范围内找，更早的交叉不返回。
+`GET /api/v1/watchlist` 对每只收藏的证券给出快速诊断，实现在 `backend/src/api/watchlist.rs`，均线用 `analysis::ma`。自选按 `ref.instrument` 支持股票和 ETF：股票读 `mkt.stock_bar_1d`（等比前复权），ETF 读 `mkt.etf_bar_1d`（供应商前复权）。
+- 每只证券取最近 500 根前复权日线（约两年），在这个范围内计算均线和状态，判定规则与单只证券相同。最近一次交叉只在这个范围内找，更早的交叉不返回。
 - `change_1d`、`change_20d` 用前复权收盘价计算，除权除息日不会出现假涨跌。
 - 还没有日线时 `diagnosis` 为空，不足 `slow` 根时 `diagnosis.ma` 为空。
 - `recent_signals` 是最近 5 个交易日出现过的事件类信号，规则与 [个股诊断](strategies.md#diagnosis) 的最近信号相同。

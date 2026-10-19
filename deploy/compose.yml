@@ -1,4 +1,4 @@
-# niulai 的 Docker 部署：使用 CI 构建好的镜像，运行内置 PostgreSQL 和 niulai 两个容器。
+# niulai 的 Docker 部署：使用 CI 构建好的镜像，运行内置 PostgreSQL、niulai 和一键升级助手 upgrader 三个容器（upgrader 由 .env 的 COMPOSE_PROFILES 启用）。
 # 对外只暴露 niulai 的一个 HTTP 端口，页面和 API 都在这个端口上。全部配置在同目录的 .env 中。
 #
 #   cp .env.example .env     # 默认值可以直接使用，按需修改端口等

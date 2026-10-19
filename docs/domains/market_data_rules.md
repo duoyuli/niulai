@@ -17,7 +17,7 @@
 ## 交易日
 
 - 供应商交易日历（`a_share.calendar`）固定返回最近一年，写入 `ref.trading_day` 时 `source = api`。
-- 更早的交易日在运行结束后从 `mkt.stock_bar_1d` 中出现过的日期推导，`source = derived`。
+- 更早的交易日在运行结束后从 `mkt.stock_bar_1d` 和 `mkt.etf_bar_1d` 中出现过的日期推导，`source = derived`。
 - 规划 `trading_day` 分区时，使用 `ref.trading_day` 中的日期；早于已知最早日期的区间，退回到周一到周五。所以这类数据集排在交易日历之后的波次规划，见 [波次规划](../architecture/sync_pipeline.md#waves)；执行前还会再确认一次日期，见 [过期的日期](../architecture/sync_pipeline.md#stale_dates)。
 - 交易日校验遇到本地日历里没有的日期时，会先刷新供应商日历，见 [交易日校验](#trade_date_guard)。
 - 定时调度在触发时现取一次日历，用来判断今天是否为交易日，见 [定时调度](../architecture/sync_pipeline.md#scheduling)。
@@ -49,12 +49,14 @@
 - 快照只会更新 `snapshot` 行的价格和成交量；已有 `hist` 行时只补 `pre_close`，不覆盖精确值。
 - 快照中成交量为 0 或开盘价为 0 的股票（停牌）不写入。
 
+ETF 日线（`mkt.etf_bar_1d`）同样有两个来源：收盘快照 `fund.market_snapshot`（`source = snapshot`，`price_basis = market_snapshot`，同时写入前收）和历史日线 `fund.etf_bar_1d`（`source = hist`，`price_basis = vendor_forward_adjusted`，供应商前复权价）。覆盖规则与股票相同：历史行覆盖同一天的快照行，快照只更新快照行、已有历史行时只补 `pre_close`，开盘价为 0 的不写入。实现见 `backend/src/sync/sinks.rs`。
+
 <a id="trade_date_guard"></a>
 ### 交易日校验
 
 快照类接口只返回「当前」的数据，响应中的 `data.timestamp` 是请求时刻，不是数据所属的交易日。例如 2026-10-16 00:06 请求快照，`data.timestamp` 是 00:06，价格却是 10-15 的收盘价。所以不能用 `data.timestamp` 判断数据属于哪一天。
 
-配置了 `trade_date_guard: true` 的数据集（`a_share.snapshot`、`index.snapshot`、`a_share.valuation`、`a_share.auction_final`、`special.anomaly_reason`），执行前按以下规则判断：
+配置了 `trade_date_guard: true` 的数据集（`a_share.snapshot`、`index.snapshot`、`a_share.valuation`、`a_share.auction_final`、`special.anomaly_reason`、`fund.market_snapshot`），执行前按以下规则判断：
 
 | 情况 | 处理 |
 | --- | --- |
