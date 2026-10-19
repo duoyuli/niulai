@@ -187,6 +187,7 @@ mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            asset_type: crate::analysis::indicators::AssetType::Stock,
         };
         let d = def(serde_json::json!({
             "universe": {"exclude_st": false},
@@ -222,6 +223,7 @@ mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            asset_type: crate::analysis::indicators::AssetType::Stock,
         };
         let d = def(serde_json::json!({
             "universe": {"exclude_st": false},
@@ -293,6 +295,7 @@ mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            asset_type: crate::analysis::indicators::AssetType::Stock,
         };
         let d = def(serde_json::json!({
             "universe": {"exclude_st": false},

@@ -404,6 +404,16 @@ pub struct SignalTarget {
 /// 草稿用这个编号临时放进信号库
 const DRAFT_ID: i64 = -1;
 
+fn requested_assets(values: Option<&Vec<String>>) -> ApiResult<Vec<String>> {
+    let assets = values.cloned().unwrap_or_else(|| vec!["stock".into()]);
+    if assets.is_empty() || assets.iter().any(|a| a != "stock" && a != "etf") {
+        return Err(ApiError::BadRequest(
+            "asset_types 只能包含 stock 或 etf，且至少选择一种".into(),
+        ));
+    }
+    Ok(assets)
+}
+
 /// 解析成「一个条件 + 信号库」
 async fn resolve(s: &AppState, t: &SignalTarget) -> ApiResult<(Condition, SignalLib)> {
     let lib = signal_lib::load(&s.pool).await?;
@@ -438,6 +448,9 @@ async fn resolve(s: &AppState, t: &SignalTarget) -> ApiResult<(Condition, Signal
 #[derive(Deserialize, ToSchema)]
 pub struct TodayInput {
     pub target: SignalTarget,
+    /// stock / etf；缺省为 stock，保持旧接口行为
+    #[serde(default)]
+    pub asset_types: Option<Vec<String>>,
     /// 交易日，默认最新
     #[serde(default)]
     pub date: Option<NaiveDate>,
@@ -462,8 +475,12 @@ async fn signal_today(
     Json(input): Json<TodayInput>,
 ) -> ApiResult<Json<SignalToday>> {
     let (cond, lib) = resolve(&s, &input.target).await?;
+    let asset_types = requested_assets(input.asset_types.as_ref())?;
     let d = Definition {
-        universe: Universe::default(),
+        universe: Universe {
+            asset_types,
+            ..Universe::default()
+        },
         all: vec![cond],
         any: vec![],
         exit: Default::default(),
@@ -486,6 +503,9 @@ async fn signal_today(
 #[derive(Deserialize, ToSchema)]
 pub struct StatsInput {
     pub target: SignalTarget,
+    /// stock / etf；缺省为 stock，保持旧接口行为
+    #[serde(default)]
+    pub asset_types: Option<Vec<String>>,
     /// 统计最近几年，默认 3，范围 1 到 5
     #[serde(default)]
     pub years: Option<u32>,
@@ -512,13 +532,15 @@ async fn signal_stats(
         return Err(ApiError::BadRequest("years 应在 1 到 5 之间".into()));
     }
     let (cond, lib) = resolve(&s, &input.target).await?;
+    let asset_types = requested_assets(input.asset_types.as_ref())?;
     // 键包含条件本身和草稿或自定义信号的定义：改了定义就不会命中旧结果
     let defs: Vec<(i64, String)> = lib
         .iter()
         .map(|(k, v)| (*k, serde_json::to_string(&v.def).unwrap_or_default()))
         .collect();
     let key = format!(
-        "{}|{years}|{defs:?}",
+        "{:?}|{years}|{:?}|{defs:?}",
+        asset_types,
         serde_json::to_string(&cond).unwrap_or_default()
     );
     // 复权价或权威涨跌停池有变化都会让统计结果失效
@@ -533,7 +555,11 @@ async fn signal_stats(
     {
         return Ok(Json(hit.2.clone()));
     }
-    let stats = signal_stats::compute(&s.pool, &cond, &lib, years)
+    let universe = Universe {
+        asset_types,
+        ..Universe::default()
+    };
+    let stats = signal_stats::compute(&s.pool, &cond, &lib, years, universe)
         .await?
         .ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;
     let mut entries = s.stats.entries.lock().unwrap_or_else(|e| e.into_inner());
@@ -559,7 +585,7 @@ pub struct SignalDays {
     pub dates: Vec<NaiveDate>,
 }
 
-async fn stock(
+async fn instrument(
     s: &AppState,
     code: &str,
 ) -> ApiResult<(
@@ -575,7 +601,7 @@ async fn stock(
         .ok_or_else(|| ApiError::NotFound(format!("证券不存在：{code}")))?;
     let history = sec.st_history.get(code).cloned().unwrap_or_default();
     Ok((
-        prices::stock_bars(&s.pool, code, None).await?,
+        prices::instrument_bars(&s.pool, code, None).await?,
         meta,
         history,
     ))
@@ -601,7 +627,7 @@ async fn signal_days(
     Json(input): Json<DaysInput>,
 ) -> ApiResult<Json<SignalDays>> {
     let (cond, lib) = resolve(&s, &input.target).await?;
-    let (bars, meta, history) = stock(&s, &code).await?;
+    let (bars, meta, history) = instrument(&s, &code).await?;
     let limits = load_limits(&s, &code, &bars).await?;
     let f = Frame::with_authority_and_st_history(&bars, Some(&meta), &limits, &code, &history);
     let series = cond.series(&f, &lib);
@@ -810,7 +836,7 @@ async fn indicator_series(
 ) -> ApiResult<Json<IndicatorSeries>> {
     let r = IndicatorRef::new(q.id, q.n);
     r.validate().map_err(ApiError::BadRequest)?;
-    let (bars, meta, history) = stock(&s, &code).await?;
+    let (bars, meta, history) = instrument(&s, &code).await?;
     let f = Frame::with_st_history(&bars, Some(&meta), &history);
     let v = f.get(r);
     let points = bars
@@ -871,7 +897,7 @@ async fn strategy_points(
     let d = serde_json::from_value::<Definition>(v)
         .map_err(anyhow::Error::from)?
         .with_lib(signal_lib::load(&s.pool).await?);
-    let (bars, meta, history) = stock(&s, &code).await?;
+    let (bars, meta, history) = instrument(&s, &code).await?;
     let limits = load_limits(&s, &code, &bars).await?;
     let f = Frame::with_authority_and_st_history(&bars, Some(&meta), &limits, &code, &history);
     let start = q.start.unwrap_or_else(|| {

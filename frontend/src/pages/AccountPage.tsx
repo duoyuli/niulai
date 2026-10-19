@@ -46,6 +46,7 @@ import {
 import { useSearchState } from "../hooks/useSearchState";
 import { ACTIONS, TRADE_KINDS, TRADE_SOURCES, yuan } from "../lib/accounts";
 import { BACKTEST_RANGES, fmtDateTime, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
+import { ASSET_TYPES } from "../lib/labels";
 
 const TABS = [
   { value: "advice", label: "运营" },
@@ -168,7 +169,7 @@ function Positions({ d }: { d: AccountDetail }) {
           <Table>
             <thead>
               <tr>
-                <th>股票</th>
+                <th>证券</th>
                 <th>股数</th>
                 <th>现价</th>
                 <th>市值 / 占比</th>
@@ -188,6 +189,9 @@ function Positions({ d }: { d: AccountDetail }) {
                     <Link to={`/securities/${v.position.thscode}`} className="hover:underline">
                       {v.name}
                     </Link>
+                    <span className="ml-1 rounded bg-zinc-100 px-1 text-xs text-zinc-500 dark:bg-zinc-800">
+                      {ASSET_TYPES[v.asset_type] ?? v.asset_type}
+                    </span>
                     <span className="ml-1 text-xs text-zinc-400">{v.position.thscode}</span>
                     {v.delisted && <span className="ml-1 text-xs text-red-600">已退市</span>}
                   </td>

@@ -7,6 +7,8 @@
  */
 
 export interface Security {
+  /** stock / etf */
+  asset_type: string;
   /** main / chinext / star / bse */
   board: string;
   /** @nullable */

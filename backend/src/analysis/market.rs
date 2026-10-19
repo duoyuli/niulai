@@ -8,7 +8,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
-use super::indicators::{Frame, IndicatorId, IndicatorRef, StPeriod, StockMeta};
+use super::indicators::{AssetType, Frame, IndicatorId, IndicatorRef, StPeriod, StockMeta};
 use super::prices;
 
 /// 股票的静态信息和简称
@@ -18,20 +18,23 @@ pub struct Securities {
     pub st_history: HashMap<String, Vec<StPeriod>>,
 }
 
+type InstrumentRow = (String, String, String, Option<String>, Option<NaiveDate>);
+
 pub async fn securities(pool: &PgPool) -> sqlx::Result<Securities> {
-    let rows: Vec<(String, String, String, Option<NaiveDate>)> =
-        sqlx::query_as("SELECT thscode, name, board, list_date FROM ref.security")
+    let rows: Vec<InstrumentRow> =
+        sqlx::query_as("SELECT thscode, name, board, asset_type, list_date FROM ref.instrument")
             .fetch_all(pool)
             .await?;
     let mut meta = HashMap::new();
     let mut names = HashMap::new();
-    for (code, name, board, list_date) in rows {
+    for (code, name, board, asset_type, list_date) in rows {
         meta.insert(
             code.clone(),
             StockMeta {
                 board,
                 is_st: name.contains("ST"),
                 list_date,
+                asset_type: AssetType::from_db(asset_type.as_deref()),
             },
         );
         names.insert(code, name);
@@ -62,7 +65,11 @@ pub async fn resolve_date(
     date: Option<NaiveDate>,
 ) -> sqlx::Result<Option<NaiveDate>> {
     sqlx::query_scalar(
-        "SELECT max(trade_date) FROM mkt.stock_bar_1d WHERE ($1::date IS NULL OR trade_date <= $1)",
+        "SELECT max(trade_date) FROM (
+             SELECT trade_date FROM mkt.stock_bar_1d
+             UNION
+             SELECT trade_date FROM mkt.etf_bar_1d
+         ) d WHERE ($1::date IS NULL OR trade_date <= $1)",
     )
     .bind(date)
     .fetch_one(pool)

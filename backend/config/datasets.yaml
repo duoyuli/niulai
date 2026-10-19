@@ -44,7 +44,7 @@ datasets:
     key: "{thscode}"
     thscode: "{thscode}"
     schedule: weekly
-    sink: [ref.security, ref.index_info]       # a-share → ref.security（ST、改名写入 ref.security_name_hist）；a-share-index → ref.index_info
+    sink: [ref.security, ref.etf_security, ref.index_info]       # 股票、ETF 和指数分别投影到独立数据域
     notes: >-
       a-share 5580、a-share-index 1431、fund-etf 1712、fund-lof 404、fund-reits 90、futures 1175、
       futures-commodity-index 136、forex 384；fund-otc 和 options 都超过 10000，需要翻页。
@@ -585,6 +585,8 @@ datasets:
     thscode: "{_part.thscode}"
     obs_date: "{date_ms:date}"
     incremental: {since_cursor: {overlap_days: 10}}
+    schedule: weekly
+    sink: [mkt.etf_bar_1d]
     notes: 前复权价格，只有近 5 年，只支持 ETF（1211 根 ≈ 5 年）。前复权会随分红变化，增量时需要整段重取。
 
   - id: fund.market_snapshot
@@ -593,11 +595,13 @@ datasets:
     summary: 场内基金当天的行情和换手率
     endpoint: /api/fund/market/snapshot
     priority: P2
-    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof') AND active"}}
+    partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'fund-etf' AND active"}}
     params: {thscode: "{thscode}"}
     records: data.item
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
+    trade_date_guard: true
+    sink: [mkt.etf_bar_1d]
     notes: 每次只能查 1 只（不支持批量），约 2100 次/天；含换手率。
 
   - id: fund.nav

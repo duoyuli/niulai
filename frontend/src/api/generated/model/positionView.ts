@@ -8,6 +8,8 @@
 import type { AccountPosition } from './accountPosition';
 
 export interface PositionView {
+  /** stock / etf */
+  asset_type: string;
   board: string;
   /**
      * 最近一个交易日的涨跌（%）

@@ -8,6 +8,11 @@
 import type { SignalTarget } from './signalTarget';
 
 export interface StatsInput {
+  /**
+     * stock / etf；缺省为 stock，保持旧接口行为
+     * @nullable
+     */
+  asset_types?: string[] | null;
   target: SignalTarget;
   /**
      * 统计最近几年，默认 3，范围 1 到 5

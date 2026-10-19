@@ -392,6 +392,185 @@ async fn adjustment_and_api_end_to_end() {
 }
 
 #[tokio::test]
+async fn etf_domain_sync_and_analysis_path() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let reg = registry();
+    niulai::sync::registry::sync_to_db(&db.pool, &reg)
+        .await
+        .unwrap();
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO ops.run (kind, trade_date) VALUES ('backfill', '2026-06-29') RETURNING run_id",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+
+    let tickers = reg.get("meta.tickers").unwrap();
+    let vars = json!({"asset_type": "fund-etf"})
+        .as_object()
+        .unwrap()
+        .clone();
+    let recs = vec![(
+        "item".to_string(),
+        json!({"thscode":"510300.SH","ticker":"510300","name":"沪深300ETF","exchange":"SH","asset_type":"fund-etf","list_date":"2012-05-28"}),
+    )];
+    let rows = build_rows(tickers, &vars, &recs, Some("2026-06-29")).unwrap();
+    sinks::apply(
+        &db.pool,
+        "ref.etf_security",
+        &sink_ctx(run_id, "meta.tickers", &vars),
+        &rows,
+    )
+    .await
+    .unwrap();
+
+    let etf = reg.get("fund.etf_bar_1d").unwrap();
+    let vars = json!({"thscode":"510300.SH"}).as_object().unwrap().clone();
+    let recs = vec![
+        (
+            "item".to_string(),
+            json!({"date_ms": 1782230400000_i64, "open_price": 4.10, "high_price": 4.20, "low_price": 4.00, "close_price": 4.15, "volume": 1000000.0, "turnover": 4150000.0}),
+        ),
+        (
+            "item".to_string(),
+            json!({"date_ms": 1782316800000_i64, "open_price": 4.15, "high_price": 4.30, "low_price": 4.10, "close_price": 4.25, "volume": 1200000.0, "turnover": 5100000.0}),
+        ),
+        (
+            "item".to_string(),
+            json!({"date_ms": 1782403200000_i64, "open_price": 4.25, "high_price": 4.40, "low_price": 4.20, "close_price": 4.35, "volume": 1300000.0, "turnover": 5655000.0}),
+        ),
+    ];
+    let rows = build_rows(etf, &vars, &recs, None).unwrap();
+    assert_eq!(
+        sinks::apply(
+            &db.pool,
+            "mkt.etf_bar_1d",
+            &sink_ctx(run_id, "fund.etf_bar_1d", &vars),
+            &rows,
+        )
+        .await
+        .unwrap(),
+        3
+    );
+    let instrument: (String, String) =
+        sqlx::query_as("SELECT asset_type, name FROM ref.instrument WHERE thscode = '510300.SH'")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(instrument, ("etf".into(), "沪深300ETF".into()));
+    let bars = niulai::analysis::prices::instrument_bars(&db.pool, "510300.SH", None)
+        .await
+        .unwrap();
+    assert_eq!(bars.len(), 3);
+    assert_eq!(bars[2].q_close, 4.35);
+
+    let sec = niulai::analysis::market::securities(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        sec.meta["510300.SH"].asset_type,
+        niulai::analysis::indicators::AssetType::Etf
+    );
+    let def: niulai::analysis::strategy::Definition = serde_json::from_value(json!({
+        "universe": {"asset_types": ["etf"], "exclude_st": false, "min_price": null, "min_amount": null, "min_listed_days": null},
+        "all": [{"kind":"compare", "left":{"id":"change_pct"}, "op":">", "right":{"value":1.0}}]
+    }))
+    .unwrap();
+    let out = niulai::analysis::screener::screen(
+        &db.pool,
+        &[&def],
+        Some("2026-06-26".parse().unwrap()),
+        niulai::analysis::screener::Mode::Preview,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(out.results[0].hits[0].thscode, "510300.SH");
+    assert_eq!(out.results[0].hits[0].asset_type, "etf");
+
+    let engine = Engine::new(
+        bare_settings("http://127.0.0.1:1", Some("test")),
+        db.pool.clone(),
+    )
+    .await
+    .unwrap();
+    let app = logged_in(niulai::api::router(engine)).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/v1/securities/510300.SH/bars?adjust=qfq",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["bars"].as_array().unwrap().len(), 3);
+    assert_eq!(body["adjust"], "qfq");
+    let (status, created) = call(
+        &app,
+        "POST",
+        "/api/v1/accounts",
+        Some(json!({"name": "ETF 测试账户", "cash": 10000})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let account_id = created["summary"]["account"]["account_id"]
+        .as_i64()
+        .unwrap();
+    let (status, trade) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/accounts/{account_id}/trades"),
+        Some(json!({"kind":"buy","thscode":"510300.SH","shares":1000,"price":4.35})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{trade}");
+    let (status, detail) = call(&app, "GET", &format!("/api/v1/accounts/{account_id}"), None).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["positions"][0]["asset_type"], "etf");
+    let (status, strategy) = call(
+        &app,
+        "POST",
+        "/api/v1/strategies",
+        Some(json!({
+            "name": "ETF 变化率测试",
+            "description": "ETF 集成测试",
+            "screening": false,
+            "show_on_today": false,
+            "definition": {
+                "universe": {"asset_types":["etf"],"exclude_st":false,"min_price":null,"min_amount":null,"min_listed_days":null},
+                "all": [{"kind":"compare","left":{"id":"change_pct"},"op":">","right":{"value":1.0}}],
+                "any": [], "exit": {"any": []}, "sort": {"by":{"id":"amount"},"desc":true}, "limit": 50
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{strategy}");
+    let strategy_id = strategy["strategy_id"].as_i64().unwrap();
+    let (status, backtest) = call(
+        &app,
+        "GET",
+        &format!("/api/v1/backtest/strategy?thscode=510300.SH&strategy_id={strategy_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{backtest}");
+    let (status, portfolio) = call(
+        &app,
+        "GET",
+        &format!(
+            "/api/v1/backtest/portfolio?strategy_id={strategy_id}&start=2026-06-24&end=2026-06-26"
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{portfolio}");
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn task_queue_claim_dedup_and_stale_requeue() {
     let Some(db) = TestDb::create().await else {
         eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");

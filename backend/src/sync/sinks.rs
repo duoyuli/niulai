@@ -61,6 +61,9 @@ pub async fn apply_in_tx(
         ("ref.security", "meta.tickers") => {
             security(conn, &data, trade_date, var("asset_type").as_deref()).await?
         }
+        ("ref.etf_security", "meta.tickers") => {
+            etf_security(conn, &data, trade_date, var("asset_type").as_deref()).await?
+        }
         ("ref.index_info", "meta.tickers") | ("ref.index_info", "index.ths_catalog") => {
             index_info(conn, &data, trade_date, var("tag").as_deref()).await?
         }
@@ -72,6 +75,10 @@ pub async fn apply_in_tx(
         ("mkt.stock_bar_1d", "a_share.bar_1d") => exec(conn, STOCK_BAR_HIST, &data, run_id).await?,
         ("mkt.stock_bar_1d", "a_share.snapshot") => {
             exec_dated(conn, STOCK_BAR_SNAPSHOT, &data, run_id, trade_date).await?
+        }
+        ("mkt.etf_bar_1d", "fund.etf_bar_1d") => exec(conn, ETF_BAR_HIST, &data, run_id).await?,
+        ("mkt.etf_bar_1d", "fund.market_snapshot") => {
+            exec_dated(conn, ETF_BAR_SNAPSHOT, &data, run_id, trade_date).await?
         }
         ("mkt.index_bar_1d", "index.bar_1d") => exec(conn, INDEX_BAR_HIST, &data, run_id).await?,
         ("mkt.index_bar_1d", "index.snapshot") => {
@@ -191,6 +198,48 @@ ON CONFLICT (thscode, trade_date) DO UPDATE
       amount = CASE WHEN t.source = 'snapshot' THEN EXCLUDED.amount ELSE t.amount END,
       updated_at = now()";
 
+const ETF_BAR_HIST: &str = "
+INSERT INTO mkt.etf_bar_1d AS t (thscode, trade_date, open, high, low, close, volume, amount, source, price_basis, run_id)
+SELECT e->>'thscode', (e->>'obs_date')::date,
+       coalesce((e->'p'->>'open_price')::numeric, (e->'p'->>'open')::numeric),
+       coalesce((e->'p'->>'high_price')::numeric, (e->'p'->>'high')::numeric),
+       coalesce((e->'p'->>'low_price')::numeric, (e->'p'->>'low')::numeric),
+       coalesce((e->'p'->>'close_price')::numeric, (e->'p'->>'close')::numeric),
+       round(coalesce((e->'p'->>'volume')::numeric, 0))::bigint,
+       coalesce((e->'p'->>'turnover')::numeric, (e->'p'->>'amount')::numeric, 0),
+       'hist', 'vendor_forward_adjusted', $2
+FROM jsonb_array_elements($1) e
+WHERE coalesce(e->'p'->>'open_price', e->'p'->>'open') IS NOT NULL
+ON CONFLICT (thscode, trade_date) DO UPDATE
+ SET open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low, close = EXCLUDED.close,
+     volume = EXCLUDED.volume, amount = EXCLUDED.amount, source = 'hist',
+     price_basis = 'vendor_forward_adjusted', run_id = EXCLUDED.run_id, updated_at = now()";
+
+const ETF_BAR_SNAPSHOT: &str = "
+INSERT INTO mkt.etf_bar_1d AS t (thscode, trade_date, open, high, low, close, volume, amount, pre_close, source, price_basis, run_id)
+SELECT e->>'thscode', $3::date,
+       coalesce((e->'p'->>'open_price')::numeric, (e->'p'->>'open')::numeric),
+       coalesce((e->'p'->>'high_price')::numeric, (e->p->>'high')::numeric),
+       coalesce((e->'p'->>'low_price')::numeric, (e->'p'->>'low')::numeric),
+       coalesce((e->'p'->>'last_price')::numeric, (e->'p'->>'close_price')::numeric, (e->'p'->>'close')::numeric),
+       round(coalesce((e->'p'->>'volume')::numeric, 0))::bigint,
+       coalesce((e->'p'->>'turnover')::numeric, (e->'p'->>'amount')::numeric, 0),
+       coalesce((e->'p'->>'prev_price')::numeric, (e->'p'->>'pre_close')::numeric),
+       'snapshot', 'market_snapshot', $2
+FROM jsonb_array_elements($1) e
+WHERE coalesce((e->'p'->>'open_price')::numeric, (e->'p'->>'open')::numeric, 0) > 0
+ON CONFLICT (thscode, trade_date) DO UPDATE
+ SET pre_close = EXCLUDED.pre_close,
+     open = CASE WHEN t.source = 'snapshot' THEN EXCLUDED.open ELSE t.open END,
+     high = CASE WHEN t.source = 'snapshot' THEN EXCLUDED.high ELSE t.high END,
+     low = CASE WHEN t.source = 'snapshot' THEN EXCLUDED.low ELSE t.low END,
+     close = CASE WHEN t.source = 'snapshot' THEN EXCLUDED.close ELSE t.close END,
+     volume = CASE WHEN t.source = 'snapshot' THEN EXCLUDED.volume ELSE t.volume END,
+     amount = CASE WHEN t.source = 'snapshot' THEN EXCLUDED.amount ELSE t.amount END,
+     source = CASE WHEN t.source = 'snapshot' THEN 'snapshot' ELSE t.source END,
+     price_basis = CASE WHEN t.source = 'snapshot' THEN 'market_snapshot' ELSE t.price_basis END,
+     run_id = EXCLUDED.run_id, updated_at = now()";
+
 // 指数的基日那一行（点位 1000）没有成交量和成交额，按 0 写入
 const INDEX_BAR_HIST: &str = "
 INSERT INTO mkt.index_bar_1d AS t (thscode, trade_date, open, high, low, close, volume, amount, run_id)
@@ -287,6 +336,20 @@ async fn security(
     .execute(&mut *conn)
     .await?
     .rows_affected();
+    sqlx::query(
+        "INSERT INTO ref.instrument AS t (thscode, ticker, name, asset_type, exchange, board, list_date, first_seen, last_seen)
+         SELECT thscode, ticker, name, 'stock', exchange,
+                CASE WHEN exchange = 'BJ' THEN 'bse' WHEN ticker ~ '^30[01]' THEN 'chinext' WHEN ticker ~ '^68[89]' THEN 'star' ELSE 'main' END,
+                list_date, $1, $1
+         FROM _sec
+         ON CONFLICT (thscode) DO UPDATE
+           SET ticker = EXCLUDED.ticker, name = EXCLUDED.name, exchange = EXCLUDED.exchange,
+               board = EXCLUDED.board, list_date = EXCLUDED.list_date, last_seen = EXCLUDED.last_seen,
+               delisted_on = NULL, updated_at = now()",
+    )
+    .bind(today)
+    .execute(&mut *conn)
+    .await?;
     // 简称变化（含 ST 戴帽摘帽）：关闭旧区间，打开新区间
     sqlx::query(
         "UPDATE ref.security_name_hist h SET valid_to = $1
@@ -310,6 +373,67 @@ async fn security(
         .await?;
     if listed > 3000 {
         sqlx::query("UPDATE ref.security SET delisted_on = last_seen + 1, updated_at = now() WHERE last_seen < $1 AND delisted_on IS NULL")
+            .bind(today)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(n as usize)
+}
+
+async fn etf_security(
+    conn: &mut PgConnection,
+    data: &Value,
+    trade_date: Option<NaiveDate>,
+    asset_type: Option<&str>,
+) -> anyhow::Result<usize> {
+    if asset_type != Some("fund-etf") {
+        return Ok(0);
+    }
+    let today = trade_date.unwrap_or_else(crate::time::today_cn);
+    sqlx::query("CREATE TEMP TABLE _etf (thscode TEXT PRIMARY KEY, ticker TEXT, name TEXT, exchange TEXT, list_date DATE) ON COMMIT DROP")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "INSERT INTO _etf
+         SELECT DISTINCT ON (e->'p'->>'thscode') e->'p'->>'thscode', e->'p'->>'ticker', e->'p'->>'name', e->'p'->>'exchange',
+                CASE WHEN e->'p'->>'list_date' ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN (e->'p'->>'list_date')::date END
+         FROM jsonb_array_elements($1) e
+         WHERE e->'p'->>'asset_type' = 'fund-etf' AND e->'p'->>'exchange' IN ('SH', 'SZ')",
+    )
+    .bind(data)
+    .execute(&mut *conn)
+    .await?;
+    let n = sqlx::query(
+        "INSERT INTO ref.instrument AS t (thscode, ticker, name, asset_type, exchange, board, list_date, first_seen, last_seen)
+         SELECT thscode, ticker, name, 'etf', exchange, 'etf', list_date, $1, $1 FROM _etf
+         ON CONFLICT (thscode) DO UPDATE
+           SET ticker = EXCLUDED.ticker, name = EXCLUDED.name, asset_type = 'etf', exchange = EXCLUDED.exchange,
+               board = 'etf', list_date = EXCLUDED.list_date, last_seen = EXCLUDED.last_seen,
+               delisted_on = NULL, updated_at = now()",
+    )
+    .bind(today)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    sqlx::query(
+        "INSERT INTO ref.etf_security AS t (thscode, ticker, name, exchange, list_date, first_seen, last_seen)
+         SELECT thscode, ticker, name, exchange, list_date, $1, $1 FROM _etf
+         ON CONFLICT (thscode) DO UPDATE
+           SET ticker = EXCLUDED.ticker, name = EXCLUDED.name, exchange = EXCLUDED.exchange,
+               list_date = EXCLUDED.list_date, last_seen = EXCLUDED.last_seen, delisted_on = NULL, updated_at = now()",
+    )
+    .bind(today)
+    .execute(&mut *conn)
+    .await?;
+    let listed: i64 = sqlx::query_scalar("SELECT count(*) FROM _etf")
+        .fetch_one(&mut *conn)
+        .await?;
+    if listed > 100 {
+        sqlx::query("UPDATE ref.etf_security SET delisted_on = last_seen + 1, updated_at = now() WHERE last_seen < $1 AND delisted_on IS NULL")
+            .bind(today)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("UPDATE ref.instrument SET delisted_on = last_seen + 1, updated_at = now() WHERE asset_type = 'etf' AND last_seen < $1 AND delisted_on IS NULL")
             .bind(today)
             .execute(&mut *conn)
             .await?;

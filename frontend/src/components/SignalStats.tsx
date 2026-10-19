@@ -13,21 +13,35 @@ const YEARS = [
   { value: "3", label: "近 3 年" },
   { value: "5", label: "近 5 年" },
 ] as const;
+const ASSETS = [
+  { value: "stock", label: "股票" },
+  { value: "etf", label: "ETF" },
+  { value: "all", label: "股票 + ETF" },
+] as const;
 
 const ratio = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${(v * 100).toFixed(0)}%`);
 
 /** 过去表现：这个信号出现之后几天的涨跌，和同期所有股票对比。要逐只统计全市场，第一次十几秒到二十秒，之后有缓存 */
 export function SignalStatsCard({ target, enabled = true }: { target: SignalTarget; enabled?: boolean }) {
-  const [s, set] = useSearchState({ years: "3" });
+  const [s, set] = useSearchState({ years: "3", asset: "stock" });
   const qc = useQueryClient();
   const targetKey = JSON.stringify(target);
   // 只有点「计算过去表现」时才发请求；换年份、改条件都不会自动重算
-  const [req, setReq] = useState<{ target: SignalTarget; targetKey: string; years: string } | null>(null);
-  const queryKey = ["signal-stats", req?.targetKey ?? "", req?.years ?? ""];
+  const [req, setReq] = useState<{ target: SignalTarget; targetKey: string; years: string; asset: string } | null>(
+    null,
+  );
+  const queryKey = ["signal-stats", req?.targetKey ?? "", req?.years ?? "", req?.asset ?? "stock"];
   const q = useQuery({
     queryKey,
     queryFn: ({ signal }) =>
-      signalStats({ target: req?.target ?? target, years: Number(req?.years ?? s.years) }, { signal }),
+      signalStats(
+        {
+          target: req?.target ?? target,
+          years: Number(req?.years ?? s.years),
+          asset_types: (req?.asset ?? s.asset) === "all" ? ["stock", "etf"] : [req?.asset ?? s.asset],
+        },
+        { signal },
+      ),
     enabled: enabled && req !== null,
     staleTime: 10 * 60_000,
     retry: false,
@@ -35,23 +49,28 @@ export function SignalStatsCard({ target, enabled = true }: { target: SignalTarg
   });
   const running = req !== null && q.isFetching;
   const seconds = useElapsedSeconds(running);
-  const changed = req !== null && (req.targetKey !== targetKey || req.years !== s.years);
+  const changed = req !== null && (req.targetKey !== targetKey || req.years !== s.years || req.asset !== s.asset);
   const start = () => {
     // 参数没变时再点一次，就是按同一组参数重算（不走缓存）
     if (req && !changed) {
       void q.refetch();
       return;
     }
-    setReq({ target, targetKey, years: s.years });
+    setReq({ target, targetKey, years: s.years, asset: s.asset });
   };
   const cancel = () => {
-    if (req) void qc.cancelQueries({ queryKey: ["signal-stats", req.targetKey, req.years] });
+    if (req) void qc.cancelQueries({ queryKey: ["signal-stats", req.targetKey, req.years, req.asset] });
     setReq(null);
   };
   return (
     <Card
       title="过去表现：出现之后涨了还是跌了"
-      extra={<Segmented value={s.years} options={YEARS} onChange={(years) => set({ years })} />}
+      extra={
+        <div className="flex flex-wrap gap-2">
+          <Segmented value={s.asset} options={ASSETS} onChange={(asset) => set({ asset })} />
+          <Segmented value={s.years} options={YEARS} onChange={(years) => set({ years })} />
+        </div>
+      }
     >
       {req === null ? (
         <div className="flex flex-col gap-2">
@@ -184,26 +203,34 @@ function Summary({ h }: { h: HorizonStat }) {
 }
 
 export function useSignalToday(target: SignalTarget, enabled = true) {
+  return useSignalTodayFor(target, "stock", enabled);
+}
+
+function useSignalTodayFor(target: SignalTarget, asset: string, enabled = true) {
   return useQuery({
-    queryKey: ["signal-today", JSON.stringify(target)],
-    queryFn: () => signalToday({ target }),
+    queryKey: ["signal-today", JSON.stringify(target), asset],
+    queryFn: () => signalToday({ target, asset_types: asset === "all" ? ["stock", "etf"] : [asset] }),
     enabled,
     staleTime: 60_000,
     retry: false,
   });
 }
 
-/** 今天哪些股票出现了这个信号 */
+/** 今天哪些证券出现了这个信号 */
 export function SignalTodayCard({ target, enabled = true }: { target: SignalTarget; enabled?: boolean }) {
-  const q = useSignalToday(target, enabled);
+  const [asset, setAsset] = useState("stock");
+  const q = useSignalTodayFor(target, asset, enabled);
   return (
-    <Card title={q.data ? `${q.data.trade_date} 出现在哪些股票上` : "今天出现在哪些股票上"}>
+    <Card
+      title={q.data ? `${q.data.trade_date} 出现在哪些证券上` : "今天出现哪些证券上"}
+      extra={<Segmented value={asset} options={ASSETS} onChange={setAsset} />}
+    >
       {q.isPending ? (
         <Spinner />
       ) : q.error ? (
         <p className="text-sm text-red-600">{errorText(q.error)}</p>
       ) : q.data.matched === 0 ? (
-        <p className="text-sm text-zinc-400">今天没有股票出现这个信号</p>
+        <p className="text-sm text-zinc-400">今天没有证券出现这个信号</p>
       ) : (
         <>
           <p className="mb-2 text-sm text-zinc-500">

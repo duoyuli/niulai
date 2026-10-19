@@ -86,7 +86,7 @@ fn check_range(start: Option<NaiveDate>, end: Option<NaiveDate>) -> ApiResult<()
 }
 
 async fn security_name(s: &AppState, code: &str) -> ApiResult<String> {
-    sqlx::query_scalar("SELECT name FROM ref.security WHERE thscode = $1")
+    sqlx::query_scalar("SELECT name FROM ref.instrument WHERE thscode = $1")
         .bind(code)
         .fetch_optional(&s.pool)
         .await?
@@ -146,13 +146,34 @@ async fn strategy_backtest(
     let capital = capital(q.capital)?;
     check_range(q.start, q.end)?;
     let name = security_name(&s, &q.thscode).await?;
+    let asset_type: String =
+        sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
+            .bind(&q.thscode)
+            .fetch_one(&s.pool)
+            .await?;
+    let costs = if asset_type == "etf" {
+        Costs {
+            stamp_tax_rate: 0.0,
+            ..costs
+        }
+    } else {
+        costs
+    };
     let (strategy_name, d) = strategy(&s, q.strategy_id).await?;
+    let costs = if d.universe.asset_types.len() == 1 && d.universe.asset_types[0] == "etf" {
+        Costs {
+            stamp_tax_rate: 0.0,
+            ..costs
+        }
+    } else {
+        costs
+    };
     let sec = market::securities(&s.pool).await?;
     let meta = sec
         .meta
         .get(&q.thscode)
         .ok_or_else(|| ApiError::NotFound(format!("证券不存在：{}", q.thscode)))?;
-    let bars = prices::stock_bars(&s.pool, &q.thscode, q.end).await?;
+    let bars = prices::instrument_bars(&s.pool, &q.thscode, q.end).await?;
     let events = prices::corp_events(&s.pool, &q.thscode, q.end).await?;
     // 权威涨跌停池：策略里的涨跌停、炸板、连板信号以供应商的名单为准；一字板能否成交的判断不变
     let codes = [q.thscode.clone()];

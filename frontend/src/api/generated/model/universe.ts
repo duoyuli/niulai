@@ -11,6 +11,8 @@ import type { SectorFilter } from './sectorFilter';
  * 股票池：先排除不想要的股票，再判断条件
  */
 export interface Universe {
+  /** 资产类型：stock / etf；旧策略缺省为股票，避免改变已有结果 */
+  asset_types?: string[];
   /** 只看这些板块：main 主板、chinext 创业板、star 科创板、bse 北交所；为空表示全部 */
   boards?: string[];
   /** 排除简称含 ST 的股票 */

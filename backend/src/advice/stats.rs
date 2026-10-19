@@ -169,49 +169,62 @@ pub async fn compute(
     };
     let start = end - chrono::Duration::days(365 * YEARS);
     let sec = market::securities(pool).await?;
-    let base_def = Definition::any_stock();
+    let asset_types: Vec<String> = defs
+        .iter()
+        .flat_map(|(_, d)| d.universe.asset_types.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let base_def = Definition::any_assets(asset_types.clone());
     let warmup = defs.iter().map(|(_, d)| d.warmup()).max().unwrap_or(30) + 5;
     let lo = start - chrono::Duration::days(calendar_days_for(warmup));
     // 权威涨跌停池：策略过去表现里的买卖点同样以供应商的名单为准
     let limits = crate::analysis::limit_pool::LimitPool::load(pool, lo, end).await?;
     let mut accs: Vec<Acc> = defs.iter().map(|_| Acc::default()).collect();
     let mut base = DayAcc::default();
-    prices::for_each_stock(pool, lo, end, |code, bars| {
-        let Some(meta) = sec.meta.get(code) else {
-            return;
-        };
-        let Some(first) = bars.iter().position(|b| b.date >= start) else {
-            return;
-        };
-        let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
-        let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
-        for (acc, (_, d)) in accs.iter_mut().zip(defs) {
-            let p = points::run(bars, &f, meta, d, first);
-            for t in &p.trades {
-                acc.signals += 1;
-                if t.exit_date.is_some() {
-                    acc.closed += 1;
-                    acc.wins += (t.return_pct > 0.0) as u64;
-                    acc.ret_sum += t.return_pct;
-                    acc.held_sum += t.bars_held as f64;
+    prices::for_each_assets(
+        pool,
+        lo,
+        end,
+        asset_types.iter().any(|a| a == "stock"),
+        asset_types.iter().any(|a| a == "etf"),
+        |code, bars| {
+            let Some(meta) = sec.meta.get(code) else {
+                return;
+            };
+            let Some(first) = bars.iter().position(|b| b.date >= start) else {
+                return;
+            };
+            let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
+            let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
+            for (acc, (_, d)) in accs.iter_mut().zip(defs) {
+                let p = points::run(bars, &f, meta, d, first);
+                for t in &p.trades {
+                    acc.signals += 1;
+                    if t.exit_date.is_some() {
+                        acc.closed += 1;
+                        acc.wins += (t.return_pct > 0.0) as u64;
+                        acc.ret_sum += t.return_pct;
+                        acc.held_sum += t.bars_held as f64;
+                    }
+                    if let Ok(s) = bars.binary_search_by_key(&t.signal_date, |b| b.date)
+                        && let Some(r) = forward_return(bars, s)
+                    {
+                        acc.after_n += 1;
+                        acc.after_up += (r > 0.0) as u64;
+                        acc.days.add(t.signal_date, r);
+                    }
                 }
-                if let Ok(s) = bars.binary_search_by_key(&t.signal_date, |b| b.date)
-                    && let Some(r) = forward_return(bars, s)
+            }
+            for i in first..bars.len() {
+                if base_def.in_universe(&f, meta, i)
+                    && let Some(r) = forward_return(bars, i)
                 {
-                    acc.after_n += 1;
-                    acc.after_up += (r > 0.0) as u64;
-                    acc.days.add(t.signal_date, r);
+                    base.add(bars[i].date, r);
                 }
             }
-        }
-        for i in first..bars.len() {
-            if base_def.in_universe(&f, meta, i)
-                && let Some(r) = forward_return(bars, i)
-            {
-                base.add(bars[i].date, r);
-            }
-        }
-    })
+        },
+    )
     .await?;
     Ok(defs
         .iter()

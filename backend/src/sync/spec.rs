@@ -137,9 +137,11 @@ impl Registry {
 
 const KNOWN_SINKS: &[&str] = &[
     "ref.security",
+    "ref.etf_security",
     "ref.index_info",
     "ref.trading_day",
     "mkt.stock_bar_1d",
+    "mkt.etf_bar_1d",
     "mkt.index_bar_1d",
     "mkt.corp_action",
     "ref.index_member",
@@ -170,7 +172,8 @@ fn validate_dependency_cycle(
 
 /// 日线表
 pub const STOCK_BARS: &str = "mkt.stock_bar_1d";
-pub const BAR_TABLES: [&str; 2] = [STOCK_BARS, "mkt.index_bar_1d"];
+pub const ETF_BARS: &str = "mkt.etf_bar_1d";
+pub const BAR_TABLES: [&str; 3] = [STOCK_BARS, ETF_BARS, "mkt.index_bar_1d"];
 /// 影响复权价的表：个股日线和公司行动。写入它们的数据集有变化时，运行结束后重算复权
 pub const PRICE_TABLES: [&str; 2] = [STOCK_BARS, "mkt.corp_action"];
 
@@ -685,7 +688,8 @@ mod tests {
             bars,
             [
                 ("a_share.bar_1d", "mkt.stock_bar_1d"),
-                ("index.bar_1d", "mkt.index_bar_1d")
+                ("index.bar_1d", "mkt.index_bar_1d"),
+                ("fund.etf_bar_1d", "mkt.etf_bar_1d")
             ]
         );
         assert_eq!(

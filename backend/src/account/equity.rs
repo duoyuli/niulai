@@ -72,7 +72,11 @@ pub async fn refresh(
     };
     let created = (created + Duration::hours(8)).date_naive();
     let end: Option<NaiveDate> = sqlx::query_scalar(
-        "SELECT max(trade_date) FROM mkt.stock_bar_1d WHERE ($1::date IS NULL OR trade_date <= $1)",
+        "SELECT max(trade_date) FROM (
+             SELECT trade_date FROM mkt.stock_bar_1d
+             UNION
+             SELECT trade_date FROM mkt.etf_bar_1d
+         ) d WHERE ($1::date IS NULL OR trade_date <= $1)",
     )
     .bind(through)
     .fetch_one(pool)
@@ -136,7 +140,11 @@ pub async fn refresh(
     } else {
         sqlx::query_as(
             "SELECT thscode, trade_date, close::float8 FROM mkt.stock_bar_1d
-             WHERE thscode = ANY($1) AND trade_date <= $2 ORDER BY thscode, trade_date",
+             WHERE thscode = ANY($1) AND trade_date <= $2
+             UNION ALL
+             SELECT thscode, trade_date, close::float8 FROM mkt.etf_bar_1d
+             WHERE thscode = ANY($1) AND trade_date <= $2
+             ORDER BY thscode, trade_date",
         )
         .bind(&codes)
         .bind(end)
@@ -157,11 +165,17 @@ pub async fn refresh(
     .fetch_all(pool)
     .await?;
     if days.is_empty() {
-        days = sqlx::query_scalar("SELECT DISTINCT trade_date FROM mkt.stock_bar_1d WHERE trade_date BETWEEN $1 AND $2 ORDER BY trade_date")
-            .bind(start)
-            .bind(end)
-            .fetch_all(pool)
-            .await?;
+        days = sqlx::query_scalar(
+            "SELECT trade_date FROM (
+             SELECT DISTINCT trade_date FROM mkt.stock_bar_1d WHERE trade_date BETWEEN $1 AND $2
+             UNION
+             SELECT DISTINCT trade_date FROM mkt.etf_bar_1d WHERE trade_date BETWEEN $1 AND $2
+         ) d ORDER BY trade_date",
+        )
+        .bind(start)
+        .bind(end)
+        .fetch_all(pool)
+        .await?;
     }
     if days.is_empty() || days.last() != Some(&end) {
         days.push(end);

@@ -33,7 +33,7 @@ import {
 } from "../components/ui";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtBig, fmtInt, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
-import { BOARDS } from "../lib/labels";
+import { ASSET_TYPES, BOARDS } from "../lib/labels";
 import { findSignal, newSignalCondition } from "../lib/strategy";
 import { ExplainedView } from "./StrategyPage";
 
@@ -404,30 +404,54 @@ function Editor({
 const SECTOR_DAY_OPTIONS = [1, 3, 5, 10, 20, 60];
 
 function UniverseEditor({ u, onChange }: { u: Universe; onChange: (u: Universe) => void }) {
+  const assetTypes = u.asset_types?.length ? u.asset_types : ["stock"];
+  const hasStock = assetTypes.includes("stock");
+  const toggleAsset = (asset: string) =>
+    onChange({
+      ...u,
+      asset_types: assetTypes.includes(asset)
+        ? assetTypes.filter((x) => x !== asset).length > 0
+          ? assetTypes.filter((x) => x !== asset)
+          : assetTypes
+        : [...assetTypes, asset],
+    });
   const boards = u.boards ?? [];
   const toggleBoard = (b: string) =>
     onChange({ ...u, boards: boards.includes(b) ? boards.filter((x) => x !== b) : [...boards, b] });
   return (
     <div className="flex flex-col gap-4 text-sm">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <span className="text-xs text-zinc-500">板块</span>
-        {Object.entries(BOARDS).map(([k, v]) => (
+        <span className="text-xs text-zinc-500">资产</span>
+        {Object.entries(ASSET_TYPES).map(([k, v]) => (
           <label key={k} className="flex items-center gap-1.5">
-            <input type="checkbox" checked={boards.includes(k)} onChange={() => toggleBoard(k)} />
+            <input type="checkbox" checked={assetTypes.includes(k)} onChange={() => toggleAsset(k)} />
             {v}
           </label>
         ))}
-        <span className="text-xs text-zinc-400">{boards.length === 0 ? "都不勾表示全部板块" : ""}</span>
       </div>
+      {hasStock && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="text-xs text-zinc-500">板块</span>
+          {Object.entries(BOARDS).map(([k, v]) => (
+            <label key={k} className="flex items-center gap-1.5">
+              <input type="checkbox" checked={boards.includes(k)} onChange={() => toggleBoard(k)} />
+              {v}
+            </label>
+          ))}
+          <span className="text-xs text-zinc-400">{boards.length === 0 ? "都不勾表示全部板块" : ""}</span>
+        </div>
+      )}
       <div className="flex flex-wrap items-end gap-4">
-        <label className="flex items-center gap-1.5 pb-1.5">
-          <input
-            type="checkbox"
-            checked={u.exclude_st ?? true}
-            onChange={(e) => onChange({ ...u, exclude_st: e.target.checked })}
-          />
-          排除 ST 股
-        </label>
+        {hasStock && (
+          <label className="flex items-center gap-1.5 pb-1.5">
+            <input
+              type="checkbox"
+              checked={u.exclude_st ?? true}
+              onChange={(e) => onChange({ ...u, exclude_st: e.target.checked })}
+            />
+            排除 ST 股
+          </label>
+        )}
         <Labeled label="最低股价（元）">
           <NumInput value={u.min_price} onChange={(min_price) => onChange({ ...u, min_price })} allowEmpty />
         </Labeled>
@@ -447,49 +471,51 @@ function UniverseEditor({ u, onChange }: { u: Universe; onChange: (u: Universe) 
           />
         </Labeled>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5">
-          <input
-            type="checkbox"
-            checked={!!u.sector}
-            onChange={(e) =>
-              onChange({ ...u, sector: e.target.checked ? { category: "industry", days: 5, top_pct: 20 } : null })
-            }
-          />
-          只看强势板块的股票
-        </label>
-        {u.sector && (
-          <>
-            <span className="text-zinc-500">：按</span>
-            <select
-              className={inputClass}
-              value={u.sector.category}
-              onChange={(e) => u.sector && onChange({ ...u, sector: { ...u.sector, category: e.target.value } })}
-            >
-              <option value="industry">同花顺行业</option>
-              <option value="cn_concept">同花顺概念</option>
-            </select>
-            <select
-              className={inputClass}
-              value={u.sector.days}
-              onChange={(e) => u.sector && onChange({ ...u, sector: { ...u.sector, days: Number(e.target.value) } })}
-            >
-              {SECTOR_DAY_OPTIONS.map((d) => (
-                <option key={d} value={d}>
-                  {d === 1 ? "当天" : `近 ${d} 个交易日`}
-                </option>
-              ))}
-            </select>
-            <span className="text-zinc-500">的涨幅排名，前</span>
-            <NumInput
-              value={u.sector.top_pct}
-              onChange={(v) => u.sector && v !== null && onChange({ ...u, sector: { ...u.sector, top_pct: v } })}
-              width="w-16"
+      {hasStock && (
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={!!u.sector}
+              onChange={(e) =>
+                onChange({ ...u, sector: e.target.checked ? { category: "industry", days: 5, top_pct: 20 } : null })
+              }
             />
-            <span className="text-zinc-500">%</span>
-          </>
-        )}
-      </div>
+            只看强势板块的股票
+          </label>
+          {u.sector && (
+            <>
+              <span className="text-zinc-500">：按</span>
+              <select
+                className={inputClass}
+                value={u.sector.category}
+                onChange={(e) => u.sector && onChange({ ...u, sector: { ...u.sector, category: e.target.value } })}
+              >
+                <option value="industry">同花顺行业</option>
+                <option value="cn_concept">同花顺概念</option>
+              </select>
+              <select
+                className={inputClass}
+                value={u.sector.days}
+                onChange={(e) => u.sector && onChange({ ...u, sector: { ...u.sector, days: Number(e.target.value) } })}
+              >
+                {SECTOR_DAY_OPTIONS.map((d) => (
+                  <option key={d} value={d}>
+                    {d === 1 ? "当天" : `近 ${d} 个交易日`}
+                  </option>
+                ))}
+              </select>
+              <span className="text-zinc-500">的涨幅排名，前</span>
+              <NumInput
+                value={u.sector.top_pct}
+                onChange={(v) => u.sector && v !== null && onChange({ ...u, sector: { ...u.sector, top_pct: v } })}
+                width="w-16"
+              />
+              <span className="text-zinc-500">%</span>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

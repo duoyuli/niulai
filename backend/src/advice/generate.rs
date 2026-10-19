@@ -49,6 +49,8 @@ pub struct HoldingIn {
     pub thscode: String,
     pub name: String,
     pub board: String,
+    #[serde(default)]
+    pub asset_type: String,
     pub shares: i64,
     pub cost_price: Option<f64>,
     pub opened_on: Option<NaiveDate>,
@@ -90,6 +92,8 @@ pub struct CandidateIn {
     pub thscode: String,
     pub name: String,
     pub board: String,
+    #[serde(default)]
+    pub asset_type: String,
     pub is_st: bool,
     /// 今天选中它的策略（账户参考的那些）
     pub picks: Vec<Pick>,
@@ -436,7 +440,7 @@ pub fn generate(inp: &Input) -> Advice {
         }
         let target = (available / slots as f64).min(total * p.max_weight_pct / 100.0);
         let close = c.snap.close;
-        let rule = lots::lot_rule(&c.board);
+        let rule = lots::lot_rule_for(&c.asset_type, &c.board);
         let shares = lots::max_buy_shares(rule, target, close, &inp.fees);
         if shares == 0 {
             no_money = true;
@@ -720,7 +724,7 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         }
         Item {
             amount,
-            fee: inp.fees.sell_fee(amount),
+            fee: inp.fees.sell_fee_for(&h.asset_type, amount),
             evidence: ev,
             cautions,
             plan: vec![
@@ -783,7 +787,7 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
     if weight > p.max_weight_pct + 0.5 {
         let target = total * p.max_weight_pct / 100.0;
         let want = ((value - target) / close).ceil() as i64;
-        let n = lots::reduce_shares(lots::lot_rule(&h.board), h.shares, want);
+        let n = lots::reduce_shares(lots::lot_rule_for(&h.asset_type, &h.board), h.shares, want);
         if n > 0 {
             let amount = round2(n as f64 * close);
             let key = format!("reduce-{}", h.thscode);
@@ -799,7 +803,7 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
             return Item {
                 shares: n,
                 amount,
-                fee: inp.fees.sell_fee(amount),
+                fee: inp.fees.sell_fee_for(&h.asset_type, amount),
                 evidence: ev,
                 cautions,
                 plan: vec![format!(
@@ -1011,8 +1015,11 @@ fn buy_item(
     }
 
     let stop_price = close * (1.0 - p.stop_loss_pct / 100.0);
-    let loss =
-        shares as f64 * (close - stop_price) + fee + inp.fees.sell_fee(shares as f64 * stop_price);
+    let loss = shares as f64 * (close - stop_price)
+        + fee
+        + inp
+            .fees
+            .sell_fee_for(&c.asset_type, shares as f64 * stop_price);
     let chase = close * (1.0 + p.chase_limit_pct / 100.0);
     let mut plan = vec![
         format!(
@@ -1096,6 +1103,7 @@ mod tests {
             thscode: code.into(),
             name: format!("股票{code}"),
             board: "main".into(),
+            asset_type: "stock".into(),
             shares,
             cost_price: cost,
             opened_on: None,
@@ -1114,6 +1122,7 @@ mod tests {
             thscode: code.into(),
             name: format!("候选{code}"),
             board: "main".into(),
+            asset_type: "stock".into(),
             is_st: false,
             picks: picks
                 .iter()

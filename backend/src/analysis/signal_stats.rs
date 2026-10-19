@@ -83,6 +83,7 @@ pub async fn compute(
     cond: &Condition,
     lib: &SignalLib,
     years: u32,
+    universe: Universe,
 ) -> anyhow::Result<Option<SignalStats>> {
     let Some(end) = market::resolve_date(pool, None).await? else {
         return Ok(None);
@@ -90,7 +91,7 @@ pub async fn compute(
     let start = end - chrono::Duration::days(365 * years as i64);
     let sec = market::securities(pool).await?;
     let d = Definition {
-        universe: Universe::default(),
+        universe,
         all: vec![cond.clone()],
         any: vec![],
         exit: Default::default(),
@@ -107,7 +108,9 @@ pub async fn compute(
     let mut occurrences = 0u64;
     let mut stocks = 0u64;
     let mut recent: Vec<Occurrence> = vec![];
-    prices::for_each_stock(pool, lo, end, |code, bars| {
+    let include_stock = d.universe.asset_types.iter().any(|a| a == "stock");
+    let include_etf = d.universe.asset_types.iter().any(|a| a == "etf");
+    prices::for_each_assets(pool, lo, end, include_stock, include_etf, |code, bars| {
         let Some(meta) = sec.meta.get(code) else {
             return;
         };

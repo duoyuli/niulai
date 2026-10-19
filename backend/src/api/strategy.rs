@@ -428,6 +428,8 @@ pub struct ResultsQuery {
 pub struct StoredHit {
     pub thscode: String,
     pub name: String,
+    /// stock / etf
+    pub asset_type: String,
     pub rank: i32,
     /// 上一次巡检时不在结果中
     pub is_new: bool,
@@ -501,7 +503,7 @@ async fn results(
     };
     let rows = |kind: &'static str| {
         sqlx::query_as::<_, StoredHit>(
-            "SELECT thscode, coalesce(metrics->>'name', '') AS name, rank, is_new, reasons,
+            "SELECT thscode, coalesce(metrics->>'name', '') AS name, coalesce(metrics->>'asset_type', 'stock') AS asset_type, rank, is_new, reasons,
                     (metrics->>'close')::float8 AS close, (metrics->>'change_pct')::float8 AS change_pct,
                     (metrics->>'amount')::float8 AS amount, (metrics->>'sort_value')::float8 AS sort_value,
                     (metrics->>'entry_date')::date AS entry_date, (metrics->>'entry_price')::float8 AS entry_price,

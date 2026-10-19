@@ -155,6 +155,8 @@ pub struct PositionView {
     pub position: Position,
     pub name: String,
     pub board: String,
+    /// stock / etf
+    pub asset_type: String,
     /// 最近一根日线的收盘价（未复权）和日期；没有日线时为空
     pub close: Option<f64>,
     pub last_date: Option<NaiveDate>,
@@ -187,7 +189,7 @@ async fn quote(
     code: &str,
     n: i64,
 ) -> ApiResult<(Vec<prices::DailyBar>, Option<(NaiveDate, f64, Option<f64>)>)> {
-    let bars = prices::recent_bars(&s.pool, code, n).await?;
+    let bars = prices::recent_instrument_bars(&s.pool, code, n).await?;
     let q = bars.last().map(|b| {
         let ch = bars
             .len()
@@ -277,14 +279,14 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
     let acc = account::get(&s.pool, me.user_id, id).await?;
     let params = acc.rules.clone();
     let positions = account::positions(&s.pool, id).await?;
-    let names: HashMap<String, (String, String, bool)> = sqlx::query_as::<_, (String, String, String, bool)>(
-        "SELECT thscode, name, board, delisted_on IS NOT NULL FROM ref.security WHERE thscode = ANY($1)",
+    let names: HashMap<String, (String, String, String, bool)> = sqlx::query_as::<_, (String, String, String, String, bool)>(
+        "SELECT thscode, name, board, asset_type, delisted_on IS NOT NULL FROM ref.instrument WHERE thscode = ANY($1)",
     )
     .bind(positions.iter().map(|p| p.thscode.clone()).collect::<Vec<_>>())
     .fetch_all(&s.pool)
     .await?
     .into_iter()
-    .map(|(c, n, b, d)| (c, (n, b, d)))
+        .map(|(c, n, b, a, d)| (c, (n, b, a, d)))
     .collect();
     let strategy_names: HashMap<i64, String> =
         sqlx::query_as::<_, (i64, String)>("SELECT strategy_id, name FROM app.strategy")
@@ -305,13 +307,14 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
             .filter(|v| v.is_finite());
         let close = q.map(|q| q.1);
         let mv = close.map_or(0.0, |c| c * p.shares as f64);
-        let (name, board, delisted) = names
+        let (name, board, asset_type, delisted) = names
             .get(&p.thscode)
             .cloned()
-            .unwrap_or_else(|| (p.thscode.clone(), "main".into(), false));
+            .unwrap_or_else(|| (p.thscode.clone(), "main".into(), "stock".into(), false));
         views.push(PositionView {
             name,
             board,
+            asset_type,
             close,
             last_date: q.map(|q| q.0),
             change_pct: q.and_then(|q| q.2),
@@ -461,10 +464,11 @@ async fn parse_positions(
     if input.text.chars().count() > 20_000 {
         return Err(ApiError::BadRequest("粘贴的文字太长".into()));
     }
-    let rows: Vec<(String, String, String)> =
-        sqlx::query_as("SELECT thscode, ticker, name FROM ref.security WHERE delisted_on IS NULL")
-            .fetch_all(&s.pool)
-            .await?;
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT thscode, ticker, name FROM ref.instrument WHERE delisted_on IS NULL",
+    )
+    .fetch_all(&s.pool)
+    .await?;
     let known: Vec<Known> = rows
         .iter()
         .map(|(c, t, n)| Known {

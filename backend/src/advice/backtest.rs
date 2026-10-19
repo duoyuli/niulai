@@ -17,7 +17,7 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 
 use crate::account::history::{self, HistorySeries};
-use crate::account::lots::{Fees, STAMP_TAX_RATE, round2};
+use crate::account::lots::{Fees, round2};
 use crate::account::rules::{Preset, Rules, WeakMarket};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef};
 use crate::analysis::market::{self, calendar_days_for};
@@ -128,6 +128,7 @@ pub struct RulesBacktest {
 struct Stock {
     code: String,
     name: String,
+    asset_type: String,
     /// 第 k 天对应全局日历的下标
     day: Vec<u32>,
     /// 未复权开盘价：交易记录里展示用
@@ -191,7 +192,13 @@ pub async fn run(
         .collect();
     let edge_from = start - chrono::Duration::days(365 * YEARS);
     let sec = market::securities(pool).await?;
-    let base_def = Definition::any_stock();
+    let asset_types: Vec<String> = defs
+        .iter()
+        .flat_map(|d| d.universe.asset_types.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let base_def = Definition::any_assets(asset_types.clone());
     let warmup = defs
         .iter()
         .map(|d| d.warmup())
@@ -216,87 +223,100 @@ pub async fn run(
     let mut ew = crate::analysis::portfolio::EqualWeight::default();
     // 每天：收盘站上 20 日均线的股票数、当天有日线的股票数
     let mut breadth: HashMap<NaiveDate, (u32, u32)> = HashMap::new();
-    prices::for_each_stock(pool, lo, end, |code, bars| {
-        let Some(meta) = sec.meta.get(code) else {
-            return;
-        };
-        let Some(first_edge) = bars.iter().position(|b| b.date >= edge_from) else {
-            return;
-        };
-        let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
-        let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
-        let first = bars.iter().position(|b| b.date >= start);
-        let n = first.map_or(0, |f0| bars.len() - f0);
-        let mut buy = vec![0u64; n];
-        for (k, d) in defs.iter().enumerate() {
-            let history_series = rules
-                .history_check
-                .as_ref()
-                .map(|_| HistorySeries::new(bars, &f, meta, d));
-            for t in points::run(bars, &f, meta, d, first_edge).trades {
-                let Ok(s) = bars.binary_search_by_key(&t.signal_date, |b| b.date) else {
-                    continue;
-                };
-                if let Some(f0) = first
-                    && s >= f0
-                    && !f.is_st(s)
-                {
-                    if let (Some(check), Some(series)) = (&rules.history_check, &history_series) {
-                        let returns = series.evaluate(
-                            bars,
-                            events.get(code).map(Vec::as_slice).unwrap_or(&[]),
-                            &check.windows,
-                            t.signal_date,
-                        );
-                        if !history::passes(check, &returns, t.signal_date) {
-                            continue;
+    prices::for_each_assets(
+        pool,
+        lo,
+        end,
+        asset_types.iter().any(|a| a == "stock"),
+        asset_types.iter().any(|a| a == "etf"),
+        |code, bars| {
+            let Some(meta) = sec.meta.get(code) else {
+                return;
+            };
+            let Some(first_edge) = bars.iter().position(|b| b.date >= edge_from) else {
+                return;
+            };
+            let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
+            let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
+            let first = bars.iter().position(|b| b.date >= start);
+            let n = first.map_or(0, |f0| bars.len() - f0);
+            let mut buy = vec![0u64; n];
+            for (k, d) in defs.iter().enumerate() {
+                let history_series = rules
+                    .history_check
+                    .as_ref()
+                    .map(|_| HistorySeries::new(bars, &f, meta, d));
+                for t in points::run(bars, &f, meta, d, first_edge).trades {
+                    let Ok(s) = bars.binary_search_by_key(&t.signal_date, |b| b.date) else {
+                        continue;
+                    };
+                    if let Some(f0) = first
+                        && s >= f0
+                        && !f.is_st(s)
+                    {
+                        if let (Some(check), Some(series)) = (&rules.history_check, &history_series)
+                        {
+                            let returns = series.evaluate(
+                                bars,
+                                events.get(code).map(Vec::as_slice).unwrap_or(&[]),
+                                &check.windows,
+                                t.signal_date,
+                            );
+                            if !history::passes(check, &returns, t.signal_date) {
+                                continue;
+                            }
                         }
+                        buy[s - f0] |= 1 << k;
                     }
-                    buy[s - f0] |= 1 << k;
                 }
             }
-        }
-        let Some(f0) = first else { return };
-        ew.add(&base_def, bars, &f, meta, f0);
-        let ma20 = f.get(IndicatorRef::new(IndicatorId::Ma, Some(20)));
-        let ma = f.get(IndicatorRef::new(IndicatorId::Ma, Some(rules.trend_ma)));
-        let exits: Vec<Vec<bool>> = defs.iter().map(|d| d.exit_series(&f)).collect();
-        let mut s = Stock {
-            code: code.to_string(),
-            name: sec.names.get(code).cloned().unwrap_or_default(),
-            day: vec![],
-            open: Vec::with_capacity(n),
-            q_open: Vec::with_capacity(n),
-            q_close: Vec::with_capacity(n),
-            one_price: Vec::with_capacity(n),
-            ma_trend: Vec::with_capacity(n),
-            buy,
-            exit: Vec::with_capacity(n),
-            amount: Vec::with_capacity(n),
-        };
-        let mut dates = Vec::with_capacity(n);
-        for i in f0..bars.len() {
-            let b = &bars[i];
-            let e = breadth.entry(b.date).or_default();
-            e.1 += 1;
-            e.0 += (!ma20[i].is_nan() && b.q_close > ma20[i]) as u32;
-            let mut em = 0u64;
-            for (k, x) in exits.iter().enumerate() {
-                if x[i] {
-                    em |= 1 << k;
+            let Some(f0) = first else { return };
+            ew.add(&base_def, bars, &f, meta, f0);
+            let ma20 = f.get(IndicatorRef::new(IndicatorId::Ma, Some(20)));
+            let ma = f.get(IndicatorRef::new(IndicatorId::Ma, Some(rules.trend_ma)));
+            let exits: Vec<Vec<bool>> = defs.iter().map(|d| d.exit_series(&f)).collect();
+            let mut s = Stock {
+                code: code.to_string(),
+                name: sec.names.get(code).cloned().unwrap_or_default(),
+                asset_type: if meta.asset_type == crate::instrument::AssetType::Etf {
+                    "etf".into()
+                } else {
+                    "stock".into()
+                },
+                day: vec![],
+                open: Vec::with_capacity(n),
+                q_open: Vec::with_capacity(n),
+                q_close: Vec::with_capacity(n),
+                one_price: Vec::with_capacity(n),
+                ma_trend: Vec::with_capacity(n),
+                buy,
+                exit: Vec::with_capacity(n),
+                amount: Vec::with_capacity(n),
+            };
+            let mut dates = Vec::with_capacity(n);
+            for i in f0..bars.len() {
+                let b = &bars[i];
+                let e = breadth.entry(b.date).or_default();
+                e.1 += 1;
+                e.0 += (!ma20[i].is_nan() && b.q_close > ma20[i]) as u32;
+                let mut em = 0u64;
+                for (k, x) in exits.iter().enumerate() {
+                    if x[i] {
+                        em |= 1 << k;
+                    }
                 }
+                dates.push(b.date);
+                s.open.push(b.open as f32);
+                s.q_open.push(b.q_open as f32);
+                s.q_close.push(b.q_close as f32);
+                s.one_price.push(b.high == b.low);
+                s.ma_trend.push(ma[i] as f32);
+                s.exit.push(em);
+                s.amount.push(b.amount as f32);
             }
-            dates.push(b.date);
-            s.open.push(b.open as f32);
-            s.q_open.push(b.q_open as f32);
-            s.q_close.push(b.q_close as f32);
-            s.one_price.push(b.high == b.low);
-            s.ma_trend.push(ma[i] as f32);
-            s.exit.push(em);
-            s.amount.push(b.amount as f32);
-        }
-        raw.push((dates, s));
-    })
+            raw.push((dates, s));
+        },
+    )
     .await?;
     let calendar: Vec<NaiveDate> = raw
         .iter()
@@ -448,7 +468,7 @@ fn simulate(
             if let Some(pos) = held.iter().position(|h| h.stock == ps.stock) {
                 let h = held.swap_remove(pos);
                 let gross = h.units * s.q_open[k] as f64;
-                let net = gross - FEES.commission(gross) - gross * STAMP_TAX_RATE;
+                let net = gross - FEES.sell_fee_for(&s.asset_type, gross);
                 cash += net;
                 closed += 1;
                 wins += (net > h.cost) as usize;
@@ -683,6 +703,7 @@ mod tests {
         let mk = |closes: Vec<f32>, buy_days: &[usize], bits: u64| Stock {
             code: "T".into(),
             name: "测试".into(),
+            asset_type: "stock".into(),
             day: (0..10).collect(),
             open: (0..10).map(|i| closes[i.max(1) - 1]).collect(),
             q_open: (0..10).map(|i| closes[i.max(1) - 1]).collect(),

@@ -6350,6 +6350,7 @@
         "required": [
           "thscode",
           "name",
+          "asset_type",
           "close",
           "change_pct",
           "amount",
@@ -6361,6 +6362,10 @@
             "type": "number",
             "format": "double",
             "description": "成交额（元）"
+          },
+          "asset_type": {
+            "type": "string",
+            "description": "stock / etf"
           },
           "change_pct": {
             "type": "number",
@@ -7409,10 +7414,15 @@
                 "ticker",
                 "name",
                 "exchange",
+                "asset_type",
                 "board",
                 "last_seen"
               ],
               "properties": {
+                "asset_type": {
+                  "type": "string",
+                  "description": "stock / etf"
+                },
                 "board": {
                   "type": "string",
                   "description": "main / chinext / star / bse"
@@ -8038,11 +8048,16 @@
           "position",
           "name",
           "board",
+          "asset_type",
           "market_value",
           "weight_pct",
           "delisted"
         ],
         "properties": {
+          "asset_type": {
+            "type": "string",
+            "description": "stock / etf"
+          },
           "board": {
             "type": "string"
           },
@@ -9083,10 +9098,15 @@
           "ticker",
           "name",
           "exchange",
+          "asset_type",
           "board",
           "last_seen"
         ],
         "properties": {
+          "asset_type": {
+            "type": "string",
+            "description": "stock / etf"
+          },
           "board": {
             "type": "string",
             "description": "main / chinext / star / bse"
@@ -9686,6 +9706,16 @@
           "target"
         ],
         "properties": {
+          "asset_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "stock / etf；缺省为 stock，保持旧接口行为"
+          },
           "target": {
             "$ref": "#/components/schemas/SignalTarget"
           },
@@ -9748,6 +9778,7 @@
         "required": [
           "thscode",
           "name",
+          "asset_type",
           "rank",
           "is_new",
           "reasons"
@@ -9759,6 +9790,10 @@
               "null"
             ],
             "format": "double"
+          },
+          "asset_type": {
+            "type": "string",
+            "description": "stock / etf"
           },
           "bars_held": {
             "type": [
@@ -10424,6 +10459,16 @@
           "target"
         ],
         "properties": {
+          "asset_types": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "stock / etf；缺省为 stock，保持旧接口行为"
+          },
           "date": {
             "type": [
               "string",
@@ -10624,6 +10669,13 @@
         "type": "object",
         "description": "股票池：先排除不想要的股票，再判断条件",
         "properties": {
+          "asset_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "资产类型：stock / etf；旧策略缺省为股票，避免改变已有结果"
+          },
           "boards": {
             "type": "array",
             "items": {
@@ -11016,6 +11068,7 @@
           "thscode",
           "name",
           "board",
+          "asset_type",
           "added_at",
           "recent_signals"
         ],
@@ -11023,6 +11076,10 @@
           "added_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "asset_type": {
+            "type": "string",
+            "description": "stock / etf"
           },
           "board": {
             "type": "string",

@@ -3,7 +3,7 @@ import { useListSecurities } from "../api/generated/market/market";
 import { useDebounced } from "../hooks/useDebounced";
 import { Field, inputClass } from "./ui";
 
-/** 按代码或名称搜索股票的下拉框。onPick 时选中后关闭；action 为每一行前面加一个操作（例如收藏星标） */
+/** 按代码或名称搜索证券的下拉框。onPick 时选中后关闭；action 为每一行前面加一个操作（例如收藏星标） */
 export function SecuritySearch({
   label,
   onPick,
@@ -22,7 +22,7 @@ export function SecuritySearch({
   const input = (
     <input
       className={`${inputClass} ${width}`}
-      placeholder={label ? "代码或名称，例如 600519 或 茅台" : "搜索股票"}
+      placeholder={label ? "代码或名称，例如 600519 或 沪深300ETF" : "搜索证券"}
       value={text}
       onChange={(e) => setText(e.target.value)}
       onKeyDown={(e) => {

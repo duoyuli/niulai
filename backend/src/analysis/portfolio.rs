@@ -167,8 +167,18 @@ pub async fn run(
     let mut cands: Vec<Candidate> = vec![];
     let mut calendar: BTreeSet<NaiveDate> = BTreeSet::new();
     let mut ew = EqualWeight::default();
-    let any_stock = Definition::any_stock();
-    prices::for_each_stock(pool, lo, p.end, |code, bars| {
+    let include_stock = d.universe.asset_types.iter().any(|a| a == "stock");
+    let include_etf = d.universe.asset_types.iter().any(|a| a == "etf");
+    let costs = if include_etf && !include_stock {
+        Costs {
+            stamp_tax_rate: 0.0,
+            ..p.costs
+        }
+    } else {
+        p.costs
+    };
+    let any_asset = Definition::any_assets(d.universe.asset_types.clone());
+    prices::for_each_assets(pool, lo, p.end, include_stock, include_etf, |code, bars| {
         let Some(meta) = sec.meta.get(code) else {
             return;
         };
@@ -180,7 +190,7 @@ pub async fn run(
         }
         let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
         let f = Frame::with_authority_and_st_history(bars, Some(meta), &limits, code, history);
-        ew.add(&any_stock, bars, &f, meta, first);
+        ew.add(&any_asset, bars, &f, meta, first);
         let found = candidates(bars, &f, meta, d, first, stocks.len());
         if found.is_empty() {
             return;
@@ -258,7 +268,7 @@ pub async fn run(
                 && date == day
             {
                 let gross = held[k].units * q;
-                let fee = p.costs.commission(gross) + gross * p.costs.stamp_tax_rate;
+                let fee = costs.commission(gross) + gross * costs.stamp_tax_rate;
                 fees += fee;
                 cash += gross - fee;
                 trades.push(trade(c, (gross - fee) / held[k].cost - 1.0, true));
@@ -280,7 +290,7 @@ pub async fn run(
                     continue;
                 }
                 let invest = cash / free as f64;
-                let fee = p.costs.commission(invest);
+                let fee = costs.commission(invest);
                 if invest <= fee {
                     skipped += 1;
                     continue;
@@ -441,6 +451,7 @@ mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            asset_type: crate::analysis::indicators::AssetType::Stock,
         };
         let d: Definition = serde_json::from_value(serde_json::json!({
             "universe": {"exclude_st": false},

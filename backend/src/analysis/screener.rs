@@ -20,6 +20,8 @@ use super::strategy::Definition;
 pub struct Hit {
     pub thscode: String,
     pub name: String,
+    /// stock / etf
+    pub asset_type: String,
     /// 收盘价（未复权）
     pub close: f64,
     /// 涨跌幅（%）
@@ -37,6 +39,8 @@ pub struct Hit {
 pub struct PositionHit {
     pub thscode: String,
     pub name: String,
+    /// stock / etf
+    pub asset_type: String,
     /// 收盘价（未复权）
     pub close: f64,
     pub change_pct: f64,
@@ -94,6 +98,12 @@ pub async fn screen(
         return Ok(None);
     };
     let sec = market::securities(pool).await?;
+    let include_stock = defs
+        .iter()
+        .any(|d| d.universe.asset_types.iter().any(|a| a == "stock"));
+    let include_etf = defs
+        .iter()
+        .any(|d| d.universe.asset_types.iter().any(|a| a == "etf"));
     let mut sector_sets = Vec::with_capacity(defs.len());
     for d in defs {
         sector_sets.push(match &d.universe.sector {
@@ -120,7 +130,7 @@ pub async fn screen(
         })
         .collect();
     let mut scanned = 0usize;
-    prices::for_each_stock(pool, lo, date, |code, bars| {
+    prices::for_each_assets(pool, lo, date, include_stock, include_etf, |code, bars| {
         let Some(last) = bars.last() else {
             return;
         };
@@ -141,6 +151,11 @@ pub async fn screen(
             let hit = |reasons| Hit {
                 thscode: code.to_string(),
                 name: name(),
+                asset_type: if meta.asset_type == super::indicators::AssetType::Etf {
+                    "etf".into()
+                } else {
+                    "stock".into()
+                },
                 close: last.close,
                 change_pct,
                 amount: last.amount,
@@ -161,6 +176,11 @@ pub async fn screen(
                 points.trades.last().map(|t| PositionHit {
                     thscode: code.to_string(),
                     name: name(),
+                    asset_type: if meta.asset_type == super::indicators::AssetType::Etf {
+                        "etf".into()
+                    } else {
+                        "stock".into()
+                    },
                     close: last.close,
                     change_pct,
                     entry_date: t.entry_date,

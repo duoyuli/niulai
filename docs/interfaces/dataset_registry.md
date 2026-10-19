@@ -110,9 +110,9 @@
 | 需要类型化表（有类型、有索引、给 API 或指标用） | 在 `sinks.rs` 实现投影，在 `sink` 中引用 |
 | 数据量很大、已有类型化表 | `store_record: false`，只写类型化表 |
 
-目前 `store_record: false` 的数据集是 `a_share.bar_1d`、`a_share.snapshot`、`index.bar_1d`、`index.snapshot`。已实现的 sink 组合见 [类型化表](../architecture/data_model.md#typed_tables)。
+目前 `store_record: false` 的数据集是 `a_share.bar_1d`、`a_share.snapshot`、`index.bar_1d`、`index.snapshot`。ETF 日线同时保留 `raw.record` 和独立的 `mkt.etf_bar_1d` 类型化投影。已实现的 sink 组合见 [类型化表](../architecture/data_model.md#typed_tables)。
 
-数据集在流程中的角色由 `sink` 和分区推出，代码里不写死数据集 ID（`spec.rs` 的 `Registry`）：`sink` 中有 `mkt.stock_bar_1d` 或 `mkt.corp_action` 的，有变化时运行结束后重算复权；按证券和时间窗口取、写日线表的，参加数据核检，其中写个股日线的那个用于兜底补偿时按股票补。
+数据集在流程中的角色由 `sink` 和分区推出，代码里不写死数据集 ID（`spec.rs` 的 `Registry`）：`sink` 中有 `mkt.stock_bar_1d` 或 `mkt.corp_action` 的，有变化时运行结束后重算股票复权；ETF 日线写入独立表，不参与股票复权重算。按证券和时间窗口取、写日线表的，参加对应数据域的数据核检。
 
 <a id="adding_dataset"></a>
 ## 新增数据集

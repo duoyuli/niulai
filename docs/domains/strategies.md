@@ -113,7 +113,7 @@
 
 ```json
 {
-  "universe": {"boards": [], "exclude_st": true, "min_price": 2, "min_amount": 50000000, "min_listed_days": 60, "sector": null},
+  "universe": {"asset_types": ["stock"], "boards": [], "exclude_st": true, "min_price": 2, "min_amount": 50000000, "min_listed_days": 60, "sector": null},
   "all": [{"kind": "signal", "signal": "ma_cross_up", "params": {"fast": 5, "slow": 20}, "within_days": 1}],
   "any": [],
   "exit": {"any": [{"kind": "signal", "signal": "price_cross_below_ma", "params": {"n": 20}}], "stop_loss_pct": 8, "take_profit_pct": null, "max_hold_days": 20},
@@ -122,7 +122,8 @@
 }
 ```
 
-- **股票池**（`universe`）：先排除不想看的股票。板块为空表示全部；价格用未复权收盘价，成交额用当天原值。「上市满 N 个交易日」按本地读入的日线根数判断，所以巡检会读至少 N 根，N 不超过 500。`sector` 是 [强势板块过滤](#market)。
+- **资产范围**（`universe.asset_types`）：可选 `stock`、`etf`，缺省为 `stock` 以保持旧策略行为；选择 ETF 后同一套指标、信号、策略、巡检和回测主流程读取 ETF 独立日线。
+- **股票池**（`universe`）：先排除不想看的证券。`boards`、`exclude_st` 和 `sector` 只对股票条件生效；ETF 使用自己的资产类型和交易规则。价格用对应行情口径的收盘价，成交额用当天原值。「上市满 N 个交易日」按本地读入的日线根数判断，所以巡检会读至少 N 根，N 不超过 500。`sector` 是 [强势板块过滤](#market)。
 - **条件：** `all` 中每一条都要满足；`any` 不为空时至少满足一条。只有一层「全部 / 任一」，不能嵌套。条件有三种：
   - `signal`：出现一个内置信号。参数缺省时用目录中的默认值。
   - `my_signal`：出现一个自定义信号，按 `signal_id` 引用。

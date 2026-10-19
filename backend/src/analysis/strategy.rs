@@ -44,6 +44,9 @@ fn default_limit() -> u32 {
 /// 股票池：先排除不想要的股票，再判断条件
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
 pub struct Universe {
+    /// 资产类型：stock / etf；旧策略缺省为股票，避免改变已有结果
+    #[serde(default = "default_asset_types")]
+    pub asset_types: Vec<String>,
     /// 只看这些板块：main 主板、chinext 创业板、star 科创板、bse 北交所；为空表示全部
     #[serde(default)]
     pub boards: Vec<String>,
@@ -71,6 +74,7 @@ fn yes() -> bool {
 impl Default for Universe {
     fn default() -> Self {
         Universe {
+            asset_types: default_asset_types(),
             boards: vec![],
             exclude_st: true,
             min_price: Some(2.0),
@@ -79,6 +83,10 @@ impl Default for Universe {
             sector: None,
         }
     }
+}
+
+fn default_asset_types() -> Vec<String> {
+    vec!["stock".into()]
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
@@ -534,6 +542,16 @@ impl Definition {
         }
     }
 
+    pub fn any_assets(asset_types: Vec<String>) -> Self {
+        Definition {
+            universe: Universe {
+                asset_types,
+                ..Universe::default()
+            },
+            ..Definition::any_stock()
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.all.is_empty() && self.any.is_empty() {
             return Err("至少要有一个条件".into());
@@ -560,6 +578,15 @@ impl Definition {
             if !["main", "chinext", "star", "bse"].contains(&b.as_str()) {
                 return Err(format!("未知的板块：{b}"));
             }
+        }
+        if self.universe.asset_types.is_empty()
+            || self
+                .universe
+                .asset_types
+                .iter()
+                .any(|a| !["stock", "etf"].contains(&a.as_str()))
+        {
+            return Err("资产类型只能是 stock 或 etf，且至少选择一种".into());
         }
         if let Some(s) = &self.universe.sector
             && (!["industry", "cn_concept"].contains(&s.category.as_str())
@@ -737,8 +764,16 @@ impl Definition {
     pub fn in_universe(&self, f: &Frame, meta: &StockMeta, i: usize) -> bool {
         let u = &self.universe;
         let b = &f.bars[i];
-        (u.boards.is_empty() || u.boards.contains(&meta.board))
-            && !(u.exclude_st && f.is_st(i))
+        let asset = match meta.asset_type {
+            super::indicators::AssetType::Stock => "stock",
+            super::indicators::AssetType::Etf => "etf",
+        };
+        (u.asset_types.iter().any(|a| a == asset))
+            && (meta.asset_type == super::indicators::AssetType::Etf
+                || u.boards.is_empty()
+                || u.boards.contains(&meta.board))
+            && (meta.asset_type == super::indicators::AssetType::Etf
+                || !(u.exclude_st && f.is_st(i)))
             && u.min_price.is_none_or(|p| b.close >= p)
             && u.min_amount.is_none_or(|a| b.amount >= a)
             && u.min_listed_days.is_none_or(|d| i + 1 >= d as usize)
@@ -748,6 +783,11 @@ impl Definition {
     pub fn describe_universe(&self) -> Vec<String> {
         let u = &self.universe;
         let mut out = vec![];
+        if u.asset_types.len() == 1 && u.asset_types[0] == "etf" {
+            out.push("只看 ETF".into());
+        } else if u.asset_types.iter().any(|a| a == "etf") {
+            out.push("包含股票和 ETF".into());
+        }
         if !u.boards.is_empty() {
             let names: Vec<&str> = u
                 .boards

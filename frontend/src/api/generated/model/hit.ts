@@ -12,6 +12,8 @@
 export interface Hit {
   /** 成交额（元） */
   amount: number;
+  /** stock / etf */
+  asset_type: string;
   /** 涨跌幅（%） */
   change_pct: number;
   /** 收盘价（未复权） */

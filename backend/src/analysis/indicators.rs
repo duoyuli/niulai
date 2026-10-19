@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 use super::limit_pool::LimitPool;
 use super::ma::sma;
 use super::prices::DailyBar;
+pub use crate::instrument::AssetType;
 
 /// 指标周期 n 的上限：巡检和回测按它确定要读多少根历史日线
 pub const MAX_WINDOW: u32 = 250;
@@ -228,7 +229,7 @@ impl IndicatorRef {
     }
 }
 
-/// 股票的静态信息，计算涨跌停价时用
+/// 证券静态信息。股票和 ETF 共用分析主流程，资产差异由 asset_type 和交易扩展提供。
 #[derive(Clone, Debug)]
 pub struct StockMeta {
     /// main / chinext / star / bse
@@ -236,6 +237,7 @@ pub struct StockMeta {
     /// 当前简称含 ST（没有历史 ST 状态，整段历史都按当前状态计算）
     pub is_st: bool,
     pub list_date: Option<NaiveDate>,
+    pub asset_type: AssetType,
 }
 
 /// 从开始采集那天起记录的简称区间；区间内的 ST 状态用于历史涨跌停判断。
@@ -607,6 +609,14 @@ impl<'a> Frame<'a> {
             broken: vec![false; n],
             consecutive_up: vec![0; n],
         };
+        if self
+            .meta
+            .is_some_and(|m| !crate::instrument::extension(m.asset_type).uses_stock_limit_pool())
+        {
+            let l = Rc::new(l);
+            *self.limits.borrow_mut() = Some(l.clone());
+            return l;
+        }
         for i in 1..n {
             if self.ipo_period(i) {
                 continue;
@@ -1104,6 +1114,7 @@ pub(crate) mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            asset_type: AssetType::Stock,
         };
         let f = Frame::new(&b, Some(&main));
         let l = f.limits();
@@ -1112,6 +1123,7 @@ pub(crate) mod tests {
             board: "main".into(),
             is_st: true,
             list_date: None,
+            asset_type: AssetType::Stock,
         };
         let f = Frame::new(&b, Some(&st));
         assert!((f.limits().up_price[1] - 10.5).abs() < 1e-9, "ST 涨跌幅 5%");
@@ -1119,6 +1131,7 @@ pub(crate) mod tests {
             board: "star".into(),
             is_st: false,
             list_date: None,
+            asset_type: AssetType::Stock,
         };
         let f = Frame::new(&b, Some(&star));
         assert!(!f.limits().limit_up[1], "科创板 20% 才涨停");
@@ -1131,6 +1144,7 @@ pub(crate) mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            asset_type: AssetType::Stock,
         };
         let history = [StPeriod {
             valid_from: b[2].date,
@@ -1154,6 +1168,7 @@ pub(crate) mod tests {
             board: board.into(),
             is_st,
             list_date: None,
+            asset_type: AssetType::Stock,
         }
     }
 

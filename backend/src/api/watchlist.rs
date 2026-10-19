@@ -7,6 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -54,6 +55,8 @@ pub struct WatchItem {
     pub name: String,
     /// main / chinext / star / bse
     pub board: String,
+    /// stock / etf
+    pub asset_type: String,
     pub delisted_on: Option<NaiveDate>,
     pub added_at: DateTime<Utc>,
     /// 本地最新一根日线（未复权）的日期和收盘价；还没有日线时为空
@@ -117,16 +120,21 @@ async fn list_watchlist(
         String,
         String,
         String,
+        String,
         Option<NaiveDate>,
         DateTime<Utc>,
         Option<NaiveDate>,
         Option<String>,
     );
     let base: Vec<BaseRow> = sqlx::query_as(
-        "SELECT w.thscode, s.name, s.board, s.delisted_on, w.added_at, l.trade_date, l.close::text
-         FROM app.watchlist w JOIN ref.security s USING (thscode)
-         LEFT JOIN LATERAL (SELECT trade_date, close FROM mkt.stock_bar_1d b WHERE b.thscode = w.thscode
-                            ORDER BY trade_date DESC LIMIT 1) l ON true
+        "SELECT w.thscode, s.name, s.board, s.asset_type, s.delisted_on, w.added_at, l.trade_date, l.close::text
+         FROM app.watchlist w JOIN ref.instrument s USING (thscode)
+         LEFT JOIN LATERAL (
+             SELECT trade_date, close FROM mkt.stock_bar_1d b WHERE b.thscode = w.thscode
+             UNION ALL
+             SELECT trade_date, close FROM mkt.etf_bar_1d b WHERE b.thscode = w.thscode
+             ORDER BY trade_date DESC LIMIT 1
+         ) l ON true
          WHERE w.user_id = $1
          ORDER BY w.added_at DESC, w.thscode",
     )
@@ -135,7 +143,14 @@ async fn list_watchlist(
     .await?;
 
     let codes: Vec<String> = base.iter().map(|r| r.0.clone()).collect();
-    let series = prices::recent_closes(&s.pool, &codes, LOOKBACK).await?;
+    let mut series: HashMap<String, Vec<(NaiveDate, f64)>> = HashMap::new();
+    for code in &codes {
+        let bars = prices::recent_instrument_bars(&s.pool, code, LOOKBACK).await?;
+        series.insert(
+            code.clone(),
+            bars.into_iter().map(|b| (b.date, b.q_close)).collect(),
+        );
+    }
 
     let sec = market::securities(&s.pool).await?;
     // 权威涨跌停池：最近信号里的涨跌停、炸板、连板以供应商的名单为准；自选股数量不多，按股票只读需要的行
@@ -152,11 +167,11 @@ async fn list_watchlist(
         None => LimitPool::empty(),
     };
     let mut items = vec![];
-    for (thscode, name, board, delisted_on, added_at, last_date, close) in base {
+    for (thscode, name, board, asset_type, delisted_on, added_at, last_date, close) in base {
         let diagnosis = series
             .get(&thscode)
             .and_then(|pts| diagnose(pts, fast, slow));
-        let bars = prices::recent_bars(&s.pool, &thscode, RECENT_BARS).await?;
+        let bars = prices::recent_instrument_bars(&s.pool, &thscode, RECENT_BARS).await?;
         let recent_signals = {
             let history = sec
                 .st_history
@@ -176,6 +191,7 @@ async fn list_watchlist(
             thscode,
             name,
             board,
+            asset_type,
             delisted_on,
             added_at,
             last_date,
@@ -234,7 +250,7 @@ async fn add_watch(
     Path(code): Path<String>,
 ) -> ApiResult<StatusCode> {
     let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ref.security WHERE thscode = $1)")
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ref.instrument WHERE thscode = $1)")
             .bind(&code)
             .fetch_one(&s.pool)
             .await?;

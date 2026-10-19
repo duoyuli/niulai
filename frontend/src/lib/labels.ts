@@ -7,6 +7,11 @@ export const BOARDS: Record<string, string> = {
   bse: "北交所",
 };
 
+export const ASSET_TYPES: Record<string, string> = {
+  stock: "股票",
+  etf: "ETF",
+};
+
 export const INDEX_CATEGORIES: Record<string, string> = {
   exchange: "交易所指数",
   industry: "同花顺行业",

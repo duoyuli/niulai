@@ -549,7 +549,19 @@ async fn add_cash(tx: &mut Transaction<'_, Postgres>, account_id: i64, delta: f6
 
 async fn security_board(tx: &mut Transaction<'_, Postgres>, code: &str) -> Result<Option<String>> {
     Ok(
-        sqlx::query_scalar("SELECT board FROM ref.security WHERE thscode = $1")
+        sqlx::query_scalar("SELECT board FROM ref.instrument WHERE thscode = $1")
+            .bind(code)
+            .fetch_optional(&mut **tx)
+            .await?,
+    )
+}
+
+async fn security_asset_type(
+    tx: &mut Transaction<'_, Postgres>,
+    code: &str,
+) -> Result<Option<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
             .bind(code)
             .fetch_optional(&mut **tx)
             .await?,
@@ -678,9 +690,9 @@ async fn record_in_tx(
                 .map(str::trim)
                 .filter(|c| !c.is_empty())
                 .ok_or_else(|| AccountError::Invalid("缺少股票代码".into()))?;
-            if security_board(tx, code).await?.is_none() {
-                return invalid(format!("没有这只股票：{code}"));
-            }
+            let asset_type = security_asset_type(tx, code)
+                .await?
+                .ok_or_else(|| AccountError::Invalid(format!("没有这只证券：{code}")))?;
             let shares = input
                 .shares
                 .filter(|n| *n > 0)
@@ -756,7 +768,7 @@ async fn record_in_tx(
                 if shares > held {
                     return invalid(format!("只持有 {held} 股，不能卖 {shares} 股"));
                 }
-                let fee = supplied_fee.unwrap_or_else(|| fees.sell_fee(gross));
+                let fee = supplied_fee.unwrap_or_else(|| fees.sell_fee_for(&asset_type, gross));
                 if held == shares {
                     sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2")
                         .bind(account_id)
@@ -1206,7 +1218,7 @@ pub async fn trades(
     let rows: Vec<TradeRow> = sqlx::query_as(
         "SELECT t.trade_id, t.kind, t.trade_date, t.thscode, s.name, t.shares, t.price::float8, t.amount::float8, t.fee::float8, t.source, t.note,
                 t.reversed_at, t.created_at
-         FROM app.account_trade t LEFT JOIN ref.security s USING (thscode)
+         FROM app.account_trade t LEFT JOIN ref.instrument s USING (thscode)
          WHERE t.account_id = $1 ORDER BY t.trade_id DESC LIMIT $2",
     )
     .bind(account_id)

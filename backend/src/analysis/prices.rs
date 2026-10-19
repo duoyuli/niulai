@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 use sqlx::{AssertSqlSafe, PgPool};
 
+use crate::instrument::{AssetType, extension};
+
 /// 一根日线：未复权价用于成交、计算手数和涨跌停，等比前复权价（q_*）用于收益和指标
 #[derive(Clone, Debug)]
 pub struct DailyBar {
@@ -32,6 +34,11 @@ const BAR_COLUMNS: &str =
      b.volume::float8, b.amount::float8";
 const BAR_JOIN: &str = "mkt.stock_bar_1d b
      LEFT JOIN mkt.adj_segment s ON s.thscode = b.thscode AND b.trade_date >= s.valid_from AND b.trade_date < s.valid_to";
+const ETF_BAR_COLUMNS: &str =
+    "b.trade_date, b.open::float8, b.high::float8, b.low::float8, b.close::float8,
+     b.open::float8, b.high::float8, b.low::float8, b.close::float8,
+     b.volume::float8, b.amount::float8";
+const ETF_BAR_JOIN: &str = "mkt.etf_bar_1d b";
 
 type BarRow = (NaiveDate, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64);
 type StockBarRow = (
@@ -85,6 +92,32 @@ pub async fn stock_bars(
     Ok(rows.into_iter().map(bar).collect())
 }
 
+/// 一只证券截至 end（含）的全部日线；ETF 使用供应商前复权价格作为分析价格。
+pub async fn instrument_bars(
+    pool: &PgPool,
+    code: &str,
+    end: Option<NaiveDate>,
+) -> sqlx::Result<Vec<DailyBar>> {
+    let kind: Option<String> =
+        sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
+            .bind(code)
+            .fetch_optional(pool)
+            .await?;
+    if extension(AssetType::from_db(kind.as_deref())).bar_table() == "mkt.etf_bar_1d" {
+        let sql = format!(
+            "SELECT {ETF_BAR_COLUMNS} FROM {ETF_BAR_JOIN} WHERE b.thscode = $1 AND ($2::date IS NULL OR b.trade_date <= $2) ORDER BY b.trade_date"
+        );
+        let rows: Vec<BarRow> = sqlx::query_as(AssertSqlSafe(sql))
+            .bind(code)
+            .bind(end)
+            .fetch_all(pool)
+            .await?;
+        Ok(rows.into_iter().map(bar).collect())
+    } else {
+        stock_bars(pool, code, end).await
+    }
+}
+
 /// 一只股票最近 n 根日线，按日期升序
 pub async fn stock_bars_between(
     pool: &PgPool,
@@ -105,6 +138,33 @@ pub async fn stock_bars_between(
     Ok(rows.into_iter().map(bar).collect())
 }
 
+pub async fn instrument_bars_between(
+    pool: &PgPool,
+    code: &str,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> sqlx::Result<Vec<DailyBar>> {
+    let kind: Option<String> =
+        sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
+            .bind(code)
+            .fetch_optional(pool)
+            .await?;
+    if extension(AssetType::from_db(kind.as_deref())).bar_table() == "mkt.etf_bar_1d" {
+        let sql = format!(
+            "SELECT {ETF_BAR_COLUMNS} FROM {ETF_BAR_JOIN} WHERE b.thscode = $1 AND b.trade_date BETWEEN $2 AND $3 ORDER BY b.trade_date"
+        );
+        let rows: Vec<BarRow> = sqlx::query_as(AssertSqlSafe(sql))
+            .bind(code)
+            .bind(start)
+            .bind(end)
+            .fetch_all(pool)
+            .await?;
+        Ok(rows.into_iter().map(bar).collect())
+    } else {
+        stock_bars_between(pool, code, start, end).await
+    }
+}
+
 /// 一只股票最近 n 根日线，按日期升序
 pub async fn recent_bars(pool: &PgPool, code: &str, n: i64) -> sqlx::Result<Vec<DailyBar>> {
     // 审计：只拼接了本文件中的常量
@@ -117,6 +177,32 @@ pub async fn recent_bars(pool: &PgPool, code: &str, n: i64) -> sqlx::Result<Vec<
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().map(bar).collect())
+}
+
+/// 一只证券最近 n 根日线，按日期升序。
+pub async fn recent_instrument_bars(
+    pool: &PgPool,
+    code: &str,
+    n: i64,
+) -> sqlx::Result<Vec<DailyBar>> {
+    let kind: Option<String> =
+        sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
+            .bind(code)
+            .fetch_optional(pool)
+            .await?;
+    if extension(AssetType::from_db(kind.as_deref())).bar_table() == "mkt.etf_bar_1d" {
+        let sql = format!(
+            "SELECT * FROM (SELECT {ETF_BAR_COLUMNS} FROM {ETF_BAR_JOIN} WHERE b.thscode = $1 ORDER BY b.trade_date DESC LIMIT $2) t ORDER BY 1"
+        );
+        let rows: Vec<BarRow> = sqlx::query_as(AssertSqlSafe(sql))
+            .bind(code)
+            .bind(n)
+            .fetch_all(pool)
+            .await?;
+        Ok(rows.into_iter().map(bar).collect())
+    } else {
+        recent_bars(pool, code, n).await
+    }
 }
 
 /// 一只股票截至 end（含）的最近 n 根日线，按日期升序
@@ -137,6 +223,55 @@ pub async fn recent_bars_until(
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().map(bar).collect())
+}
+
+pub async fn recent_instrument_bars_until(
+    pool: &PgPool,
+    code: &str,
+    end: NaiveDate,
+    n: i64,
+) -> sqlx::Result<Vec<DailyBar>> {
+    let kind: Option<String> =
+        sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
+            .bind(code)
+            .fetch_optional(pool)
+            .await?;
+    if extension(AssetType::from_db(kind.as_deref())).bar_table() == "mkt.etf_bar_1d" {
+        let sql = format!(
+            "SELECT * FROM (SELECT {ETF_BAR_COLUMNS} FROM {ETF_BAR_JOIN} WHERE b.thscode = $1 AND b.trade_date <= $3 ORDER BY b.trade_date DESC LIMIT $2) t ORDER BY 1"
+        );
+        let rows: Vec<BarRow> = sqlx::query_as(AssertSqlSafe(sql))
+            .bind(code)
+            .bind(n)
+            .bind(end)
+            .fetch_all(pool)
+            .await?;
+        Ok(rows.into_iter().map(bar).collect())
+    } else {
+        recent_bars_until(pool, code, end, n).await
+    }
+}
+
+pub async fn bar_count_between(
+    pool: &PgPool,
+    code: &str,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> sqlx::Result<i64> {
+    let kind: Option<String> =
+        sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
+            .bind(code)
+            .fetch_optional(pool)
+            .await?;
+    let table = extension(AssetType::from_db(kind.as_deref())).bar_table();
+    let sql =
+        format!("SELECT count(*) FROM {table} WHERE thscode = $1 AND trade_date BETWEEN $2 AND $3");
+    sqlx::query_scalar(AssertSqlSafe(sql))
+        .bind(code)
+        .bind(start)
+        .bind(end)
+        .fetch_one(pool)
+        .await
 }
 
 /// 同时进行的全市场计算最多几个。每个都要读几百万行日线、算几秒到十几秒，
@@ -211,6 +346,83 @@ where
                 run_cpu(|| f(code, bars));
             }
         }
+    }
+    Ok(())
+}
+
+/// 全市场 ETF 日线扫描。与股票扫描共享限流槽位，数据表和价格口径保持独立。
+pub async fn for_each_etf<F>(
+    pool: &PgPool,
+    lo: NaiveDate,
+    hi: NaiveDate,
+    mut f: F,
+) -> sqlx::Result<()>
+where
+    F: FnMut(&str, &[DailyBar]),
+{
+    let slots = if BACKGROUND.try_with(|_| ()).is_ok() {
+        &BACKGROUND_SLOT
+    } else {
+        &SCAN_SLOTS
+    };
+    let _slot = slots.acquire().await.expect("信号量不会被关闭");
+    const BATCH_CODES: usize = 128;
+    let codes: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT b.thscode FROM mkt.etf_bar_1d b WHERE b.trade_date > $1 AND b.trade_date <= $2 ORDER BY b.thscode",
+    )
+    .bind(lo)
+    .bind(hi)
+    .fetch_all(pool)
+    .await?;
+    for chunk in codes.chunks(BATCH_CODES) {
+        let mut tx = pool.begin().await?;
+        sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
+        sqlx::query("SET LOCAL work_mem = '128MB'")
+            .execute(&mut *tx)
+            .await?;
+        let sql = format!(
+            "SELECT b.thscode, {ETF_BAR_COLUMNS} FROM {ETF_BAR_JOIN} WHERE b.thscode = ANY($1) AND b.trade_date > $2 AND b.trade_date <= $3 ORDER BY b.thscode, b.trade_date"
+        );
+        let rows: Vec<StockBarRow> = sqlx::query_as(AssertSqlSafe(sql))
+            .bind(chunk)
+            .bind(lo)
+            .bind(hi)
+            .fetch_all(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let mut grouped: HashMap<String, Vec<DailyBar>> = HashMap::new();
+        for (code, d, o, h, l, cl, qo, qh, ql, qc, v, a) in rows {
+            grouped
+                .entry(code)
+                .or_default()
+                .push(bar((d, o, h, l, cl, qo, qh, ql, qc, v, a)));
+        }
+        for code in chunk {
+            if let Some(bars) = grouped.get(code) {
+                run_cpu(|| f(code, bars));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 按资产类型扫描；回调参数仍保持代码和日线，资产信息从 `market::securities` 读取。
+pub async fn for_each_assets<F>(
+    pool: &PgPool,
+    lo: NaiveDate,
+    hi: NaiveDate,
+    include_stock: bool,
+    include_etf: bool,
+    mut f: F,
+) -> sqlx::Result<()>
+where
+    F: FnMut(&str, &[DailyBar]),
+{
+    if include_stock {
+        for_each_stock(pool, lo, hi, &mut f).await?;
+    }
+    if include_etf {
+        for_each_etf(pool, lo, hi, &mut f).await?;
     }
     Ok(())
 }

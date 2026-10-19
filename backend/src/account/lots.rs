@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::instrument::{AssetType, extension};
+
 /// 印花税：只在卖出时收，千分之 0.5（2023-08-28 起）
 pub const STAMP_TAX_RATE: f64 = 0.0005;
 
@@ -27,6 +29,12 @@ pub fn lot_rule(board: &str) -> LotRule {
     }
 }
 
+/// 资产类别的申报单位。ETF 默认按场内基金常见的 100 份一手处理，股票继续按板块规则。
+pub fn lot_rule_for(asset_type: &str, board: &str) -> LotRule {
+    let (min, step) = extension(AssetType::from_db(Some(asset_type))).lot_rule(board);
+    LotRule { min, step }
+}
+
 /// 账户的费率
 #[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug, PartialEq)]
 pub struct Fees {
@@ -47,6 +55,14 @@ impl Fees {
 
     pub fn sell_fee(&self, amount: f64) -> f64 {
         round2(self.commission(amount) + amount * STAMP_TAX_RATE)
+    }
+
+    pub fn sell_fee_for(&self, asset_type: &str, amount: f64) -> f64 {
+        if extension(AssetType::from_db(Some(asset_type))).stamp_tax_rate() == 0.0 {
+            self.commission(amount)
+        } else {
+            self.sell_fee(amount)
+        }
     }
 }
 

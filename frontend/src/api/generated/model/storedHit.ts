@@ -9,6 +9,8 @@
 export interface StoredHit {
   /** @nullable */
   amount?: number | null;
+  /** stock / etf */
+  asset_type: string;
   /** @nullable */
   bars_held?: number | null;
   /** @nullable */

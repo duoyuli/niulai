@@ -15,7 +15,7 @@ import { Badge, Card, Empty, ErrorState, Field, inputClass, Segmented, Spinner, 
 import { WatchButton } from "../components/WatchButton";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtBig, fmtInt, fmtPercent, fmtPrice, RANGES, rangeStart, toNumber, upDownClass } from "../lib/format";
-import { ADJUSTS, type Adjust, BOARDS, financialIndicatorName } from "../lib/labels";
+import { ADJUSTS, type Adjust, ASSET_TYPES, BOARDS, financialIndicatorName } from "../lib/labels";
 
 const TABS = [
   { value: "chart", label: "走势与诊断" },
@@ -43,7 +43,8 @@ export function SecurityDetailPage() {
           <h1 className="flex flex-wrap items-baseline gap-2 text-xl font-semibold">
             {sec?.name ?? thscode}
             <span className="num font-mono text-sm font-normal text-zinc-500">{thscode}</span>
-            {sec && <Badge>{BOARDS[sec.board] ?? sec.board}</Badge>}
+            {sec && <Badge>{ASSET_TYPES[sec.asset_type] ?? sec.asset_type}</Badge>}
+            {sec && sec.asset_type === "stock" && <Badge>{BOARDS[sec.board] ?? sec.board}</Badge>}
             {sec?.delisted_on && <Badge tone="bad">已退市 {sec.delisted_on}</Badge>}
           </h1>
           {close !== null && (
@@ -81,7 +82,7 @@ export function SecurityDetailPage() {
         <>
           <DiagnosisCard thscode={thscode} />
           <FundamentalsCard thscode={thscode} />
-          <ChartCard thscode={thscode} earliest={sec?.first_bar} />
+          <ChartCard thscode={thscode} assetType={sec?.asset_type} earliest={sec?.first_bar} />
         </>
       )}
     </>
@@ -243,7 +244,15 @@ function abilityName(name: string) {
   );
 }
 
-function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string | null }) {
+function ChartCard({
+  thscode,
+  assetType,
+  earliest,
+}: {
+  thscode: string;
+  assetType?: string;
+  earliest?: string | null;
+}) {
   const [s, set] = useSearchState({
     adjust: "qfq",
     range: "3",
@@ -253,7 +262,8 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
   const catalog = useCatalog({ query: { staleTime: Number.POSITIVE_INFINITY } });
   const signals = useListSignals({ query: { staleTime: 60_000 } });
   const strategies = useListStrategies();
-  const adjust = s.adjust as Adjust;
+  const adjustOptions = assetType === "etf" ? ADJUSTS.filter((x) => ["none", "qfq", "hfq"].includes(x.value)) : ADJUSTS;
+  const adjust = (assetType === "etf" && !["none", "qfq", "hfq"].includes(s.adjust) ? "qfq" : s.adjust) as Adjust;
   const { start, end } = rangeQuery(s);
   const bars = useSecurityBars(
     thscode,
@@ -290,7 +300,11 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
           strategies={strategies.data}
         />
         {adjust !== "qfq" && (
-          <p className="text-xs text-zinc-500">指标和信号按等比前复权价计算，切换回「等比前复权」后画在 K 线上。</p>
+          <p className="text-xs text-zinc-500">
+            {assetType === "etf"
+              ? "ETF 历史价格按供应商前复权口径保存，指标和信号使用这份价格计算。"
+              : "指标和信号按等比前复权价计算，切换回「等比前复权」后画在 K 线上。"}
+          </p>
         )}
         {overlays.some((a) => a.startsWith("strategy:")) && (
           <p className="text-xs text-zinc-500">
@@ -310,8 +324,8 @@ function ChartCard({ thscode, earliest }: { thscode: string; earliest?: string |
       <details className="mt-3 text-sm">
         <summary className="cursor-pointer text-zinc-500 select-none">价格口径</summary>
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-          <Segmented value={adjust} options={ADJUSTS} onChange={(adjust) => set({ adjust })} />
-          <span>{ADJUSTS.find((a) => a.value === adjust)?.hint}</span>
+          <Segmented value={adjust} options={adjustOptions} onChange={(adjust) => set({ adjust })} />
+          <span>{adjustOptions.find((a) => a.value === adjust)?.hint}</span>
         </div>
       </details>
     </Card>

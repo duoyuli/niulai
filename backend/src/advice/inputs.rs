@@ -14,7 +14,7 @@ use crate::account::history::{HistoryReturn, HistorySeries};
 use crate::account::rules::{HistoryWindow, Rules};
 use crate::account::{self, Account};
 use crate::analysis::diagnosis::{self, Verdict};
-use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef, StockMeta};
+use crate::analysis::indicators::{AssetType, Frame, IndicatorId, IndicatorRef, StockMeta};
 use crate::analysis::limit_pool::LimitPool;
 use crate::analysis::market::{self, Securities};
 use crate::analysis::prices::{self, DailyBar};
@@ -169,7 +169,7 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
             let Some(meta) = sec.meta.get(code) else {
                 continue;
             };
-            let bars = prices::stock_bars_between(pool, code, start, trade_date).await?;
+            let bars = prices::instrument_bars_between(pool, code, start, trade_date).await?;
             let events = prices::corp_events(pool, code, Some(trade_date)).await?;
             let st = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
             prices::run_cpu(|| {
@@ -193,7 +193,7 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
         }
     }
     let delisted: HashMap<String, bool> = sqlx::query_as::<_, (String, bool)>(
-        "SELECT thscode, delisted_on IS NOT NULL FROM ref.security",
+        "SELECT thscode, delisted_on IS NOT NULL FROM ref.instrument",
     )
     .fetch_all(pool)
     .await?
@@ -309,18 +309,13 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             board: "main".into(),
             is_st: false,
             list_date: None,
+            asset_type: AssetType::Stock,
         });
-        let bars = prices::recent_bars_until(pool, &p.thscode, sh.trade_date, BARS).await?;
+        let bars =
+            prices::recent_instrument_bars_until(pool, &p.thscode, sh.trade_date, BARS).await?;
         let snap = snapshot(&bars, &meta, rules.trend_ma, Some((&sh.limits, &p.thscode)));
         let bars_held = match p.opened_on {
-            Some(d) => Some(
-                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mkt.stock_bar_1d WHERE thscode = $1 AND trade_date >= $2 AND trade_date <= $3")
-                    .bind(&p.thscode)
-                    .bind(d)
-                    .bind(sh.trade_date)
-                    .fetch_one(pool)
-                    .await?,
-            ),
+            Some(d) => Some(prices::bar_count_between(pool, &p.thscode, d, sh.trade_date).await?),
             None => None,
         };
         let strategy = p.strategy_id.map(|id| StrategyRef {
@@ -356,6 +351,11 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
                 .cloned()
                 .unwrap_or_else(|| p.thscode.clone()),
             board: meta.board.clone(),
+            asset_type: if meta.asset_type == AssetType::Etf {
+                "etf".into()
+            } else {
+                "stock".into()
+            },
             shares: p.shares,
             cost_price: p.cost_price,
             opened_on: p.opened_on,
@@ -425,7 +425,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         let Some(meta) = sh.sec.meta.get(code) else {
             continue;
         };
-        let bars = prices::recent_bars_until(pool, code, sh.trade_date, BARS).await?;
+        let bars = prices::recent_instrument_bars_until(pool, code, sh.trade_date, BARS).await?;
         let Some(snap) = snapshot(&bars, meta, rules.trend_ma, Some((&sh.limits, code))) else {
             continue;
         };
@@ -433,6 +433,11 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             thscode: code.to_string(),
             name: sh.sec.names.get(code).cloned().unwrap_or_default(),
             board: meta.board.clone(),
+            asset_type: if meta.asset_type == AssetType::Etf {
+                "etf".into()
+            } else {
+                "stock".into()
+            },
             is_st: meta.is_st,
             picks,
             snap,

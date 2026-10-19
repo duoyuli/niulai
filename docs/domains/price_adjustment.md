@@ -37,6 +37,7 @@
 - `mkt.stock_bar_1d` 只存**未复权原价**，即每天实际成交的价格。原价一旦写入就不会因为新的除权事件而改变。
 - `mkt.corp_action` 存**公司行动事件**：每股现金分红 `cash_div`（税前）、每股送转股 `bonus_ratio`、每股配股 `rights_ratio`、配股价 `rights_price`。
 - 前复权价随每次新的除权事件变化，所以不落库为固定值；所有复权价都由原价和事件计算得到。
+- `mkt.etf_bar_1d` 是独立数据域。当前供应商 ETF 历史接口按前复权价格返回，记录 `price_basis = vendor_forward_adjusted`；ETF 不参与股票公司行动和 `mkt.adj_segment` 重算。
 
 <a id="equal_ratio_factor"></a>
 ## 等比复权因子
@@ -106,5 +107,7 @@ factor    = 从本库第一根 K 线起各次比例的累乘（第一根 K 线�
 | `hfq` | `mkt.v_stock_bar_hfq` | 等比后复权；与 `qfq` 的信号结果相同 |
 | `qfq_ths` | `mkt.v_stock_bar_qfq_ths` | 同花顺减法前复权；与同花顺软件对数、K 线图显示 |
 | `hfq_ths` | `mkt.v_stock_bar_hfq_ths` | 同花顺减法后复权；与同花顺接口对数 |
+
+ETF 也接受 `none`、`qfq` 和 `hfq` 参数，但三者读取同一份供应商前复权日线；接口返回的 `factor` 为空，并在证券详情中保留 ETF 的数据口径。
 
 所有复权视图都按日期区间关联 `mkt.adj_segment`，每根 K 线都有复权价；没有分段行的股票按原价返回。接口的其他约定见 [REST API](../interfaces/rest_api.md)。

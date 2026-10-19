@@ -10,6 +10,8 @@ import type { WatchDiagnosis } from './watchDiagnosis';
 
 export interface WatchItem {
   added_at: string;
+  /** stock / etf */
+  asset_type: string;
   /** main / chinext / star / bse */
   board: string;
   /** @nullable */

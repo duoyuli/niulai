@@ -46,6 +46,8 @@ pub struct Security {
     pub ticker: String,
     pub name: String,
     pub exchange: String,
+    /// stock / etf
+    pub asset_type: String,
     /// main / chinext / star / bse
     pub board: String,
     pub list_date: Option<NaiveDate>,
@@ -81,14 +83,14 @@ async fn list_securities(
     let filter = "($1::text IS NULL OR thscode ILIKE $1 OR name ILIKE $1) AND ($2::text IS NULL OR board = $2)";
     // 审计：filter 是固定的 SQL 片段，用户输入全部走绑定参数
     let total: i64 = sqlx::query_scalar(AssertSqlSafe(format!(
-        "SELECT count(*) FROM ref.security WHERE {filter}"
+        "SELECT count(*) FROM ref.instrument WHERE {filter}"
     )))
     .bind(&pattern)
     .bind(&q.board)
     .fetch_one(&s.pool)
     .await?;
     let items = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT thscode, ticker, name, exchange, board, list_date, delisted_on, last_seen FROM ref.security WHERE {filter} ORDER BY thscode LIMIT $3 OFFSET $4"
+        "SELECT thscode, ticker, name, exchange, asset_type, board, list_date, delisted_on, last_seen FROM ref.instrument WHERE {filter} ORDER BY thscode LIMIT $3 OFFSET $4"
     )))
     .bind(&pattern)
     .bind(&q.board)
@@ -191,7 +193,7 @@ async fn get_security(
     Path(code): Path<String>,
 ) -> ApiResult<Json<SecurityDetail>> {
     let security: Security = sqlx::query_as(
-        "SELECT thscode, ticker, name, exchange, board, list_date, delisted_on, last_seen FROM ref.security WHERE thscode = $1",
+        "SELECT thscode, ticker, name, exchange, asset_type, board, list_date, delisted_on, last_seen FROM ref.instrument WHERE thscode = $1",
     )
     .bind(&code)
     .fetch_optional(&s.pool)
@@ -201,11 +203,20 @@ async fn get_security(
         .bind(&code)
         .fetch_all(&s.pool)
         .await?;
-    let (first_bar, last_bar, bars): (Option<NaiveDate>, Option<NaiveDate>, i64) =
+    let (first_bar, last_bar, bars): (Option<NaiveDate>, Option<NaiveDate>, i64) = if security
+        .asset_type
+        == "etf"
+    {
+        sqlx::query_as("SELECT min(trade_date), max(trade_date), count(*) FROM mkt.etf_bar_1d WHERE thscode = $1")
+                .bind(&code)
+                .fetch_one(&s.pool)
+                .await?
+    } else {
         sqlx::query_as("SELECT min(trade_date), max(trade_date), count(*) FROM mkt.stock_bar_1d WHERE thscode = $1")
-            .bind(&code)
-            .fetch_one(&s.pool)
-            .await?;
+                .bind(&code)
+                .fetch_one(&s.pool)
+                .await?
+    };
     Ok(Json(SecurityDetail {
         security,
         name_history,
@@ -224,7 +235,7 @@ async fn security_fundamentals(
     Query(q): Query<FundamentalsQuery>,
 ) -> ApiResult<Json<Fundamentals>> {
     let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ref.security WHERE thscode = $1)")
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ref.instrument WHERE thscode = $1)")
             .bind(&code)
             .fetch_one(&s.pool)
             .await?;
@@ -427,13 +438,21 @@ pub struct BarSeries {
 }
 
 // @project-doc docs/domains/price_adjustment.md#adjust_views
-fn bar_view(adjust: &str) -> ApiResult<&'static str> {
+fn bar_view(asset_type: &str, adjust: &str) -> ApiResult<(&'static str, &'static str)> {
+    if asset_type == "etf" {
+        return match adjust {
+            "none" | "qfq" | "hfq" => Ok(("mkt.etf_bar_1d", "NULL::float8")),
+            other => Err(ApiError::BadRequest(format!(
+                "ETF 的 adjust 只能是 none / qfq / hfq：{other}"
+            ))),
+        };
+    }
     Ok(match adjust {
-        "none" => "mkt.stock_bar_1d",
-        "qfq" => "mkt.v_stock_bar_qfq",
-        "hfq" => "mkt.v_stock_bar_hfq",
-        "qfq_ths" => "mkt.v_stock_bar_qfq_ths",
-        "hfq_ths" => "mkt.v_stock_bar_hfq_ths",
+        "none" => ("mkt.stock_bar_1d", "NULL::float8"),
+        "qfq" => ("mkt.v_stock_bar_qfq", "factor"),
+        "hfq" => ("mkt.v_stock_bar_hfq", "factor"),
+        "qfq_ths" => ("mkt.v_stock_bar_qfq_ths", "NULL::float8"),
+        "hfq_ths" => ("mkt.v_stock_bar_hfq_ths", "NULL::float8"),
         other => {
             return Err(ApiError::BadRequest(format!(
                 "adjust 只能是 none / qfq / hfq / qfq_ths / hfq_ths：{other}"
@@ -451,15 +470,17 @@ async fn security_bars(
     Query(q): Query<BarQuery>,
 ) -> ApiResult<Json<BarSeries>> {
     let adjust = q.adjust.unwrap_or_else(|| "qfq".into());
-    let view = bar_view(&adjust)?;
+    let asset_type: Option<String> =
+        sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
+            .bind(&code)
+            .fetch_optional(&s.pool)
+            .await?;
+    let asset_type = asset_type.ok_or_else(|| ApiError::NotFound(format!("证券不存在：{code}")))?;
+    let (view, factor) = bar_view(&asset_type, &adjust)?;
     let limit = q.limit.unwrap_or(500).clamp(1, 10_000);
-    let factor = match adjust.as_str() {
-        "qfq" | "hfq" => "factor",
-        _ => "NULL::float8",
-    };
     let sql = format!(
         "SELECT * FROM (
-           SELECT trade_date, open::text, high::text, low::text, close::text, volume, amount, {factor} AS factor
+           SELECT trade_date, open::text, high::text, low::text, close::text, volume, amount, {factor}
            FROM {view} WHERE thscode = $1 AND ($2::date IS NULL OR trade_date >= $2) AND ($3::date IS NULL OR trade_date <= $3)
            ORDER BY trade_date DESC LIMIT $4) t ORDER BY trade_date"
     );

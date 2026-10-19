@@ -9,6 +9,11 @@ import type { SignalTarget } from './signalTarget';
 
 export interface TodayInput {
   /**
+     * stock / etf；缺省为 stock，保持旧接口行为
+     * @nullable
+     */
+  asset_types?: string[] | null;
+  /**
      * 交易日，默认最新
      * @nullable
      */
