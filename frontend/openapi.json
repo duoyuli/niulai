@@ -5962,6 +5962,82 @@
           }
         }
       },
+      "EtfFundamentals": {
+        "type": "object",
+        "required": [
+          "bars"
+        ],
+        "properties": {
+          "bars": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "first_bar": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "fund_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fund_scale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_bar": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "latest_close": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latest_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "management_company": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "management_fee": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_basis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "vendor_forward_adjusted / market_snapshot"
+          },
+          "unit_nav": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ExecuteInput": {
         "type": "object",
         "properties": {
@@ -6209,10 +6285,15 @@
         "type": "object",
         "required": [
           "thscode",
+          "asset_type",
           "valuation",
           "indicators"
         ],
         "properties": {
+          "asset_type": {
+            "type": "string",
+            "description": "stock / etf"
+          },
           "balance": {
             "oneOf": [
               {
@@ -6227,6 +6308,17 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/FinancialStatement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "etf": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EtfFundamentals",
+                "description": "ETF 专用资料和行情概览；股票时为空"
               },
               {
                 "type": "null"

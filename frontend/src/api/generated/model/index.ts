@@ -58,6 +58,7 @@ export * from './dimension';
 export * from './equityCurve';
 export * from './equityPoint';
 export * from './errorBody';
+export * from './etfFundamentals';
 export * from './executeInput';
 export * from './exitReason';
 export * from './exitRule';

@@ -177,12 +177,32 @@ pub struct FinancialAbility {
 #[derive(Serialize, ToSchema)]
 pub struct Fundamentals {
     pub thscode: String,
+    /// stock / etf
+    pub asset_type: String,
     /// 每个交易日一条，按日期倒序
     pub valuation: Vec<ValuationPoint>,
     pub income: Option<FinancialStatement>,
     pub balance: Option<FinancialStatement>,
     pub cashflow: Option<FinancialStatement>,
     pub indicators: Vec<FinancialAbility>,
+    /// ETF 专用资料和行情概览；股票时为空
+    pub etf: Option<EtfFundamentals>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct EtfFundamentals {
+    pub latest_close: Option<String>,
+    pub latest_date: Option<NaiveDate>,
+    pub first_bar: Option<NaiveDate>,
+    pub last_bar: Option<NaiveDate>,
+    pub bars: i64,
+    /// vendor_forward_adjusted / market_snapshot
+    pub price_basis: Option<String>,
+    pub fund_name: Option<String>,
+    pub fund_scale: Option<String>,
+    pub unit_nav: Option<String>,
+    pub management_company: Option<String>,
+    pub management_fee: Option<String>,
 }
 
 /// 单只证券详情
@@ -243,6 +263,24 @@ async fn security_fundamentals(
         return Err(ApiError::NotFound(format!("证券不存在：{code}")));
     }
 
+    let asset_type: String =
+        sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
+            .bind(&code)
+            .fetch_one(&s.pool)
+            .await?;
+    if asset_type == "etf" {
+        return Ok(Json(Fundamentals {
+            thscode: code.clone(),
+            asset_type,
+            valuation: vec![],
+            income: None,
+            balance: None,
+            cashflow: None,
+            indicators: vec![],
+            etf: Some(etf_fundamentals(&s.pool, &code).await?),
+        }));
+    }
+
     let limit = q.limit.unwrap_or(90).clamp(1, 365);
     let valuation_rows: Vec<ValuationRow> = sqlx::query_as(
         "SELECT trade_date, float_market_cap::text, pe_ttm::text, pe_mrq::text, pb_mrq::text, ps_ttm::text, pcf_ttm::text
@@ -287,12 +325,72 @@ async fn security_fundamentals(
 
     Ok(Json(Fundamentals {
         thscode: code,
+        asset_type,
         valuation,
         income,
         balance,
         cashflow,
         indicators,
+        etf: None,
     }))
+}
+
+async fn etf_fundamentals(pool: &sqlx::PgPool, code: &str) -> sqlx::Result<EtfFundamentals> {
+    let (first_bar, last_bar, bars): (Option<NaiveDate>, Option<NaiveDate>, i64) = sqlx::query_as(
+        "SELECT min(trade_date), max(trade_date), count(*) FROM mkt.etf_bar_1d WHERE thscode = $1",
+    )
+    .bind(code)
+    .fetch_one(pool)
+    .await?;
+    let latest: Option<(NaiveDate, String, String)> = sqlx::query_as(
+        "SELECT trade_date, close::text, price_basis FROM mkt.etf_bar_1d WHERE thscode = $1 ORDER BY trade_date DESC LIMIT 1",
+    )
+    .bind(code)
+    .fetch_optional(pool)
+    .await?;
+    let profile: Option<Value> = sqlx::query_scalar(
+        "SELECT payload FROM raw.record WHERE dataset_id = 'fund.profile' AND thscode = $1 ORDER BY last_seen_at DESC LIMIT 1",
+    )
+    .bind(code)
+    .fetch_optional(pool)
+    .await?;
+    let number_text = |key: &str| {
+        profile.as_ref().and_then(|v| v.get(key)).and_then(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .or_else(|| v.as_f64().map(|n| n.to_string()))
+        })
+    };
+    let management_fee = profile.as_ref().and_then(|v| {
+        v.get("rate_info")
+            .and_then(Value::as_array)
+            .and_then(|items| {
+                items.iter().find(|item| {
+                    item.get("rate_type").and_then(Value::as_str) == Some("management")
+                })
+            })
+            .and_then(|item| item.get("standard_rate").and_then(Value::as_str))
+            .map(str::to_owned)
+    });
+    Ok(EtfFundamentals {
+        latest_close: latest.as_ref().map(|(_, close, _)| close.clone()),
+        latest_date: latest.as_ref().map(|(date, _, _)| *date),
+        first_bar,
+        last_bar,
+        bars,
+        price_basis: latest.map(|(_, _, basis)| basis),
+        fund_name: profile
+            .as_ref()
+            .and_then(|v| v.get("fund_name").and_then(Value::as_str))
+            .map(str::to_owned),
+        fund_scale: number_text("fund_scale"),
+        unit_nav: number_text("unit_nav"),
+        management_company: profile
+            .as_ref()
+            .and_then(|v| v.get("mgmt_name").and_then(Value::as_str))
+            .map(str::to_owned),
+        management_fee,
+    })
 }
 
 async fn latest_statement(

@@ -35,7 +35,7 @@ async fn security_diagnosis(
         .meta
         .get(&code)
         .ok_or_else(|| ApiError::NotFound(format!("证券不存在：{code}")))?;
-    let bars = prices::recent_bars(&s.pool, &code, diagnosis::BARS_NEEDED).await?;
+    let bars = prices::recent_instrument_bars(&s.pool, &code, diagnosis::BARS_NEEDED).await?;
     let rows: Vec<(i64, String, serde_json::Value)> = sqlx::query_as(
         "SELECT strategy_id, name, definition FROM app.strategy ORDER BY strategy_id",
     )

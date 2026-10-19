@@ -81,7 +81,7 @@ export function SecurityDetailPage() {
       ) : (
         <>
           <DiagnosisCard thscode={thscode} />
-          <FundamentalsCard thscode={thscode} />
+          <FundamentalsCard thscode={thscode} assetType={sec?.asset_type} />
           <ChartCard thscode={thscode} assetType={sec?.asset_type} earliest={sec?.first_bar} />
         </>
       )}
@@ -89,7 +89,7 @@ export function SecurityDetailPage() {
   );
 }
 
-function FundamentalsCard({ thscode }: { thscode: string }) {
+function FundamentalsCard({ thscode, assetType }: { thscode: string; assetType?: string }) {
   const q = useSecurityFundamentals(thscode, { limit: 90 }, { query: { staleTime: 300_000 } });
   if (q.isPending)
     return (
@@ -104,6 +104,27 @@ function FundamentalsCard({ thscode }: { thscode: string }) {
       </Card>
     );
   const d = q.data;
+  if (assetType === "etf") {
+    const e = d?.etf;
+    return (
+      <Card title="ETF 基本资料" extra={<span className="text-xs text-zinc-500">按 ETF 数据口径展示</span>}>
+        {!e ? (
+          <Empty>本地还没有 ETF 资料或日线，可能仍在同步中</Empty>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <FundamentalStat label="最新收盘" value={e.latest_close} />
+            <FundamentalStat label="单位净值" value={e.unit_nav} />
+            <FundamentalStat label="基金规模" value={e.fund_scale} big />
+            <FundamentalStat label="管理费" value={e.management_fee} />
+            <FundamentalText label="管理人" value={e.management_company} />
+            <FundamentalText label="历史日线" value={e.bars ? `${e.bars} 根` : null} />
+            <FundamentalText label="最新日期" value={e.latest_date} />
+            <FundamentalText label="价格口径" value={e.price_basis} />
+          </div>
+        )}
+      </Card>
+    );
+  }
   if (!d || (d.valuation.length === 0 && !d.income && !d.balance && !d.cashflow && d.indicators.length === 0)) {
     return (
       <Card title="基本面">
@@ -198,6 +219,17 @@ function FundamentalStat({ label, value, big = false }: { label: string; value?:
     <div>
       <p className="text-xs text-zinc-500">{label}</p>
       <p className="num mt-0.5 font-medium">{n === null ? "—" : big ? fmtBig(n) : n.toFixed(2)}</p>
+    </div>
+  );
+}
+
+function FundamentalText({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div>
+      <p className="text-xs text-zinc-500">{label}</p>
+      <p className="mt-0.5 truncate text-sm font-medium" title={value ?? undefined}>
+        {value ?? "—"}
+      </p>
     </div>
   );
 }

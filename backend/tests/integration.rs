@@ -508,6 +508,20 @@ async fn etf_domain_sync_and_analysis_path() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["bars"].as_array().unwrap().len(), 3);
     assert_eq!(body["adjust"], "qfq");
+    let (status, diagnosis) =
+        call(&app, "GET", "/api/v1/securities/510300.SH/diagnosis", None).await;
+    assert_eq!(status, StatusCode::OK, "{diagnosis}");
+    assert_eq!(diagnosis["dimensions"].as_array().unwrap().len(), 4);
+    let (status, fundamentals) = call(
+        &app,
+        "GET",
+        "/api/v1/securities/510300.SH/fundamentals",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{fundamentals}");
+    assert_eq!(fundamentals["asset_type"], "etf");
+    assert!(fundamentals["etf"]["latest_close"].is_string());
     let (status, created) = call(
         &app,
         "POST",
