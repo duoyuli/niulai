@@ -218,7 +218,7 @@ export function PositionsEditor({
         </div>
       )}
       <p className="text-xs text-zinc-500">
-        填上成本价才能按策略止损、止盈或账户保护线判断。分红送转之后系统会自动改股数和成本，不用自己改；这里没列出的股票视为已经卖掉。
+        填上成本价才能按策略止损、止盈判断。分红送转之后系统会自动改股数和成本，不用自己改；这里没列出的股票视为已经卖掉。
       </p>
       {bad.length > 0 && <p className="text-sm text-red-600">股数要大于 0，成本价不填或大于 0</p>}
       {!!save.error && <p className="text-sm text-red-600">{errorText(save.error)}</p>}

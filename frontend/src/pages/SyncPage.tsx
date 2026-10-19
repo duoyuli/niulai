@@ -44,7 +44,9 @@ import { groupChains } from "../lib/runs";
 import { ChainProgress } from "./RunDetailPage";
 
 // @project-doc docs/architecture/frontend.md#pages
-/** 数据同步：状态、同步计划（什么时候自动同步什么）、数据核检、同步记录和手动同步，然后是要处理的问题，最后按分类看每类数据 */
+const ETF_DATASET_IDS = ["fund.etf_bar_1d", "fund.market_snapshot", "fund.profile"] as const;
+
+/** 数据同步：状态、同步计划（什么时候自动同步什么）、数据核检、同步记录和手动同步，然后按分类看股票与 ETF 等数据 */
 export function SyncPage() {
   const health = useSyncHealth({ query: { refetchInterval: 15_000, staleTime: 0 } });
   const datasets = useListDatasets({ query: { refetchInterval: 30_000, staleTime: 0 } });
@@ -57,7 +59,7 @@ export function SyncPage() {
     <>
       <PageHeader
         title="数据同步"
-        desc="按下面的同步计划自动同步，时间都是上海时间。每天同步后自动核对最近 20 个交易日的数据是否齐全，能补的自动补。"
+        desc="股票和 ETF 的行情都按下面的同步计划自动同步，时间都是上海时间。每天同步后自动核对最近 20 个交易日的数据是否齐全，能补的自动补。"
         extra={
           <div className="flex flex-wrap items-center gap-2">
             <SyncNow
@@ -76,6 +78,7 @@ export function SyncPage() {
       />
       {manual && datasets.data && <ManualSync datasets={datasets.data} onDone={() => setManual(false)} />}
       {health.isPending ? <Spinner /> : health.data && <Status h={health.data} />}
+      {datasets.data && <AssetSyncSummary rows={datasets.data} />}
       <QueryView query={schedule}>{(s) => <Plans s={s} titles={titles} />}</QueryView>
       <DataCheck />
       <Card title="同步记录" extra={<span className="text-xs text-zinc-400">每 10 秒刷新，点一行看详情</span>}>
@@ -133,8 +136,9 @@ function SyncNow({
 }
 
 const PLAN_HINTS: Record<string, string> = {
-  daily: "收盘后当天就有的数据：日 K 线（收盘快照）、指数行情、估值、异动原因、公司行动等",
-  weekly: "变化不频繁的基础数据：交易日历、股票列表、指数成分、财务报表，以及按股票重新核对一遍日 K 线",
+  daily: "收盘后当天就有的数据：股票和 ETF 日 K 线快照、指数行情、估值、异动原因、公司行动等",
+  weekly:
+    "变化不频繁的基础数据：交易日历、股票和 ETF 代码表、ETF 历史日线、指数成分、财务报表，以及按股票重新核对一遍日 K 线",
   monthly: "更新很慢的数据，跟每月第一次每周同步一起",
   report_season: "财报密集的月份每天取，其余月份每周取",
 };
@@ -166,7 +170,7 @@ function Plans({ s, titles }: { s: SyncSchedule; titles: Map<string, string> }) 
           </p>
         )}
         <p className="text-xs text-zinc-400">
-          只列已开启的数据。基金、期货、期权等默认没有开启，在「手动同步」里可以单独同步。
+          股票和 ETF 行情默认开启；其他基金、期货、期权等数据可在「手动同步」里单独同步。
         </p>
       </div>
     </Card>
@@ -451,6 +455,35 @@ function groupByCategory(list: DatasetStatus[]): [string, DatasetStatus[]][] {
   return [...m];
 }
 
+function AssetSyncSummary({ rows }: { rows: DatasetStatus[] }) {
+  const byId = new Map(rows.map((d) => [d.dataset_id, d]));
+  return (
+    <Card title="股票与 ETF 行情同步" extra={<span className="text-xs text-zinc-400">两类行情都应保持开启</span>}>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {ETF_DATASET_IDS.map((id) => {
+          const d = byId.get(id);
+          if (!d) return null;
+          const st = datasetState(d);
+          return (
+            <div key={id} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">{d.title}</span>
+                <Badge tone={st.tone}>{st.label}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                {d.schedule === "daily" ? "每日" : "每周"} · 最近完成{" "}
+                {d.last_done_at ? fmtAgo(d.last_done_at) : "还没有"}
+              </p>
+              {d.open_tasks > 0 && <p className="mt-1 text-xs text-blue-600">进行中任务：{fmtInt(d.open_tasks)}</p>}
+              {d.dead_tasks > 0 && <p className="mt-1 text-xs text-red-600">未解决失败：{fmtInt(d.dead_tasks)}</p>}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 /** 按分类分组；没有开启的数据集收在最后 */
 function Datasets({ rows }: { rows: DatasetStatus[] }) {
   const [showOff, setShowOff] = useState(false);
@@ -469,7 +502,7 @@ function Datasets({ rows }: { rows: DatasetStatus[] }) {
             className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
             onClick={() => setShowOff((v) => !v)}
           >
-            {showOff ? "▾" : "▸"} 没有开启的数据（{offCount} 个：基金、期货、期权等，开启方法见数据目录文档）
+            {showOff ? "▾" : "▸"} 没有开启的数据（{offCount} 个：其他基金、期货、期权等，开启方法见数据目录文档）
           </button>
           {showOff && (
             <div className="mt-3 flex flex-col gap-5 opacity-70">
@@ -610,7 +643,7 @@ function ManualSync({ datasets, onDone }: { datasets: DatasetStatus[]; onDone: (
       rows: on.filter((d) => d.schedule === k),
     })).filter((g) => g.rows.length > 0);
     const off = datasets.filter((d) => !d.enabled);
-    if (off.length > 0) out.push({ key: "off", name: "没有开启的数据（基金、期货、期权等）", rows: off });
+    if (off.length > 0) out.push({ key: "off", name: "没有开启的数据（其他基金、期货、期权等）", rows: off });
     return out;
   }, [datasets]);
   const enabledIds = datasets.filter((d) => d.enabled).map((d) => d.dataset_id);
@@ -707,12 +740,12 @@ function ManualSync({ datasets, onDone }: { datasets: DatasetStatus[]; onDone: (
           </div>
         </div>
         <Field
-          label="只同步这些股票（可选）"
-          hint="作用于按股票展开的数据集，例如重新拉取个别股票；多个代码用空格或逗号分隔"
+          label="只同步这些证券（可选）"
+          hint="作用于按证券展开的数据集，例如重新拉取个别股票或 ETF；多个代码用空格或逗号分隔"
         >
           <input
             className={`${inputClass} max-w-md`}
-            placeholder="600519.SH 000001.SZ"
+            placeholder="600519.SH 510300.SH"
             value={codes}
             onChange={(e) => setCodes(e.target.value)}
           />

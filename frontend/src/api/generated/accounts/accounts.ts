@@ -268,7 +268,7 @@ export const useCreateAccount = <TError = ErrorBody,
 }
 
 /**
- * @summary 账户详情：持仓带现价、市值、占比、盈亏和可选的账户保护价
+ * @summary 账户详情：持仓带现价、市值、占比和盈亏
  */
 export const getAccount = async (accountId: number, options?: Parameters<typeof apiFetch>[1]): Promise<AccountDetail> => {
 
@@ -339,7 +339,7 @@ export function useGetAccount<TData = Awaited<ReturnType<typeof getAccount>>, TE
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
 /**
- * @summary 账户详情：持仓带现价、市值、占比、盈亏和可选的账户保护价
+ * @summary 账户详情：持仓带现价、市值、占比和盈亏
  */
 
 export function useGetAccount<TData = Awaited<ReturnType<typeof getAccount>>, TError = ErrorBody>(

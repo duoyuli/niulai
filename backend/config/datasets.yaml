@@ -562,7 +562,7 @@ datasets:
     category: 基金
     summary: 基金规模、净值、管理人、基金经理、费率
     endpoint: /api/fund/profile/detail
-    priority: P2
+    priority: P1
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type IN ('fund-etf','fund-lof','fund-reits') AND active"}}
     params: {thscode: "{thscode}"}
     records: data.item
@@ -576,7 +576,7 @@ datasets:
     category: 基金
     summary: ETF 每天的价格（前复权），近 5 年
     endpoint: /api/fund/market/historical
-    priority: P2
+    priority: P1
     partition: {security_window: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'fund-etf' AND active",
                                   window_days: 1825, floor: -5y}}
     params: {thscode: "{thscode}", interval: 1d, start: "{start_ms}", end: "{end_ms}"}
@@ -594,7 +594,7 @@ datasets:
     category: 基金
     summary: 场内基金当天的行情和换手率
     endpoint: /api/fund/market/snapshot
-    priority: P2
+    priority: P1
     partition: {security: {universe: "dataset_id = 'meta.tickers' AND asset_type = 'fund-etf' AND active"}}
     params: {thscode: "{thscode}"}
     records: data.item

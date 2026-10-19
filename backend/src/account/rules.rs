@@ -1,5 +1,5 @@
 //! 账户的选股和风控规则：参考哪些策略（新账户保存创建时的策略快照）、至少几个策略同时选中才买、最多持几只、
-//! 单只最多占多少、留多少现金、账户保护线、弱市怎么办、追高上限。
+//! 单只最多占多少、留多少现金、弱市怎么办、追高上限。
 //! 规则不绑定具体策略：候选股按同一套优先级排序（见 advice::generate）。
 //!
 //! 保守、稳健、进取只是三组参考值（`Preset`），在高级设置里作为辅助：说明这类账户一般怎么设计，点一下套用后还可以再改。
@@ -107,10 +107,6 @@ pub struct Rules {
     pub max_weight_pct: f64,
     /// 至少留多少现金（占总资产的百分比）
     pub min_cash_pct: f64,
-    /// 账户保护线：比成本价亏多少（%）就卖；默认关闭，由账户主动开启
-    /// `stop_loss_pct` 是旧版本字段名，读取时兼容并迁移到保护线。
-    #[serde(alias = "stop_loss_pct")]
-    pub protection_stop_loss_pct: Option<f64>,
     pub weak_market: WeakMarket,
     /// 全市场站上 20 日均线的股票比例低于多少（%）算弱市
     pub weak_threshold_pct: f64,
@@ -141,9 +137,6 @@ impl Rules {
         range(self.max_positions as f64, 1.0, 20.0, "最多持有只数")?;
         range(self.max_weight_pct, 5.0, 100.0, "单只上限（%）")?;
         range(self.min_cash_pct, 0.0, 90.0, "保留现金（%）")?;
-        if let Some(v) = self.protection_stop_loss_pct {
-            range(v, 2.0, 30.0, "账户保护线（%）")?;
-        }
         range(self.weak_threshold_pct, 5.0, 60.0, "弱市阈值（%）")?;
         range(self.chase_limit_pct, 0.0, 20.0, "追高上限（%）")?;
         match &self.strategies {
@@ -210,20 +203,20 @@ impl Preset {
                 "买入前回看：每个策略在这只股票上过去 1 年、3 年的总收益都大于 0",
                 "分散：最多 5 只，单只不超过 20%，一只出问题影响有限",
                 "留 20% 现金，跌的时候有余地",
-                "策略决定什么时候卖出；账户只在主动开启保护线时限制亏损",
+                "策略决定什么时候卖出，账户只负责组合约束",
                 "全市场偏弱时不买新股票；开盘比参考价高 3% 以上不追",
             ],
             Preset::Balanced => vec![
                 "1 个勾选的策略看好就考虑买",
                 "最多 6 只，单只不超过 25%，留 10% 现金",
-                "策略决定什么时候卖出；账户保护线默认关闭",
+                "策略决定什么时候卖出，账户只负责组合约束",
                 "全市场偏弱时用于买新股票的钱减半；开盘比参考价高 5% 以上不追",
             ],
             Preset::Aggressive => vec![
                 "勾选的策略都可以提供候选，候选最多",
                 "1 个勾选的策略看好就买，几乎满仓",
                 "最多 8 只，单只可以到 30%",
-                "策略决定什么时候卖出；账户保护线默认关闭，给策略更多波动空间",
+                "策略决定什么时候卖出，给策略更多波动空间",
                 "全市场偏弱也照常买；开盘比参考价高 7% 以内都追；持有的股票被 ST 也不急着卖",
             ],
         }
@@ -238,7 +231,6 @@ impl Preset {
             max_positions: 6,
             max_weight_pct: 25.0,
             min_cash_pct: 10.0,
-            protection_stop_loss_pct: None,
             weak_market: WeakMarket::Half,
             weak_threshold_pct: 30.0,
             chase_limit_pct: 5.0,
@@ -254,7 +246,6 @@ impl Preset {
                 max_positions: 5,
                 max_weight_pct: 20.0,
                 min_cash_pct: 20.0,
-                protection_stop_loss_pct: None,
                 weak_market: WeakMarket::Pause,
                 chase_limit_pct: 3.0,
                 ..base
@@ -264,7 +255,6 @@ impl Preset {
                 max_positions: 8,
                 max_weight_pct: 30.0,
                 min_cash_pct: 0.0,
-                protection_stop_loss_pct: None,
                 weak_market: WeakMarket::Normal,
                 chase_limit_pct: 7.0,
                 sell_st: false,
@@ -291,9 +281,6 @@ mod tests {
             Preset::Aggressive.rules(),
         );
         assert!(c.max_positions < b.max_positions && b.max_positions < a.max_positions);
-        assert!(c.protection_stop_loss_pct.is_none());
-        assert!(b.protection_stop_loss_pct.is_none());
-        assert!(a.protection_stop_loss_pct.is_none());
         assert!(c.min_picks >= b.min_picks && b.min_picks >= a.min_picks);
         assert_eq!(Rules::default(), b);
     }
@@ -301,7 +288,6 @@ mod tests {
     #[test]
     fn missing_fields_use_balanced_values_and_empty_means_all() {
         let r: Rules = serde_json::from_value(serde_json::json!({})).unwrap();
-        assert!(r.protection_stop_loss_pct.is_none());
         assert_eq!(r.max_positions, Preset::Balanced.rules().max_positions);
         assert!(r.uses(42));
         let r = Rules {
@@ -318,16 +304,6 @@ mod tests {
             .is_err(),
             "一个都不勾不行，不会当成全部"
         );
-        assert!(
-            Rules {
-                protection_stop_loss_pct: Some(1.0),
-                ..r
-            }
-            .validate()
-            .is_err()
-        );
-        let legacy: Rules = serde_json::from_value(serde_json::json!({"stop_loss_pct": 8.0}))
-            .expect("旧账户规则字段仍可读取");
-        assert_eq!(legacy.protection_stop_loss_pct, Some(8.0));
+        assert!(r.validate().is_ok());
     }
 }

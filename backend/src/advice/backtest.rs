@@ -4,7 +4,7 @@
 //! - 有效策略逐年滚动判断：回测中的每一年，只用这一年之前 3 年的数据（买点之后 20 个交易日、且这 20 天在这一年之前结束）
 //!   比较策略和随便买，不用未来的数据挑策略；
 //! - 排序：同时选中的有效策略数 → 它们的超额之和 → 成交额，至少 min_picks 个；
-//! - 卖出：买入依据策略的完整卖出规则，以及可选的账户保护线；最多持几只、单只上限、保留现金、弱市、追高上限。
+//! - 卖出：买入依据策略的完整卖出规则；最多持几只、单只上限、保留现金、弱市、追高上限。
 //!
 //! 近似：价格用前复权价（分红送转已在价格里），允许零股，佣金和印花税照扣；ST 按现在的简称判断，持有中被 ST 不卖；
 //! 不做单只超过上限时的减仓。规则见 docs/domains/accounts.md#rules_backtest。
@@ -101,7 +101,7 @@ pub struct RulesTrade {
     /// 卖出日和未复权开盘价；回测结束时还持有为空
     pub exit_date: Option<NaiveDate>,
     pub exit_price: Option<f64>,
-    /// 为什么卖：策略卖出规则或账户保护线；还持有为空
+    /// 为什么卖：策略卖出规则；还持有为空
     pub exit_reason: Option<String>,
     /// 持有的交易日数（还持有时算到回测最后一天）
     pub days_held: u32,
@@ -534,12 +534,7 @@ fn simulate(
             let ret = close / h.entry_q - 1.0;
             let strategy_index = h.origin.trailing_zeros() as usize;
             let strategy = defs.get(strategy_index).copied();
-            let reason = if p
-                .protection_stop_loss_pct
-                .is_some_and(|loss| ret <= -loss / 100.0)
-            {
-                Some(format!("账户保护线：亏 {:.1}%", -ret * 100.0))
-            } else if s.exit[k] & h.origin != 0 {
+            let reason = if s.exit[k] & h.origin != 0 {
                 Some(format!(
                     "「{}」的卖出条件",
                     names_of(h.origin, strategy_names).join("")
@@ -735,11 +730,12 @@ mod tests {
             &[0, 1, 2, 3],
             0b01,
         );
-        let b = mk(
+        let mut b = mk(
             vec![10.0, 10.0, 10.0, 9.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0],
             &[1],
             0b11,
         );
+        b.exit[3] = 0b11;
         (vec![a, b], cal)
     }
 
@@ -759,17 +755,14 @@ mod tests {
     fn selected_strategies_count_and_stops_out() {
         let (stocks, cal) = stocks();
         let breadth: HashMap<NaiveDate, (u32, u32)> = cal.iter().map(|d| (*d, (60, 100))).collect();
-        let p = Rules {
-            protection_stop_loss_pct: Some(8.0),
-            ..Preset::Aggressive.rules()
-        };
+        let p = Preset::Aggressive.rules();
         let names = vec!["策略一".to_string(), "策略二".to_string()];
         let defs_owned = [
             Definition::any_assets(vec!["stock".into()]),
             Definition::any_assets(vec!["stock".into()]),
         ];
         let defs: Vec<&Definition> = defs_owned.iter().collect();
-        // 两个策略都有效：A 第 1 天买入一路涨；B 第 2 天买入，第 3 天收盘亏 10% 触发止损，第 4 天卖出
+        // 两个策略都有效：A 第 1 天买入一路涨；B 第 2 天买入，第 3 天命中策略卖出条件，第 4 天卖出
         let both: HashMap<i32, YearEdge> = HashMap::from([(2026, YearEdge { mask: 0b11 })]);
         let r = simulate(
             &p,
@@ -786,15 +779,15 @@ mod tests {
         assert_eq!(r.summary.win_rate, Some(0.0));
         assert!(r.summary.total_return > 0.0, "{:?}", r.summary);
         assert!(r.equity.len() >= 2 && r.equity[0].date == cal[0]);
-        // 交易记录：B 触发账户保护线卖出，A 期末还持有；买入日新的在前
+        // 交易记录：B 命中策略卖出条件，A 期末还持有；买入日新的在前
         assert_eq!(r.trades.len(), 2, "{:?}", r.trades);
         let b = r.trades.iter().find(|t| t.exit_date.is_some()).unwrap();
-        // 第 3 天收盘亏 10%，达到账户保护线，下一个交易日开盘卖出
+        // 第 3 天收盘命中策略卖出条件，下一个交易日开盘卖出
         assert_eq!(
             (b.signal_date, b.entry_date, b.exit_date),
             (cal[1], cal[2], Some(cal[4]))
         );
-        assert_eq!(b.exit_reason.as_deref(), Some("账户保护线：亏 10.0%"));
+        assert_eq!(b.exit_reason.as_deref(), Some("「策略一」的卖出条件"));
         assert_eq!(b.strategies, ["策略一", "策略二"]);
         assert!(b.return_pct < 0.0 && b.profit < 0.0 && b.days_held == 2);
         let a = r.trades.iter().find(|t| t.exit_date.is_none()).unwrap();

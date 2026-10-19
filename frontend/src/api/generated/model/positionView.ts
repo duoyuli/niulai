@@ -35,11 +35,6 @@ export interface PositionView {
   pnl_pct?: number | null;
   position: AccountPosition;
   /**
-     * 按本账户保护线算的保护价；保护线关闭时为空
-     * @nullable
-     */
-  stop_price?: number | null;
-  /**
      * 买入依据的策略
      * @nullable
      */

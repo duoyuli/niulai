@@ -2636,11 +2636,6 @@ async fn accounts_positions_and_daily_advice() {
     assert_eq!(st(&r), StatusCode::CREATED, "{v}");
     let acc = v["summary"]["account"]["account_id"].as_i64().unwrap();
     assert_eq!(
-        v["summary"]["account"]["rules"]["protection_stop_loss_pct"],
-        Value::Null,
-        "新账户默认关闭账户保护线"
-    );
-    assert_eq!(
         v["summary"]["account"]["rules"]["strategies"]
             .as_array()
             .unwrap()
@@ -2668,10 +2663,10 @@ async fn accounts_positions_and_daily_advice() {
             .any(|id| id.as_i64() == Some(later_id)),
         "新策略不能自动加入已有账户"
     );
-    let rules = |stop: f64| json!({"name": "华泰主账户", "fees": {"commission_rate": 0.00025, "min_commission": 5}, "rules": {"protection_stop_loss_pct": stop}});
-    let (r, _) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(50.0))).await;
-    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "止损线超出范围");
-    let mut none = rules(8.0);
+    let rules = |cash: f64| json!({"name": "华泰主账户", "fees": {"commission_rate": 0.00025, "min_commission": 5}, "rules": {"min_cash_pct": cash}});
+    let (r, _) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(95.0))).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "保留现金比例超出范围");
+    let mut none = rules(10.0);
     none["rules"]["strategies"] = json!([]);
     let (r, v) = call_as(&app, Some(&mama), "PUT", &base, Some(none)).await;
     assert_eq!(
@@ -2679,7 +2674,7 @@ async fn accounts_positions_and_daily_advice() {
         StatusCode::BAD_REQUEST,
         "一个策略都不勾不会被当成全部：{v}"
     );
-    let (r, v) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(8.0))).await;
+    let (r, v) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(10.0))).await;
     assert_eq!(st(&r), StatusCode::OK, "{v}");
     let (r, _) = call_as(
         &app,
@@ -2726,7 +2721,7 @@ async fn accounts_positions_and_daily_advice() {
     .await;
     assert_eq!(st(&r), StatusCode::BAD_REQUEST, "代码不存在");
 
-    // 巡检后生成建议：亏 23%，超过主动开启的账户保护线 8%
+    // 巡检后生成建议：手工录入的持仓没有绑定策略，不因亏损自动卖出
     niulai::analysis::screener::run_and_store(&db.pool, None, None)
         .await
         .unwrap();
@@ -2734,6 +2729,7 @@ async fn accounts_positions_and_daily_advice() {
     let (_, v) = call_as(&app, Some(&mama), "GET", &format!("{base}/advice"), None).await;
     let advice = &v["advice"];
     assert!(v["waiting"].is_null(), "{v}");
+    let advice_id = advice["advice_id"].as_i64().unwrap();
     let item = advice["advice"]["items"]
         .as_array()
         .unwrap()
@@ -2741,41 +2737,28 @@ async fn accounts_positions_and_daily_advice() {
         .find(|i| i["thscode"] == "600000.SH")
         .unwrap()
         .clone();
-    assert_eq!(item["action"], "sell", "{item}");
+    assert_eq!(item["action"], "hold", "{item}");
     assert!(
         item["headline"]
             .as_str()
             .unwrap()
-            .contains("超过账户保护线 8%"),
+            .contains("还没有触发卖出规则"),
         "{item}"
     );
     assert!(
         !item["rule"].as_str().unwrap().is_empty()
             && !item["evidence"].as_array().unwrap().is_empty()
-            && !item["plan"].as_array().unwrap().is_empty()
     );
-    let advice_id = advice["advice_id"].as_i64().unwrap();
-
-    // 已执行：按实际成交价卖出，持仓清空、现金增加；同一条不能记两次
-    let exec = format!(
-        "{base}/advice/{advice_id}/items/{}/execute",
-        item["key"].as_str().unwrap()
-    );
+    // 手动按实际成交价卖出，持仓清空、现金增加
     let (r, v) = call_as(
         &app,
         Some(&mama),
         "POST",
-        &exec,
-        Some(json!({"price": 22.5})),
+        &format!("{base}/trades"),
+        Some(json!({"kind":"sell","thscode":"600000.SH","shares":1000,"price":22.5})),
     )
     .await;
     assert_eq!(st(&r), StatusCode::OK, "{v}");
-    assert_eq!(
-        v["advice"]["states"][item["key"].as_str().unwrap()],
-        "executed"
-    );
-    let (r, _) = call_as(&app, Some(&mama), "POST", &exec, Some(json!({}))).await;
-    assert_eq!(st(&r), StatusCode::BAD_REQUEST);
     let (_, d) = call_as(&app, Some(&mama), "GET", &base, None).await;
     assert!(d["positions"].as_array().unwrap().is_empty());
     let cash = d["summary"]["account"]["cash"].as_f64().unwrap();

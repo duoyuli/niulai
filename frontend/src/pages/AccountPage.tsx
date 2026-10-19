@@ -173,9 +173,6 @@ function Positions({ d }: { d: AccountDetail }) {
                 <th>现价</th>
                 <th>市值 / 占比</th>
                 <th>盈亏</th>
-                <th title="开启账户保护线后，跌到保护价会建议卖出；策略自己的卖出规则单独显示在运营建议里">
-                  账户保护价
-                </th>
                 <th>买入依据</th>
               </tr>
             </thead>
@@ -207,7 +204,6 @@ function Positions({ d }: { d: AccountDetail }) {
                       `${yuan(v.pnl)}（${fmtPctValue(v.pnl_pct, 1)}）`
                     )}
                   </td>
-                  <td className="num text-xs">{v.stop_price ? fmtPrice(v.stop_price) : "已关闭"}</td>
                   <td className="text-xs text-zinc-500">{v.strategy_name ?? "手动录入"}</td>
                 </tr>
               ))}

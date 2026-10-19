@@ -26,7 +26,7 @@ export interface RulesTrade {
   /** @nullable */
   exit_price?: number | null;
   /**
-     * 为什么卖：策略卖出规则或账户保护线；还持有为空
+     * 为什么卖：策略卖出规则；还持有为空
      * @nullable
      */
   exit_reason?: string | null;

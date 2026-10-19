@@ -87,7 +87,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "账户详情：持仓带现价、市值、占比、盈亏和可选的账户保护价",
+        "summary": "账户详情：持仓带现价、市值、占比和盈亏",
         "operationId": "get_account",
         "parameters": [
           {
@@ -4827,14 +4827,6 @@
             "format": "int64",
             "description": "卖出、减仓、买入的股数；继续拿和不动时是持有的股数"
           },
-          "stop_price": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "买入或持仓时：账户保护线开启后的保护价；关闭时为空"
-          },
           "strategy_id": {
             "type": [
               "integer",
@@ -8205,14 +8197,6 @@
           "position": {
             "$ref": "#/components/schemas/AccountPosition"
           },
-          "stop_price": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "按本账户保护线算的保护价；保护线关闭时为空"
-          },
           "strategy_name": {
             "type": [
               "string",
@@ -8576,15 +8560,6 @@
             "default": 1,
             "minimum": 0
           },
-          "protection_stop_loss_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "账户保护线：比成本价亏多少（%）就卖；默认关闭，由账户主动开启\n`stop_loss_pct` 是旧版本字段名，读取时兼容并迁移到保护线。",
-            "default": null
-          },
           "sell_st": {
             "type": "boolean",
             "description": "持有的股票被 ST 时卖出",
@@ -8824,7 +8799,7 @@
               "string",
               "null"
             ],
-            "description": "为什么卖：策略卖出规则或账户保护线；还持有为空"
+            "description": "为什么卖：策略卖出规则；还持有为空"
           },
           "invest": {
             "type": "number",

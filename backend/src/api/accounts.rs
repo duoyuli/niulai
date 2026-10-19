@@ -166,8 +166,6 @@ pub struct PositionView {
     /// 浮动盈亏（元、%）；没填成本价时为空
     pub pnl: Option<f64>,
     pub pnl_pct: Option<f64>,
-    /// 按本账户保护线算的保护价；保护线关闭时为空
-    pub stop_price: Option<f64>,
     /// 买入依据的策略
     pub strategy_name: Option<String>,
     pub delisted: bool,
@@ -273,7 +271,6 @@ async fn summary(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
 
 async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDetail> {
     let acc = account::get(&s.pool, me.user_id, id).await?;
-    let params = acc.rules.clone();
     let positions = account::positions(&s.pool, id).await?;
     let names: HashMap<String, (String, String, String, bool)> = sqlx::query_as::<_, (String, String, String, String, bool)>(
         "SELECT thscode, name, board, asset_type, delisted_on IS NOT NULL FROM ref.instrument WHERE thscode = ANY($1)",
@@ -313,10 +310,6 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
                 .zip(close)
                 .map(|(c, x)| (x - c) * p.shares as f64),
             pnl_pct: p.cost_price.zip(close).map(|(c, x)| (x / c - 1.0) * 100.0),
-            stop_price: p
-                .cost_price
-                .zip(params.protection_stop_loss_pct)
-                .map(|(c, pct)| c * (1.0 - pct / 100.0)),
             strategy_name: p
                 .strategy_id
                 .and_then(|id| strategy_names.get(&id).cloned()),
@@ -380,7 +373,7 @@ async fn create_account(
     ))
 }
 
-/// 账户详情：持仓带现价、市值、占比、盈亏和可选的账户保护价
+/// 账户详情：持仓带现价、市值、占比和盈亏
 #[utoipa::path(get, path = "/accounts/{account_id}", tag = "accounts", params(("account_id" = i64, Path)),
     responses((status = 200, description = "成功", body = AccountDetail), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
 async fn get_account(

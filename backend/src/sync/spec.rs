@@ -711,8 +711,10 @@ mod tests {
             Incremental::SinceCursor { overlap_days: 10 }
         ));
         assert!(reg.get("a_share.corp_action_dump").unwrap().is_dump());
-        // P2/P3 默认关闭
-        assert!(!reg.get("fund.profile").unwrap().enabled);
+        // ETF 资料和行情默认开启，其他 P2/P3 数据仍默认关闭
+        assert!(reg.get("fund.profile").unwrap().enabled);
+        assert!(reg.get("fund.etf_bar_1d").unwrap().enabled);
+        assert!(reg.get("fund.market_snapshot").unwrap().enabled);
         assert!(reg.get("special.limit_up_pool").unwrap().enabled);
     }
 

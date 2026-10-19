@@ -30,9 +30,7 @@ export function rulesText(p: FullRules): string[] {
         ]
       : []),
     `最多同时持有 ${p.max_positions} 只，单只最多占总资产的 ${p.max_weight_pct}%${p.min_cash_pct > 0 ? `，至少留 ${p.min_cash_pct}% 现金` : ""}`,
-    ...(p.protection_stop_loss_pct
-      ? [`账户保护线：比成本价亏 ${p.protection_stop_loss_pct}% 就卖（策略自己的卖出规则仍然独立生效）`]
-      : ["账户保护线已关闭，持仓卖出由买入策略的卖出规则决定"]),
+    "持仓卖出由买入依据的策略卖出规则决定",
     `全市场站上 20 日均线的股票不到 ${p.weak_threshold_pct}% 时算弱市：${WEAK_MARKET[p.weak_market]}`,
     `第二天开盘比参考价高 ${p.chase_limit_pct}% 以上就不追`,
   ];
@@ -232,30 +230,6 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                       />
                     </Field>
                   ))}
-                  <div className="flex flex-col gap-1 text-xs text-zinc-500">
-                    <label className="flex items-center gap-2 text-sm text-zinc-900 dark:text-zinc-100">
-                      <input
-                        type="checkbox"
-                        checked={value.protection_stop_loss_pct != null}
-                        onChange={(e) =>
-                          set({
-                            protection_stop_loss_pct: e.target.checked ? (value.protection_stop_loss_pct ?? 8) : null,
-                          })
-                        }
-                      />
-                      开启账户保护线
-                    </label>
-                    {value.protection_stop_loss_pct != null && (
-                      <input
-                        className={inputClass}
-                        inputMode="decimal"
-                        aria-label="账户保护线：比成本亏损百分比"
-                        value={value.protection_stop_loss_pct}
-                        onChange={(e) => set({ protection_stop_loss_pct: num(e.target.value) })}
-                      />
-                    )}
-                    <span>保护线可能早于策略卖出；默认关闭。</span>
-                  </div>
                   <Field label="弱市时">
                     <select
                       className={inputClass}

@@ -29,12 +29,6 @@ export interface Rules {
      * @minimum 0
      */
   min_picks?: number;
-  /**
-     * 账户保护线：比成本价亏多少（%）就卖；默认关闭，由账户主动开启
-     * `stop_loss_pct` 是旧版本字段名，读取时兼容并迁移到保护线。
-     * @nullable
-     */
-  protection_stop_loss_pct?: number | null;
   /** 持有的股票被 ST 时卖出 */
   sell_st?: boolean;
   /**

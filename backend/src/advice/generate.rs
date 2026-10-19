@@ -13,7 +13,7 @@ use crate::account::lots::{self, Fees, round2};
 use crate::account::rules::{Rules, WeakMarket};
 
 /// 生成规则的版本：规则改了就加一，历史建议记着当时的版本。
-/// 账户退出语义从账户趋势/止损规则改为策略退出规则和可选保护线，必须与旧建议区分。
+/// 账户退出语义由买入策略负责，历史建议按规则版本区分。
 pub const RULES_VERSION: i32 = 4;
 /// 「没选上的候选」最多列几只
 const MAX_SKIPPED: usize = 8;
@@ -204,8 +204,6 @@ pub struct Item {
     pub plan: Vec<String>,
     /// 买入时：选中它的策略（排第一的）；执行后记在持仓上，以后按它的卖出条件判断
     pub strategy_id: Option<i64>,
-    /// 买入或持仓时：账户保护线开启后的保护价；关闭时为空
-    pub stop_price: Option<f64>,
     /// 买入时：下一个交易日开盘价不高于它才买，高于就是追高、放弃（参考价加追高上限）
     #[serde(default)]
     pub limit_price: Option<f64>,
@@ -631,7 +629,6 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         cautions: vec![],
         plan: vec![],
         strategy_id: h.strategy.as_ref().map(|s| s.strategy_id),
-        stop_price: None,
         limit_price: None,
         streak: 0,
         weight_pct: 0.0,
@@ -666,9 +663,6 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
     let value = h.shares as f64 * close;
     let weight = value / total.max(1.0) * 100.0;
     let ret = h.cost_price.map(|c| close / c - 1.0);
-    let stop_price = p
-        .protection_stop_loss_pct
-        .and_then(|pct| h.cost_price.map(|c| c * (1.0 - pct / 100.0)));
 
     let mut evidence = vec![];
     if let (Some(c), Some(r)) = (h.cost_price, ret) {
@@ -724,27 +718,12 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
                 ),
                 "开盘一字跌停卖不出时，下一份建议会继续提示".into(),
             ],
-            stop_price,
             streak,
             weight_pct: weight,
             ..base(Action::Sell, headline, rule)
         }
     };
 
-    if let (Some(r), Some(c), Some(pct)) = (ret, h.cost_price, p.protection_stop_loss_pct)
-        && r <= -pct / 100.0
-    {
-        return sell(
-            format!("亏损 {:.1}%，超过账户保护线 {}%", -r * 100.0, pct),
-            format!(
-                "本账户已开启保护线：比成本价亏 {}% 就卖出（保护价 {:.2} 元）",
-                pct,
-                c * (1.0 - pct / 100.0)
-            ),
-            evidence,
-            cautions,
-        );
-    }
     if let (Some(text), Some(st)) = (&h.strategy_exit, &h.strategy) {
         return sell(
             format!("买入依据「{}」的卖出条件满足：{text}", st.name),
@@ -791,7 +770,6 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
                     inp.next_date,
                     h.shares - n
                 )],
-                stop_price,
                 streak,
                 weight_pct: weight,
                 ..base(
@@ -809,19 +787,11 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         }
     }
 
-    // 继续拿：写出会让结论变成卖出的价格
-    let mut triggers = vec![];
-    if let Some(sp) = stop_price {
-        triggers.push(format!("亏到 {sp:.2} 元（账户保护价）"));
-    }
     let headline = "还没有触发卖出规则".to_string();
     if h.is_st {
         cautions.push(note("risk", "已被实施风险警示（ST），风险较大"));
     }
     let mut plan = vec![];
-    if !triggers.is_empty() {
-        plan.push(format!("{}时会建议卖出", triggers.join("，或")));
-    }
     if let Some(st) = &h.strategy {
         plan.push(format!(
             "买入依据「{}」的卖出条件满足时也会建议卖出",
@@ -832,12 +802,11 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         evidence,
         cautions,
         plan,
-        stop_price,
         weight_pct: weight,
         ..base(
             Action::Hold,
             headline,
-            "策略卖出规则、账户保护线、ST 和单只上限一条都没有触发".into(),
+            "策略卖出规则、ST 和单只上限一条都没有触发".into(),
         )
     }
 }
@@ -985,25 +954,10 @@ fn buy_item(
     }
 
     let chase = close * (1.0 + p.chase_limit_pct / 100.0);
-    let mut plan = vec![format!(
+    let plan = vec![format!(
         "下一个交易日（{}）开盘后买入；开盘高于 {chase:.2} 元（比参考价高 {}%）就不要买，开盘一字涨停买不进时这条作废",
         inp.next_date, p.chase_limit_pct
     )];
-    let stop_price = p
-        .protection_stop_loss_pct
-        .map(|pct| close * (1.0 - pct / 100.0));
-    if let (Some(stop_price), Some(pct)) = (stop_price, p.protection_stop_loss_pct) {
-        let loss = shares as f64 * (close - stop_price)
-            + fee
-            + inp
-                .fees
-                .sell_fee_for(&c.asset_type, shares as f64 * stop_price);
-        plan.push(format!(
-            "账户保护价 {stop_price:.2} 元：亏损达到 {pct}% 会建议卖出，这笔大约亏 {}，占总资产 {:.1}%",
-            yuan(loss),
-            loss / total.max(1.0) * 100.0
-        ));
-    }
     let scope = match &p.strategies {
         None => "全部参加巡检的策略".to_string(),
         Some(l) => format!("勾选的 {} 个策略", l.len()),
@@ -1033,7 +987,6 @@ fn buy_item(
         cautions,
         plan,
         strategy_id: kept.first().map(|k| k.strategy_id),
-        stop_price,
         limit_price: Some(round2(chase)),
         streak: 0,
         weight_pct: amount / total.max(1.0) * 100.0,
@@ -1159,46 +1112,14 @@ mod tests {
     }
 
     #[test]
-    fn sells_on_stop_loss_then_trend_and_holds_otherwise() {
+    fn unbound_holding_does_not_sell_on_loss() {
         let hs = vec![
-            holding("A", 1000, Some(15.10), snap(13.80)), // 亏 8.6%，账户保护线开启时卖出
-            holding("B", 100, Some(142.5), snap(138.0)),  // 亏 3.2%，没有策略或保护线触发
-            holding("C", 500, Some(10.0), snap(12.0)),    // 赚，没有策略或保护线触发
+            holding("A", 1000, Some(15.10), snap(13.80)),
+            holding("B", 100, Some(142.5), snap(138.0)),
+            holding("C", 500, Some(10.0), snap(12.0)),
         ];
-        let off = generate(&input(Preset::Balanced, 50_000.0, hs.clone(), vec![]));
-        assert_eq!(find(&off, "A").action, Action::Hold, "默认关闭账户保护线");
-        let mut inp = input(Preset::Balanced, 50_000.0, hs, vec![]);
-        inp.rules.protection_stop_loss_pct = Some(8.0);
-        let a = generate(&inp);
-        let (ia, ib, ic) = (find(&a, "A"), find(&a, "B"), find(&a, "C"));
-        assert_eq!(ia.action, Action::Sell);
-        assert!(
-            ia.headline.contains("亏损 8.6%") && ia.rule.contains("保护价 13.89 元"),
-            "{} / {}",
-            ia.headline,
-            ia.rule
-        );
-        assert_eq!(ib.action, Action::Hold);
-        assert!(
-            ib.evidence
-                .iter()
-                .any(|n| n.text.contains("亏 3.2%（¥450）")),
-            "{:?}",
-            ib.evidence
-        );
-        assert_eq!(ic.action, Action::Hold);
-        assert!(
-            ic.plan
-                .iter()
-                .any(|p| p.contains("亏到 9.20 元（账户保护价）")),
-            "{:?}",
-            ic.plan
-        );
-        assert_eq!(a.headline, "卖出 1 只");
-        assert_eq!(a.items[0].action, Action::Sell, "卖出排在前面");
-        // 卖出全部；印花税和佣金按卖出金额估算
-        assert_eq!(ia.shares, 1000);
-        assert_eq!(ia.fee, 11.9, "佣金不足 5 元按 5 元，印花税 6.9 元");
+        let a = generate(&input(Preset::Balanced, 50_000.0, hs, vec![]));
+        assert!(a.items.iter().all(|i| i.action == Action::Hold));
     }
 
     #[test]
@@ -1261,12 +1182,7 @@ mod tests {
             buys[0].plan[0]
         );
         assert_eq!(buys[0].limit_price, Some(31.5));
-        assert_eq!(buys[0].stop_price, None);
-        assert!(
-            buys[0].plan.len() == 1,
-            "默认关闭账户保护线时不展示保护价：{:?}",
-            buys[0].plan
-        );
+        assert_eq!(buys[0].plan.len(), 1);
         let reasons: HashMap<&str, &str> = a
             .skipped
             .iter()

@@ -72,7 +72,7 @@
 | `GET /rules/guide` | 设置规则时的辅助：三组风控参考值（适合什么样的账户、怎么设计），以及可勾选的巡检策略 | 见 [选股和风控规则](../domains/accounts.md#rules) |
 | `GET /accounts` | 当前用户的账户：总资产、当日盈亏、已实现盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的；已实现盈亏见 [撤销流水和已实现盈亏](../domains/accounts.md#undo) |
 | `POST /accounts` | 新建账户（规则用稳健型的参考值），返回 201 和详情，并生成第一份建议 | 请求体 `{name, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
-| `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比、盈亏和可选账户保护价）；修改名字、规则 `rules`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [选股和风控规则](../domains/accounts.md#rules)，之后重新生成建议 |
+| `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比和盈亏）；修改名字、规则 `rules`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [选股和风控规则](../domains/accounts.md#rules)，之后重新生成建议 |
 | `POST /accounts/{id}/positions/parse` | 识别粘贴的持仓文字，只返回预览 | 请求体 `{text}`，最多 20,000 字；规则见 [持仓](../domains/accounts.md#positions) |
 | `PUT /accounts/{id}/positions` | 校准：整体替换持仓和现金，差异记为校准流水，之后重新生成建议 | 请求体 `{cash, positions: [{thscode, shares, cost_price?, opened_on?}]}`；代码不存在、股数不大于 0、重复时返回 400 |
 | `GET` / `POST /accounts/{id}/trades` | 流水（新的在前，`limit` 默认 100、最多 500，已撤销的也列出并带撤销时间）；手动记一笔买入、卖出、转入、转出，之后重新生成建议 | 请求体 `{kind, thscode?, shares?, price?, amount?, fee?, trade_date?, note?}`；现金不够、卖出超过持有时返回 400；卖出流水带这一笔的 `realized_pnl`；配股认购（`kind` 为 `rights`）也在流水里 |
