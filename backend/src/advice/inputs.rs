@@ -9,9 +9,9 @@ use sqlx::PgPool;
 use super::generate::{
     CandidateIn, HoldingIn, Input, MarketIn, Pick, Snapshot, StrategyIn, StrategyRef,
 };
-use crate::account::{self, Account};
 use crate::account::history::{HistoryReturn, HistorySeries};
 use crate::account::rules::{HistoryWindow, Rules};
+use crate::account::{self, Account};
 use crate::analysis::diagnosis::{self, Verdict};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef, StockMeta};
 use crate::analysis::limit_pool::LimitPool;
@@ -110,27 +110,52 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
         .map(|(id, code, r, amount)| (id, code, r.0, amount.unwrap_or(0.0)))
         .collect();
     // 只有启用回看的账户所选策略的候选需要长历史；同一股票只读取一次。
-    let account_rules: Vec<sqlx::types::Json<Rules>> = sqlx::query_scalar("SELECT rules FROM app.account")
-        .fetch_all(pool).await?;
+    let account_rules: Vec<sqlx::types::Json<Rules>> =
+        sqlx::query_scalar("SELECT rules FROM app.account")
+            .fetch_all(pool)
+            .await?;
     let defs = screener::screening_strategies(pool).await?;
-    let checked: Vec<_> = defs.iter().filter(|(id, _)| account_rules.iter().any(|r| r.history_check.is_some() && r.uses(*id))).collect();
+    let checked: Vec<_> = defs
+        .iter()
+        .filter(|(id, _)| {
+            account_rules
+                .iter()
+                .any(|r| r.history_check.is_some() && r.uses(*id))
+        })
+        .collect();
     let mut history = HashMap::new();
     if !checked.is_empty() {
         let warmup = checked.iter().map(|(_, d)| d.warmup()).max().unwrap_or(30) + 5;
-        let start = HistoryWindow::FiveYears.start(trade_date) - chrono::Duration::days(market::calendar_days_for(warmup));
+        let start = HistoryWindow::FiveYears.start(trade_date)
+            - chrono::Duration::days(market::calendar_days_for(warmup));
         let history_limits = LimitPool::load(pool, start, trade_date).await?;
-        let codes: std::collections::BTreeSet<_> = hits.iter().filter(|(id, _, _, _)| checked.iter().any(|(sid, _)| sid == id)).map(|(_, code, _, _)| code).collect();
+        let codes: std::collections::BTreeSet<_> = hits
+            .iter()
+            .filter(|(id, _, _, _)| checked.iter().any(|(sid, _)| sid == id))
+            .map(|(_, code, _, _)| code)
+            .collect();
         for code in codes {
-            let Some(meta) = sec.meta.get(code) else { continue };
+            let Some(meta) = sec.meta.get(code) else {
+                continue;
+            };
             let bars = prices::stock_bars_between(pool, code, start, trade_date).await?;
             let events = prices::corp_events(pool, code, Some(trade_date)).await?;
             let st = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
             prices::run_cpu(|| {
-                let frame = Frame::with_authority_and_st_history(&bars, Some(meta), &history_limits, code, st);
+                let frame = Frame::with_authority_and_st_history(
+                    &bars,
+                    Some(meta),
+                    &history_limits,
+                    code,
+                    st,
+                );
                 for (id, def) in &checked {
                     if hits.iter().any(|(sid, c, _, _)| sid == id && c == code) {
                         let series = HistorySeries::new(&bars, &frame, meta, def);
-                        history.insert((*id, code.clone()), series.evaluate(&bars, &events, &HistoryWindow::ALL, trade_date));
+                        history.insert(
+                            (*id, code.clone()),
+                            series.evaluate(&bars, &events, &HistoryWindow::ALL, trade_date),
+                        );
                     }
                 }
             });
@@ -165,7 +190,6 @@ fn finite(v: f64) -> Option<f64> {
 fn snapshot(
     bars: &[DailyBar],
     meta: &StockMeta,
-    trend_ma: u32,
     authority: Option<(&LimitPool, &str)>,
 ) -> Option<Snapshot> {
     let last = bars.last()?;
@@ -176,11 +200,6 @@ fn snapshot(
     };
     let i = bars.len() - 1;
     let v = |id, n| finite(f.at(IndicatorRef::new(id, n), i));
-    let to_raw = if last.q_close > 0.0 {
-        last.close / last.q_close
-    } else {
-        1.0
-    };
     let (hi, lo) = (
         v(IndicatorId::HighN, Some(60)),
         v(IndicatorId::LowN, Some(60)),
@@ -195,7 +214,6 @@ fn snapshot(
         close: last.close,
         change_pct: v(IndicatorId::ChangePct, None),
         amount: last.amount,
-        ma_trend: v(IndicatorId::Ma, Some(trend_ma)).map(|m| m * to_raw),
         rsi: v(IndicatorId::Rsi, Some(14)),
         momentum20: v(IndicatorId::Momentum, Some(20)),
         range60_pos,
@@ -208,6 +226,44 @@ fn snapshot(
             format!("{}（{}）", volume.headline, volume.detail)
         },
     })
+}
+
+/// 计算买入依据策略的完整卖出规则。账户不再替策略补一条趋势均线。
+fn strategy_exit_text(
+    def: &crate::analysis::strategy::Definition,
+    frame: &Frame,
+    bars: &[DailyBar],
+    i: usize,
+    cost_price: Option<f64>,
+    bars_held: Option<i64>,
+) -> Option<String> {
+    let mut reasons = vec![];
+    if def.exit_signal(frame, i) {
+        reasons.push(
+            def.exit_reason_text(frame, i)
+                .unwrap_or_else(|| "卖出条件".into()),
+        );
+    }
+    let close = bars[i].close;
+    if let Some(cost) = cost_price {
+        let ret = close / cost - 1.0;
+        if let Some(stop) = def.exit.stop_loss_pct
+            && ret <= -stop / 100.0
+        {
+            reasons.push(format!("亏损达到 {stop}% 止损"));
+        }
+        if let Some(take) = def.exit.take_profit_pct
+            && ret >= take / 100.0
+        {
+            reasons.push(format!("盈利达到 {take}% 止盈"));
+        }
+    }
+    if let (Some(max), Some(held)) = (def.exit.max_hold_days, bars_held)
+        && held >= max as i64
+    {
+        reasons.push(format!("持有满 {max} 个交易日"));
+    }
+    (!reasons.is_empty()).then(|| reasons.join("；"))
 }
 
 /// 之前的建议中连续给出、还没执行的卖出和减仓：key → 连续天数
@@ -254,7 +310,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             list_date: None,
         });
         let bars = prices::recent_bars_until(pool, &p.thscode, sh.trade_date, BARS).await?;
-        let snap = snapshot(&bars, &meta, rules.trend_ma, Some((&sh.limits, &p.thscode)));
+        let snap = snapshot(&bars, &meta, Some((&sh.limits, &p.thscode)));
         let bars_held = match p.opened_on {
             Some(d) => Some(
                 sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mkt.stock_bar_1d WHERE thscode = $1 AND trade_date >= $2 AND trade_date <= $3")
@@ -279,12 +335,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
                 Some(def) => {
                     let f = Frame::with_authority(&bars, Some(&meta), &sh.limits, &p.thscode);
                     let i = bars.len() - 1;
-                    if def.exit_signal(&f, i) {
-                        def.exit_reason_text(&f, i)
-                            .or_else(|| Some("卖出条件".into()))
-                    } else {
-                        None
-                    }
+                    strategy_exit_text(&def, &f, &bars, i, p.cost_price, bars_held)
                 }
                 None => None,
             },
@@ -328,7 +379,11 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             e.0.push(Pick {
                 strategy_id: *id,
                 reasons: reasons.clone(),
-                history: sh.history.get(&(*id, code.clone())).cloned().unwrap_or_default(),
+                history: sh
+                    .history
+                    .get(&(*id, code.clone()))
+                    .cloned()
+                    .unwrap_or_default(),
             });
         }
     }
@@ -338,7 +393,9 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         .collect();
     let mut history_rejected = 0;
     pre.retain_mut(|(code, picks, _)| {
-        if positions.iter().any(|p| p.thscode == *code) { return false; }
+        if positions.iter().any(|p| p.thscode == *code) {
+            return false;
+        }
         let before = picks.len();
         picks.retain(|p| p.eligible(&rules, sh.trade_date));
         let enough = picks.len() >= rules.min_picks as usize;
@@ -363,7 +420,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             continue;
         };
         let bars = prices::recent_bars_until(pool, code, sh.trade_date, BARS).await?;
-        let Some(snap) = snapshot(&bars, meta, rules.trend_ma, Some((&sh.limits, code))) else {
+        let Some(snap) = snapshot(&bars, meta, Some((&sh.limits, code))) else {
             continue;
         };
         candidates.push(CandidateIn {
@@ -398,4 +455,24 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         strategies,
         streaks: streaks(pool, acc.account_id, sh.trade_date).await?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strategy_exit_includes_strategy_risk_rules() {
+        let bars = crate::analysis::indicators::tests::bars_from(&[10.0, 10.0, 9.0]);
+        let frame = Frame::new(&bars, None);
+        let def: crate::analysis::strategy::Definition =
+            serde_json::from_value(serde_json::json!({
+                "exit": {"stop_loss_pct": 8, "take_profit_pct": 20, "max_hold_days": 2}
+            }))
+            .unwrap();
+        assert_eq!(
+            strategy_exit_text(&def, &frame, &bars, 2, Some(10.0), Some(2)).as_deref(),
+            Some("亏损达到 8% 止损；持有满 2 个交易日")
+        );
+    }
 }

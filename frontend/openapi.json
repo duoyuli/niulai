@@ -87,7 +87,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "账户详情：持仓带现价、市值、占比、盈亏、止损价和趋势均线",
+        "summary": "账户详情：持仓带现价、市值、占比、盈亏和可选的账户保护价",
         "operationId": "get_account",
         "parameters": [
           {
@@ -4832,7 +4832,8 @@
               "number",
               "null"
             ],
-            "format": "double"
+            "format": "double",
+            "description": "买入或持仓时：账户保护线开启后的保护价；关闭时为空"
           },
           "strategy_id": {
             "type": [
@@ -8103,7 +8104,7 @@
               "null"
             ],
             "format": "double",
-            "description": "按本账户止损线算的止损价"
+            "description": "按本账户保护线算的保护价；保护线关闭时为空"
           },
           "strategy_name": {
             "type": [
@@ -8111,21 +8112,6 @@
               "null"
             ],
             "description": "买入依据的策略"
-          },
-          "trend_gap_pct": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
-          },
-          "trend_ma": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double",
-            "description": "本账户趋势均线的值，以及收盘价相对它的位置（%）"
           },
           "weight_pct": {
             "type": "number",
@@ -8449,7 +8435,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/HistoryCheck",
-                "description": "买入前回看；旧账户缺少此字段时关闭。"
+                "description": "买入前回看；为空时关闭。"
               },
               {
                 "type": "null"
@@ -8476,12 +8462,6 @@
             "description": "至少留多少现金（占总资产的百分比）",
             "default": 10.0
           },
-          "min_edge_pct": {
-            "type": "number",
-            "format": "double",
-            "description": "历史兼容字段：旧版本保存的有效门槛仍能读取，但当前建议流程不使用它",
-            "default": 0.0
-          },
           "min_picks": {
             "type": "integer",
             "format": "int32",
@@ -8489,16 +8469,19 @@
             "default": 1,
             "minimum": 0
           },
+          "protection_stop_loss_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "账户保护线：比成本价亏多少（%）就卖；默认关闭，由账户主动开启",
+            "default": null
+          },
           "sell_st": {
             "type": "boolean",
             "description": "持有的股票被 ST 时卖出",
             "default": true
-          },
-          "stop_loss_pct": {
-            "type": "number",
-            "format": "double",
-            "description": "止损线：比成本价亏多少（%）就卖",
-            "default": 8.0
           },
           "strategies": {
             "type": [
@@ -8509,15 +8492,8 @@
               "type": "integer",
               "format": "int64"
             },
-            "description": "只参考这些策略（策略编号）；旧数据为 null 时兼容为当前全部参加巡检的策略，新账户保存当前策略快照",
+            "description": "只参考这些策略（策略编号）；为空时表示当前全部参加巡检的策略，新账户保存当前策略快照",
             "default": null
-          },
-          "trend_ma": {
-            "type": "integer",
-            "format": "int32",
-            "description": "收盘跌破几日均线就卖",
-            "default": 20,
-            "minimum": 0
           },
           "weak_market": {
             "$ref": "#/components/schemas/WeakMarket",
@@ -8741,7 +8717,7 @@
               "string",
               "null"
             ],
-            "description": "为什么卖：止损、跌破均线、买入依据策略的卖出条件；还持有为空"
+            "description": "为什么卖：策略卖出规则或账户保护线；还持有为空"
           },
           "invest": {
             "type": "number",

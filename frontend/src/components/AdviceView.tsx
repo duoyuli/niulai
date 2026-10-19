@@ -139,7 +139,7 @@ function Body({
         <Card title={`买入（${dayLabel(a.next_date)}开盘后，开盘价不超过上限才买）`}>
           <OrderTable accountId={accountId} s={s} items={buys} readonly={readonly} kind="buy" />
           <p className="mt-2 text-xs text-zinc-500">
-            开盘价高于「最高买入价」就是追高，这只放弃；开盘一字涨停买不进，这条作废。也可以直接按最高买入价挂限价单。买入后跌到止损价，建议会提示卖出。
+            开盘价高于「最高买入价」就是追高，这只放弃；开盘一字涨停买不进，这条作废。也可以直接按最高买入价挂限价单。买入后的卖出由策略决定；开启账户保护线时，跌到保护价也会提示卖出。
           </p>
         </Card>
       )}
@@ -228,7 +228,7 @@ function OrderTable({
           <th>{kind === "buy" ? "买多少" : "卖多少"}</th>
           <th>参考价（{trade} 收盘）</th>
           {kind === "buy" && <th>最高买入价（开盘不超过）</th>}
-          {kind === "buy" ? <th>止损价</th> : <th>为什么卖</th>}
+          {kind === "buy" ? <th>账户保护价</th> : <th>为什么卖</th>}
           <th>约多少钱</th>
           <th />
         </tr>

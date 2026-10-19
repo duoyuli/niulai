@@ -4,7 +4,7 @@
 //! - 有效策略逐年滚动判断：回测中的每一年，只用这一年之前 3 年的数据（买点之后 20 个交易日、且这 20 天在这一年之前结束）
 //!   比较策略和随便买，不用未来的数据挑策略；
 //! - 排序：同时选中的有效策略数 → 它们的超额之和 → 成交额，至少 min_picks 个；
-//! - 卖出：止损、趋势均线、买入依据策略的卖出条件；最多持几只、单只上限、保留现金、弱市、追高上限。
+//! - 卖出：买入依据策略的完整卖出规则，以及可选的账户保护线；最多持几只、单只上限、保留现金、弱市、追高上限。
 //!
 //! 近似：价格用前复权价（分红送转已在价格里），允许零股，佣金和印花税照扣；ST 按现在的简称判断，持有中被 ST 不卖；
 //! 不做单只超过上限时的减仓。规则见 docs/domains/accounts.md#rules_backtest。
@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
+use crate::account::history::{self, HistorySeries};
 use crate::account::lots::{Fees, STAMP_TAX_RATE, round2};
 use crate::account::rules::{Preset, Rules, WeakMarket};
-use crate::account::history::{self, HistorySeries};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef};
 use crate::analysis::market::{self, calendar_days_for};
 use crate::analysis::points;
@@ -101,7 +101,7 @@ pub struct RulesTrade {
     /// 卖出日和未复权开盘价；回测结束时还持有为空
     pub exit_date: Option<NaiveDate>,
     pub exit_price: Option<f64>,
-    /// 为什么卖：止损、跌破均线、买入依据策略的卖出条件；还持有为空
+    /// 为什么卖：策略卖出规则或账户保护线；还持有为空
     pub exit_reason: Option<String>,
     /// 持有的交易日数（还持有时算到回测最后一天）
     pub days_held: u32,
@@ -135,7 +135,6 @@ struct Stock {
     q_open: Vec<f32>,
     q_close: Vec<f32>,
     one_price: Vec<bool>,
-    ma_trend: Vec<f32>,
     /// 第 k 天哪些策略出现买点，按位
     buy: Vec<u64>,
     /// 第 k 天哪些策略的卖出条件满足，按位
@@ -192,20 +191,20 @@ pub async fn run(
     let edge_from = start - chrono::Duration::days(365 * YEARS);
     let sec = market::securities(pool).await?;
     let base_def = Definition::any_stock();
-    let warmup = defs
-        .iter()
-        .map(|d| d.warmup())
-        .max()
-        .unwrap_or(30)
-        .max(rules.trend_ma)
-        + 5;
-    let history_start = rules.history_check.as_ref().and_then(|c| c.windows.iter().map(|w| w.start(start)).min()).unwrap_or(edge_from);
+    let warmup = defs.iter().map(|d| d.warmup()).max().unwrap_or(30) + 5;
+    let history_start = rules
+        .history_check
+        .as_ref()
+        .and_then(|c| c.windows.iter().map(|w| w.start(start)).min())
+        .unwrap_or(edge_from);
     let lo = edge_from.min(history_start) - chrono::Duration::days(calendar_days_for(warmup));
     // 权威涨跌停池：参考值回测里的买卖点同样以供应商的名单为准
     let limits = crate::analysis::limit_pool::LimitPool::load(pool, lo, end).await?;
     let events = if rules.history_check.is_some() {
         prices::corp_events_for_window(pool, lo, end).await?
-    } else { HashMap::new() };
+    } else {
+        HashMap::new()
+    };
     let mut raw: Vec<(Vec<NaiveDate>, Stock)> = vec![];
     let mut ew = crate::analysis::portfolio::EqualWeight::default();
     // 每天：收盘站上 20 日均线的股票数、当天有日线的股票数
@@ -223,7 +222,10 @@ pub async fn run(
         let n = first.map_or(0, |f0| bars.len() - f0);
         let mut buy = vec![0u64; n];
         for (k, d) in defs.iter().enumerate() {
-            let history_series = rules.history_check.as_ref().map(|_| HistorySeries::new(bars, &f, meta, d));
+            let history_series = rules
+                .history_check
+                .as_ref()
+                .map(|_| HistorySeries::new(bars, &f, meta, d));
             for t in points::run(bars, &f, meta, d, first_edge).trades {
                 let Ok(s) = bars.binary_search_by_key(&t.signal_date, |b| b.date) else {
                     continue;
@@ -233,8 +235,15 @@ pub async fn run(
                     && !f.is_st(s)
                 {
                     if let (Some(check), Some(series)) = (&rules.history_check, &history_series) {
-                        let returns = series.evaluate(bars, events.get(code).map(Vec::as_slice).unwrap_or(&[]), &check.windows, t.signal_date);
-                        if !history::passes(check, &returns, t.signal_date) { continue; }
+                        let returns = series.evaluate(
+                            bars,
+                            events.get(code).map(Vec::as_slice).unwrap_or(&[]),
+                            &check.windows,
+                            t.signal_date,
+                        );
+                        if !history::passes(check, &returns, t.signal_date) {
+                            continue;
+                        }
                     }
                     buy[s - f0] |= 1 << k;
                 }
@@ -243,7 +252,6 @@ pub async fn run(
         let Some(f0) = first else { return };
         ew.add(&base_def, bars, &f, meta, f0);
         let ma20 = f.get(IndicatorRef::new(IndicatorId::Ma, Some(20)));
-        let ma = f.get(IndicatorRef::new(IndicatorId::Ma, Some(rules.trend_ma)));
         let exits: Vec<Vec<bool>> = defs.iter().map(|d| d.exit_series(&f)).collect();
         let mut s = Stock {
             code: code.to_string(),
@@ -253,7 +261,6 @@ pub async fn run(
             q_open: Vec::with_capacity(n),
             q_close: Vec::with_capacity(n),
             one_price: Vec::with_capacity(n),
-            ma_trend: Vec::with_capacity(n),
             buy,
             exit: Vec::with_capacity(n),
             amount: Vec::with_capacity(n),
@@ -275,7 +282,6 @@ pub async fn run(
             s.q_open.push(b.q_open as f32);
             s.q_close.push(b.q_close as f32);
             s.one_price.push(b.high == b.low);
-            s.ma_trend.push(ma[i] as f32);
             s.exit.push(em);
             s.amount.push(b.amount as f32);
         }
@@ -329,6 +335,7 @@ pub async fn run(
         &edges,
         bench,
         &strategy_names,
+        &defs,
     );
     r.summary.strategies = defs.len();
     Ok(Some(r))
@@ -383,6 +390,7 @@ fn simulate(
     edges: &HashMap<i32, YearEdge>,
     bench: Option<(String, HashMap<NaiveDate, f64>)>,
     strategy_names: &[String],
+    defs: &[&Definition],
 ) -> RulesBacktest {
     let mut cash = CAPITAL;
     let mut held: Vec<Held> = vec![];
@@ -503,19 +511,42 @@ fn simulate(
             let s = &stocks[h.stock];
             let Some(k) = s.at(d32) else { continue };
             let close = s.q_close[k] as f64;
-            let ma = s.ma_trend[k] as f64;
             let ret = close / h.entry_q - 1.0;
-            let reason = if ret <= -p.stop_loss_pct / 100.0 {
-                Some(format!("止损：亏 {:.1}%", -ret * 100.0))
+            let strategy_index = h.origin.trailing_zeros() as usize;
+            let strategy = defs.get(strategy_index).copied();
+            let reason = if p
+                .protection_stop_loss_pct
+                .is_some_and(|loss| ret <= -loss / 100.0)
+            {
+                Some(format!("账户保护线：亏 {:.1}%", -ret * 100.0))
             } else if s.exit[k] & h.origin != 0 {
                 Some(format!(
                     "「{}」的卖出条件",
                     names_of(h.origin, strategy_names).join("")
                 ))
-            } else if !ma.is_nan() && close < ma {
-                Some(format!("收盘跌破 {} 日均线", p.trend_ma))
+            } else if let Some(loss) = strategy
+                .and_then(|d| d.exit.stop_loss_pct)
+                .filter(|loss| ret <= -*loss / 100.0)
+            {
+                Some(format!(
+                    "策略止损：亏 {:.1}%（阈值 {}%）",
+                    -ret * 100.0,
+                    loss
+                ))
+            } else if let Some(profit) = strategy
+                .and_then(|d| d.exit.take_profit_pct)
+                .filter(|profit| ret >= *profit / 100.0)
+            {
+                Some(format!(
+                    "策略止盈：赚 {:.1}%（阈值 {}%）",
+                    ret * 100.0,
+                    profit
+                ))
             } else {
-                None
+                strategy
+                    .and_then(|d| d.exit.max_hold_days)
+                    .filter(|days| d32 + 1 - h.entry_day >= *days)
+                    .map(|days| format!("策略持有满 {days} 个交易日"))
             };
             if let Some(reason) = reason {
                 pending_sell.push(PendingSell {
@@ -672,7 +703,6 @@ mod tests {
             q_open: (0..10).map(|i| closes[i.max(1) - 1]).collect(),
             q_close: closes.clone(),
             one_price: vec![false; 10],
-            ma_trend: vec![f32::NAN; 10],
             buy: (0..10)
                 .map(|i| if buy_days.contains(&i) { bits } else { 0 })
                 .collect(),
@@ -708,8 +738,13 @@ mod tests {
     fn selected_strategies_count_and_stops_out() {
         let (stocks, cal) = stocks();
         let breadth: HashMap<NaiveDate, (u32, u32)> = cal.iter().map(|d| (*d, (60, 100))).collect();
-        let p = Preset::Aggressive.rules();
+        let p = Rules {
+            protection_stop_loss_pct: Some(8.0),
+            ..Preset::Aggressive.rules()
+        };
         let names = vec!["策略一".to_string(), "策略二".to_string()];
+        let defs_owned = [Definition::any_stock(), Definition::any_stock()];
+        let defs: Vec<&Definition> = defs_owned.iter().collect();
         // 两个策略都有效：A 第 1 天买入一路涨；B 第 2 天买入，第 3 天收盘亏 10% 触发止损，第 4 天卖出
         let both: HashMap<i32, YearEdge> = HashMap::from([(2026, YearEdge { mask: 0b11 })]);
         let r = simulate(
@@ -721,22 +756,23 @@ mod tests {
             &both,
             None,
             &names,
+            &defs,
         );
         assert_eq!(r.summary.trades, 1, "{:?}", r.summary);
         assert_eq!(r.summary.win_rate, Some(0.0));
         assert!(r.summary.total_return > 0.0, "{:?}", r.summary);
         assert!(r.equity.len() >= 2 && r.equity[0].date == cal[0]);
-        // 交易记录：B 止损卖出，A 期末还持有；买入日新的在前
+        // 交易记录：B 触发账户保护线卖出，A 期末还持有；买入日新的在前
         assert_eq!(r.trades.len(), 2, "{:?}", r.trades);
         let b = r.trades.iter().find(|t| t.exit_date.is_some()).unwrap();
-        // 第 4 天收盘亏 20%（第 3 天亏 10% 差一点没到止损线），第 5 天开盘卖出
+        // 第 3 天收盘亏 10%，达到账户保护线，下一个交易日开盘卖出
         assert_eq!(
             (b.signal_date, b.entry_date, b.exit_date),
-            (cal[1], cal[2], Some(cal[5]))
+            (cal[1], cal[2], Some(cal[4]))
         );
-        assert_eq!(b.exit_reason.as_deref(), Some("止损：亏 20.0%"));
+        assert_eq!(b.exit_reason.as_deref(), Some("账户保护线：亏 10.0%"));
         assert_eq!(b.strategies, ["策略一", "策略二"]);
-        assert!(b.return_pct < 0.0 && b.profit < 0.0 && b.days_held == 3);
+        assert!(b.return_pct < 0.0 && b.profit < 0.0 && b.days_held == 2);
         let a = r.trades.iter().find(|t| t.exit_date.is_none()).unwrap();
         assert!(a.return_pct > 0.0 && a.exit_reason.is_none());
         assert!(r.trades[0].entry_date >= r.trades[1].entry_date);
@@ -751,6 +787,7 @@ mod tests {
             &both,
             None,
             &names,
+            &defs,
         );
         assert_eq!(r.summary.trades, 1);
         assert!(r.summary.total_return < 0.0);
