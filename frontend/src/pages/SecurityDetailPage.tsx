@@ -119,7 +119,7 @@ function FundamentalsCard({ thscode, assetType }: { thscode: string; assetType?:
             <FundamentalText label="管理人" value={e.management_company} />
             <FundamentalText label="历史日线" value={e.bars ? `${e.bars} 根` : null} />
             <FundamentalText label="最新日期" value={e.latest_date} />
-            <FundamentalText label="价格口径" value={e.price_basis} />
+            <FundamentalText label="价格口径" value={priceBasisLabel(e.price_basis)} />
           </div>
         )}
       </Card>
@@ -232,6 +232,17 @@ function FundamentalText({ label, value }: { label: string; value?: string | nul
       </p>
     </div>
   );
+}
+
+function priceBasisLabel(value?: string | null) {
+  switch (value) {
+    case "vendor_forward_adjusted":
+      return "供应商前复权（同花顺）";
+    case "market_snapshot":
+      return "收盘行情快照";
+    default:
+      return value;
+  }
 }
 
 function StatementBlock({
