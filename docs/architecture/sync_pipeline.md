@@ -32,7 +32,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
                   运行结束 ─► 复权重算 ─► 规划下一个波次
 ```
 
-`niulai serve` 和运维子命令启动时都会创建同步引擎（`sync::Engine`）：读取并校验 `datasets.yaml`，把配置同步到 `ops.dataset`（配置中删掉的数据集标记为关闭，留作历史，数据集列表不再展示），创建供应商客户端和限速器。配置在进程启动时读取一次，修改配置后需要重启进程。
+`niulai serve` 和需要数据库的运维子命令启动时先由 `bootstrap::bootstrap` 执行一次应用初始化：设置第一个管理员密码并同步内置策略模板。随后创建同步引擎（`sync::Engine`）：读取并校验 `datasets.yaml`，把配置同步到 `ops.dataset`（配置中删掉的数据集标记为关闭，留作历史，数据集列表不再展示），创建供应商客户端和限速器。`Engine::new` 不执行鉴权或分析初始化。配置在进程启动时读取一次，修改配置后需要重启进程。
 
 还没有配置 API Key 时，执行循环不认领任务、定时调度不发起增量，直到在网页上配置，见 [首次登录引导](../interfaces/rest_api.md#setup)。
 
@@ -46,6 +46,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 | 层 | 模块 | 职责 |
 | --- | --- | --- |
 | 入口 | `scheduler.rs`、`executor.rs`、`audit.rs`、`check.rs`、`retention.rs` | 同步计划与定时触发；执行循环、单个任务的编排和运行结束后的衔接；完整性核对与兜底补偿；数据核检；定期清理 |
+| 事件 | `events.rs` | 发布同步运行完成和维护周期事件，不依赖分析、建议或鉴权模块 |
 | 规划 | `planner.rs` | 把分区展开为任务，按波次创建运行 |
 | 执行步骤 | `fetch.rs`、`records.rs`、`sinks.rs`、`postprocess.rs` | HTTP 取数与调用日志；记录主键与 `raw.record`；类型化表投影；运行结束后的计算 |
 | 状态 | `queue.rs`、`run.rs`、`cursor.rs`、`calendar.rs` | `ops.task` 的状态变更；`ops.run` 的创建与结束；`ops.cursor`；`ref.trading_day` 与交易日校验 |
@@ -142,9 +143,9 @@ raw 记录、类型化 sink 和游标在同一个任务事务中写入；事务�
 2. `CALL mkt.rebuild_adj_segment(run_id)`：全量重算复权分段，包括等比复权因子和同花顺减法复权的系数。本机全市场实测约 2 秒（1,500 万根日线、6 万段分段；第一次执行或磁盘忙时会更久），在数据库事务中完成，查询在提交前看到旧结果，不被阻塞。
 3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的进程内缓存（市场概况、信号的过去表现）失效。
 
-另外，运行结束时先按本次运行中三个权威涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`）任务的变化条数，决定是否更新 `ops.derived_version` 的 `limit_pool` 行。这三个池只写 `raw.record`、没有类型化表，不在 `PRICE_TABLES` 里，所以单独判断；**即使行情没有变化，只要池补上了滞后的数据也会更新**，市场概况和信号过去表现的缓存随之失效，并且和行情有变化时一样，在最新交易日上重做一次每日巡检、刷新还没处理过的调仓建议（当天的名单比行情晚到时，之前的巡检用的是自算的涨停）。更早日期的巡检结果不重算。
+另外，应用事件编排器收到 `SyncRunCompleted` 后，按本次运行中三个权威涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`）任务的变化条数，决定是否更新 `ops.derived_version` 的 `limit_pool` 行。这三个池只写 `raw.record`、没有类型化表，不在 `PRICE_TABLES` 里，所以单独判断；**即使行情没有变化，只要池补上了滞后的数据也会更新**，市场概况和信号过去表现的缓存随之失效，并且和行情有变化时一样，在最新交易日上重做一次每日巡检、刷新还没处理过的调仓建议（当天的名单比行情晚到时，之前的巡检用的是自算的涨停）。更早日期的巡检结果不重算。
 
-重算完成后，用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，再为每个账户生成 [调仓建议](../domains/accounts.md#generation)；失败只写日志，不影响运行的状态。执行循环每分钟的维护里也补齐缺的建议。策略过去表现和参考值回测只在用户主动研究时运行，不由维护循环自动重算。下一个波次在这些计算之前就已规划，计算失败不会让后面的波次停掉。复权的计算规则见 [复权](../domains/price_adjustment.md)。
+`executor` 在复权重算完成后发布 `SyncRunCompleted`，应用事件编排器再用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，并为每个账户生成 [调仓建议](../domains/accounts.md#generation)；失败只写日志，不影响运行的状态。执行循环每分钟发布 `MaintenanceTick`，编排器消费后补齐缺的建议和巡检。策略过去表现和参考值回测只在用户主动研究时运行，不由维护事件自动重算。下一个波次在事件发布之前就已规划，分析或建议失败不会让后面的波次停掉。复权的计算规则见 [复权](../domains/price_adjustment.md)。
 
 新的一天的日线不用重算就有复权价（落在最后一个分段里）。但一个回补运行可能要执行一两天，期间补回来的历史日线和公司行动会改变分段，只在运行结束时重算的话，这段时间的复权价是旧的。所以执行循环的维护（每分钟一次）还会检查：自上次重算以来有价格类任务写入了变化，并且距上次重算超过 5 分钟，就重算一次。上次重算的时刻记在 `ops.scheduler` 的 `adj_rebuild` 作业上，用条件 UPDATE 抢占；运行结束时的重算也会刷新这个时刻。重算不阻塞查询，见 [等比复权因子](../domains/price_adjustment.md#equal_ratio_factor)。
 

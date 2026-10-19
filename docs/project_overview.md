@@ -36,7 +36,7 @@ niulai 是面向 A 股股票和交易所 ETF 的诊断工作台。数据来自�
 | `.agents/skills/project-doc/` | 维护本文档库的 skill（`.claude/skills/project-doc` 是指向它的符号链接） |
 | `AGENTS.md` | 仓库说明与工作约定（`CLAUDE.md` 是指向它的符号链接） |
 
-后端模块：`sync`（同步框架）、`vendor`（供应商客户端与限速）、`analysis`（指标、信号、策略、巡检、诊断、回测）、`account`（账户、持仓、流水和规则）、`advice`（调仓建议、建议回看和规则回测）、`api`（REST API 和页面）、`auth`（用户、密码和登录会话）、`instrument`（股票与 ETF 的跨资产抽象）、`operation_log`（操作日志）、`upgrader`（一键升级助手），以及 `config`、`db`、`time`、`version` 等基础模块。
+后端模块：`sync`（同步框架和领域事件）、`bootstrap`（应用初始化与事件编排）、`vendor`（供应商客户端与限速）、`analysis`（指标、信号、策略、巡检、诊断、回测）、`account`（账户、持仓、流水和规则）、`advice`（调仓建议、建议回看和规则回测）、`api`（REST API 和页面）、`auth`（用户、密码和登录会话）、`instrument`（股票与 ETF 的跨资产抽象）、`operation_log`（操作日志）、`upgrader`（一键升级助手），以及 `config`、`db`、`time`、`version` 等基础模块。
 
 <a id="processes"></a>
 ## 进程

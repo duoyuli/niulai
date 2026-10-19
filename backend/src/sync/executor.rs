@@ -14,6 +14,7 @@ use sqlx::PgPool;
 use tokio::sync::watch;
 
 use super::calendar::{self, Readiness, TradeDateGuard};
+use super::events::{DomainEvent, EventBus};
 use super::fetch::{Fetcher, Target};
 use super::planner::Planner;
 use super::queue::{ClaimedTask, Finished, HEARTBEAT, TaskQueue, TaskStats};
@@ -33,6 +34,7 @@ pub struct Executor {
     queue: TaskQueue,
     fetcher: Fetcher,
     guard: TradeDateGuard,
+    events: EventBus,
 }
 
 /// 一个任务的执行结果（失败以 Err 返回）
@@ -54,6 +56,7 @@ impl Executor {
         pool: PgPool,
         client: Arc<HithinkClient>,
         registry: Arc<Registry>,
+        events: EventBus,
         worker_id: String,
     ) -> Self {
         Executor {
@@ -63,6 +66,7 @@ impl Executor {
             pool,
             client,
             registry,
+            events,
         }
     }
 
@@ -159,11 +163,7 @@ impl Executor {
         }
         postprocess::refresh_if_stale(&self.pool, &self.price_datasets()).await?;
         super::retention::prune_if_due(&self.pool).await?;
-        if let Err(e) =
-            crate::analysis::prices::in_background(crate::advice::maintain(&self.pool)).await
-        {
-            tracing::error!(error = %format!("{e:#}"), "调仓建议的维护失败");
-        }
+        self.events.publish(DomainEvent::MaintenanceTick);
         Ok(())
     }
 
@@ -229,30 +229,6 @@ impl Executor {
             }
         }
         self.after_task(task.run_id).await
-    }
-
-    /// 这个运行写入了权威涨跌停池（special.limit_up_pool、limit_down_pool、limit_break_pool）的话，
-    /// 更新 `ops.derived_version` 的 `limit_pool` 行：市场概况、信号过去表现的进程内缓存以它为版本号。
-    /// 与行情是否变化无关：行情没变、只补上了滞后的涨停名单时，涨停数也要跟着变。返回池有没有变化
-    async fn mark_limit_pool_changed(&self, run_id: i64) -> anyhow::Result<bool> {
-        let changed: i64 = sqlx::query_scalar("SELECT coalesce(sum(changed), 0) FROM ops.task WHERE run_id = $1 AND dataset_id = ANY($2) AND status = 'done'")
-            .bind(run_id)
-            .bind(crate::analysis::limit_pool::DATASETS.to_vec())
-            .fetch_one(&self.pool)
-            .await?;
-        if changed > 0 {
-            sqlx::query(
-                "UPDATE ops.derived_version SET updated_at = now() WHERE name = 'limit_pool'",
-            )
-            .execute(&self.pool)
-            .await?;
-            tracing::info!(
-                run_id,
-                changed,
-                "权威涨跌停池有变化，市场概况和信号统计的缓存已失效"
-            );
-        }
-        Ok(changed > 0)
     }
 
     /// 执行期间定期续租；返回的句柄被丢弃时停止
@@ -384,40 +360,18 @@ impl Executor {
         if status == "succeeded" {
             self.commit_planned_since(run_id).await?;
         }
-        // 权威涨跌停池只写 raw.record、没有类型化表，不在 PRICE_TABLES 里；单独统计它的变化来更新版本号。
-        // 更新失败不影响运行状态，只写日志（下次有变化的运行还会再更新）
-        let pool_changed = match self.mark_limit_pool_changed(run_id).await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!(run_id, error = %format!("{e:#}"), "更新权威涨跌停池的版本号失败");
-                false
-            }
-        };
         if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry)
             .continue_chain(run_id)
             .await?
         {
             tracing::info!(run_id, next, "已规划下一个波次");
         }
-        // 行情有变化时，按最新交易日执行每日巡检，再为每个账户生成调仓建议；失败不影响同步。
-        // 只有涨跌停池变了（例如当天的名单比行情晚到）也重做一次：之前的巡检用的是自算的涨停，名单到了以名单为准。
-        // 已经处理过的建议不会被替换（refresh_all 只替换没处理过的）
         let price_changed =
             postprocess::after_run(&self.pool, run_id, &self.price_datasets()).await?;
-        if price_changed || pool_changed {
-            let pool = &self.pool;
-            crate::analysis::prices::in_background(async {
-                match crate::analysis::screener::run_and_store(pool, None, None).await {
-                    Ok(_) => {
-                        if let Err(e) = crate::advice::refresh_all(pool, true).await {
-                            tracing::error!(run_id, error = %format!("{e:#}"), "生成调仓建议失败");
-                        }
-                    }
-                    Err(e) => tracing::error!(run_id, error = %format!("{e:#}"), "每日巡检失败"),
-                }
-            })
-            .await;
-        }
+        self.events.publish(DomainEvent::SyncRunCompleted {
+            run_id,
+            price_changed,
+        });
         Ok(())
     }
 

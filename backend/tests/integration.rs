@@ -47,6 +47,10 @@ impl TestDb {
         niulai::db::migrate(&pool)
             .await
             .expect("迁移应在空库上成功");
+        let settings = bare_settings("http://127.0.0.1:1", Some("test"));
+        niulai::bootstrap::bootstrap(&pool, &settings)
+            .await
+            .expect("应用启动初始化应成功");
         Some(TestDb {
             admin_url,
             name,
@@ -237,11 +241,8 @@ async fn adjustment_and_api_end_to_end() {
         limiter,
     )
     .unwrap();
-    // 直接组装引擎（不经过 Engine::new），要自己设置第一个管理员
-    niulai::auth::init_first_admin(&db.pool, &settings)
-        .await
-        .unwrap();
-    niulai::analysis::screener::sync_builtin_strategies(&db.pool)
+    // 直接组装引擎（不经过应用启动入口），要显式执行启动初始化
+    niulai::bootstrap::bootstrap(&db.pool, &settings)
         .await
         .unwrap();
     let engine = Arc::new(Engine {
@@ -249,6 +250,7 @@ async fn adjustment_and_api_end_to_end() {
         pool: db.pool.clone(),
         client: Arc::new(client),
         registry: Arc::new(reg),
+        events: niulai::sync::events::EventBus::new(),
     });
     let app = logged_in(niulai::api::router(engine.clone())).await;
 

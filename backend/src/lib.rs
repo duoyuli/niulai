@@ -13,6 +13,7 @@ pub mod advice;
 pub mod analysis;
 pub mod api;
 pub mod auth;
+pub mod bootstrap;
 pub mod config;
 pub mod db;
 pub mod error;

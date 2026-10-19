@@ -135,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     db::migrate(&pool).await?;
+    niulai::bootstrap::bootstrap(&pool, &settings).await?;
     let engine = Engine::new(settings, pool).await?;
     match cli.cmd {
         Cmd::Migrate | Cmd::Openapi | Cmd::Upgrader { .. } => unreachable!(),
@@ -296,20 +297,35 @@ async fn work(
 ) -> anyhow::Result<()> {
     let _lock = engine.lock_executor().await?;
     let (tx, rx) = tokio::sync::watch::channel(false);
+    let events = engine
+        .take_event_receiver()
+        .ok_or_else(|| anyhow::anyhow!("应用事件消费者已经启动"))?;
+    let event_task = tokio::spawn(niulai::bootstrap::run_events(
+        events,
+        engine.pool.clone(),
+        rx.clone(),
+    ));
     let n = concurrency.unwrap_or(engine.settings.worker_concurrency);
     let mut handles = vec![];
     for slot in 0..n {
         let ex = engine.executor(format!("cli-{}-{slot}", std::process::id()));
         handles.push(tokio::spawn(ex.run_loop(slot, rx.clone(), until_idle)));
     }
+    let stop_tx = tx.clone();
     let stopper = tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         tracing::info!("收到停止信号，等待正在执行的任务结束");
-        tx.send(true).ok();
+        stop_tx.send(true).ok();
     });
-    for h in handles {
-        h.await??;
+    let result = async {
+        for h in handles {
+            h.await??;
+        }
+        Ok::<_, anyhow::Error>(())
     }
+    .await;
+    tx.send(true).ok();
+    event_task.await??;
     stopper.abort();
-    Ok(())
+    result
 }

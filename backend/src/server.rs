@@ -11,6 +11,7 @@ use tokio::sync::watch;
 use tokio::task::{JoinError, JoinSet};
 
 use crate::api;
+use crate::bootstrap;
 use crate::sync::{Engine, scheduler};
 
 #[derive(Debug, Clone, Copy)]
@@ -27,8 +28,23 @@ type Component = (&'static str, anyhow::Result<()>);
 /// 任何一个组件在收到停止信号之前退出（出错或 panic），都按故障处理：停止其他组件，进程以错误退出，
 /// 由 Docker 的 `restart: unless-stopped` 或 systemd 重新拉起。否则执行循环或调度器悄悄停了，API 却还显示正常
 pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()> {
+    if !opts.api && !opts.worker && !opts.scheduler {
+        anyhow::bail!("--no-api、--no-worker、--no-scheduler 不能同时使用");
+    }
     let (stop_tx, stop_rx) = watch::channel(false);
     let mut set: JoinSet<Component> = JoinSet::new();
+
+    let events = engine
+        .take_event_receiver()
+        .ok_or_else(|| anyhow::anyhow!("应用事件消费者已经启动"))?;
+    let event_pool = engine.pool.clone();
+    let event_stop = stop_rx.clone();
+    set.spawn(async move {
+        (
+            "应用事件",
+            bootstrap::run_events(events, event_pool, event_stop).await,
+        )
+    });
 
     if opts.worker {
         let (e, stop) = (engine.clone(), stop_rx.clone());
@@ -54,9 +70,6 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
             });
             ("API", r.await.map_err(anyhow::Error::from))
         });
-    }
-    if set.is_empty() {
-        anyhow::bail!("--no-api、--no-worker、--no-scheduler 不能同时使用");
     }
     tracing::info!(
         version = crate::api::system::current_version(),

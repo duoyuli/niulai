@@ -11,6 +11,7 @@ pub mod audit;
 pub mod calendar;
 pub mod check;
 pub mod cursor;
+pub mod events;
 pub mod executor;
 pub mod fetch;
 pub mod planner;
@@ -40,6 +41,7 @@ pub struct Engine {
     pub pool: PgPool,
     pub client: Arc<HithinkClient>,
     pub registry: Arc<Registry>,
+    pub events: events::EventBus,
 }
 
 impl Engine {
@@ -53,8 +55,6 @@ impl Engine {
                 .map(|d| d.id.clone())
                 .collect(),
         );
-        crate::analysis::screener::sync_builtin_strategies(&pool).await?;
-        crate::auth::init_first_admin(&pool, &settings).await?;
         let limiter = RateLimiter::new(settings.rate_limit_rps);
         // 环境变量优先，其次是网页上保存的；都没有时等用户在首次登录引导中配置
         let api_key = match &settings.hithink_finance_api_key {
@@ -80,6 +80,7 @@ impl Engine {
             pool,
             client: Arc::new(client),
             registry: Arc::new(registry),
+            events: events::EventBus::new(),
         }))
     }
 
@@ -88,8 +89,15 @@ impl Engine {
             self.pool.clone(),
             self.client.clone(),
             self.registry.clone(),
+            self.events.clone(),
             worker_id,
         ))
+    }
+
+    pub fn take_event_receiver(
+        &self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<events::DomainEvent>> {
+        self.events.take_receiver()
     }
 
     // @project-doc docs/architecture/sync_pipeline.md#rate_limit
