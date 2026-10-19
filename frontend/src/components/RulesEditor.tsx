@@ -30,7 +30,9 @@ export function rulesText(p: FullRules): string[] {
         ]
       : []),
     `最多同时持有 ${p.max_positions} 只，单只最多占总资产的 ${p.max_weight_pct}%${p.min_cash_pct > 0 ? `，至少留 ${p.min_cash_pct}% 现金` : ""}`,
-    `比成本价亏 ${p.stop_loss_pct}% 就卖（止损），收盘跌破 ${p.trend_ma} 日均线也卖`,
+    ...(p.protection_stop_loss_pct
+      ? [`账户保护线：比成本价亏 ${p.protection_stop_loss_pct}% 就卖（策略自己的卖出规则仍然独立生效）`]
+      : ["账户保护线已关闭，持仓卖出由买入策略的卖出规则决定"]),
     `全市场站上 20 日均线的股票不到 ${p.weak_threshold_pct}% 时算弱市：${WEAK_MARKET[p.weak_market]}`,
     `第二天开盘比参考价高 ${p.chase_limit_pct}% 以上就不追`,
   ];
@@ -56,20 +58,11 @@ export function BacktestLine({ b }: { b: RulesBacktest }) {
   );
 }
 
-type NumKey =
-  | "max_positions"
-  | "max_weight_pct"
-  | "min_cash_pct"
-  | "stop_loss_pct"
-  | "trend_ma"
-  | "weak_threshold_pct"
-  | "chase_limit_pct";
+type NumKey = "max_positions" | "max_weight_pct" | "min_cash_pct" | "weak_threshold_pct" | "chase_limit_pct";
 const RISK_FIELDS: { key: NumKey; label: string }[] = [
   { key: "max_positions", label: "最多持有几只" },
   { key: "max_weight_pct", label: "单只最多占总资产（%）" },
   { key: "min_cash_pct", label: "至少留现金（%）" },
-  { key: "stop_loss_pct", label: "止损线：比成本亏（%）" },
-  { key: "trend_ma", label: "收盘跌破几日均线就卖" },
   { key: "weak_threshold_pct", label: "弱市：站上 20 日均线的股票低于（%）" },
   { key: "chase_limit_pct", label: "追高上限：开盘比参考价高（%）" },
 ];
@@ -82,7 +75,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
   return (
     <QueryView query={guide}>
       {(g) => {
-        // null 只为读取旧数据兼容；保存新的勾选时写入当前策略快照，后续新增策略不会自动加入
+        // 空值表示全部当前策略；保存勾选时写入当前策略快照，后续新增策略不会自动加入
         const picked = value.strategies;
         const checked = (s: StrategyQuality) => picked === null || picked.includes(s.strategy_id);
         const toggle = (s: StrategyQuality) => {
@@ -227,7 +220,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
               </section>
 
               <section>
-                <h3 className="text-sm font-medium">风控</h3>
+                <h3 className="text-sm font-medium">组合约束与保护</h3>
                 <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {RISK_FIELDS.map((f) => (
                     <Field key={f.key} label={f.label}>
@@ -239,6 +232,30 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                       />
                     </Field>
                   ))}
+                  <div className="flex flex-col gap-1 text-xs text-zinc-500">
+                    <label className="flex items-center gap-2 text-sm text-zinc-900 dark:text-zinc-100">
+                      <input
+                        type="checkbox"
+                        checked={value.protection_stop_loss_pct != null}
+                        onChange={(e) =>
+                          set({
+                            protection_stop_loss_pct: e.target.checked ? (value.protection_stop_loss_pct ?? 8) : null,
+                          })
+                        }
+                      />
+                      开启账户保护线
+                    </label>
+                    {value.protection_stop_loss_pct != null && (
+                      <input
+                        className={inputClass}
+                        inputMode="decimal"
+                        aria-label="账户保护线：比成本亏损百分比"
+                        value={value.protection_stop_loss_pct}
+                        onChange={(e) => set({ protection_stop_loss_pct: num(e.target.value) })}
+                      />
+                    )}
+                    <span>保护线可能早于策略卖出；默认关闭。</span>
+                  </div>
                   <Field label="弱市时">
                     <select
                       className={inputClass}

@@ -36,7 +36,10 @@ export interface AdviceItem {
   rule: string;
   /** 卖出、减仓、买入的股数；继续拿和不动时是持有的股数 */
   shares: number;
-  /** @nullable */
+  /**
+     * 买入或持仓时：账户保护线开启后的保护价；关闭时为空
+     * @nullable
+     */
   stop_price?: number | null;
   /**
      * 买入时：选中它的策略（排第一的）；执行后记在持仓上，以后按它的卖出条件判断

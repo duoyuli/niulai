@@ -26,7 +26,6 @@ use crate::advice::backtest::{self, RulesBacktest};
 use crate::advice::generate::Action;
 use crate::advice::review::{self, Review};
 use crate::advice::{self, AdviceDay, StoredAdvice, inputs};
-use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef};
 use crate::analysis::{prices, screener};
 use crate::error::{ApiError, ApiResult};
 
@@ -167,11 +166,8 @@ pub struct PositionView {
     /// 浮动盈亏（元、%）；没填成本价时为空
     pub pnl: Option<f64>,
     pub pnl_pct: Option<f64>,
-    /// 按本账户止损线算的止损价
+    /// 按本账户保护线算的保护价；保护线关闭时为空
     pub stop_price: Option<f64>,
-    /// 本账户趋势均线的值，以及收盘价相对它的位置（%）
-    pub trend_ma: Option<f64>,
-    pub trend_gap_pct: Option<f64>,
     /// 买入依据的策略
     pub strategy_name: Option<String>,
     pub delisted: bool,
@@ -296,15 +292,7 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
             .collect();
     let mut views = vec![];
     for p in positions {
-        let (bars, q) = quote(s, &p.thscode, params.trend_ma as i64 + 5).await?;
-        let trend_ma = (!bars.is_empty())
-            .then(|| {
-                Frame::new(&bars, None).at(
-                    IndicatorRef::new(IndicatorId::Ma, Some(params.trend_ma)),
-                    bars.len() - 1,
-                )
-            })
-            .filter(|v| v.is_finite());
+        let (_bars, q) = quote(s, &p.thscode, 2).await?;
         let close = q.map(|q| q.1);
         let mv = close.map_or(0.0, |c| c * p.shares as f64);
         let (name, board, asset_type, delisted) = names
@@ -327,9 +315,8 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
             pnl_pct: p.cost_price.zip(close).map(|(c, x)| (x / c - 1.0) * 100.0),
             stop_price: p
                 .cost_price
-                .map(|c| c * (1.0 - params.stop_loss_pct / 100.0)),
-            trend_gap_pct: trend_ma.zip(close).map(|(m, c)| (c / m - 1.0) * 100.0),
-            trend_ma,
+                .zip(params.protection_stop_loss_pct)
+                .map(|(c, pct)| c * (1.0 - pct / 100.0)),
             strategy_name: p
                 .strategy_id
                 .and_then(|id| strategy_names.get(&id).cloned()),
@@ -393,7 +380,7 @@ async fn create_account(
     ))
 }
 
-/// 账户详情：持仓带现价、市值、占比、盈亏、止损价和趋势均线
+/// 账户详情：持仓带现价、市值、占比、盈亏和可选的账户保护价
 #[utoipa::path(get, path = "/accounts/{account_id}", tag = "accounts", params(("account_id" = i64, Path)),
     responses((status = 200, description = "成功", body = AccountDetail), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
 async fn get_account(

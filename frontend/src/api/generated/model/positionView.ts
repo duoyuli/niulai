@@ -35,7 +35,7 @@ export interface PositionView {
   pnl_pct?: number | null;
   position: AccountPosition;
   /**
-     * 按本账户止损线算的止损价
+     * 按本账户保护线算的保护价；保护线关闭时为空
      * @nullable
      */
   stop_price?: number | null;
@@ -44,12 +44,5 @@ export interface PositionView {
      * @nullable
      */
   strategy_name?: string | null;
-  /** @nullable */
-  trend_gap_pct?: number | null;
-  /**
-     * 本账户趋势均线的值，以及收盘价相对它的位置（%）
-     * @nullable
-     */
-  trend_ma?: number | null;
   weight_pct: number;
 }

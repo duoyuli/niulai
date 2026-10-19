@@ -132,7 +132,6 @@ function CheckHint({ d }: { d: AccountDetail }) {
 
 function Positions({ d }: { d: AccountDetail }) {
   const [mode, setMode] = useState<"view" | "calibrate" | "trade">("view");
-  const p = d.summary.account.rules as FullRules;
   return (
     <>
       <RightsNotice d={d} />
@@ -174,10 +173,8 @@ function Positions({ d }: { d: AccountDetail }) {
                 <th>现价</th>
                 <th>市值 / 占比</th>
                 <th>盈亏</th>
-                <th
-                  title={`跌到止损价（比成本亏 ${p.stop_loss_pct}%）或收盘跌破 ${p.trend_ma} 日均线时，建议会提示卖出`}
-                >
-                  止损价 / {p.trend_ma} 日均线
+                <th title="开启账户保护线后，跌到保护价会建议卖出；策略自己的卖出规则单独显示在运营建议里">
+                  账户保护价
                 </th>
                 <th>买入依据</th>
               </tr>
@@ -210,14 +207,7 @@ function Positions({ d }: { d: AccountDetail }) {
                       `${yuan(v.pnl)}（${fmtPctValue(v.pnl_pct, 1)}）`
                     )}
                   </td>
-                  <td className="num text-xs">
-                    {v.stop_price ? fmtPrice(v.stop_price) : "—"} / {fmtPrice(v.trend_ma)}
-                    {v.trend_gap_pct !== null && v.trend_gap_pct !== undefined && (
-                      <span className={clsx("ml-1", upDownClass(v.trend_gap_pct))}>
-                        （{fmtPctValue(v.trend_gap_pct, 1)}）
-                      </span>
-                    )}
-                  </td>
+                  <td className="num text-xs">{v.stop_price ? fmtPrice(v.stop_price) : "已关闭"}</td>
                   <td className="text-xs text-zinc-500">{v.strategy_name ?? "手动录入"}</td>
                 </tr>
               ))}

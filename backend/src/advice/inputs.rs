@@ -222,7 +222,6 @@ fn finite(v: f64) -> Option<f64> {
 fn snapshot(
     bars: &[DailyBar],
     meta: &StockMeta,
-    trend_ma: u32,
     authority: Option<(&LimitPool, &str)>,
 ) -> Option<Snapshot> {
     let last = bars.last()?;
@@ -233,11 +232,6 @@ fn snapshot(
     };
     let i = bars.len() - 1;
     let v = |id, n| finite(f.at(IndicatorRef::new(id, n), i));
-    let to_raw = if last.q_close > 0.0 {
-        last.close / last.q_close
-    } else {
-        1.0
-    };
     let (hi, lo) = (
         v(IndicatorId::HighN, Some(60)),
         v(IndicatorId::LowN, Some(60)),
@@ -252,7 +246,6 @@ fn snapshot(
         close: last.close,
         change_pct: v(IndicatorId::ChangePct, None),
         amount: last.amount,
-        ma_trend: v(IndicatorId::Ma, Some(trend_ma)).map(|m| m * to_raw),
         rsi: v(IndicatorId::Rsi, Some(14)),
         momentum20: v(IndicatorId::Momentum, Some(20)),
         range60_pos,
@@ -265,6 +258,44 @@ fn snapshot(
             format!("{}（{}）", volume.headline, volume.detail)
         },
     })
+}
+
+/// 计算买入依据策略的完整卖出规则。账户不再替策略补一条趋势均线。
+fn strategy_exit_text(
+    def: &crate::analysis::strategy::Definition,
+    frame: &Frame,
+    bars: &[DailyBar],
+    i: usize,
+    cost_price: Option<f64>,
+    bars_held: Option<i64>,
+) -> Option<String> {
+    let mut reasons = vec![];
+    if def.exit_signal(frame, i) {
+        reasons.push(
+            def.exit_reason_text(frame, i)
+                .unwrap_or_else(|| "卖出条件".into()),
+        );
+    }
+    let close = bars[i].close;
+    if let Some(cost) = cost_price {
+        let ret = close / cost - 1.0;
+        if let Some(stop) = def.exit.stop_loss_pct
+            && ret <= -stop / 100.0
+        {
+            reasons.push(format!("亏损达到 {stop}% 止损"));
+        }
+        if let Some(take) = def.exit.take_profit_pct
+            && ret >= take / 100.0
+        {
+            reasons.push(format!("盈利达到 {take}% 止盈"));
+        }
+    }
+    if let (Some(max), Some(held)) = (def.exit.max_hold_days, bars_held)
+        && held >= max as i64
+    {
+        reasons.push(format!("持有满 {max} 个交易日"));
+    }
+    (!reasons.is_empty()).then(|| reasons.join("；"))
 }
 
 /// 之前的建议中连续给出、还没执行的卖出和减仓：key → 连续天数
@@ -313,7 +344,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         });
         let bars =
             prices::recent_instrument_bars_until(pool, &p.thscode, sh.trade_date, BARS).await?;
-        let snap = snapshot(&bars, &meta, rules.trend_ma, Some((&sh.limits, &p.thscode)));
+        let snap = snapshot(&bars, &meta, Some((&sh.limits, &p.thscode)));
         let bars_held = match p.opened_on {
             Some(d) => Some(prices::bar_count_between(pool, &p.thscode, d, sh.trade_date).await?),
             None => None,
@@ -331,12 +362,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
                 Some(def) => {
                     let f = Frame::with_authority(&bars, Some(&meta), &sh.limits, &p.thscode);
                     let i = bars.len() - 1;
-                    if def.exit_signal(&f, i) {
-                        def.exit_reason_text(&f, i)
-                            .or_else(|| Some("卖出条件".into()))
-                    } else {
-                        None
-                    }
+                    strategy_exit_text(&def, &f, &bars, i, p.cost_price, bars_held)
                 }
                 None => None,
             },
@@ -426,7 +452,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             continue;
         };
         let bars = prices::recent_instrument_bars_until(pool, code, sh.trade_date, BARS).await?;
-        let Some(snap) = snapshot(&bars, meta, rules.trend_ma, Some((&sh.limits, code))) else {
+        let Some(snap) = snapshot(&bars, meta, Some((&sh.limits, code))) else {
             continue;
         };
         candidates.push(CandidateIn {
@@ -478,4 +504,24 @@ fn definition_hash(value: &serde_json::Value) -> String {
     let digest = Sha256::digest(bytes);
     let encoded: String = digest.iter().map(|b| format!("{b:02x}")).collect();
     format!("sha256:{encoded}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strategy_exit_includes_strategy_risk_rules() {
+        let bars = crate::analysis::indicators::tests::bars_from(&[10.0, 10.0, 9.0]);
+        let frame = Frame::new(&bars, None);
+        let def: crate::analysis::strategy::Definition =
+            serde_json::from_value(serde_json::json!({
+                "exit": {"stop_loss_pct": 8, "take_profit_pct": 20, "max_hold_days": 2}
+            }))
+            .unwrap();
+        assert_eq!(
+            strategy_exit_text(&def, &frame, &bars, 2, Some(10.0), Some(2)).as_deref(),
+            Some("亏损达到 8% 止损；持有满 2 个交易日")
+        );
+    }
 }

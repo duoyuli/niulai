@@ -1,5 +1,5 @@
 //! 账户的选股和风控规则：参考哪些策略（新账户保存创建时的策略快照）、至少几个策略同时选中才买、最多持几只、
-//! 单只最多占多少、留多少现金、止损线、趋势卖出看哪条均线、弱市怎么办、追高上限。
+//! 单只最多占多少、留多少现金、账户保护线、弱市怎么办、追高上限。
 //! 规则不绑定具体策略：候选股按同一套优先级排序（见 advice::generate）。
 //!
 //! 保守、稳健、进取只是三组参考值（`Preset`），在高级设置里作为辅助：说明这类账户一般怎么设计，点一下套用后还可以再改。
@@ -94,13 +94,11 @@ impl HistoryCheck {
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Rules {
-    /// 只参考这些策略（策略编号）；旧数据为 null 时兼容为当前全部参加巡检的策略，新账户保存当前策略快照
+    /// 只参考这些策略（策略编号）；为空时表示当前全部参加巡检的策略，新账户保存当前策略快照
     pub strategies: Option<Vec<i64>>,
-    /// 历史兼容字段：旧版本保存的有效门槛仍能读取，但当前建议流程不使用它
-    pub min_edge_pct: f64,
     /// 至少几个勾选的策略同时选中才买
     pub min_picks: u32,
-    /// 买入前回看；旧账户缺少此字段时关闭。
+    /// 买入前回看；为空时关闭。
     #[serde(default)]
     pub history_check: Option<HistoryCheck>,
     /// 最多同时持有几只
@@ -109,10 +107,8 @@ pub struct Rules {
     pub max_weight_pct: f64,
     /// 至少留多少现金（占总资产的百分比）
     pub min_cash_pct: f64,
-    /// 止损线：比成本价亏多少（%）就卖
-    pub stop_loss_pct: f64,
-    /// 收盘跌破几日均线就卖
-    pub trend_ma: u32,
+    /// 账户保护线：比成本价亏多少（%）就卖；默认关闭，由账户主动开启
+    pub protection_stop_loss_pct: Option<f64>,
     pub weak_market: WeakMarket,
     /// 全市场站上 20 日均线的股票比例低于多少（%）算弱市
     pub weak_threshold_pct: f64,
@@ -129,8 +125,6 @@ impl Default for Rules {
 }
 
 /// 趋势卖出可选的均线
-pub const TREND_MAS: [u32; 5] = [10, 20, 30, 60, 120];
-
 impl Rules {
     /// 参数是否在合理范围内
     pub fn validate(&self) -> Result<(), String> {
@@ -141,17 +135,15 @@ impl Rules {
                 Err(format!("{what}应在 {lo} 到 {hi} 之间"))
             }
         };
-        range(self.min_edge_pct, 0.0, 10.0, "历史兼容字段（%）")?;
         range(self.min_picks as f64, 1.0, 5.0, "至少几个有效策略同时选中")?;
         range(self.max_positions as f64, 1.0, 20.0, "最多持有只数")?;
         range(self.max_weight_pct, 5.0, 100.0, "单只上限（%）")?;
         range(self.min_cash_pct, 0.0, 90.0, "保留现金（%）")?;
-        range(self.stop_loss_pct, 2.0, 30.0, "止损线（%）")?;
+        if let Some(v) = self.protection_stop_loss_pct {
+            range(v, 2.0, 30.0, "账户保护线（%）")?;
+        }
         range(self.weak_threshold_pct, 5.0, 60.0, "弱市阈值（%）")?;
         range(self.chase_limit_pct, 0.0, 20.0, "追高上限（%）")?;
-        if !TREND_MAS.contains(&self.trend_ma) {
-            return Err(format!("趋势均线只能是 {TREND_MAS:?} 日之一"));
-        }
         match &self.strategies {
             Some(l) if l.is_empty() => return Err("至少勾选一个策略".into()),
             Some(l) if l.len() > 64 => return Err("最多勾选 64 个策略".into()),
@@ -216,20 +208,20 @@ impl Preset {
                 "买入前回看：每个策略在这只股票上过去 1 年、3 年的总收益都大于 0",
                 "分散：最多 5 只，单只不超过 20%，一只出问题影响有限",
                 "留 20% 现金，跌的时候有余地",
-                "止损紧（6%），收盘跌破 20 日均线就走，不扛单",
+                "策略决定什么时候卖出；账户只在主动开启保护线时限制亏损",
                 "全市场偏弱时不买新股票；开盘比参考价高 3% 以上不追",
             ],
             Preset::Balanced => vec![
                 "1 个勾选的策略看好就考虑买",
                 "最多 6 只，单只不超过 25%，留 10% 现金",
-                "止损 8%，收盘跌破 20 日均线就卖",
+                "策略决定什么时候卖出；账户保护线默认关闭",
                 "全市场偏弱时用于买新股票的钱减半；开盘比参考价高 5% 以上不追",
             ],
             Preset::Aggressive => vec![
                 "勾选的策略都可以提供候选，候选最多",
                 "1 个勾选的策略看好就买，几乎满仓",
                 "最多 8 只，单只可以到 30%",
-                "止损宽（10%），趋势看 60 日均线，给股票更多波动空间，但单笔亏损会更大",
+                "策略决定什么时候卖出；账户保护线默认关闭，给策略更多波动空间",
                 "全市场偏弱也照常买；开盘比参考价高 7% 以内都追；持有的股票被 ST 也不急着卖",
             ],
         }
@@ -239,14 +231,12 @@ impl Preset {
     pub fn rules(self) -> Rules {
         let base = Rules {
             strategies: None,
-            min_edge_pct: 0.0,
             min_picks: 1,
             history_check: None,
             max_positions: 6,
             max_weight_pct: 25.0,
             min_cash_pct: 10.0,
-            stop_loss_pct: 8.0,
-            trend_ma: 20,
+            protection_stop_loss_pct: None,
             weak_market: WeakMarket::Half,
             weak_threshold_pct: 30.0,
             chase_limit_pct: 5.0,
@@ -262,7 +252,7 @@ impl Preset {
                 max_positions: 5,
                 max_weight_pct: 20.0,
                 min_cash_pct: 20.0,
-                stop_loss_pct: 6.0,
+                protection_stop_loss_pct: None,
                 weak_market: WeakMarket::Pause,
                 chase_limit_pct: 3.0,
                 ..base
@@ -272,8 +262,7 @@ impl Preset {
                 max_positions: 8,
                 max_weight_pct: 30.0,
                 min_cash_pct: 0.0,
-                stop_loss_pct: 10.0,
-                trend_ma: 60,
+                protection_stop_loss_pct: None,
                 weak_market: WeakMarket::Normal,
                 chase_limit_pct: 7.0,
                 sell_st: false,
@@ -300,15 +289,17 @@ mod tests {
             Preset::Aggressive.rules(),
         );
         assert!(c.max_positions < b.max_positions && b.max_positions < a.max_positions);
-        assert!(c.stop_loss_pct < b.stop_loss_pct && b.stop_loss_pct < a.stop_loss_pct);
+        assert!(c.protection_stop_loss_pct.is_none());
+        assert!(b.protection_stop_loss_pct.is_none());
+        assert!(a.protection_stop_loss_pct.is_none());
         assert!(c.min_picks >= b.min_picks && b.min_picks >= a.min_picks);
         assert_eq!(Rules::default(), b);
     }
 
     #[test]
     fn missing_fields_use_balanced_values_and_empty_means_all() {
-        let r: Rules = serde_json::from_value(serde_json::json!({"stop_loss_pct": 5.0})).unwrap();
-        assert_eq!(r.stop_loss_pct, 5.0);
+        let r: Rules = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(r.protection_stop_loss_pct.is_none());
         assert_eq!(r.max_positions, Preset::Balanced.rules().max_positions);
         assert!(r.uses(42));
         let r = Rules {
@@ -325,6 +316,13 @@ mod tests {
             .is_err(),
             "一个都不勾不行，不会当成全部"
         );
-        assert!(Rules { trend_ma: 7, ..r }.validate().is_err());
+        assert!(
+            Rules {
+                protection_stop_loss_pct: Some(1.0),
+                ..r
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

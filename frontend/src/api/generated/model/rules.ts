@@ -24,27 +24,23 @@ export interface Rules {
   max_weight_pct?: number;
   /** 至少留多少现金（占总资产的百分比） */
   min_cash_pct?: number;
-  /** 历史兼容字段：旧版本保存的有效门槛仍能读取，但当前建议流程不使用它 */
-  min_edge_pct?: number;
   /**
      * 至少几个勾选的策略同时选中才买
      * @minimum 0
      */
   min_picks?: number;
+  /**
+     * 账户保护线：比成本价亏多少（%）就卖；默认关闭，由账户主动开启
+     * @nullable
+     */
+  protection_stop_loss_pct?: number | null;
   /** 持有的股票被 ST 时卖出 */
   sell_st?: boolean;
-  /** 止损线：比成本价亏多少（%）就卖 */
-  stop_loss_pct?: number;
   /**
-     * 只参考这些策略（策略编号）；旧数据为 null 时兼容为当前全部参加巡检的策略，新账户保存当前策略快照
+     * 只参考这些策略（策略编号）；为空时表示当前全部参加巡检的策略，新账户保存当前策略快照
      * @nullable
      */
   strategies?: number[] | null;
-  /**
-     * 收盘跌破几日均线就卖
-     * @minimum 0
-     */
-  trend_ma?: number;
   weak_market?: WeakMarket;
   /** 全市场站上 20 日均线的股票比例低于多少（%）算弱市 */
   weak_threshold_pct?: number;
