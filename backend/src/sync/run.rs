@@ -158,7 +158,9 @@ pub async fn stalled(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
 
 pub async fn planned_since_runs(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
     Ok(sqlx::query_scalar(
-        "SELECT run_id FROM ops.run WHERE status = 'succeeded' AND jsonb_object_length(coalesce(params->'planned_since_marks', '{}'::jsonb)) > 0 ORDER BY run_id",
+        "SELECT run_id FROM ops.run WHERE status = 'succeeded'
+         AND (SELECT count(*) FROM jsonb_object_keys(coalesce(params->'planned_since_marks', '{}'::jsonb))) > 0
+         ORDER BY run_id",
     )
     .fetch_all(pool)
     .await?)
