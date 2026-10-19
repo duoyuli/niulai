@@ -2,6 +2,7 @@ export * from './accounts/accounts';
 export * from './auth/auth';
 export * from './backtest/backtest';
 export * from './market/market';
+export * from './operation-log/operation-log';
 export * from './setup/setup';
 export * from './signal/signal';
 export * from './strategy/strategy';

@@ -45,7 +45,11 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
         let mut rx = stop_rx.clone();
         tracing::info!(%bind, "API 已启动，接口规范：/api/v1/openapi.json");
         set.spawn(async move {
-            let r = axum::serve(listener, app).with_graceful_shutdown(async move {
+            let r = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
                 let _ = rx.wait_for(|stop| *stop).await;
             });
             ("API", r.await.map_err(anyhow::Error::from))

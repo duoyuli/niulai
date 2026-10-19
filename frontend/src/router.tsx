@@ -22,6 +22,7 @@ const IndicatorDetailPage = page(() => import("./pages/IndicatorsPage"), "Indica
 const IndicatorsPage = page(() => import("./pages/IndicatorsPage"), "IndicatorsPage");
 const IndicesPage = page(() => import("./pages/IndicesPage"), "IndicesPage");
 const MePage = page(() => import("./pages/MePage"), "MePage");
+const OperationLogsPage = page(() => import("./pages/OperationLogsPage"), "OperationLogsPage");
 const RunDetailPage = page(() => import("./pages/RunDetailPage"), "RunDetailPage");
 const SecurityDetailPage = page(() => import("./pages/SecurityDetailPage"), "SecurityDetailPage");
 const SetupPage = page(() => import("./pages/SetupPage"), "SetupPage");
@@ -121,6 +122,14 @@ export const router = createBrowserRouter([
             element: (
               <AdminOnly>
                 <UsersPage />
+              </AdminOnly>
+            ),
+          },
+          {
+            path: "/operation-logs",
+            element: (
+              <AdminOnly>
+                <OperationLogsPage />
               </AdminOnly>
             ),
           },

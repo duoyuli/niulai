@@ -601,8 +601,9 @@ datasets:
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
     trade_date_guard: true
+    empty_codes: [3002]                       # 个别场内基金当天没有可用快照，按无数据记账，不作为同步失败
     sink: [mkt.etf_bar_1d]
-    notes: 每次只能查 1 只（不支持批量），约 2100 次/天；含换手率。
+    notes: 每次只能查 1 只（不支持批量），ETF 全量约 1719 次/交易日；含换手率。错误码 3002 表示该代码当天暂无可用快照，按 empty 处理。
 
   - id: fund.nav
     title: 基金净值

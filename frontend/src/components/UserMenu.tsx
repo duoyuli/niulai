@@ -26,6 +26,7 @@ export function UserMenu({ me }: { me: AuthStatus }) {
   const personalItems = [{ to: "/me", label: "密码设置" }];
   const adminItems = [
     { to: "/users", label: "用户管理" },
+    { to: "/operation-logs", label: "操作日志" },
     { to: "/setup", label: "数据源设置" },
   ];
   return (

@@ -856,6 +856,8 @@ async fn logged_in(app: axum::Router) -> axum::Router {
         .method("POST")
         .uri("/api/v1/auth/login")
         .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.7")
+        .header("user-agent", "NiulaiTestDevice/1.0")
         .body(Body::from(
             json!({"username": "admin", "password": "secret-pass"}).to_string(),
         ))
@@ -932,6 +934,8 @@ async fn login_is_required_and_lasts_30_days() {
         .method("POST")
         .uri("/api/v1/auth/login")
         .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.7")
+        .header("user-agent", "NiulaiTestDevice/1.0")
         .body(Body::from(
             json!({"username": "admin", "password": "secret-pass"}).to_string(),
         ))
@@ -943,6 +947,20 @@ async fn login_is_required_and_lasts_30_days() {
         set.contains("Max-Age=2592000") && set.contains("HttpOnly"),
         "{set}"
     );
+    let log: (i64, String, String, String, String) = sqlx::query_as(
+        "SELECT user_id, username, action, ip_address, device
+         FROM app.operation_log
+         ORDER BY log_id DESC
+         LIMIT 1",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(log.0, 1);
+    assert_eq!(log.1, "admin");
+    assert_eq!(log.2, "login");
+    assert_eq!(log.3, "203.0.113.7");
+    assert_eq!(log.4, "NiulaiTestDevice/1.0");
     let cookie = set.split(';').next().unwrap().to_string();
     let with = |uri: &str, cookie: &str| {
         Request::builder()
@@ -984,6 +1002,16 @@ async fn login_is_required_and_lasts_30_days() {
             .status(),
         StatusCode::OK
     );
+    let logs = app
+        .clone()
+        .oneshot(with("/api/v1/operation-logs?limit=1", &cookie))
+        .await
+        .unwrap();
+    assert_eq!(logs.status(), StatusCode::OK);
+    let logs = logs.into_body().collect().await.unwrap().to_bytes();
+    let logs: Value = serde_json::from_slice(&logs).unwrap();
+    assert_eq!(logs.as_array().unwrap().len(), 1);
+    assert_eq!(logs[0]["action"], "login");
     // 配置里的账号密码只用来设置第一个管理员一次：之后改配置不影响登录，密码在网页上改
     let mut changed = bare_settings("http://127.0.0.1:1", Some("test"));
     changed.admin_password = "new-pass".into();

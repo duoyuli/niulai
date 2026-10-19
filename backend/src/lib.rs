@@ -17,6 +17,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod instrument;
+pub mod operation_log;
 pub mod server;
 pub mod setup;
 pub mod sync;

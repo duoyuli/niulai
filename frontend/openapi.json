@@ -2169,6 +2169,63 @@
         }
       }
     },
+    "/operation-logs": {
+      "get": {
+        "tags": [
+          "operation-log"
+        ],
+        "summary": "最近的成功登录日志。登录失败不写入操作日志。",
+        "operationId": "list_operation_logs",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "返回条数，默认 100，最大 200",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "跳过的条数，默认 0",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "default": 0,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OperationLog"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/ready": {
       "get": {
         "tags": [
@@ -7428,6 +7485,50 @@
           }
         ]
       },
+      "OperationLog": {
+        "type": "object",
+        "required": [
+          "log_id",
+          "username",
+          "action",
+          "ip_address",
+          "device",
+          "created_at"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "当前只会是 login"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "device": {
+            "type": "string",
+            "description": "登录请求的 User-Agent"
+          },
+          "ip_address": {
+            "type": "string"
+          },
+          "log_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "日志编号"
+          },
+          "user_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "用户被删除后为空；username 仍保留当时的用户名"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
       "Overview": {
         "type": "object",
         "required": [
@@ -11219,6 +11320,10 @@
     {
       "name": "auth",
       "description": "登录与改密码"
+    },
+    {
+      "name": "operation-log",
+      "description": "操作日志（管理员）"
     },
     {
       "name": "users",

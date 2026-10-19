@@ -275,3 +275,31 @@ fn parquet_rows(bytes: bytes::Bytes) -> anyhow::Result<Vec<Value>> {
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn configured_etf_snapshot_no_data_code_is_not_a_failure() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/datasets.yaml");
+        let registry = super::super::spec::Registry::load(&path).unwrap();
+        let snapshot = registry.get("fund.market_snapshot").unwrap();
+        let no_data = CallError::Retryable {
+            code: Some(3002),
+            http_status: Some(200),
+            message: "Fund market snapshot is not available yet".into(),
+            latency_ms: 1,
+        };
+        let other = CallError::Retryable {
+            code: Some(3003),
+            http_status: Some(200),
+            message: "unexpected supplier response".into(),
+            latency_ms: 1,
+        };
+
+        assert!(is_empty_code(snapshot, &no_data));
+        assert!(!is_empty_code(snapshot, &other));
+    }
+}

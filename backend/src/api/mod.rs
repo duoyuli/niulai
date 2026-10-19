@@ -6,6 +6,7 @@ pub mod backtest;
 pub mod insight;
 pub mod market;
 pub mod metrics;
+pub mod operation_log;
 pub mod setup;
 pub mod signal;
 pub mod strategy;
@@ -58,6 +59,7 @@ pub struct AppState {
     tags(
         (name = "system", description = "健康检查、版本与一键升级"),
         (name = "auth", description = "登录与改密码"),
+        (name = "operation-log", description = "操作日志（管理员）"),
         (name = "users", description = "用户管理（管理员）"),
         (name = "setup", description = "首次登录引导：配置 API Key"),
         (name = "market", description = "证券、日线、指数与均线信号"),
@@ -129,6 +131,7 @@ fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(health))
         .routes(routes!(ready))
         .merge(auth::routes())
+        .merge(operation_log::routes())
         .merge(users::routes())
         .merge(system::routes())
         .merge(setup::routes())

@@ -3,13 +3,14 @@
 //! 规则见 docs/interfaces/rest_api.md#auth。
 
 use axum::Json;
-use axum::extract::{FromRequestParts, Request, State};
-use axum::http::header::{COOKIE, SET_COOKIE};
+use axum::extract::{ConnectInfo, Extension, FromRequestParts, Request, State};
+use axum::http::header::{COOKIE, SET_COOKIE, USER_AGENT};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -30,12 +31,13 @@ const PUBLIC_PATHS: &[&str] = &[
     "/auth/logout",
     "/openapi.json",
 ];
-/// 只有管理员能访问（包括查看）的接口前缀：数据同步、数据源设置、用户管理、升级、手动巡检
+/// 只有管理员能访问（包括查看）的接口前缀：数据同步、数据源设置、用户管理、操作日志、升级、手动巡检
 const ADMIN_PREFIXES: &[&str] = &[
     "/sync",
     "/datasets",
     "/setup",
     "/users",
+    "/operation-logs",
     "/system/upgrade",
     "/screening",
 ];
@@ -127,7 +129,12 @@ impl From<&User> for AuthStatus {
     responses((status = 200, description = "登录成功，响应带 Set-Cookie", body = AuthStatus),
               (status = 401, description = "账号或密码不对，或已停用", body = crate::error::ErrorBody),
               (status = 429, description = "输错次数太多，暂停登录", body = crate::error::ErrorBody)))]
-async fn login(State(s): State<AppState>, Json(input): Json<LoginInput>) -> ApiResult<Response> {
+async fn login(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Json(input): Json<LoginInput>,
+) -> ApiResult<Response> {
     if let Some(left) = s.login_guard.locked_for(&input.username) {
         return Err(ApiError::TooManyRequests(format!(
             "输错次数太多，请 {} 分钟后再试",
@@ -149,6 +156,14 @@ async fn login(State(s): State<AppState>, Json(input): Json<LoginInput>) -> ApiR
         }
     };
     s.login_guard.succeeded(&input.username);
+    let ip_address = client_ip(connect.as_ref().map(|Extension(info)| info), &headers);
+    let device = headers
+        .get(USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("未知设备");
+    // 登录成功后再写入，失败登录不会产生「谁已登录」的记录。
+    crate::operation_log::record_login(&s.pool, user.user_id, &user.username, &ip_address, device)
+        .await?;
     with_session(&s, &user, Json(AuthStatus::from(&user)).into_response()).await
 }
 
@@ -302,6 +317,31 @@ fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .find_map(|kv| kv.trim().strip_prefix(name)?.strip_prefix('='))
 }
 
+/// 优先使用服务端注入的实际 TCP 地址；直接调用 Router 的测试和未注入连接信息时，
+/// 再兼容反向代理常用的请求头，最后明确记为 unknown。
+fn client_ip(connect: Option<&ConnectInfo<SocketAddr>>, headers: &HeaderMap) -> String {
+    connect
+        .map(|ConnectInfo(addr)| addr.ip().to_string())
+        .or_else(|| {
+            headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split(',').next())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,6 +391,7 @@ mod tests {
             (Method::GET, "/datasets"),
             (Method::GET, "/setup"),
             (Method::GET, "/users"),
+            (Method::GET, "/operation-logs"),
             (Method::PUT, "/watchlist"),
             (Method::PUT, "/watchlist/a/b"),
         ] {

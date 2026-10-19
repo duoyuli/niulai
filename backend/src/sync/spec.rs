@@ -715,6 +715,7 @@ mod tests {
         assert!(reg.get("fund.profile").unwrap().enabled);
         assert!(reg.get("fund.etf_bar_1d").unwrap().enabled);
         assert!(reg.get("fund.market_snapshot").unwrap().enabled);
+        assert_eq!(reg.get("fund.market_snapshot").unwrap().empty_codes, [3002]);
         assert!(reg.get("special.limit_up_pool").unwrap().enabled);
     }
 
