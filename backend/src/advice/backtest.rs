@@ -198,12 +198,7 @@ pub async fn run(
         .into_iter()
         .collect();
     let base_def = Definition::any_assets(asset_types.clone());
-    let warmup = defs
-        .iter()
-        .map(|d| d.warmup())
-        .max()
-        .unwrap_or(30)
-        + 5;
+    let warmup = defs.iter().map(|d| d.warmup()).max().unwrap_or(30) + 5;
     let history_start = rules
         .history_check
         .as_ref()
@@ -769,7 +764,10 @@ mod tests {
             ..Preset::Aggressive.rules()
         };
         let names = vec!["策略一".to_string(), "策略二".to_string()];
-        let defs_owned = [Definition::any_stock(), Definition::any_stock()];
+        let defs_owned = [
+            Definition::any_assets(vec!["stock".into()]),
+            Definition::any_assets(vec!["stock".into()]),
+        ];
         let defs: Vec<&Definition> = defs_owned.iter().collect();
         // 两个策略都有效：A 第 1 天买入一路涨；B 第 2 天买入，第 3 天收盘亏 10% 触发止损，第 4 天卖出
         let both: HashMap<i32, YearEdge> = HashMap::from([(2026, YearEdge { mask: 0b11 })]);

@@ -13,11 +13,11 @@ use crate::account::lots::{self, Fees, round2};
 use crate::account::rules::{Rules, WeakMarket};
 
 /// 生成规则的版本：规则改了就加一，历史建议记着当时的版本
-pub const RULES_VERSION: i32 = 4;
+pub const RULES_VERSION: i32 = 3;
 /// 「没选上的候选」最多列几只
 const MAX_SKIPPED: usize = 8;
 
-/// 一只股票在建议交易日的状态（价格是未复权价；最新一段的前复权价等于原价）
+/// 一只资产在建议交易日的状态（价格是未复权价；最新一段的前复权价等于原价）
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Snapshot {
     pub close: f64,
@@ -203,7 +203,6 @@ pub struct Item {
     pub plan: Vec<String>,
     /// 买入时：选中它的策略（排第一的）；执行后记在持仓上，以后按它的卖出条件判断
     pub strategy_id: Option<i64>,
-    /// 买入或持仓时：账户保护线开启后的保护价；关闭时为空
     pub stop_price: Option<f64>,
     /// 买入时：下一个交易日开盘价不高于它才买，高于就是追高、放弃（参考价加追高上限）
     #[serde(default)]
@@ -582,7 +581,7 @@ pub fn generate(inp: &Input) -> Advice {
         .count();
     if missing_cost > 0 {
         notes.push(format!(
-            "{missing_cost} 只持仓没填成本价，不能按策略止损、止盈或账户保护线判断，可以在持仓页补上"
+            "{missing_cost} 只持仓没填成本价，不能按止损线判断，可以在持仓页补上"
         ));
     }
 
@@ -994,7 +993,9 @@ fn buy_item(
     if let (Some(stop_price), Some(pct)) = (stop_price, p.protection_stop_loss_pct) {
         let loss = shares as f64 * (close - stop_price)
             + fee
-            + inp.fees.sell_fee(shares as f64 * stop_price);
+            + inp
+                .fees
+                .sell_fee_for(&c.asset_type, shares as f64 * stop_price);
         plan.push(format!(
             "账户保护价 {stop_price:.2} 元：亏损达到 {pct}% 会建议卖出，这笔大约亏 {}，占总资产 {:.1}%",
             yuan(loss),
