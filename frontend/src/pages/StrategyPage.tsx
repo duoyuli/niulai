@@ -34,6 +34,7 @@ import { WatchButton } from "../components/WatchButton";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtBig, fmtDateTime, fmtInt, fmtPctValue, fmtPrice, RANGES, rangeStart, upDownClass } from "../lib/format";
+import { invalidateStrategyQueries } from "../lib/queryInvalidation";
 import { holdingsText, MAX_HOLDINGS } from "../lib/strategy";
 
 const TABS = [
@@ -50,7 +51,7 @@ export function StrategyPage() {
   const qc = useQueryClient();
   const [s, set] = useSearchState({ tab: "picks", date: "" });
   const strategy = useGetStrategy(id);
-  const refresh = () => qc.invalidateQueries();
+  const refresh = () => invalidateStrategyQueries(qc, id);
   const update = useUpdateStrategy({ mutation: { onSuccess: refresh } });
   const remove = useDeleteStrategy({ mutation: { onSuccess: () => nav("/strategies") } });
   const admin = useIsAdmin();
@@ -181,7 +182,7 @@ function Conditions({ e }: { e: Explained }) {
 function Picks({ id, st, date, onDate }: { id: number; st: StrategyItem; date: string; onDate: (d: string) => void }) {
   const qc = useQueryClient();
   const results = useResults(id, date ? { date } : undefined, { query: { placeholderData: keepPreviousData } });
-  const run = useRunScreening({ mutation: { onSuccess: () => qc.invalidateQueries() } });
+  const run = useRunScreening({ mutation: { onSuccess: () => invalidateStrategyQueries(qc, id) } });
   const admin = useIsAdmin();
   return (
     <Card

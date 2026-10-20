@@ -47,6 +47,7 @@ import { useSearchState } from "../hooks/useSearchState";
 import { ACTIONS, TRADE_KINDS, TRADE_SOURCES, yuan } from "../lib/accounts";
 import { BACKTEST_RANGES, fmtDateTime, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
 import { ASSET_TYPES } from "../lib/labels";
+import { invalidateAccountQueries } from "../lib/queryInvalidation";
 
 const TABS = [
   { value: "advice", label: "运营" },
@@ -227,7 +228,7 @@ function RightsNotice({ d }: { d: AccountDetail }) {
   const refresh = (r: AccountDetail) => {
     qc.setQueryData(getGetAccountQueryKey(id), r);
     qc.invalidateQueries({ queryKey: getListCorpActionsQueryKey(id) });
-    qc.invalidateQueries();
+    invalidateAccountQueries(qc, id);
   };
   const subscribe = useSubscribeRights({
     mutation: {
@@ -243,7 +244,7 @@ function RightsNotice({ d }: { d: AccountDetail }) {
       onSuccess: () => {
         setError(null);
         qc.invalidateQueries({ queryKey: getListCorpActionsQueryKey(id) });
-        qc.invalidateQueries();
+        invalidateAccountQueries(qc, id);
       },
       onError: (e) => setError(errorText(e)),
     },
@@ -321,7 +322,7 @@ function TradeForm({ d, onDone }: { d: AccountDetail; onDone: () => void }) {
       onSuccess: (r) => {
         qc.setQueryData(getGetAccountQueryKey(id), r);
         qc.invalidateQueries({ queryKey: getListAccountsQueryKey() });
-        qc.invalidateQueries();
+        invalidateAccountQueries(qc, id);
         onDone();
       },
     },
@@ -429,7 +430,7 @@ function Records({ id }: { id: number }) {
         qc.setQueryData(getGetAccountQueryKey(id), r);
         qc.invalidateQueries({ queryKey: getListAccountsQueryKey() });
         qc.invalidateQueries({ queryKey: getListTradesQueryKey(id) });
-        qc.invalidateQueries();
+        invalidateAccountQueries(qc, id);
         setUndoError(null);
       },
       onError: (e) => setUndoError(errorText(e)),
@@ -703,7 +704,7 @@ function Settings({ d }: { d: AccountDetail }) {
     mutation: {
       onSuccess: (r) => {
         qc.setQueryData(getGetAccountQueryKey(id), r);
-        qc.invalidateQueries();
+        invalidateAccountQueries(qc, id);
         setSaved(true);
       },
     },

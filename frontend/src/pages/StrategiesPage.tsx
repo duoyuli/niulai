@@ -12,6 +12,7 @@ import { StrategyNav } from "../components/StrategyNav";
 import { Badge, buttonClass, Card, Empty, errorText, PageHeader, QueryView } from "../components/ui";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { fmtInt } from "../lib/format";
+import { invalidateStrategyQueries } from "../lib/queryInvalidation";
 import { holdingsText } from "../lib/strategy";
 
 export function StrategiesPage() {
@@ -21,7 +22,7 @@ export function StrategiesPage() {
   const [sortOpen, setSortOpen] = useState(false);
   const run = useRunScreening({
     // 巡检结果出现在策略列表、策略详情和个股诊断里，全部刷新
-    mutation: { onSuccess: () => qc.invalidateQueries() },
+    mutation: { onSuccess: () => invalidateStrategyQueries(qc) },
   });
 
   return (
