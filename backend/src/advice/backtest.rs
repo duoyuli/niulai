@@ -51,10 +51,6 @@ pub fn resolve_range(
 pub const MAX_STRATEGIES: usize = 64;
 /// 本金（只影响金额，不影响收益率）
 const CAPITAL: f64 = 1_000_000.0;
-const FEES: Fees = Fees {
-    commission_rate: 0.00025,
-    min_commission: 5.0,
-};
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
 pub struct RulesBacktestSummary {
@@ -164,6 +160,7 @@ pub async fn run(
     all: &[(i64, Definition)],
     start: NaiveDate,
     end: NaiveDate,
+    fees: Fees,
 ) -> anyhow::Result<Option<RulesBacktest>> {
     let used: Vec<&(i64, Definition)> = all
         .iter()
@@ -356,6 +353,7 @@ pub async fn run(
         bench,
         &strategy_names,
         &defs,
+        fees,
     );
     r.summary.strategies = defs.len();
     Ok(Some(r))
@@ -411,6 +409,7 @@ fn simulate(
     bench: Option<(String, HashMap<NaiveDate, f64>)>,
     strategy_names: &[String],
     defs: &[&Definition],
+    fees: Fees,
 ) -> RulesBacktest {
     let mut cash = CAPITAL;
     let mut held: Vec<Held> = vec![];
@@ -460,7 +459,7 @@ fn simulate(
             if let Some(pos) = held.iter().position(|h| h.stock == ps.stock) {
                 let h = held.swap_remove(pos);
                 let gross = h.units * s.q_open[k] as f64;
-                let net = gross - FEES.sell_fee_for(&s.asset_type, gross);
+                let net = gross - fees.sell_fee_for(&s.asset_type, gross);
                 cash += net;
                 closed += 1;
                 wins += (net > h.cost) as usize;
@@ -483,7 +482,7 @@ fn simulate(
                 continue;
             }
             let invest = b.budget.min(cash);
-            let fee = FEES.commission(invest);
+            let fee = fees.commission(invest);
             if invest <= fee * 2.0 {
                 continue;
             }
@@ -665,7 +664,7 @@ pub async fn refresh_presets(pool: &PgPool) -> anyhow::Result<()> {
         let start = latest
             .checked_sub_months(chrono::Months::new(12 * YEARS as u32))
             .unwrap_or(latest);
-        let Some(mut r) = run(pool, &rules, &defs, start, latest).await? else {
+        let Some(mut r) = run(pool, &rules, &defs, start, latest, Fees::default()).await? else {
             continue;
         };
         // 参考值只展示汇总，不保存几百笔交易记录
@@ -774,6 +773,7 @@ mod tests {
             None,
             &names,
             &defs,
+            Fees::default(),
         );
         assert_eq!(r.summary.trades, 1, "{:?}", r.summary);
         assert_eq!(r.summary.win_rate, Some(0.0));
@@ -805,6 +805,7 @@ mod tests {
             None,
             &names,
             &defs,
+            Fees::default(),
         );
         assert_eq!(r.summary.trades, 1);
         assert!(r.summary.total_return < 0.0);

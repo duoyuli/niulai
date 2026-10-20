@@ -849,7 +849,7 @@ async fn account_backtest(
     let (start, end) =
         backtest::resolve_range(latest, q.start, q.end).map_err(ApiError::BadRequest)?;
     let defs = screener::screening_strategies(&s.pool).await?;
-    backtest::run(&s.pool, &acc.rules, &defs, start, end)
+    backtest::run(&s.pool, &acc.rules, &defs, start, end, acc.fees)
         .await?
         .map(Json)
         .ok_or_else(|| {

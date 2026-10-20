@@ -44,6 +44,15 @@ pub struct Fees {
     pub min_commission: f64,
 }
 
+impl Default for Fees {
+    fn default() -> Self {
+        Self {
+            commission_rate: 0.00025,
+            min_commission: 5.0,
+        }
+    }
+}
+
 impl Fees {
     pub fn commission(&self, amount: f64) -> f64 {
         round2((amount * self.commission_rate).max(self.min_commission))
