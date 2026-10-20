@@ -558,22 +558,8 @@ pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
     // 重试用尽的临时失败（供应商暂时不可用），之后也没有成功过：再试一次。每个任务最多补偿 MAX_REPAIRS 次，
     // 供应商一直给不了的分区不会每天被重排、把所属的运行重新打开
     let mut tx = engine.pool.begin().await?;
-    let retried = sqlx::query(
-        // 同一个分区可能有多个失败的任务：只重新排队最新的一个，而且这个分区没有未完成的任务（每个分区同时只能有一个）
-        // 重新排队的任务放到补偿层（50 层，保留 P0–P3 的 10–40），不和每日数据抢先后
-        "UPDATE ops.task t SET status = 'pending', attempts = 0, not_before = now(), finished_at = NULL, priority = 50 + t.priority % 50, repairs = t.repairs + 1
-         WHERE t.task_id IN (
-           SELECT max(x.task_id) FROM ops.task x
-           WHERE x.status = 'dead' AND x.last_error LIKE '可重试错误%'
-             AND NOT EXISTS (SELECT 1 FROM ops.task o WHERE o.dataset_id = x.dataset_id AND o.part_key = x.part_key
-                               AND (o.status IN ('pending', 'running', 'failed') OR (o.task_id > x.task_id AND o.status IN ('done', 'empty'))))
-           GROUP BY x.dataset_id, x.part_key)
-           AND t.repairs < $1",
-    )
-    .bind(MAX_REPAIRS)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+    // 同一个分区只重新排队最新的 dead 任务，状态迁移由 queue 模块统一执行。
+    let retried = super::queue::requeue_dead_for_repair(&mut tx, MAX_REPAIRS).await?;
     // 只有明确的 partial repair 运行允许重新打开；成功运行不会被补偿路径改写。
     let _ = super::run::reopen_partial_repairs(&mut tx).await?;
     tx.commit().await?;

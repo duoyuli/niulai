@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use chrono::NaiveDate;
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 /// 数据尚未就绪时，任务推迟多久再执行
 pub const DEFER_DELAY: &str = "10 minutes";
@@ -76,6 +76,28 @@ pub async fn skip_dead(pool: &PgPool, task_id: i64, why: &str) -> anyhow::Result
     .await?
     .rows_affected()
         > 0)
+}
+
+/// 将补偿允许重试的 dead 任务重新排队；任务状态迁移集中在队列模块。
+pub async fn requeue_dead_for_repair(
+    conn: &mut PgConnection,
+    max_repairs: i16,
+) -> anyhow::Result<u64> {
+    Ok(sqlx::query(
+        "UPDATE ops.task t SET status = 'pending', attempts = 0, not_before = now(),
+                finished_at = NULL, priority = 50 + t.priority % 50, repairs = t.repairs + 1
+         WHERE t.task_id IN (
+           SELECT max(x.task_id) FROM ops.task x
+           WHERE x.status = 'dead' AND x.last_error LIKE '可重试错误%'
+             AND NOT EXISTS (SELECT 1 FROM ops.task o WHERE o.dataset_id = x.dataset_id AND o.part_key = x.part_key
+                               AND (o.status IN ('pending', 'running', 'failed') OR (o.task_id > x.task_id AND o.status IN ('done', 'empty'))))
+           GROUP BY x.dataset_id, x.part_key)
+           AND t.repairs < $1",
+    )
+    .bind(max_repairs)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 impl TaskQueue {
