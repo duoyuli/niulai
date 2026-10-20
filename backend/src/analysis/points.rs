@@ -89,7 +89,7 @@ pub fn run(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, from:
         };
         let one_price = bars[k].high == bars[k].low;
         if let Some(i) = pending_buy
-            && !(one_price && bars[k].q_open > prev)
+            && !super::backtest::order_blocked(true, one_price, bars[k].q_open, prev)
         {
             pending_buy = None;
             trades.push(PointTrade {
@@ -107,7 +107,7 @@ pub fn run(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, from:
             holding = Some((trades.len() - 1, k, bars[k].q_open));
         }
         if let (Some((s, reason)), Some((t, j, q))) = (pending_sell, holding)
-            && !(one_price && bars[k].q_open < prev)
+            && !super::backtest::order_blocked(false, one_price, bars[k].q_open, prev)
         {
             let tr = &mut trades[t];
             tr.exit_signal_date = Some(bars[s].date);

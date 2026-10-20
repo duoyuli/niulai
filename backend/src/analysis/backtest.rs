@@ -118,6 +118,17 @@ pub fn exit_reason(
     }
 }
 
+/// A 股一字板的成交约束：买单遇到向上封板、卖单遇到向下封板时顺延。
+/// 所有交易状态机共用这条执行规则。
+pub fn order_blocked(is_buy: bool, one_price: bool, open: f64, previous_close: f64) -> bool {
+    one_price
+        && if is_buy {
+            open > previous_close
+        } else {
+            open < previous_close
+        }
+}
+
 #[derive(Serialize, ToSchema, Debug)]
 pub struct Trade {
     pub entry_date: NaiveDate,
@@ -274,11 +285,7 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
         if let Some(side) = pending {
             // 一字板：全天只有一个价格。按前复权价和前一天比较，除权日也不会误判
             let prev = if i > 0 { bars[i - 1].q_close } else { b.q_open };
-            let blocked = b.high == b.low
-                && match side {
-                    Side::Buy => b.q_open > prev,
-                    Side::Sell => b.q_open < prev,
-                };
+            let blocked = order_blocked(matches!(side, Side::Buy), b.high == b.low, b.q_open, prev);
             if blocked {
                 deferred += 1;
             } else {
