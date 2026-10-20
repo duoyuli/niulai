@@ -6,7 +6,7 @@
 ## 通用约定
 
 - 所有接口都在 `/api/v1` 下，响应是 JSON。默认监听 `127.0.0.1:8080`（`NIULAI_API_BIND`）。同一端口的其他路径是前端页面（配置了 `NIULAI_WEB_DIR` 时），未匹配的 `/api/` 路径返回 JSON 404，见 [由 niulai serve 提供](../architecture/frontend.md#serving)。
-- **要先登录**：除健康检查和登录本身，所有接口都要带登录 Cookie，否则返回 401；普通用户调用管理员接口返回 403，见 [登录与权限](#auth)。默认只监听本机端口（`127.0.0.1:8080`），见 [部署](../operations/runbook.md#deployment)。
+- **要先登录**：除健康检查、登录/退出、OpenAPI 和监控指标外，所有接口都要带登录 Cookie，否则返回 401；普通用户调用管理员接口返回 403，见 [登录与权限](#auth)。默认只监听本机端口（`127.0.0.1:8080`），见 [部署](../operations/runbook.md#deployment)。
 - 请求标识：每个响应都带 `x-request-id` 头。请求中带了这个头时沿用，否则生成一个 UUID；日志中的 `request_id` 与它一致。
 - 超时：单个请求超过 120 秒返回 408。
 - 数值格式：

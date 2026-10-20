@@ -4,7 +4,7 @@
 /// 解析后的版本号：年、月、日、补丁号（没有时为 0）；比较大小就是比较发布先后
 pub type Version = (u64, u64, u64, u64);
 
-// @project-doc docs/decisions/calendar_versioning.md
+// @project-doc docs/decisions/calendar_versioning.md#decision
 /// 正式版本号：四位年、两位月、两位日，可选补丁号；其他写法（例如带 `-` 的预发布）返回 None
 pub fn parse(v: &str) -> Option<Version> {
     let parts: Vec<&str> = v.split('.').collect();

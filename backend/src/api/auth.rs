@@ -30,6 +30,7 @@ const PUBLIC_PATHS: &[&str] = &[
     "/auth/login",
     "/auth/logout",
     "/openapi.json",
+    "/metrics",
 ];
 /// 只有管理员能访问（包括查看）的接口前缀：数据同步、数据源设置、用户管理、操作日志、升级、手动巡检
 const ADMIN_PREFIXES: &[&str] = &[

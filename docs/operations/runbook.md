@@ -24,7 +24,7 @@
 <a id="backfill"></a>
 ## 首次回补
 
-第一次在网页上配置 API Key 时自动规划 P0、P1 的全量回补，见 [首次登录引导](../interfaces/rest_api.md#setup)。约 31.8 万次请求（其中财务指标约 21.9 万次），按默认限速约 51 小时；回补排在日常同步后面，不影响每天的数据。各数据集的请求量见 [数据目录](../interfaces/dataset_catalog.md#request_volume)。
+第一次在网页上配置 API Key 时自动规划 P0、P1 的全量回补，见 [首次登录引导](../interfaces/rest_api.md#setup)。历史测量约 31.8 万次请求（其中财务指标约 21.9 万次），在默认限速下曾约需 51 小时；实际耗时取决于数据集开关、供应商响应和失败重试。回补排在日常同步后面，不影响每天的数据。各数据集的请求量见 [数据目录](../interfaces/dataset_catalog.md#request_volume)。
 
 Key 来自环境变量或需要重新回补时手动规划：
 

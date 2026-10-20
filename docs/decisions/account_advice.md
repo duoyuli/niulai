@@ -1,7 +1,7 @@
 # ADR：账户的每日调仓建议
 
 - 状态：已采纳（accepted），2026-10-17。
-- 相关文档：[账户与调仓建议](../domains/accounts.md)、[选股策略与诊断](../domains/strategies.md)、[ADR：多用户登录与角色](multi_user_login.md)。调研和方案草稿在 `docs/research/2026-10-17-account-advice-design.md`。
+- 相关文档：[账户与调仓建议](../domains/accounts.md)、[选股策略与诊断](../domains/strategies.md)、[ADR：多用户登录与角色](multi_user_login.md)。
 
 ## 背景
 
