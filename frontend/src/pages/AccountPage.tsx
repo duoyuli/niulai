@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
   accountBacktest,
@@ -700,6 +700,15 @@ function Settings({ d }: { d: AccountDetail }) {
   const [note, setNote] = useState(acc.note);
   const [confirm, setConfirm] = useState("");
   const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    setName(acc.name);
+    setRules(acc.rules as FullRules);
+    setRate(String(acc.fees.commission_rate * 10000));
+    setMinFee(String(acc.fees.min_commission));
+    setNote(acc.note);
+    setConfirm("");
+    setSaved(false);
+  }, [acc]);
   const update = useUpdateAccount({
     mutation: {
       onSuccess: (r) => {
