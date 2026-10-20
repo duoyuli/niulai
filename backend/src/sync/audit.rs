@@ -172,7 +172,8 @@ pub async fn gaps(
     // 只有当天值的数据，在供应商还停在这个交易日时（例如周末、下一个交易日开盘前）仍然取得到
     // 查询和同步任务共用限速，同步繁忙时可能要排队：最多等 2 秒，没等到就当作不知道（后台查完会进缓存）
     let client = engine.client.clone();
-    let lookup = tokio::spawn(async move { super::calendar::latest_vendor_day(&client).await });
+    let lookup =
+        tokio::spawn(async move { super::calendar::latest_vendor_day(client.as_ref()).await });
     let vendor_day = match tokio::time::timeout(std::time::Duration::from_secs(2), lookup).await {
         Ok(Ok(Ok(d))) => Some(d),
         _ => None,

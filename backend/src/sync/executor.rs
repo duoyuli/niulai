@@ -20,7 +20,7 @@ use super::planner::Planner;
 use super::queue::{ClaimedTask, Finished, HEARTBEAT, TaskQueue, TaskStats};
 use super::spec::{DatasetSpec, Registry};
 use super::{cursor, postprocess, records, run, sinks, template};
-use crate::vendor::{CallError, HithinkClient};
+use crate::vendor::{CallError, MarketDataClient};
 
 /// 队列为空时的轮询间隔
 const IDLE_POLL: Duration = Duration::from_secs(2);
@@ -29,7 +29,7 @@ const MAINTENANCE_EVERY: Duration = Duration::from_secs(60);
 
 pub struct Executor {
     pool: PgPool,
-    client: Arc<HithinkClient>,
+    client: Arc<dyn MarketDataClient>,
     registry: Arc<Registry>,
     queue: TaskQueue,
     fetcher: Fetcher,
@@ -54,7 +54,7 @@ enum Outcome {
 impl Executor {
     pub fn new(
         pool: PgPool,
-        client: Arc<HithinkClient>,
+        client: Arc<dyn MarketDataClient>,
         registry: Arc<Registry>,
         events: EventBus,
         worker_id: String,
@@ -177,7 +177,7 @@ impl Executor {
             }
         }
         for run_id in run::unchained(&self.pool).await? {
-            if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry)
+            if let Some(next) = Planner::new(&self.pool, self.client.as_ref(), &self.registry)
                 .continue_chain(run_id)
                 .await?
             {
@@ -384,7 +384,7 @@ impl Executor {
         if status == "succeeded" {
             self.commit_planned_since(run_id).await?;
         }
-        if let Some(next) = Planner::new(&self.pool, &self.client, &self.registry)
+        if let Some(next) = Planner::new(&self.pool, self.client.as_ref(), &self.registry)
             .continue_chain(run_id)
             .await?
         {

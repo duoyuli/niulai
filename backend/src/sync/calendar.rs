@@ -14,7 +14,7 @@ use sqlx::PgPool;
 
 use super::spec::{DatasetSpec, Partition};
 use crate::time::{cn_date_end_ms, cn_date_start_ms, now_cn, today_cn};
-use crate::vendor::HithinkClient;
+use crate::vendor::MarketDataClient;
 
 /// 交易日收盘后多久开始采集当天的快照类数据（Asia/Shanghai）
 pub const CLOSE_CUTOFF: NaiveTime = NaiveTime::from_hms_opt(15, 30, 0).unwrap();
@@ -24,7 +24,10 @@ pub const REFERENCE_INDEX: &str = "000001.SH";
 pub const LATEST_DAY_TTL: Duration = Duration::from_secs(600);
 
 /// 现取供应商交易日历（最近一年）并写入 ref.trading_day，返回日历中的日期
-pub async fn refresh(pool: &PgPool, client: &HithinkClient) -> anyhow::Result<Vec<NaiveDate>> {
+pub async fn refresh(
+    pool: &PgPool,
+    client: &dyn MarketDataClient,
+) -> anyhow::Result<Vec<NaiveDate>> {
     let resp = client
         .get("/api/a-share/calendar/trading-days", &[])
         .await?;
@@ -150,11 +153,11 @@ pub enum Readiness {
 /// 交易日校验。每个执行者一个实例；供应商最新交易日在进程内缓存。
 pub struct TradeDateGuard {
     pool: PgPool,
-    client: Arc<HithinkClient>,
+    client: Arc<dyn MarketDataClient>,
 }
 
 impl TradeDateGuard {
-    pub fn new(pool: PgPool, client: Arc<HithinkClient>) -> Self {
+    pub fn new(pool: PgPool, client: Arc<dyn MarketDataClient>) -> Self {
         TradeDateGuard { pool, client }
     }
 
@@ -170,7 +173,7 @@ impl TradeDateGuard {
         let mut known = is_known_trading_day(&self.pool, d).await?;
         // 本地日历可能还没有最近的交易日（日历在当天之前取过）：刷新一次再判断
         if !known && latest_api_day(&self.pool).await?.is_none_or(|m| m < d) {
-            refresh(&self.pool, &self.client).await?;
+            refresh(&self.pool, self.client.as_ref()).await?;
             known = is_known_trading_day(&self.pool, d).await?;
         }
         if !known {
@@ -196,7 +199,7 @@ impl TradeDateGuard {
     }
 
     async fn latest_vendor_day(&self) -> anyhow::Result<NaiveDate> {
-        latest_vendor_day(&self.client).await
+        latest_vendor_day(self.client.as_ref()).await
     }
 }
 
@@ -204,7 +207,7 @@ impl TradeDateGuard {
 static LATEST: Mutex<Option<(Instant, NaiveDate)>> = Mutex::new(None);
 
 /// 供应商最新的交易日：参照指数最新一根日线的日期，LATEST_DAY_TTL 内复用
-pub async fn latest_vendor_day(client: &HithinkClient) -> anyhow::Result<NaiveDate> {
+pub async fn latest_vendor_day(client: &dyn MarketDataClient) -> anyhow::Result<NaiveDate> {
     if let Some((at, d)) = *LATEST.lock().unwrap()
         && at.elapsed() < LATEST_DAY_TTL
     {

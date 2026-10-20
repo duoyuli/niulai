@@ -32,7 +32,7 @@ use std::time::Duration;
 use sqlx::{PgConnection, PgPool};
 
 use crate::config::Settings;
-use crate::vendor::{HithinkClient, RateLimiter};
+use crate::vendor::{HithinkClient, MarketDataClient, RateLimiter};
 use spec::Registry;
 
 /// 同步引擎：`niulai serve` 中的 API、执行循环、调度器，以及运维子命令共用
@@ -40,7 +40,7 @@ pub struct Engine {
     pub settings: Settings,
     pub pool: PgPool,
     pub cache: Arc<crate::cache::Cache>,
-    pub client: Arc<HithinkClient>,
+    pub client: Arc<dyn MarketDataClient>,
     pub registry: Arc<Registry>,
     pub events: events::EventBus,
 }
@@ -131,7 +131,7 @@ impl Engine {
     }
 
     pub fn planner(&self) -> planner::Planner<'_> {
-        planner::Planner::new(&self.pool, &self.client, &self.registry)
+        planner::Planner::new(&self.pool, self.client.as_ref(), &self.registry)
     }
 
     /// 按 ID 或优先级选择数据集。ids 为空时，按 priorities 选择已开启的数据集。

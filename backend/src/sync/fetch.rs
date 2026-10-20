@@ -9,7 +9,7 @@ use sqlx::PgPool;
 
 use super::records::extract;
 use super::spec::{DatasetSpec, Paging, Records};
-use crate::vendor::{CallError, CallResult, HithinkClient};
+use crate::vendor::{CallError, CallResult, MarketDataClient};
 
 /// 翻页上限，防止分页信息异常时无限翻页
 const MAX_PAGES: i32 = 10_000;
@@ -34,13 +34,13 @@ pub struct Target<'a> {
 
 pub struct Fetcher {
     pool: PgPool,
-    client: Arc<HithinkClient>,
+    client: Arc<dyn MarketDataClient>,
     /// 单次请求内可重试错误的退避秒数
     backoff_s: Vec<u64>,
 }
 
 impl Fetcher {
-    pub fn new(pool: PgPool, client: Arc<HithinkClient>, backoff_s: Vec<u64>) -> Self {
+    pub fn new(pool: PgPool, client: Arc<dyn MarketDataClient>, backoff_s: Vec<u64>) -> Self {
         Fetcher {
             pool,
             client,

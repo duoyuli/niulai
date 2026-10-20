@@ -424,7 +424,7 @@ async fn catch_up(engine: &Engine, today: NaiveDate) -> anyhow::Result<()> {
 
 /// 现取交易日历并写入 ref.trading_day，再判断今天是否为交易日
 async fn is_trading_day(engine: &Engine, today: NaiveDate) -> anyhow::Result<bool> {
-    match calendar::refresh(&engine.pool, &engine.client).await {
+    match calendar::refresh(&engine.pool, engine.client.as_ref()).await {
         Ok(dates) => Ok(dates.contains(&today)),
         Err(e) => {
             // 日历取不到时退回本地记录；本地也没有，就按交易日处理（执行快照类任务时还会再校验）

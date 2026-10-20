@@ -21,7 +21,7 @@ use super::spec::{DatasetSpec, Incremental, Partition, Registry, Schedule};
 use super::template::{self, Scope};
 use super::{calendar, cursor};
 use crate::time::{cn_date_end_ms, cn_date_start_ms, today_cn};
-use crate::vendor::HithinkClient;
+use crate::vendor::MarketDataClient;
 
 #[derive(Debug)]
 pub struct TaskSeed {
@@ -31,7 +31,7 @@ pub struct TaskSeed {
 
 pub struct PlanContext<'a> {
     pub pool: &'a PgPool,
-    pub client: &'a HithinkClient,
+    pub client: &'a dyn MarketDataClient,
     pub today: NaiveDate,
     pub kind: RunKind,
     /// 只规划这些证券（为空表示不限）；作用于按证券展开的分区
@@ -122,12 +122,12 @@ struct Planned<'s> {
 
 pub struct Planner<'a> {
     pool: &'a PgPool,
-    client: &'a HithinkClient,
+    client: &'a dyn MarketDataClient,
     registry: &'a Registry,
 }
 
 impl<'a> Planner<'a> {
-    pub fn new(pool: &'a PgPool, client: &'a HithinkClient, registry: &'a Registry) -> Self {
+    pub fn new(pool: &'a PgPool, client: &'a dyn MarketDataClient, registry: &'a Registry) -> Self {
         Planner {
             pool,
             client,
@@ -835,7 +835,10 @@ async fn universe_rows(
     Ok(rows)
 }
 
-async fn available_dates(client: &HithinkClient, endpoint: &str) -> anyhow::Result<Vec<NaiveDate>> {
+async fn available_dates(
+    client: &dyn MarketDataClient,
+    endpoint: &str,
+) -> anyhow::Result<Vec<NaiveDate>> {
     let resp = client
         .get(endpoint, &[])
         .await
