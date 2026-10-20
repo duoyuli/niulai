@@ -21,7 +21,7 @@ const NAV = [
 /** 不是每天用的，放在右侧：说明和数据。个人与管理员功能收在用户名的菜单里 */
 const AUX = [
   { to: "/guide", label: "说明", title: "指标、信号、策略是什么，怎么用", who: "all" },
-  { to: "/sync", label: "数据", title: "数据同步与指数板块", who: "all" },
+  { to: "/sync", label: "数据", title: "数据同步与指数板块", who: "admin" },
 ] as const;
 
 export function Layout() {
@@ -66,7 +66,7 @@ export function Layout() {
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-3">
             <SecuritySearch onPick={(code) => nav(`/securities/${code}`)} width="w-28 sm:w-56" />
-            {AUX.map((a) => (
+            {AUX.filter((a) => a.who === "all" || admin).map((a) => (
               <NavLink
                 key={a.to}
                 to={a.to}
