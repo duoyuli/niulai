@@ -28,11 +28,7 @@ pub async fn run_events(
                 }
             }
             event = events.recv() => match event {
-                Some(DomainEvent::SyncRunCompleted { run_id, price_changed }) => {
-                    if let Err(e) = handle_sync_run_completed(&pool, run_id, price_changed).await {
-                        tracing::error!(run_id, error = %format!("{e:#}"), "同步完成事件处理失败，将在后续维护中重试");
-                    }
-                }
+                Some(DomainEvent::SyncRunCompleted { .. }) => replay_pending_events(&pool).await,
                 Some(DomainEvent::MaintenanceTick) => {
                     replay_pending_events(&pool).await;
                     if let Err(e) = crate::analysis::prices::in_background(crate::advice::maintain(&pool)).await {
@@ -73,10 +69,14 @@ async fn replay_pending_events(pool: &PgPool) {
             return;
         }
     };
-    for (run_id, price_changed) in pending {
-        if let Err(e) = handle_sync_run_completed(pool, run_id, price_changed).await {
-            tracing::error!(run_id, error = %format!("{e:#}"), "重放同步完成事件失败");
-        }
+    let Some((run_id, _)) = pending.last().copied() else {
+        return;
+    };
+    let price_changed = pending.iter().any(|(_, changed)| *changed);
+    if let Err(e) = handle_sync_run_completed(pool, run_id, price_changed).await {
+        tracing::error!(run_id, error = %format!("{e:#}"), "同步完成事件处理失败，将在后续维护中重试");
+    } else if let Err(e) = crate::sync::run::clear_sync_event_pending_through(pool, run_id).await {
+        tracing::error!(run_id, error = %format!("{e:#}"), "清理已覆盖的同步完成事件失败");
     }
 }
 
