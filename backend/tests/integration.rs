@@ -97,7 +97,11 @@ fn sink_ctx<'a>(
         run_id,
         trade_date: Some("2026-06-29".parse().unwrap()),
         vars,
-        sink_mode: None,
+        sink_mode: match dataset_id {
+            "a_share.snapshot" | "fund.market_snapshot" | "index.snapshot" => Some("snapshot"),
+            "a_share.auction_final" => Some("float_cap"),
+            _ => Some("history"),
+        },
     }
 }
 
@@ -2002,7 +2006,7 @@ async fn audit_finds_gaps_and_plans_repairs() {
         .fetch_one(pool)
         .await
         .unwrap();
-    assert_eq!(reopened, "running", "重新排队的任务所在的运行重新打开");
+    assert_eq!(reopened, "partial", "补偿不会重开非 repair 终态运行");
     let pr: i16 = sqlx::query_scalar("SELECT priority FROM ops.task WHERE dataset_id = 'special.hot_stock_daily' AND status = 'pending'").fetch_one(pool).await.unwrap();
     assert!((50..100).contains(&pr), "重新排队的任务在补偿层：{pr}");
     db.drop().await;
