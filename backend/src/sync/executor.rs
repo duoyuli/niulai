@@ -354,6 +354,7 @@ impl Executor {
             run_id: task.run_id,
             trade_date: task.trade_date,
             vars,
+            sink_mode: spec.sink_mode.as_deref(),
         };
         for sink in &spec.sink {
             let n = sinks::apply_in_tx(&mut tx, sink, &ctx, &rows)

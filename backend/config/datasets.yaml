@@ -82,6 +82,7 @@ datasets:
     obs_date: "{date_ms:date}"
     incremental: {since_cursor: {overlap_days: 10}}
     schedule: weekly
+    sink_mode: history
     sink: [mkt.stock_bar_1d]
     notes: >-
       最早到 2005-01-04；窗口不超过 10 年；只返回开高低收、成交量（股）、成交额（元），停牌日无记录。
@@ -103,6 +104,7 @@ datasets:
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
+    sink_mode: snapshot
     sink: [mkt.stock_bar_1d]                   # source='snapshot'，同时写 pre_close；成交量为 0 的不写
     notes: >-
       全市场 28 页（size=200）。价格与历史接口一致；成交量和成交额只保留约 9 位有效数字。
@@ -137,6 +139,7 @@ datasets:
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
+    sink_mode: valuation
     sink: [fin.valuation_1d]
     notes: 只有最新值（PE TTM/MRQ、PB、PS、PCF），没有历史，每天存一份积累；56 次请求。
 
@@ -154,6 +157,7 @@ datasets:
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
+    sink_mode: float_cap
     sink: [fin.valuation_1d]                   # float_market_cap
     notes: >-
       集合竞价终态：竞价价格、量、额、未匹配量、竞价换手率、量比，另有 float_market_cap（流通市值）。
@@ -271,6 +275,7 @@ datasets:
     obs_date: "{date_ms:date}"
     incremental: {since_cursor: {overlap_days: 10}}
     schedule: weekly
+    sink_mode: history
     sink: [mkt.index_bar_1d]
     notes: 只有 2022-01-04 以后的数据；窗口起点早于这一天会返回空，floor 必须 >= 2022-01-01。
 
@@ -291,6 +296,7 @@ datasets:
     key: "{_run.trade_date}|{thscode}"
     thscode: "{thscode}"
     obs_date: "{_run.trade_date}"
+    sink_mode: snapshot
     sink: [mkt.index_bar_1d]
     notes: 每次最多 100 个；不接受 .CSI 代码（2026-10-16 实测）。
 
@@ -586,6 +592,7 @@ datasets:
     obs_date: "{date_ms:date}"
     incremental: {since_cursor: {overlap_days: 10}}
     schedule: weekly
+    sink_mode: history
     sink: [mkt.etf_bar_1d]
     notes: 前复权价格，只有近 5 年，只支持 ETF（1211 根 ≈ 5 年）。前复权会随分红变化，增量时需要整段重取。
 
@@ -602,6 +609,7 @@ datasets:
     thscode: "{thscode}"
     trade_date_guard: true
     empty_codes: [3002]                       # 个别场内基金当天没有可用快照，按无数据记账，不作为同步失败
+    sink_mode: snapshot
     sink: [mkt.etf_bar_1d]
     notes: 每次只能查 1 只（不支持批量），ETF 全量约 1719 次/交易日；含换手率。错误码 3002 表示该代码当天暂无可用快照，按 empty 处理。
 

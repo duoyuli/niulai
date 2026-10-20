@@ -18,6 +18,7 @@ pub struct SinkContext<'a> {
     pub trade_date: Option<NaiveDate>,
     /// 任务的分区变量
     pub vars: &'a Map<String, Value>,
+    pub sink_mode: Option<&'a str>,
 }
 
 fn rows_json(rows: &[RecordRow]) -> Value {
@@ -56,44 +57,47 @@ pub async fn apply_in_tx(
     let run_id = ctx.run_id;
     let trade_date = ctx.trade_date;
     let ds = ctx.dataset_id;
+    let mode = ctx.sink_mode;
     let var = |k: &str| ctx.vars.get(k).and_then(Value::as_str).map(str::to_string);
     let n = match (sink, ds) {
-        ("ref.security", "meta.tickers") => {
+        ("ref.security", _) => {
             security(conn, &data, trade_date, var("asset_type").as_deref()).await?
         }
-        ("ref.etf_security", "meta.tickers") => {
+        ("ref.etf_security", _) => {
             etf_security(conn, &data, trade_date, var("asset_type").as_deref()).await?
         }
-        ("ref.index_info", "meta.tickers") | ("ref.index_info", "index.ths_catalog") => {
-            index_info(conn, &data, trade_date, var("tag").as_deref()).await?
-        }
+        ("ref.index_info", _) => index_info(conn, &data, trade_date, var("tag").as_deref()).await?,
         ("ref.trading_day", _) => sqlx::query(TRADING_DAY)
             .bind(&data)
             .execute(&mut *conn)
             .await?
             .rows_affected() as usize,
-        ("mkt.stock_bar_1d", "a_share.bar_1d") => exec(conn, STOCK_BAR_HIST, &data, run_id).await?,
-        ("mkt.stock_bar_1d", "a_share.snapshot") => {
+        ("mkt.stock_bar_1d", _) if mode != Some("snapshot") => {
+            exec(conn, STOCK_BAR_HIST, &data, run_id).await?
+        }
+        ("mkt.stock_bar_1d", _) => {
             exec_dated(conn, STOCK_BAR_SNAPSHOT, &data, run_id, trade_date).await?
         }
-        ("mkt.etf_bar_1d", "fund.etf_bar_1d") => exec(conn, ETF_BAR_HIST, &data, run_id).await?,
-        ("mkt.etf_bar_1d", "fund.market_snapshot") => {
+        ("mkt.etf_bar_1d", _) if mode != Some("snapshot") => {
+            exec(conn, ETF_BAR_HIST, &data, run_id).await?
+        }
+        ("mkt.etf_bar_1d", _) => {
             exec_dated(conn, ETF_BAR_SNAPSHOT, &data, run_id, trade_date).await?
         }
-        ("mkt.index_bar_1d", "index.bar_1d") => exec(conn, INDEX_BAR_HIST, &data, run_id).await?,
-        ("mkt.index_bar_1d", "index.snapshot") => {
+        ("mkt.index_bar_1d", _) if mode != Some("snapshot") => {
+            exec(conn, INDEX_BAR_HIST, &data, run_id).await?
+        }
+        ("mkt.index_bar_1d", _) => {
             exec_dated(conn, INDEX_BAR_SNAPSHOT, &data, run_id, trade_date).await?
         }
-        ("mkt.corp_action", "a_share.corp_action_dump") => corp_action(conn, &data, run_id).await?,
-        ("ref.index_member", "index.members") => {
+        ("mkt.corp_action", _) => corp_action(conn, &data, run_id).await?,
+        ("ref.index_member", _) => {
             index_member(conn, &data, trade_date, var("thscode").as_deref()).await?
         }
-        ("fin.valuation_1d", "a_share.valuation") => {
+        ("fin.valuation_1d", _) if mode != Some("float_cap") => {
             exec_dated(conn, VALUATION, &data, run_id, trade_date).await?
         }
-        ("fin.valuation_1d", "a_share.auction_final") => {
-            exec_dated(conn, FLOAT_CAP, &data, run_id, trade_date).await?
-        }
+        ("fin.valuation_1d", _) => exec_dated(conn, FLOAT_CAP, &data, run_id, trade_date).await?,
         (s, d) => bail!("没有为数据集 {d} 实现 sink {s}"),
     };
     Ok(n)

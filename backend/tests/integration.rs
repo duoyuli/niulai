@@ -97,6 +97,7 @@ fn sink_ctx<'a>(
         run_id,
         trade_date: Some("2026-06-29".parse().unwrap()),
         vars,
+        sink_mode: None,
     }
 }
 

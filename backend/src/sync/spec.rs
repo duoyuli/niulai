@@ -205,6 +205,9 @@ pub struct DatasetSpec {
     /// 这些供应商错误码按「没有数据」处理：不重试，任务记为 empty
     pub empty_codes: Vec<i64>,
     pub sink: Vec<String>,
+    /// 同一类型化表的投影变体，例如 history / snapshot / valuation / float_cap。
+    /// 新增数据集复用已有 sink 时只需声明变体，不需要修改同步代码。
+    pub sink_mode: Option<String>,
     /// 完整的原始配置，写入 ops.dataset.spec
     pub raw: Value,
 }
@@ -241,6 +244,7 @@ impl DatasetSpec {
                 .collect(),
             _ => vec![],
         };
+        let sink_mode = s("sink_mode");
         let text = |k: &str| {
             s(k).map(|t| t.trim().to_string())
                 .filter(|t| !t.is_empty())
@@ -274,6 +278,7 @@ impl DatasetSpec {
                 .map(|a| a.iter().filter_map(Value::as_i64).collect())
                 .unwrap_or_default(),
             sink,
+            sink_mode,
             raw: v.clone(),
             domain,
             priority,
