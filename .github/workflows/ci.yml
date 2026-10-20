@@ -51,6 +51,17 @@ jobs:
         env:
           NIULAI_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: cargo test --locked
+      - name: 数据库迁移：已发布文件不可修改
+        run: |
+          base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
+          if [ -n "$base" ]; then
+            bad=$(git diff --name-status "$base"...HEAD -- backend/migrations | awk '$1 ~ /^(M|D|R|C)/ {print}')
+            if [ -n "$bad" ]; then
+              echo "$bad"
+              echo "迁移文件只能新增，不能修改、删除或重命名" >&2
+              exit 1
+            fi
+          fi
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: frontend/package.json
