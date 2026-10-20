@@ -362,6 +362,20 @@ pub async fn for_each_stock<F>(
 where
     F: FnMut(&str, &[DailyBar]),
 {
+    for_each_table(pool, lo, hi, BAR_JOIN, BAR_COLUMNS, &mut f).await
+}
+
+async fn for_each_table<F>(
+    pool: &PgPool,
+    lo: NaiveDate,
+    hi: NaiveDate,
+    join: &str,
+    columns: &str,
+    mut f: F,
+) -> sqlx::Result<()>
+where
+    F: FnMut(&str, &[DailyBar]),
+{
     let slots = if BACKGROUND.try_with(|_| ()).is_ok() {
         &BACKGROUND_SLOT
     } else {
@@ -370,7 +384,7 @@ where
     let _slot = slots.acquire().await.expect("信号量不会被关闭");
     const BATCH_CODES: usize = 128;
     let code_sql = format!(
-        "SELECT DISTINCT b.thscode FROM {BAR_JOIN} WHERE b.trade_date > $1 AND b.trade_date <= $2 ORDER BY b.thscode"
+        "SELECT DISTINCT b.thscode FROM {join} WHERE b.trade_date > $1 AND b.trade_date <= $2 ORDER BY b.thscode"
     );
     let codes: Vec<String> = sqlx::query_scalar(AssertSqlSafe(code_sql))
         .bind(lo)
@@ -384,7 +398,7 @@ where
             .execute(&mut *tx)
             .await?;
         let sql = format!(
-            "SELECT b.thscode, {BAR_COLUMNS} FROM {BAR_JOIN} WHERE b.thscode = ANY($1) AND b.trade_date > $2 AND b.trade_date <= $3 ORDER BY b.thscode, b.trade_date"
+            "SELECT b.thscode, {columns} FROM {join} WHERE b.thscode = ANY($1) AND b.trade_date > $2 AND b.trade_date <= $3 ORDER BY b.thscode, b.trade_date"
         );
         let rows: Vec<StockBarRow> = sqlx::query_as(AssertSqlSafe(sql))
             .bind(chunk)
@@ -419,50 +433,7 @@ pub async fn for_each_etf<F>(
 where
     F: FnMut(&str, &[DailyBar]),
 {
-    let slots = if BACKGROUND.try_with(|_| ()).is_ok() {
-        &BACKGROUND_SLOT
-    } else {
-        &SCAN_SLOTS
-    };
-    let _slot = slots.acquire().await.expect("信号量不会被关闭");
-    const BATCH_CODES: usize = 128;
-    let codes: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT b.thscode FROM mkt.etf_bar_1d b WHERE b.trade_date > $1 AND b.trade_date <= $2 ORDER BY b.thscode",
-    )
-    .bind(lo)
-    .bind(hi)
-    .fetch_all(pool)
-    .await?;
-    for chunk in codes.chunks(BATCH_CODES) {
-        let mut tx = pool.begin().await?;
-        sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
-        sqlx::query("SET LOCAL work_mem = '128MB'")
-            .execute(&mut *tx)
-            .await?;
-        let sql = format!(
-            "SELECT b.thscode, {ETF_BAR_COLUMNS} FROM {ETF_BAR_JOIN} WHERE b.thscode = ANY($1) AND b.trade_date > $2 AND b.trade_date <= $3 ORDER BY b.thscode, b.trade_date"
-        );
-        let rows: Vec<StockBarRow> = sqlx::query_as(AssertSqlSafe(sql))
-            .bind(chunk)
-            .bind(lo)
-            .bind(hi)
-            .fetch_all(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        let mut grouped: HashMap<String, Vec<DailyBar>> = HashMap::new();
-        for (code, d, o, h, l, cl, qo, qh, ql, qc, v, a) in rows {
-            grouped
-                .entry(code)
-                .or_default()
-                .push(bar((d, o, h, l, cl, qo, qh, ql, qc, v, a)));
-        }
-        for code in chunk {
-            if let Some(bars) = grouped.get(code) {
-                run_cpu(|| f(code, bars));
-            }
-        }
-    }
-    Ok(())
+    for_each_table(pool, lo, hi, ETF_BAR_JOIN, ETF_BAR_COLUMNS, &mut f).await
 }
 
 /// 按资产类型扫描；回调参数仍保持代码和日线，资产信息从 `market::securities` 读取。
