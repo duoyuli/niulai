@@ -81,16 +81,11 @@ async fn replay_pending_events(pool: &PgPool) {
 }
 
 async fn mark_limit_pool_changed(pool: &PgPool, run_id: i64) -> anyhow::Result<bool> {
-    const DATASETS: &[&str] = &[
-        "special.limit_up_pool",
-        "special.limit_down_pool",
-        "special.limit_break_pool",
-    ];
     let changed: i64 = sqlx::query_scalar(
         "SELECT coalesce(sum(changed), 0) FROM ops.task WHERE run_id = $1 AND dataset_id = ANY($2) AND status = 'done'",
     )
     .bind(run_id)
-    .bind(DATASETS)
+    .bind(crate::analysis::limit_pool::DATASETS.as_slice())
     .fetch_one(pool)
     .await?;
     if changed > 0 {
