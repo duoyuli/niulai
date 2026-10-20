@@ -40,6 +40,7 @@
 | `NIULAI_UPDATE_REPO` | 否 | `duoyuli/niulai` | 到哪个 GitHub 仓库查新版本；设为空时不检查 |
 | `NIULAI_METRICS_TOKEN` | 否 | 无 | 设置后启用 `GET /api/v1/metrics`（Prometheus 文本格式），请求要带 `Authorization: Bearer <令牌>`（不接受写在网址里）；不设置时接口返回 404。令牌只在启动时读一次，见 [监控指标](../operations/runbook.md#metrics) |
 | `NIULAI_API_BIND` | 否 | `127.0.0.1:8080` | API 监听地址；Docker 镜像中默认 `0.0.0.0:8080` |
+| `NIULAI_API_TIMEOUT_S` | 否 | `300` | API 请求最长执行秒数；组合回测、信号统计等长任务仍支持前端取消 |
 | `NIULAI_DATASETS_PATH` | 否 | 依次查找 `config/datasets.yaml`、`backend/config/datasets.yaml` | 数据集注册表路径；Docker 镜像中是 `/app/config/datasets.yaml` |
 | `NIULAI_DB_MAX_CONNECTIONS` | 否 | `20` | 数据库连接池上限；API、同步和后台计算共用连接池，资源较小的机器可以调低 |
 | `NIULAI_WORKER_CONCURRENCY` | 否 | `3` | 单个进程同时执行的同步任务数，必须大于 0 |

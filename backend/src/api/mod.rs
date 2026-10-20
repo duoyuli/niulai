@@ -107,6 +107,7 @@ pub fn router(engine: Arc<Engine>) -> Router {
 }
 
 pub fn router_with_state(state: AppState) -> Router {
+    let api_timeout_s = state.engine.settings.api_timeout_s;
     let (api, openapi) = routes().split_for_parts();
     let openapi = Arc::new(openapi);
     let request_id = HeaderName::from_static("x-request-id");
@@ -139,7 +140,10 @@ pub fn router_with_state(state: AppState) -> Router {
                 tracing::info_span!("http", method = %req.method(), uri = %req.uri(), request_id = %id)
             }),
         )
-        .layer(TimeoutLayer::with_status_code(axum::http::StatusCode::REQUEST_TIMEOUT, Duration::from_secs(120)))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(api_timeout_s),
+        ))
         // 页面脚本和接口的 JSON 都按浏览器的 Accept-Encoding 压缩，前端脚本从约 600 KB 降到约 190 KB
         .layer(CompressionLayer::new())
         .layer(PropagateRequestIdLayer::new(request_id.clone()))

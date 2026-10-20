@@ -27,6 +27,9 @@ pub struct Settings {
     pub datasets_path: Option<PathBuf>,
     #[serde(default = "default_api_bind")]
     pub api_bind: String,
+    /// 普通 API 请求的上限；覆盖组合回测和信号统计等可取消长任务的最长预期时间
+    #[serde(default = "default_api_timeout_s")]
+    pub api_timeout_s: u64,
     #[serde(default = "default_db_max_connections")]
     pub db_max_connections: u32,
     /// 单个进程同时执行的同步任务数
@@ -79,6 +82,9 @@ fn default_api_bind() -> String {
 }
 fn default_db_max_connections() -> u32 {
     20
+}
+fn default_api_timeout_s() -> u64 {
+    300
 }
 fn default_worker_concurrency() -> usize {
     3
