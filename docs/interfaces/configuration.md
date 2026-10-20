@@ -32,6 +32,7 @@
 | 变量 | 必填 | 默认值 | 含义 |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | 是 | — | PostgreSQL 连接串，例如 `postgres://user:pass@127.0.0.1:5432/niulai`。需要 PostgreSQL 16 或以上 |
+| `REDIS_URL` | 否 | 无 | Redis 共享读取缓存，例如 `redis://127.0.0.1:6379`。未配置或暂时不可用时回退到进程内缓存和 PostgreSQL；缓存内容可以随时删除 |
 | `HITHINK_FINANCE_API_KEY` | 否 | — | 同花顺金融数据服务 API Key（在 <https://fuyao.aicubes.cn/admin/> 生成）。一般不设置，在网页的首次登录引导中配置，保存在数据库；设置后优先使用它，网页上不能修改，见 [ADR：API Key 在首次登录引导中配置](../decisions/api_key_setup.md)。空值按未设置处理 |
 | `NIULAI_ADMIN_USER` | 否 | `niulai` | 第一个管理员的用户名。只在第一次启动、第一个管理员还没有密码时用一次，之后在网页上管理用户，见 [登录与权限](rest_api.md#auth) |
 | `NIULAI_ADMIN_PASSWORD` | 否 | `niulai` | 第一个管理员的初始密码，同样只用一次；之后修改它没有效果，密码在网页「我的」页面改。用默认值时启动日志有警告，登录后页面顶部提醒修改 |
@@ -66,6 +67,7 @@ Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.examp
 | `NIULAI_LISTEN_ADDR`、`NIULAI_PORT` | `127.0.0.1`、`8080` | niulai 在宿主机上监听的地址和端口；端口被占用时改 `NIULAI_PORT`，要从其他机器访问时把地址改成 `0.0.0.0` |
 | `POSTGRES_PASSWORD` | `niulai` | 内置数据库的密码，要与 `DATABASE_URL` 中的一致；只在第一次启动（创建数据目录）之前修改才生效 |
 | `POSTGRES_DATA` | `./data/postgres` | 内置数据库的数据目录，默认在部署目录下，见 [数据目录](../operations/runbook.md#data_dir) |
+| `REDIS_URL` | `redis://redis:6379` | Compose 内置 Redis 的地址；只保存可重建的页面结果 |
 
 `DATABASE_URL` 默认是 `postgres://niulai:niulai@postgres:5432/niulai`，指向同一个 Compose 中的内置数据库。容器内的监听地址、前端目录和数据集配置路径由镜像固定（`NIULAI_API_BIND=0.0.0.0:8080`、`NIULAI_WEB_DIR`、`NIULAI_DATASETS_PATH`），不要在 `.env` 中修改。
 

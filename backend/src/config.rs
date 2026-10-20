@@ -13,6 +13,9 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Settings {
     pub database_url: String,
+    /// Redis 共享读取缓存；未配置时只使用进程内缓存和 PostgreSQL
+    #[serde(default)]
+    pub redis_url: Option<String>,
     /// 设置后优先于网页中保存的 Key，网页上不能修改
     #[serde(default)]
     pub hithink_finance_api_key: Option<String>,
@@ -118,6 +121,11 @@ impl Settings {
             .take()
             .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty());
+        settings.redis_url = settings
+            .redis_url
+            .take()
+            .map(|url| url.trim().to_string())
+            .filter(|url| !url.is_empty());
         settings.validate()?;
         Ok(settings)
     }

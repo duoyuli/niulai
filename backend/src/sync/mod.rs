@@ -39,6 +39,7 @@ use spec::Registry;
 pub struct Engine {
     pub settings: Settings,
     pub pool: PgPool,
+    pub cache: Arc<crate::cache::Cache>,
     pub client: Arc<HithinkClient>,
     pub registry: Arc<Registry>,
     pub events: events::EventBus,
@@ -75,9 +76,11 @@ impl Engine {
             Duration::from_secs(settings.http_timeout_s),
             limiter,
         )?;
+        let cache = Arc::new(crate::cache::Cache::new(settings.redis_url.as_deref())?);
         Ok(Arc::new(Engine {
             settings,
             pool,
+            cache,
             client: Arc::new(client),
             registry: Arc::new(registry),
             events: events::EventBus::new(),

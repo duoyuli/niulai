@@ -4,7 +4,7 @@
 - 当前实现：[项目概览](../project_overview.md)、[前端](../architecture/frontend.md)、[REST API](../interfaces/rest_api.md) 和 [运维手册](../operations/runbook.md)。
 - 后续细化：[前端技术选型](frontend_stack.md)、[单进程服务](single_process_service.md) 和 [限速在进程内](in_process_rate_limit.md)。
 
-本文记录仍然适用于当前仓库的技术边界和选择原因。历史上被取代的进程拆分、Redis 和工具链比较不在本文重复；需要追溯时看 Git 历史和对应 ADR。
+本文记录仍然适用于当前仓库的技术边界和选择原因。历史上被取代的进程拆分、Redis 限速方案和工具链比较不在本文重复；当前页面读取缓存的 Redis 边界见对应 ADR。
 
 <a id="stack_choices"></a>
 ## 技术栈
@@ -54,7 +54,7 @@ PostgreSQL 保存任务、租约、原始数据、类型化数据和业务结果
 <a id="extension_conditions"></a>
 ## 扩展条件
 
-引入 Redis、专用消息队列、独立分析存储或独立服务前，先提供可复现的吞吐、延迟、故障恢复或资源隔离证据，并同步更新对应 ADR、现状文档和运维流程。没有证据时保持当前单进程、PostgreSQL 和本地计算边界。
+引入新的 Redis 用途、专用消息队列、独立分析存储或独立服务前，先提供可复现的吞吐、延迟、故障恢复或资源隔离证据，并同步更新对应 ADR、现状文档和运维流程。页面读取缓存属于已采纳的可选加速层，见 [ADR：Redis 共享读取缓存与页面预热](redis_read_cache.md)；其他场景没有证据时保持当前单进程、PostgreSQL 和本地计算边界。
 
 ## 历史变更
 

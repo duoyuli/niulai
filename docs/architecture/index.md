@@ -10,4 +10,5 @@
 
 - [同步流水线](sync_pipeline.md)：注册表加载、波次规划、任务生命周期、写入、运行结束后的计算、同步计划与定时调度、完整性核对与补偿、数据核检、限速与单一执行进程（含全市场计算的并发和组件监督）、定期清理。阅读时机：修改 `backend/src/sync/`、`backend/src/vendor/ratelimit.rs`、`backend/src/server.rs`，或排查任务为什么没有执行、重复执行、执行失败、数据有没有缺。
 - [前端](frontend.md)：目录结构、页面与接口的对应、接口客户端的生成、展示约定，以及由 `niulai serve` 提供页面。阅读时机：修改 `frontend/` 或 `backend/src/api/web.rs`，或后端接口变更后需要更新前端。
+- [共享读取缓存与预热](read_cache.md)：Redis 缓存的键、失效、降级和首页结果预热。阅读时机：修改 API 读取缓存、页面预计算或 Compose 中的 Redis 服务。
 - [数据库分层](data_model.md)：各 schema 和表的职责、通用记录库的语义、哪些数据集写入哪些类型化表、迁移规则。阅读时机：新增或修改表、迁移、sink，或查询数据前需要知道数据在哪张表。

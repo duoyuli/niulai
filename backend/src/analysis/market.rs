@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::NaiveDate;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
@@ -81,7 +81,7 @@ pub fn calendar_days_for(bars: u32) -> i64 {
     bars as i64 * 3 / 2 + 30
 }
 
-#[derive(Serialize, ToSchema, Clone)]
+#[derive(Deserialize, Serialize, ToSchema, Clone)]
 pub struct Overview {
     pub trade_date: NaiveDate,
     /// 当天有日线的股票数
@@ -156,7 +156,7 @@ pub async fn overview(pool: &PgPool, date: Option<NaiveDate>) -> anyhow::Result<
     }))
 }
 
-#[derive(Serialize, ToSchema, Clone)]
+#[derive(Deserialize, Serialize, ToSchema, Clone)]
 pub struct SectorStrength {
     pub thscode: String,
     pub name: String,

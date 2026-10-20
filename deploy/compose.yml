@@ -41,6 +41,20 @@ services:
       retries: 10
     logging: *logging
 
+  # 页面读取缓存：只保存可重建的结果，删除或重启不会影响 PostgreSQL 数据。
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "160mb", "--maxmemory-policy", "allkeys-lru"]
+    restart: unless-stopped
+    mem_limit: 192m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *logging
+
   niulai:
     image: ${NIULAI_IMAGE:-ghcr.io/duoyuli/niulai:latest}
     command: ["niulai", "serve"]
@@ -48,10 +62,12 @@ services:
     env_file: .env
     environment:
       NIULAI_UPGRADE_DIR: /upgrade
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     # 与 upgrader 共享：niulai 在这里写「要升级到的版本号」，upgrader 写进度
     volumes: [upgrade:/upgrade]
     depends_on:
       postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
     # 对外只有这一个 HTTP 端口：页面 /，接口 /api/v1/*，健康检查 /api/v1/health、/api/v1/ready。
     # 打开网页先要登录（第一个管理员来自 .env 中的 NIULAI_ADMIN_USER、NIULAI_ADMIN_PASSWORD）；默认只监听本机
     ports: ["${NIULAI_LISTEN_ADDR:-127.0.0.1}:${NIULAI_PORT:-8080}:8080"]

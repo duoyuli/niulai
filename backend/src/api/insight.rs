@@ -10,7 +10,7 @@ use utoipa_axum::routes;
 
 use super::AppState;
 use crate::analysis::diagnosis::{self, Diagnosis};
-use crate::analysis::limit_pool::LimitPool;
+use crate::analysis::limit_pool::{CacheVersions, LimitPool};
 use crate::analysis::market::{self, Overview, SectorStrength};
 use crate::analysis::prices;
 use crate::analysis::strategy::Definition;
@@ -75,11 +75,34 @@ async fn market_overview(
     State(s): State<AppState>,
     Query(q): Query<OverviewQuery>,
 ) -> ApiResult<Json<Overview>> {
-    s.overview
-        .get(&s.pool, q.date)
+    let Some(date) = market::resolve_date(&s.pool, q.date).await? else {
+        return Err(ApiError::NotFound("本地还没有日线".into()));
+    };
+    let version = CacheVersions::load(&s.pool).await?;
+    let key = super::derived_cache_key("market:overview", &version, &date.to_string());
+    match s.cache.get_json(&key).await {
+        Ok(Some(hit)) => {
+            tracing::debug!(
+                cache = "redis",
+                endpoint = "market_overview",
+                "命中共享缓存"
+            );
+            return Ok(Json(hit));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::debug!(error = %e, endpoint = "market_overview", "读取共享缓存失败，继续计算")
+        }
+    }
+    let value = s
+        .overview
+        .get(&s.pool, Some(date))
         .await?
-        .map(Json)
-        .ok_or_else(|| ApiError::NotFound("本地还没有日线".into()))
+        .ok_or_else(|| ApiError::NotFound("本地还没有日线".into()))?;
+    if let Err(e) = s.cache.set_json(&key, &value).await {
+        tracing::debug!(error = %e, endpoint = "market_overview", "写入共享缓存失败，继续返回计算结果");
+    }
+    Ok(Json(value))
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -111,7 +134,25 @@ async fn sectors(
     let Some(date) = market::resolve_date(&s.pool, q.date).await? else {
         return Ok(Json(vec![]));
     };
-    Ok(Json(
-        market::sector_strength(&s.pool, &category, days, date).await?,
-    ))
+    let version = CacheVersions::load(&s.pool).await?;
+    let key = super::derived_cache_key(
+        "market:sectors",
+        &version,
+        &format!("{category}:{days}:{date}"),
+    );
+    match s.cache.get_json(&key).await {
+        Ok(Some(hit)) => {
+            tracing::debug!(cache = "redis", endpoint = "market_sectors", "命中共享缓存");
+            return Ok(Json(hit));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::debug!(error = %e, endpoint = "market_sectors", "读取共享缓存失败，继续计算")
+        }
+    }
+    let value = market::sector_strength(&s.pool, &category, days, date).await?;
+    if let Err(e) = s.cache.set_json(&key, &value).await {
+        tracing::debug!(error = %e, endpoint = "market_sectors", "写入共享缓存失败，继续返回计算结果");
+    }
+    Ok(Json(value))
 }

@@ -46,6 +46,11 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
         )
     });
 
+    if engine.cache.enabled() {
+        let (e, stop) = (engine.clone(), stop_rx.clone());
+        set.spawn(async move { ("页面预热", api::precompute::run(e, stop).await) });
+    }
+
     if opts.worker {
         let (e, stop) = (engine.clone(), stop_rx.clone());
         set.spawn(async move { ("执行循环", run_workers(e, stop).await) });

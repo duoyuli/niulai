@@ -7,6 +7,7 @@ pub mod insight;
 pub mod market;
 pub mod metrics;
 pub mod operation_log;
+pub mod precompute;
 pub mod setup;
 pub mod signal;
 pub mod strategy;
@@ -39,6 +40,7 @@ use crate::sync::Engine;
 pub struct AppState {
     pub engine: Arc<Engine>,
     pub pool: sqlx::PgPool,
+    pub cache: Arc<crate::cache::Cache>,
     /// 登录状态的签名密钥，第一次用到时从数据库读取
     pub session_secret: Arc<tokio::sync::OnceCell<Vec<u8>>>,
     /// 登录失败计数
@@ -51,6 +53,18 @@ pub struct AppState {
     pub stats: Arc<signal::StatsCache>,
     /// 请求计数和耗时，`GET /api/v1/metrics` 用
     pub metrics: Arc<metrics::Metrics>,
+}
+
+/// 依赖复权和权威涨跌停数据的页面结果共用一个可重建版本键。
+pub(crate) fn derived_cache_key(
+    name: &str,
+    version: &crate::analysis::limit_pool::CacheVersions,
+    suffix: &str,
+) -> String {
+    format!(
+        "niulai:v1:{name}:adj={:?}:limit={:?}:{suffix}",
+        version.adj_factor, version.limit_pool
+    )
 }
 
 #[derive(OpenApi)]
@@ -77,6 +91,7 @@ pub struct ApiDoc;
 pub fn router(engine: Arc<Engine>) -> Router {
     let state = AppState {
         pool: engine.pool.clone(),
+        cache: engine.cache.clone(),
         engine,
         session_secret: Arc::default(),
         login_guard: Arc::default(),

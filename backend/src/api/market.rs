@@ -760,7 +760,7 @@ pub struct HotQuery {
     pub date: Option<NaiveDate>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct HotMarket {
     /// 数据对应的交易日；本地还没有任何行情数据时为空
     pub trade_date: Option<NaiveDate>,
@@ -786,7 +786,7 @@ pub struct HotMarket {
     pub stats: Option<HotStats>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct HotLimitUpGroup {
     /// 连板高度，1 表示首板
     pub board_num: i32,
@@ -797,7 +797,7 @@ pub struct HotLimitUpGroup {
     pub stocks: Vec<HotLimitUpStock>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct HotLimitUpStock {
     pub thscode: String,
     pub name: String,
@@ -815,7 +815,7 @@ pub struct HotLimitUpStock {
     pub is_st: bool,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct HotStock {
     pub thscode: String,
     pub name: String,
@@ -835,7 +835,7 @@ pub struct HotStock {
     pub last_limit_time: Option<String>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct HotStats {
     /// 封板率：收盘还封在涨停的占当天触及涨停的比例（0.55 表示 55%）
     pub seal_rate: Option<f64>,
@@ -858,31 +858,59 @@ async fn market_hot(
     State(s): State<AppState>,
     Query(q): Query<HotQuery>,
 ) -> ApiResult<Json<HotMarket>> {
-    // 交易日和 /market/overview 一样取本地日线里不晚于请求日期的最近一天；
-    // 日线还没同步时退回涨跌停池自己的最新日期，先把已经同步的涨停池显示出来
-    let bar_date: Option<NaiveDate> = sqlx::query_scalar(
-        "SELECT max(trade_date) FROM mkt.stock_bar_1d WHERE ($1::date IS NULL OR trade_date <= $1)",
-    )
-    .bind(q.date)
-    .fetch_one(&s.pool)
-    .await?;
-    let trade_date = match (bar_date, q.date) {
-        (Some(d), _) => Some(d),
-        (None, Some(d)) => Some(d),
-        (None, None) => {
-            sqlx::query_scalar("SELECT max(obs_date) FROM raw.record WHERE dataset_id = $1")
-                .bind(HOT_LIMIT_UP)
-                .fetch_one(&s.pool)
-                .await?
-        }
-    };
-    let Some(trade_date) = trade_date else {
+    let Some(trade_date) = hot_trade_date(&s.pool, q.date).await? else {
         return Ok(empty_hot(
             None,
             "本地还没有行情数据，等第一次同步完成后再看".to_string(),
         ));
     };
+    let version = crate::analysis::limit_pool::CacheVersions::load(&s.pool).await?;
+    let key = super::derived_cache_key("market:hot", &version, &trade_date.to_string());
+    match s.cache.get_json(&key).await {
+        Ok(Some(hit)) => {
+            tracing::debug!(cache = "redis", endpoint = "market_hot", "命中共享缓存");
+            return Ok(Json(hit));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::debug!(error = %e, endpoint = "market_hot", "读取共享缓存失败，继续计算")
+        }
+    }
+    let value = compute_hot(&s.pool, trade_date).await?;
+    if let Err(e) = s.cache.set_json(&key, &value).await {
+        tracing::debug!(error = %e, endpoint = "market_hot", "写入共享缓存失败，继续返回计算结果");
+    }
+    Ok(Json(value))
+}
 
+pub(crate) async fn hot_trade_date(
+    pool: &sqlx::PgPool,
+    requested: Option<NaiveDate>,
+) -> sqlx::Result<Option<NaiveDate>> {
+    // 交易日和 /market/overview 一样取本地日线里不晚于请求日期的最近一天；
+    // 日线还没同步时退回涨跌停池自己的最新日期，先把已经同步的涨停池显示出来
+    let bar_date: Option<NaiveDate> = sqlx::query_scalar(
+        "SELECT max(trade_date) FROM mkt.stock_bar_1d WHERE ($1::date IS NULL OR trade_date <= $1)",
+    )
+    .bind(requested)
+    .fetch_one(pool)
+    .await?;
+    Ok(match (bar_date, requested) {
+        (Some(d), _) => Some(d),
+        (None, Some(d)) => Some(d),
+        (None, None) => {
+            sqlx::query_scalar("SELECT max(obs_date) FROM raw.record WHERE dataset_id = $1")
+                .bind(HOT_LIMIT_UP)
+                .fetch_one(pool)
+                .await?
+        }
+    })
+}
+
+pub(crate) async fn compute_hot(
+    pool: &sqlx::PgPool,
+    trade_date: NaiveDate,
+) -> ApiResult<HotMarket> {
     let ids: Vec<String> = [
         HOT_LIMIT_UP,
         HOT_LIMIT_DOWN,
@@ -902,7 +930,7 @@ async fn market_hot(
     )
     .bind(&ids)
     .bind(trade_date)
-    .fetch_all(&s.pool)
+    .fetch_all(pool)
     .await?;
 
     let (mut up_rows, mut down_rows, mut break_rows, mut stats) =
@@ -934,7 +962,7 @@ async fn market_hot(
                 trade_date.format("%Y-%m-%d")
             )
         };
-        return Ok(empty_hot(Some(trade_date), note));
+        return Ok(empty_hot(Some(trade_date), note).0);
     }
 
     // 涨停按连板高度分组，组内封单额大的排在前面（封单越大，说明想买的人越多）
@@ -998,7 +1026,7 @@ async fn market_hot(
     });
     broken_stocks.truncate(HOT_STOCK_LIMIT);
 
-    Ok(Json(HotMarket {
+    Ok(HotMarket {
         trade_date: Some(trade_date),
         available: true,
         note: None,
@@ -1010,7 +1038,7 @@ async fn market_hot(
         broken_total,
         broken_stocks,
         stats,
-    }))
+    })
 }
 
 // @project-doc docs/domains/hotspots.md#empty

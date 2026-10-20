@@ -216,6 +216,7 @@ async fn adjustment_and_api_end_to_end() {
     std::fs::write(web.join("assets/app-abc123.js"), "console.log(1)").unwrap();
     let settings = Settings {
         database_url: String::new(),
+        redis_url: None,
         hithink_finance_api_key: Some("test".into()),
         vendor_base_url: "http://127.0.0.1:1".into(),
         datasets_path: Some(
@@ -248,6 +249,7 @@ async fn adjustment_and_api_end_to_end() {
     let engine = Arc::new(Engine {
         settings,
         pool: db.pool.clone(),
+        cache: Arc::new(niulai::cache::Cache::new(None).unwrap()),
         client: Arc::new(client),
         registry: Arc::new(reg),
         events: niulai::sync::events::EventBus::new(),
@@ -833,6 +835,7 @@ async fn mock_vendor() -> String {
 fn bare_settings(vendor: &str, api_key: Option<&str>) -> Settings {
     Settings {
         database_url: String::new(),
+        redis_url: None,
         hithink_finance_api_key: api_key.map(str::to_string),
         vendor_base_url: vendor.into(),
         datasets_path: Some(

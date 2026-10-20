@@ -118,7 +118,7 @@ docker compose exec niulai niulai user reset-password <用户名>   # Docker 部
 ## 部署
 
 CI 在 GitHub 上检查代码、发布时构建镜像。服务有两种运行方式，运行的是同一个程序：
-- **Docker 部署**（默认）：CI 构建的镜像，`deploy/compose.yml` 运行内置 PostgreSQL、niulai 和一键升级助手，配置在 `deploy/.env`。
+- **Docker 部署**（默认）：CI 构建的镜像，`deploy/compose.yml` 运行内置 PostgreSQL、Redis、niulai 和一键升级助手，配置在 `deploy/.env`。Redis 只用于页面读取缓存，删除或重启不会影响数据库数据。
 - **源码部署**：在服务器上编译，直接运行 `niulai`，配置在 `backend/.env`，数据库自己准备。
 
 对外只有一个 HTTP 端口，默认 `127.0.0.1:8080`：`/` 是网页，`/api/v1/*` 是 [REST API](../interfaces/rest_api.md)，`/api/v1/health` 是存活检查、`/api/v1/ready` 在能连上数据库时返回 200，这两个检查不需要登录。打开网页先要登录（默认 `niulai` / `niulai`，部署后先改掉），然后按引导配置 API Key。取舍见 [ADR：CI 构建镜像，部署只交付服务本身](../decisions/ci_cd.md)。
