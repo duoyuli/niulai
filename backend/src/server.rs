@@ -46,9 +46,10 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
         )
     });
 
+    let app_state = api::state(engine.clone());
     if engine.cache.enabled() {
-        let (e, stop) = (engine.clone(), stop_rx.clone());
-        set.spawn(async move { ("页面预热", api::precompute::run(e, stop).await) });
+        let (state, stop) = (app_state.clone(), stop_rx.clone());
+        set.spawn(async move { ("页面预热", api::precompute::run(state, stop).await) });
     }
 
     if opts.worker {
@@ -62,7 +63,7 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
     if opts.api {
         let bind = engine.settings.api_bind.clone();
         let listener = tokio::net::TcpListener::bind(&bind).await?;
-        let app = api::router(engine.clone());
+        let app = api::router_with_state(app_state);
         let mut rx = stop_rx.clone();
         tracing::info!(%bind, "API 已启动，接口规范：/api/v1/openapi.json");
         set.spawn(async move {

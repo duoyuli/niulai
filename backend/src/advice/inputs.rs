@@ -86,7 +86,7 @@ pub async fn next_trading_day(pool: &PgPool, d: NaiveDate) -> sqlx::Result<Naive
 /// 还没有内置策略的巡检结果时为空
 pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
     // 核心数据的首次回补还没完成：日线不全，算出来的建议不可信，先不生成
-    if crate::sync::audit::core_backfill_left(pool).await? > 0 {
+    if crate::readiness::core_backfill_left(pool).await? > 0 {
         return Ok(None);
     }
     let Some(trade_date) = latest_screen_date(pool).await? else {
@@ -267,33 +267,45 @@ fn strategy_exit_text(
     bars: &[DailyBar],
     i: usize,
     cost_price: Option<f64>,
+    opened_on: Option<NaiveDate>,
     bars_held: Option<i64>,
 ) -> Option<String> {
+    let close = bars[i].q_close;
+    let signal = def.exit_signal(frame, i);
+    let ret = cost_price
+        .and_then(|cost| {
+            opened_on
+                .and_then(|d| bars.iter().find(|b| b.date >= d).map(|b| b.q_open))
+                .map(|entry_q| close / entry_q - 1.0)
+                .or_else(|| Some(bars[i].close / cost - 1.0))
+        })
+        .unwrap_or(0.0);
+    let reason = crate::analysis::backtest::exit_reason(
+        signal,
+        ret,
+        def.exit.stop_loss_pct,
+        def.exit.take_profit_pct,
+        def.exit.max_hold_days,
+        bars_held.unwrap_or_default().max(0) as usize,
+    )?;
     let mut reasons = vec![];
-    if def.exit_signal(frame, i) {
-        reasons.push(
+    match reason {
+        crate::analysis::backtest::ExitReason::Signal => reasons.push(
             def.exit_reason_text(frame, i)
                 .unwrap_or_else(|| "卖出条件".into()),
-        );
-    }
-    let close = bars[i].close;
-    if let Some(cost) = cost_price {
-        let ret = close / cost - 1.0;
-        if let Some(stop) = def.exit.stop_loss_pct
-            && ret <= -stop / 100.0
-        {
-            reasons.push(format!("亏损达到 {stop}% 止损"));
-        }
-        if let Some(take) = def.exit.take_profit_pct
-            && ret >= take / 100.0
-        {
-            reasons.push(format!("盈利达到 {take}% 止盈"));
-        }
-    }
-    if let (Some(max), Some(held)) = (def.exit.max_hold_days, bars_held)
-        && held >= max as i64
-    {
-        reasons.push(format!("持有满 {max} 个交易日"));
+        ),
+        crate::analysis::backtest::ExitReason::StopLoss => reasons.push(format!(
+            "亏损达到 {}% 止损",
+            def.exit.stop_loss_pct.unwrap_or_default()
+        )),
+        crate::analysis::backtest::ExitReason::TakeProfit => reasons.push(format!(
+            "盈利达到 {}% 止盈",
+            def.exit.take_profit_pct.unwrap_or_default()
+        )),
+        crate::analysis::backtest::ExitReason::MaxHold => reasons.push(format!(
+            "持有满 {} 个交易日",
+            def.exit.max_hold_days.unwrap_or_default()
+        )),
     }
     (!reasons.is_empty()).then(|| reasons.join("；"))
 }
@@ -362,7 +374,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
                 Some(def) => {
                     let f = Frame::with_authority(&bars, Some(&meta), &sh.limits, &p.thscode);
                     let i = bars.len() - 1;
-                    strategy_exit_text(&def, &f, &bars, i, p.cost_price, bars_held)
+                    strategy_exit_text(&def, &f, &bars, i, p.cost_price, p.opened_on, bars_held)
                 }
                 None => None,
             },
@@ -520,8 +532,8 @@ mod tests {
             }))
             .unwrap();
         assert_eq!(
-            strategy_exit_text(&def, &frame, &bars, 2, Some(10.0), Some(2)).as_deref(),
-            Some("亏损达到 8% 止损；持有满 2 个交易日")
+            strategy_exit_text(&def, &frame, &bars, 2, Some(10.0), None, Some(2)).as_deref(),
+            Some("亏损达到 8% 止损")
         );
     }
 }

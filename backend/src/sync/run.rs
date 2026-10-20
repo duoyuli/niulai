@@ -75,7 +75,10 @@ pub async fn set_total(conn: &mut PgConnection, run_id: i64, total: usize) -> an
         "UPDATE ops.run SET tasks_total = $2,
                 status = CASE WHEN $2 = 0 AND NOT (params ? 'planning_error') THEN 'succeeded'
                               WHEN $2 = 0 THEN 'partial' ELSE status END,
-                finished_at = CASE WHEN $2 = 0 THEN now() END
+                finished_at = CASE WHEN $2 = 0 THEN now() END,
+                params = CASE WHEN $2 = 0
+                    THEN jsonb_set(params, '{sync_event_pending}', jsonb_build_object('price_changed', true, 'completion', 'pending'), true)
+                    ELSE params END
          WHERE run_id = $1",
     )
     .bind(run_id)
@@ -102,7 +105,13 @@ pub async fn try_complete(pool: &PgPool, run_id: i64) -> anyhow::Result<Option<S
         "UPDATE ops.run r SET
             tasks_done   = s.ok, tasks_failed = s.bad,
             status       = CASE WHEN s.bad > 0 OR r.params ? 'planning_error' THEN 'partial' ELSE 'succeeded' END,
-            finished_at  = now()
+            finished_at  = now(),
+            params       = jsonb_set(
+                r.params,
+                '{sync_event_pending}',
+                jsonb_build_object('price_changed', true, 'completion', 'pending'),
+                true
+            )
          FROM (SELECT count(*) FILTER (WHERE status IN ('done', 'empty', 'skipped')) ok,
                       count(*) FILTER (WHERE status = 'dead') bad
                FROM ops.task WHERE run_id = $1) s
@@ -156,6 +165,20 @@ pub async fn stalled(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
     .await?)
 }
 
+/// 显式打开一个补偿运行。只有 `partial` 的 repair 运行允许重新打开；成功运行不会被补偿路径改写。
+/// 清除旧的同步事件标记，重试任务结束后由新的终态再次生成事件。
+pub async fn reopen_partial_repairs(conn: &mut PgConnection) -> anyhow::Result<u64> {
+    Ok(sqlx::query(
+        "UPDATE ops.run r SET status = 'running', finished_at = NULL, error = NULL,
+                params = (r.params - 'sync_event_pending') || jsonb_build_object('repair_reopened', true)
+         WHERE r.status = 'partial' AND r.kind = 'repair'
+           AND EXISTS (SELECT 1 FROM ops.task t WHERE t.run_id = r.run_id AND t.status = 'pending')",
+    )
+    .execute(conn)
+    .await?
+    .rows_affected())
+}
+
 pub async fn planned_since_runs(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
     Ok(sqlx::query_scalar(
         "SELECT run_id FROM ops.run WHERE status = 'succeeded'
@@ -183,7 +206,7 @@ pub async fn mark_sync_event_pending(
 ) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE ops.run SET params = jsonb_set(
-             params, '{sync_event_pending}', jsonb_build_object('price_changed', $2::boolean), true
+             params, '{sync_event_pending}', jsonb_build_object('price_changed', $2::boolean, 'completion', 'pending'), true
          ) WHERE run_id = $1",
     )
     .bind(run_id)

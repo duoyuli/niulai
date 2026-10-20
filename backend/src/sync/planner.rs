@@ -826,11 +826,17 @@ async fn universe_rows(
     );
     let pool = ctx.pool;
     // 审计：universe 来自受信任的配置文件 config/datasets.yaml，不接受外部输入
-    sqlx::query_as(AssertSqlSafe(sql))
+    let rows: Vec<(String, Option<NaiveDate>)> = sqlx::query_as(AssertSqlSafe(sql))
         .bind(ctx.only)
         .fetch_all(pool)
         .await
-        .with_context(|| format!("universe 查询失败：{universe}"))
+        .with_context(|| format!("universe 查询失败：{universe}"))?;
+    if ctx.only.is_empty() && rows.is_empty() {
+        anyhow::bail!(
+            "universe 查询为空，可能是 ops.v_universe 的 payload 字段或配置表达式已失配：{universe}"
+        );
+    }
+    Ok(rows)
 }
 
 async fn available_dates(client: &HithinkClient, endpoint: &str) -> anyhow::Result<Vec<NaiveDate>> {

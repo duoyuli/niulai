@@ -114,7 +114,14 @@ pub async fn review(pool: &PgPool, account_id: i64) -> anyhow::Result<Review> {
         .into_iter()
         .collect();
     let series: Vec<(String, NaiveDate, f64, f64)> = sqlx::query_as(
-        "SELECT thscode, trade_date, open::float8, close::float8 FROM mkt.v_stock_bar_qfq WHERE thscode = ANY($1) AND trade_date >= $2 ORDER BY thscode, trade_date",
+        "SELECT thscode, trade_date, open::float8, close::float8
+         FROM mkt.v_stock_bar_qfq
+         WHERE thscode = ANY($1) AND trade_date >= $2
+         UNION ALL
+         SELECT thscode, trade_date, open::float8, close::float8
+         FROM mkt.etf_bar_1d
+         WHERE thscode = ANY($1) AND trade_date >= $2
+         ORDER BY thscode, trade_date",
     )
     .bind(&codes)
     .bind(since)

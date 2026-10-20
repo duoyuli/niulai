@@ -366,8 +366,8 @@ impl Executor {
         {
             tracing::info!(run_id, next, "已规划下一个波次");
         }
-        // 先持久化待消费标记，再执行复权和发布进程内事件；进程中途退出时由应用层重放。
-        run::mark_sync_event_pending(&self.pool, run_id, true).await?;
+        // try_complete 已在把运行置为终态的同一条 UPDATE 中写入待消费标记；
+        // 这里仅在后处理成功后补上准确的 price_changed，进程中途退出时由应用层重放。
         let price_changed =
             postprocess::after_run(&self.pool, run_id, &self.price_datasets()).await?;
         run::mark_sync_event_pending(&self.pool, run_id, price_changed).await?;

@@ -145,7 +145,7 @@ raw 记录、类型化 sink 和游标在同一个任务事务中写入；事务�
 
 另外，应用事件编排器收到 `SyncRunCompleted` 后，按本次运行中三个权威涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`）任务的变化条数，决定是否更新 `ops.derived_version` 的 `limit_pool` 行。这三个池只写 `raw.record`、没有类型化表，不在 `PRICE_TABLES` 里，所以单独判断；**即使行情没有变化，只要池补上了滞后的数据也会更新**，市场概况和信号过去表现的缓存随之失效，并且和行情有变化时一样，在最新交易日上重做一次每日巡检、刷新还没处理过的调仓建议（当天的名单比行情晚到时，之前的巡检用的是自算的涨停）。更早日期的巡检结果不重算。配置 Redis 时，市场概况、今日热点和板块排名的共享读取缓存使用同一版本键，自然切换到新结果。
 
-`executor` 在复权重算完成后发布 `SyncRunCompleted`，应用事件编排器再用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，并为每个账户生成 [调仓建议](../domains/accounts.md#generation)。同步运行会在 `ops.run.params.sync_event_pending` 中持久化待消费标记；事件处理成功后清除，进程重启或事件处理失败时由维护循环重放，避免只依赖进程内事件。分析或建议失败不会让后面的波次停掉，但会保留待处理标记。执行循环每分钟发布 `MaintenanceTick`，编排器消费后补齐缺的建议和巡检。策略过去表现和参考值回测只在用户主动研究时运行，不由维护事件自动重算。下一个波次在事件发布之前就已规划。复权的计算规则见 [复权](../domains/price_adjustment.md)。
+`try_complete` 在把运行置为终态的同一条条件 UPDATE 中写入 `ops.run.params.sync_event_pending`，因此最后一个任务完成后即使进程在接续波次、复权重算或事件发布前退出，也能由应用层重放。`executor` 在复权重算成功后补上准确的 `price_changed` 并发布 `SyncRunCompleted`，应用事件编排器再用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，并为每个账户生成 [调仓建议](../domains/accounts.md#generation)。事件处理成功后清除标记，进程重启或事件处理失败时由维护循环重放，避免只依赖进程内事件。分析或建议失败不会让后面的波次停掉，但会保留待处理标记。执行循环每分钟发布 `MaintenanceTick`，编排器消费后补齐缺的建议和巡检。策略过去表现和参考值回测只在用户主动研究时运行，不由维护事件自动重算。下一个波次在事件发布之前就已规划。复权的计算规则见 [复权](../domains/price_adjustment.md)。
 
 新的一天的日线不用重算就有复权价（落在最后一个分段里）。但一个回补运行可能要执行一两天，期间补回来的历史日线和公司行动会改变分段，只在运行结束时重算的话，这段时间的复权价是旧的。所以执行循环的维护（每分钟一次）还会检查：自上次重算以来有价格类任务写入了变化，并且距上次重算超过 5 分钟，就重算一次。上次重算的时刻记在 `ops.scheduler` 的 `adj_rebuild` 作业上，用条件 UPDATE 抢占；运行结束时的重算也会刷新这个时刻。重算不阻塞查询，见 [等比复权因子](../domains/price_adjustment.md#equal_ratio_factor)。
 

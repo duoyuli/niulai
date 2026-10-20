@@ -13,7 +13,7 @@ use std::time::Duration;
 use anyhow::Context;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Utc, Weekday};
 use serde::{Deserialize, Serialize};
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 use tokio::sync::watch;
 use utoipa::ToSchema;
 
@@ -227,37 +227,7 @@ impl Mark {
     }
 }
 
-/// 每个周期只有一个调用者能把 last_fired 推进到新周期，返回 true 的那个负责触发
-pub(crate) async fn claim(
-    pool: &PgPool,
-    job: &str,
-    today: NaiveDate,
-    period: &str,
-) -> anyhow::Result<bool> {
-    let sql = format!(
-        "INSERT INTO ops.scheduler (job, last_fired) VALUES ($1, $2)
-         ON CONFLICT (job) DO UPDATE SET last_fired = EXCLUDED.last_fired, fired_at = now()
-         WHERE date_trunc('{period}', ops.scheduler.last_fired) < date_trunc('{period}', EXCLUDED.last_fired)
-         RETURNING job"
-    );
-    // 审计：period 只会是代码中的 day / week / month
-    Ok(sqlx::query_scalar::<_, String>(AssertSqlSafe(sql))
-        .bind(job)
-        .bind(today)
-        .fetch_optional(pool)
-        .await?
-        .is_some())
-}
-
-/// 业务动作失败时撤销周期抢占，让下一次维护可以重试。
-pub(crate) async fn release_claim(pool: &PgPool, job: &str, day: NaiveDate) -> anyhow::Result<()> {
-    sqlx::query("DELETE FROM ops.scheduler WHERE job = $1 AND last_fired = $2")
-        .bind(job)
-        .bind(day)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
+pub(crate) use crate::scheduling::{claim, release_claim};
 
 /// 抢占一个定时时刻：上次触发早于这个时刻时，只有一个调用者能成功。
 /// 第一次（还没有这一行）只记下现在，不触发：刚部署的系统正在做首次回补，不必马上再同步一遍

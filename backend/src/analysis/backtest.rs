@@ -95,6 +95,29 @@ pub enum ExitReason {
     MaxHold,
 }
 
+/// 统一的收盘后卖出优先级：策略卖出条件、止损、止盈、最长持有期。
+/// 交易执行（下一个交易日开盘、涨跌停顺延）由各回测状态机负责，原因判断只保留这一处。
+pub fn exit_reason(
+    signal: bool,
+    return_ratio: f64,
+    stop_loss_pct: Option<f64>,
+    take_profit_pct: Option<f64>,
+    max_hold_days: Option<u32>,
+    held_days: usize,
+) -> Option<ExitReason> {
+    if signal {
+        Some(ExitReason::Signal)
+    } else if stop_loss_pct.is_some_and(|v| return_ratio <= -v / 100.0) {
+        Some(ExitReason::StopLoss)
+    } else if take_profit_pct.is_some_and(|v| return_ratio >= v / 100.0) {
+        Some(ExitReason::TakeProfit)
+    } else if max_hold_days.is_some_and(|v| held_days >= v as usize) {
+        Some(ExitReason::MaxHold)
+    } else {
+        None
+    }
+}
+
 #[derive(Serialize, ToSchema, Debug)]
 pub struct Trade {
     pub entry_date: NaiveDate,
@@ -334,21 +357,14 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
         match &pos {
             Some(o) => {
                 let r = b.q_close / o.q_price - 1.0;
-                let reason = if sig.exit[i] {
-                    Some(ExitReason::Signal)
-                } else if p.risk.stop_loss_pct.is_some_and(|s| r <= -s / 100.0) {
-                    Some(ExitReason::StopLoss)
-                } else if p.risk.take_profit_pct.is_some_and(|t| r >= t / 100.0) {
-                    Some(ExitReason::TakeProfit)
-                } else if p
-                    .risk
-                    .max_hold_days
-                    .is_some_and(|d| i + 1 - o.idx >= d as usize)
-                {
-                    Some(ExitReason::MaxHold)
-                } else {
-                    None
-                };
+                let reason = exit_reason(
+                    sig.exit[i],
+                    r,
+                    p.risk.stop_loss_pct,
+                    p.risk.take_profit_pct,
+                    p.risk.max_hold_days,
+                    i + 1 - o.idx,
+                );
                 if let Some(reason) = reason {
                     pending = Some(Side::Sell);
                     sell_reason = reason;

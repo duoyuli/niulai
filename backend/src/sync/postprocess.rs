@@ -28,7 +28,6 @@ pub async fn after_run(
     if changed == 0 {
         return Ok(false);
     }
-    mark_rebuilt(pool).await?;
     recompute_adjustments(pool, run_id).await?;
     Ok(true)
 }
@@ -59,27 +58,22 @@ pub async fn refresh_if_stale(pool: &PgPool, price_datasets: &[String]) -> anyho
     .fetch_optional(pool)
     .await?
     .is_some();
-    if claimed {
-        recompute_adjustments(pool, 0).await?;
+    if claimed && let Err(error) = recompute_adjustments(pool, 0).await {
+        // 抢占时间只用于并发互斥；重算失败时把水位退回，让下一次维护继续重试。
+        sqlx::query("UPDATE ops.scheduler SET fired_at = now() - $2::interval WHERE job = $1")
+            .bind(JOB)
+            .bind(REFRESH_INTERVAL)
+            .execute(pool)
+            .await?;
+        return Err(error);
     }
     Ok(claimed)
-}
-
-/// 记下重算开始的时刻：之后写入的行情会在下次重算时处理
-async fn mark_rebuilt(pool: &PgPool) -> anyhow::Result<()> {
-    sqlx::query(
-        "INSERT INTO ops.scheduler (job, last_fired, fired_at) VALUES ($1, current_date, now())
-         ON CONFLICT (job) DO UPDATE SET last_fired = EXCLUDED.last_fired, fired_at = EXCLUDED.fired_at",
-    )
-    .bind(JOB)
-    .execute(pool)
-    .await?;
-    Ok(())
 }
 
 // @project-doc docs/domains/price_adjustment.md#equal_ratio_factor
 pub async fn recompute_adjustments(pool: &PgPool, run_id: i64) -> anyhow::Result<()> {
     let t = Instant::now();
+    let mut tx = pool.begin().await?;
     // 供应商日历只有最近一年，更早的交易日从行情中推导
     let derived = sqlx::query(
         "INSERT INTO ref.trading_day (cal_date, source)
@@ -89,17 +83,25 @@ pub async fn recompute_adjustments(pool: &PgPool, run_id: i64) -> anyhow::Result
              SELECT trade_date FROM mkt.etf_bar_1d
          ) bars ON CONFLICT (cal_date) DO NOTHING",
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     sqlx::query("CALL mkt.rebuild_adj_segment($1)")
         .bind(run_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     // 复权价变了：让依赖它的缓存失效，见 docs/decisions/indicator_compute.md
     sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = 'adj_factor'")
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    sqlx::query(
+        "INSERT INTO ops.scheduler (job, last_fired, fired_at) VALUES ($1, current_date, now())
+         ON CONFLICT (job) DO UPDATE SET last_fired = EXCLUDED.last_fired, fired_at = EXCLUDED.fired_at",
+    )
+    .bind(JOB)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     tracing::info!(
         run_id,
         derived_trading_days = derived,

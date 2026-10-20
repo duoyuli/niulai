@@ -65,6 +65,16 @@ jobs:
       - name: 前端：类型检查、代码检查、测试
         working-directory: frontend
         run: pnpm typecheck && pnpm lint && pnpm test
+      - name: 前端：构建产物
+        working-directory: frontend
+        run: pnpm build
+      - name: API：规范与生成代码无漂移
+        working-directory: frontend
+        run: |
+          pnpm api:spec
+          test -s openapi.json
+          pnpm api:gen
+          git diff --exit-code -- openapi.json src/api/generated
 
   build:
     needs: check

@@ -49,7 +49,7 @@ impl Engine {
     pub async fn new(settings: Settings, pool: PgPool) -> anyhow::Result<Arc<Self>> {
         let registry = Registry::load(&settings.datasets_file()?)?;
         registry::sync_to_db(&pool, &registry).await?;
-        let _ = audit::CORE_DATASETS.set(
+        let _ = crate::readiness::CORE_DATASETS.set(
             registry
                 .writing_to(&spec::PRICE_TABLES)
                 .iter()
@@ -60,7 +60,11 @@ impl Engine {
         // 环境变量优先，其次是网页上保存的；都没有时等用户在首次登录引导中配置
         let api_key = match &settings.hithink_finance_api_key {
             Some(k) => Some(k.clone()),
-            None => crate::setup::stored_api_key(&pool).await?,
+            None => {
+                sqlx::query_scalar("SELECT value FROM app.setting WHERE name = 'hithink_api_key'")
+                    .fetch_optional(&pool)
+                    .await?
+            }
         };
         if api_key.is_none() {
             tracing::warn!("还没有配置 API Key：同步暂停，打开网页按引导配置");

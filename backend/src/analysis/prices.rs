@@ -39,6 +39,13 @@ const ETF_BAR_COLUMNS: &str =
      b.open::float8, b.high::float8, b.low::float8, b.close::float8,
      b.volume::float8, b.amount::float8";
 const ETF_BAR_JOIN: &str = "mkt.etf_bar_1d b";
+const STOCK_BATCH_COLUMNS: &str = "b.trade_date AS trade_date, b.open::float8 AS open, b.high::float8 AS high, b.low::float8 AS low, b.close::float8 AS close,
+     (b.open * coalesce(s.qfq_factor, 1))::float8 AS q_open, (b.high * coalesce(s.qfq_factor, 1))::float8 AS q_high,
+     (b.low * coalesce(s.qfq_factor, 1))::float8 AS q_low, (b.close * coalesce(s.qfq_factor, 1))::float8 AS q_close,
+     b.volume::float8 AS volume, b.amount::float8 AS amount";
+const ETF_BATCH_COLUMNS: &str = "b.trade_date AS trade_date, b.open::float8 AS open, b.high::float8 AS high, b.low::float8 AS low, b.close::float8 AS close,
+     b.open::float8 AS q_open, b.high::float8 AS q_high, b.low::float8 AS q_low, b.close::float8 AS q_close,
+     b.volume::float8 AS volume, b.amount::float8 AS amount";
 
 type BarRow = (NaiveDate, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64);
 type StockBarRow = (
@@ -203,6 +210,58 @@ pub async fn recent_instrument_bars(
     } else {
         recent_bars(pool, code, n).await
     }
+}
+
+/// 一批证券最近 n 根日线，按证券和日期升序返回。股票与 ETF 共用一个入口，避免列表页面为每只证券发起 N+1 查询。
+pub async fn recent_instrument_bars_batch(
+    pool: &PgPool,
+    codes: &[String],
+    n: i64,
+) -> sqlx::Result<HashMap<String, Vec<DailyBar>>> {
+    if codes.is_empty() || n <= 0 {
+        return Ok(HashMap::new());
+    }
+    let stock_sql = format!(
+        "SELECT thscode, trade_date, open, high, low, close, q_open, q_high, q_low, q_close, volume, amount FROM (
+             SELECT b.thscode, {STOCK_BATCH_COLUMNS}, row_number() OVER (PARTITION BY b.thscode ORDER BY b.trade_date DESC) AS rn
+             FROM {BAR_JOIN} WHERE b.thscode = ANY($1)
+         ) x WHERE rn <= $2 ORDER BY thscode, trade_date"
+    );
+    let stock_rows: Vec<StockBarRow> = sqlx::query_as(AssertSqlSafe(stock_sql))
+        .bind(codes)
+        .bind(n)
+        .fetch_all(pool)
+        .await?;
+    let etf_sql = format!(
+        "SELECT thscode, trade_date, open, high, low, close, q_open, q_high, q_low, q_close, volume, amount FROM (
+             SELECT b.thscode, {ETF_BATCH_COLUMNS}, row_number() OVER (PARTITION BY b.thscode ORDER BY b.trade_date DESC) AS rn
+             FROM {ETF_BAR_JOIN} WHERE b.thscode = ANY($1)
+         ) x WHERE rn <= $2 ORDER BY thscode, trade_date"
+    );
+    let etf_rows: Vec<StockBarRow> = sqlx::query_as(AssertSqlSafe(etf_sql))
+        .bind(codes)
+        .bind(n)
+        .fetch_all(pool)
+        .await?;
+    let mut out: HashMap<String, Vec<DailyBar>> = HashMap::new();
+    for (code, date, open, high, low, close, q_open, q_high, q_low, q_close, volume, amount) in
+        stock_rows.into_iter().chain(etf_rows)
+    {
+        out.entry(code).or_default().push(DailyBar {
+            date,
+            open,
+            high,
+            low,
+            close,
+            q_open,
+            q_high,
+            q_low,
+            q_close,
+            volume,
+            amount,
+        });
+    }
+    Ok(out)
 }
 
 /// 一只股票截至 end（含）的最近 n 根日线，按日期升序

@@ -126,18 +126,14 @@ pub fn run(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, from:
                 trades[t].return_pct = (bars[k].q_close / q - 1.0) * 100.0;
                 trades[t].bars_held = (k - j) as i64;
                 let ret = bars[k].q_close / q - 1.0;
-                let r = &d.exit;
-                let reason = if sell[k] {
-                    Some(ExitReason::Signal)
-                } else if r.stop_loss_pct.is_some_and(|s| ret <= -s / 100.0) {
-                    Some(ExitReason::StopLoss)
-                } else if r.take_profit_pct.is_some_and(|t| ret >= t / 100.0) {
-                    Some(ExitReason::TakeProfit)
-                } else if r.max_hold_days.is_some_and(|h| k + 1 - j >= h as usize) {
-                    Some(ExitReason::MaxHold)
-                } else {
-                    None
-                };
+                let reason = super::backtest::exit_reason(
+                    sell[k],
+                    ret,
+                    d.exit.stop_loss_pct,
+                    d.exit.take_profit_pct,
+                    d.exit.max_hold_days,
+                    k + 1 - j,
+                );
                 match reason {
                     Some(reason) => pending_sell = Some((k, reason)),
                     None if buy[k] && d.in_universe(f, meta, k) => pending_sell = None,

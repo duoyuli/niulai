@@ -78,7 +78,7 @@ fn default_api_bind() -> String {
     "127.0.0.1:8080".into()
 }
 fn default_db_max_connections() -> u32 {
-    10
+    20
 }
 fn default_worker_concurrency() -> usize {
     3

@@ -20,6 +20,8 @@ pub mod db;
 pub mod error;
 pub mod instrument;
 pub mod operation_log;
+pub(crate) mod readiness;
+pub(crate) mod scheduling;
 pub mod server;
 pub mod setup;
 pub mod sync;

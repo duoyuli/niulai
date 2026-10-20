@@ -143,14 +143,16 @@ async fn list_watchlist(
     .await?;
 
     let codes: Vec<String> = base.iter().map(|r| r.0.clone()).collect();
-    let mut series: HashMap<String, Vec<(NaiveDate, f64)>> = HashMap::new();
-    for code in &codes {
-        let bars = prices::recent_instrument_bars(&s.pool, code, LOOKBACK).await?;
-        series.insert(
-            code.clone(),
-            bars.into_iter().map(|b| (b.date, b.q_close)).collect(),
-        );
-    }
+    let bars_by_code = prices::recent_instrument_bars_batch(&s.pool, &codes, LOOKBACK).await?;
+    let series: HashMap<String, Vec<(NaiveDate, f64)>> = bars_by_code
+        .into_iter()
+        .map(|(code, bars)| {
+            (
+                code,
+                bars.into_iter().map(|b| (b.date, b.q_close)).collect(),
+            )
+        })
+        .collect();
 
     let sec = market::securities(&s.pool).await?;
     // 权威涨跌停池：最近信号里的涨跌停、炸板、连板以供应商的名单为准；自选股数量不多，按股票只读需要的行
@@ -166,12 +168,14 @@ async fn list_watchlist(
         }
         None => LimitPool::empty(),
     };
+    let mut recent_by_code =
+        prices::recent_instrument_bars_batch(&s.pool, &codes, RECENT_BARS).await?;
     let mut items = vec![];
     for (thscode, name, board, asset_type, delisted_on, added_at, last_date, close) in base {
         let diagnosis = series
             .get(&thscode)
             .and_then(|pts| diagnose(pts, fast, slow));
-        let bars = prices::recent_instrument_bars(&s.pool, &thscode, RECENT_BARS).await?;
+        let bars = recent_by_code.remove(&thscode).unwrap_or_default();
         let recent_signals = {
             let history = sec
                 .st_history

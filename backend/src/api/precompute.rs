@@ -1,6 +1,5 @@
 //! 首页常用全市场结果的后台预热。
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::watch;
@@ -8,23 +7,11 @@ use tokio::sync::watch;
 use super::AppState;
 use crate::analysis::limit_pool::CacheVersions;
 use crate::analysis::market;
-use crate::sync::Engine;
 
 const WARM_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const WARM_SECTOR_DAYS: u32 = 5;
 
-pub async fn run(engine: Arc<Engine>, mut stop: watch::Receiver<bool>) -> anyhow::Result<()> {
-    let state = AppState {
-        engine: engine.clone(),
-        pool: engine.pool.clone(),
-        cache: engine.cache.clone(),
-        session_secret: Arc::default(),
-        login_guard: Arc::default(),
-        latest: Arc::default(),
-        overview: Arc::default(),
-        stats: Arc::default(),
-        metrics: Arc::default(),
-    };
+pub async fn run(state: AppState, mut stop: watch::Receiver<bool>) -> anyhow::Result<()> {
     let mut tick = tokio::time::interval(WARM_INTERVAL);
     loop {
         tokio::select! {

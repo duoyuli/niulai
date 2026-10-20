@@ -7,6 +7,7 @@ use crate::config::Settings;
 
 /// 程序里所有日期都按上海时间（A 股交易所的时间）理解，与服务器、数据库所在的时区无关
 pub const TIME_ZONE: &str = "Asia/Shanghai";
+const STATEMENT_TIMEOUT: &str = "120s";
 
 pub async fn connect(settings: &Settings) -> anyhow::Result<PgPool> {
     pool(&settings.database_url, settings.db_max_connections).await
@@ -24,6 +25,11 @@ pub async fn pool(url: &str, max_connections: u32) -> anyhow::Result<PgPool> {
                 // 审计：TIME_ZONE 是代码里的常量
                 conn.execute(AssertSqlSafe(format!("SET TIME ZONE '{TIME_ZONE}'")))
                     .await?;
+                // 审计：STATEMENT_TIMEOUT 是代码里的常量；避免单个 API 或维护查询永久占住连接。
+                conn.execute(AssertSqlSafe(format!(
+                    "SET statement_timeout = '{STATEMENT_TIMEOUT}'"
+                )))
+                .await?;
                 Ok(())
             })
         })

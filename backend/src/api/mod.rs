@@ -88,8 +88,8 @@ pub(crate) fn derived_cache_key(
 pub struct ApiDoc;
 
 // @project-doc docs/interfaces/rest_api.md#conventions
-pub fn router(engine: Arc<Engine>) -> Router {
-    let state = AppState {
+pub fn state(engine: Arc<Engine>) -> AppState {
+    AppState {
         pool: engine.pool.clone(),
         cache: engine.cache.clone(),
         engine,
@@ -99,7 +99,14 @@ pub fn router(engine: Arc<Engine>) -> Router {
         overview: Arc::default(),
         stats: Arc::default(),
         metrics: Arc::default(),
-    };
+    }
+}
+
+pub fn router(engine: Arc<Engine>) -> Router {
+    router_with_state(state(engine))
+}
+
+pub fn router_with_state(state: AppState) -> Router {
     let (api, openapi) = routes().split_for_parts();
     let openapi = Arc::new(openapi);
     let request_id = HeaderName::from_static("x-request-id");

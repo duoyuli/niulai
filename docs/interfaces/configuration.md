@@ -41,7 +41,7 @@
 | `NIULAI_METRICS_TOKEN` | 否 | 无 | 设置后启用 `GET /api/v1/metrics`（Prometheus 文本格式），请求要带 `Authorization: Bearer <令牌>`（不接受写在网址里）；不设置时接口返回 404。令牌只在启动时读一次，见 [监控指标](../operations/runbook.md#metrics) |
 | `NIULAI_API_BIND` | 否 | `127.0.0.1:8080` | API 监听地址；Docker 镜像中默认 `0.0.0.0:8080` |
 | `NIULAI_DATASETS_PATH` | 否 | 依次查找 `config/datasets.yaml`、`backend/config/datasets.yaml` | 数据集注册表路径；Docker 镜像中是 `/app/config/datasets.yaml` |
-| `NIULAI_DB_MAX_CONNECTIONS` | 否 | `10` | 数据库连接池上限 |
+| `NIULAI_DB_MAX_CONNECTIONS` | 否 | `20` | 数据库连接池上限；API、同步和后台计算共用连接池，资源较小的机器可以调低 |
 | `NIULAI_WORKER_CONCURRENCY` | 否 | `3` | 单个进程同时执行的同步任务数，必须大于 0 |
 | `NIULAI_RATE_LIMIT_RPS` | 否 | `2` | 每秒请求供应商的次数，必须大于 0。同一时刻只有一个进程执行同步任务，所以这就是全局上限，见 [限速与单一执行进程](../architecture/sync_pipeline.md#rate_limit) |
 | `NIULAI_HTTP_TIMEOUT_S` | 否 | `60` | 请求供应商的超时秒数；下载导出文件固定为 600 秒 |
