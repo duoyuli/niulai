@@ -256,11 +256,7 @@ impl<'a> Planner<'a> {
         let result = self.plan_wave_existing(wave, run_id).await;
         heartbeat.abort();
         if let Err(e) = result {
-            sqlx::query("UPDATE ops.run SET status = 'failed', error = $2, finished_at = now(), params = params - 'planning' - 'planning_heartbeat' WHERE run_id = $1")
-                .bind(run_id)
-                .bind(format!("规划失败：{e:#}"))
-                .execute(self.pool)
-                .await?;
+            super::run::fail_planning(self.pool, run_id).await?;
             return Err(e);
         }
         Ok(())

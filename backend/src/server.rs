@@ -150,10 +150,13 @@ async fn run_workers(engine: Arc<Engine>, mut stop: watch::Receiver<bool>) -> an
     let (slots_stop, slots_rx) = watch::channel(false);
     let mut slots = JoinSet::new();
     let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".into());
+    let maintenance = engine.executor(format!("{host}-{}-maintenance", std::process::id()));
+    let maintenance_stop = slots_rx.clone();
+    slots.spawn(async move { maintenance.maintenance_loop(maintenance_stop).await });
     for slot in 0..engine.settings.worker_concurrency {
         let ex = engine.executor(format!("{host}-{}-{slot}", std::process::id()));
         let stop = slots_rx.clone();
-        slots.spawn(async move { ex.run_loop(slot, stop, false).await });
+        slots.spawn(async move { ex.run_loop(slot, stop, false, false).await });
     }
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     let result = loop {

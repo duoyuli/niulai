@@ -453,12 +453,7 @@ async fn clear_stale(engine: &Engine) -> anyhow::Result<u64> {
             continue;
         };
         if let Some(why) = super::calendar::stale_partition_date(&engine.pool, spec, d).await? {
-            cleared += sqlx::query("UPDATE ops.task SET status = 'skipped', last_error = $2 WHERE task_id = $1 AND status = 'dead'")
-                .bind(id)
-                .bind(why)
-                .execute(&engine.pool)
-                .await?
-                .rows_affected();
+            cleared += super::queue::skip_dead(&engine.pool, id, &why).await? as u64;
         }
     }
     Ok(cleared)
@@ -580,7 +575,7 @@ pub async fn repair(engine: &Engine) -> anyhow::Result<RepairSummary> {
     .await?
     .rows_affected();
     // 只有明确的 partial repair 运行允许重新打开；成功运行不会被补偿路径改写。
-    let _ = super::run::reopen_partial_repairs(&mut *tx).await?;
+    let _ = super::run::reopen_partial_repairs(&mut tx).await?;
     tx.commit().await?;
     summary.retried = retried;
     // 只记录时间；last_fired 由 auto_repair 的抢占维护，手动补偿不影响当天的自动补偿

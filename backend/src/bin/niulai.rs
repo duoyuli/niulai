@@ -309,7 +309,12 @@ async fn work(
     let mut handles = vec![];
     for slot in 0..n {
         let ex = engine.executor(format!("cli-{}-{slot}", std::process::id()));
-        handles.push(tokio::spawn(ex.run_loop(slot, rx.clone(), until_idle)));
+        handles.push(tokio::spawn(ex.run_loop(
+            slot,
+            rx.clone(),
+            until_idle,
+            slot == 0,
+        )));
     }
     let stop_tx = tx.clone();
     let stopper = tokio::spawn(async move {

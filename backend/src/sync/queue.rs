@@ -64,6 +64,20 @@ pub struct TaskQueue {
     worker_id: String,
 }
 
+/// 将确认过期且不可恢复的 dead 任务收口为 skipped；其他模块不直接改任务状态。
+pub async fn skip_dead(pool: &PgPool, task_id: i64, why: &str) -> anyhow::Result<bool> {
+    Ok(sqlx::query(
+        "UPDATE ops.task SET status = 'skipped', last_error = $2, locked_by = NULL
+         WHERE task_id = $1 AND status = 'dead'",
+    )
+    .bind(task_id)
+    .bind(why)
+    .execute(pool)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
 impl TaskQueue {
     pub fn new(pool: PgPool, worker_id: String) -> Self {
         TaskQueue { pool, worker_id }

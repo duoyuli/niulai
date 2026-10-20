@@ -24,7 +24,7 @@ use crate::vendor::{CallError, HithinkClient};
 
 /// 队列为空时的轮询间隔
 const IDLE_POLL: Duration = Duration::from_secs(2);
-/// 0 号执行槽的维护间隔（回收过期租约、结束无人结束的运行、定期重算复权因子）
+/// 维护间隔（回收过期租约、结束无人结束的运行、定期重算复权因子）
 const MAINTENANCE_EVERY: Duration = Duration::from_secs(60);
 
 pub struct Executor {
@@ -85,14 +85,15 @@ impl Executor {
         slot: usize,
         mut stop: watch::Receiver<bool>,
         until_idle: bool,
+        maintenance: bool,
     ) -> anyhow::Result<()> {
-        // 队列一直有任务时也要定期维护，所以按时间而不是按空闲轮数触发
+        // CLI 的单进程 work 可让一个槽兼任维护；常驻服务由独立维护任务负责。
         let mut last_maintenance: Option<std::time::Instant> = None;
         loop {
             if *stop.borrow() {
                 return Ok(());
             }
-            if slot == 0 && last_maintenance.is_none_or(|t| t.elapsed() >= MAINTENANCE_EVERY) {
+            if maintenance && last_maintenance.is_none_or(|t| t.elapsed() >= MAINTENANCE_EVERY) {
                 last_maintenance = Some(std::time::Instant::now());
                 if let Err(e) = self.maintain().await {
                     tracing::error!(error = %format!("{e:#}"), "队列维护失败");
@@ -131,6 +132,28 @@ impl Executor {
                 Err(e) => {
                     tracing::error!(error = %e, "认领任务失败");
                     tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+    }
+
+    /// 常驻服务的独立维护循环，不占用任何一个同步任务槽。
+    pub async fn maintenance_loop(
+        self: Arc<Self>,
+        mut stop: watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
+        let mut tick = tokio::time::interval(MAINTENANCE_EVERY);
+        loop {
+            tokio::select! {
+                changed = stop.changed() => {
+                    if changed.is_err() || *stop.borrow() {
+                        return Ok(());
+                    }
+                }
+                _ = tick.tick() => {
+                    if let Err(error) = self.maintain().await {
+                        tracing::error!(error = %format!("{error:#}"), "队列维护失败");
+                    }
                 }
             }
         }
