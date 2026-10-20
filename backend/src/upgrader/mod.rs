@@ -476,6 +476,11 @@ impl Upgrade<'_> {
             write_in_place(&env_path, &set_env_line(text, "NIULAI_IMAGE", &target))?;
         }
         let niulai = self.find("niulai").await?;
+        let mut body = create_body_for(self.docker, &niulai, &target).await?;
+        // 旧容器由更新前的 Compose 创建时，补上部署目录中的共享缓存配置。
+        if let Some(redis_url) = read_env_value(&env_path, "REDIS_URL") {
+            add_container_env(&mut body, "REDIS_URL", &redis_url);
+        }
         let tick = |secs: u64| {
             p.running(
                 "restart",
@@ -485,15 +490,7 @@ impl Upgrade<'_> {
                 ),
             )
         };
-        if let Err(e) = self
-            .recreate_with(
-                &niulai,
-                create_body_for(self.docker, &niulai, &target).await?,
-                true,
-                &tick,
-            )
-            .await
-        {
+        if let Err(e) = self.recreate_with(&niulai, body, true, &tick).await {
             if let Some(text) = &env_before {
                 let _ = write_in_place(&env_path, text);
             }
@@ -673,6 +670,28 @@ fn env_var<'a>(c: &'a Value, key: &str) -> Option<&'a str> {
         .find_map(|e| e.strip_prefix(key)?.strip_prefix('='))
 }
 
+fn read_env_value(path: &Path, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    std::fs::read_to_string(path)
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix(&prefix)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+}
+
+fn add_container_env(body: &mut Value, key: &str, value: &str) {
+    let Some(env) = body["Env"].as_array_mut() else {
+        return;
+    };
+    let prefix = format!("{key}=");
+    env.retain(|entry| entry.as_str().is_none_or(|line| !line.starts_with(&prefix)));
+    env.push(Value::String(format!("{prefix}{value}")));
+}
+
 /// 由旧容器的配置生成新容器的创建参数：换镜像，保留 Compose 写入的命令、环境变量、卷、端口、网络和标签。
 /// 来自旧镜像的默认环境变量和标签去掉，让新镜像的默认值生效
 pub fn create_body(old: &Value, old_image: &Value, image: &str) -> Value {
@@ -820,6 +839,19 @@ mod tests {
         assert_eq!(
             b["NetworkingConfig"]["EndpointsConfig"],
             json!({ "niulai_default": { "Aliases": ["niulai"] } })
+        );
+    }
+
+    #[test]
+    fn container_env_overlay_replaces_existing_value() {
+        let mut body = json!({"Env": ["DATABASE_URL=redacted", "REDIS_URL=old"]});
+        add_container_env(&mut body, "REDIS_URL", "redis://redis:6379");
+        assert_eq!(
+            body["Env"].as_array().unwrap(),
+            &vec![
+                Value::String("DATABASE_URL=redacted".into()),
+                Value::String("REDIS_URL=redis://redis:6379".into())
+            ]
         );
     }
 }
