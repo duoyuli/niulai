@@ -11,7 +11,7 @@ A 股股票和交易所 ETF 诊断工作台：Rust 后端在 `backend/`，React 
 ## 约定
 
 - 执行过的迁移文件不再修改，表结构变更一律新增迁移。
-- 新增数据集优先只改 `backend/config/datasets.yaml`。
+- 新增只写 `raw.record` 的数据集优先只改 `backend/config/datasets.yaml`；复用或新增类型化表时必须同步核对 `backend/src/sync/sinks.rs`、迁移和数据集文档。
 - 动态拼接的 SQL 用 `sqlx::AssertSqlSafe` 包裹，上一行用「审计：」注释说明为什么安全；用户输入一律走绑定参数。
 - `#[utoipa::path]` 的每个响应都写 `description`；`ToSchema` 类型名在整个 API 中唯一（重名会被静默覆盖）。
 - `frontend/src/api/generated/` 由 orval 生成，不手改；前端依赖精确锁版本，不放宽「发布满 3 天才安装」的策略。
