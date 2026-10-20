@@ -37,7 +37,8 @@
 | `incremental` | 否 | 增量规则：`rerun`（与回补相同的分区，整份重取）、`{since_cursor: {overlap_days: N}}`（从游标往后，重叠 N 天）、`{latest_n: {params: {...}}}` 或 `{latest_n: {n: N}}`（只取最近 N 期） |
 | `schedule` | 否 | `daily`（默认）、`weekly`、`monthly`、`report_season`、`manual`（不自动同步），到期规则见 [定时调度](../architecture/sync_pipeline.md#scheduling) |
 | `store_record` | 否 | 是否写入通用记录库 `raw.record`，默认 true |
-| `sink` | 否 | 要写入的类型化表列表，必须是 `sinks.rs` 中已实现的组合 |
+| `sink` | 否 | 要写入的类型化表列表，必须是已注册的投影目标 |
+| `sink_mode` | 否 | 同一目标表的投影变体，例如 `history`、`snapshot`、`valuation`、`float_cap`；复用已有投影时只需在 YAML 声明变体 |
 | `trade_date_guard` | 否 | 快照类数据集设为 true：执行前做交易日校验，未收盘或数据未就绪时推迟，已经错过的交易日记为失败，见 [交易日校验](../domains/market_data_rules.md#trade_date_guard)。默认 false |
 | `recover_with` | 否 | 这个数据集取不到时，由哪个有历史的数据集补回同样的数据，例如收盘快照由个股日线补。兜底补偿按它规划，见 [完整性核对与兜底补偿](../architecture/sync_pipeline.md#audit)。没有配置的只有当天值的数据集，错过就补不回来 |
 | `empty_codes` | 否 | 按「没有数据」处理的供应商错误码列表，例如 `a_share.fin_indicator` 的 `[5003]`。命中时不重试，任务记为 `empty`，原因写在 `last_error` |
@@ -119,7 +120,7 @@
 
 1. 在 [同花顺接口](hithink_api.md) 和官方文档中确认接口路径、参数、分页上限、历史深度，用真实 Key 调一次，看响应结构。
 2. 在 `datasets.yaml` 中新增条目：写中文名、分类和一句话说明，选择分区类型，写 `params`、`records`、`key`，有业务日期时写 `obs_date`，有证券时写 `thscode`。把实测结论写进 `notes`。
-3. 需要类型化表时：新增迁移文件建表，在 `sinks.rs` 的 `apply` 中增加 `(sink, 数据集)` 分支。
+3. 需要已有类型化表的投影时：在 YAML 中选择 `sink` 和 `sink_mode`。只有新增表或新的投影语义才需要新增迁移并扩展 `sinks.rs`。
 4. 运行 `cargo test`。`spec::tests::project_registry_parses` 会解析真实的配置文件。
 5. 用少量证券试跑：`niulai plan backfill -d <数据集> --thscode 600519.SH`。`niulai serve` 在运行时会自动执行；没有运行时用 `niulai work --until-idle`。检查 `ops.task` 中没有 `dead` 任务，并抽查 `raw.record`。
 6. 更新 [数据目录](dataset_catalog.md)。
