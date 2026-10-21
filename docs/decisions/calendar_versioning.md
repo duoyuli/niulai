@@ -1,6 +1,6 @@
 # ADR：版本号按发布日期定
 
-- 状态：已采纳（accepted），2026-10-17。部分取代 [ADR：只在发布版本标签时构建镜像](image_on_tag.md) 的决策第 2、3 条（镜像标签和预发布），以及 [ADR：Docker 部署的一键升级](one_click_upgrade.md) 中「upgrader 只接受 `X.Y.Z`」。
+- 状态：已采纳（accepted），2026-10-17。规定正式版本号和镜像标签格式；[ADR：只在发布版本标签时构建镜像](image_on_tag.md) 继续规定只有发布标签构建正式镜像，[ADR：Docker 部署的一键升级](one_click_upgrade.md) 按本 ADR 校验目标版本。
 - 相关文档：[CI：构建镜像](../operations/runbook.md#release_image)、[一键升级](../operations/runbook.md#one_click_upgrade)。
 
 ## 背景

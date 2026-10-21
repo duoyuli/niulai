@@ -52,7 +52,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 | 状态 | `queue.rs`、`run.rs`、`cursor.rs`、`calendar.rs` | `ops.task` 的状态变更；`ops.run` 的创建与结束；`ops.cursor`；`ref.trading_day` 与交易日校验 |
 | 配置 | `spec.rs`、`template.rs`、`registry.rs` | 注册表的类型化表示、模板展开、同步到 `ops.dataset` |
 
-任务状态的 SQL 只写在 `queue.rs`，运行状态的 SQL 只写在 `run.rs`。重试、租约、推迟等时间策略是这两个模块和 `calendar.rs` 顶部的常量。
+任务状态迁移集中在 `queue.rs`；运行的创建、终态判定、接续和重开由 `run.rs` 负责，`planner.rs` 只更新规划过程的运行元数据（例如 `planning_error` 和 `planned_since_marks`）。重试、租约、推迟等时间策略是这两个模块和 `calendar.rs` 顶部的常量。
 
 <a id="waves"></a>
 ## 波次规划
@@ -65,7 +65,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 | 1 | `security`、`security_batch`、`security_window`、`report_period`（依赖证券范围）；按本地交易日历展开的 `trading_day`（排在交易日历之后：第一次同步时日历还是空的，那时规划会把节假日当成交易日） |
 | 来源层级 + 1 | `from_dataset`（来源数据集也有 from_dataset 时继续往上算，最多 8 层） |
 
-规划时先创建第一个波次的 planning 运行，其余波次写入该运行的 `params.pending_waves`；API 返回运行编号后，后台再展开任务。后台规划每 30 秒刷新 `params.planning_heartbeat`，规划完成并写入全部任务后清除 planning 标记和心跳，执行者不会把空任务运行提前结束。维护按心跳超过 10 分钟判断规划是否中断，避免把正常但很慢的首次大回补误判为失败。一个波次的全部任务结束后，执行器先规划下一个波次，再做 [运行结束后的计算](#postprocess)，新运行的 `params.root_run` 指向第一个波次。接续时在创建新运行的同一个事务里清空前一个运行的 `pending_waves`（条件 UPDATE），所以下一个波次只会规划一次。结束 2 分钟以上、`pending_waves` 仍不为空的运行（接续时出错或进程退出）由执行循环每分钟的维护补上。某个波次规划出 0 个任务时，立即结束该运行并规划下一个波次。
+规划时先创建第一个波次的 planning 运行，其余波次写入该运行的 `params.pending_waves`；API 返回运行编号后，后台再展开任务。后台规划每 30 秒刷新 `params.planning_heartbeat`，规划完成并写入全部任务后清除 planning 标记和心跳，执行者不会把空任务运行提前结束。维护按心跳超过 10 分钟判断规划是否中断，避免把正常但很慢的首次大回补误判为失败。一个波次的全部任务结束后，执行器先规划下一个波次，再做 [运行结束后的计算](#postprocess)，新运行的 `params.root_run` 指向第一个波次。接续时在创建新运行的同一个事务里清空前一个运行的 `pending_waves`（条件 UPDATE），所以下一个波次只会规划一次。结束 2 分钟以上、`pending_waves` 仍不为空的运行（接续时出错或进程退出）由维护组件每分钟补上。某个波次规划出 0 个任务时，立即结束该运行并规划下一个波次。
 
 规划一个波次时，先算出所有数据集的任务，再在一个事务里创建运行、写入全部任务和任务总数。所以执行者看到一个运行时，它的任务已经齐全；否则前几个数据集的任务做完、后面的还在规划时，运行会被误判为已结束，下一个波次会提前开始。某个数据集规划失败（例如 universe 查询出错）时保留其他数据集的任务，但运行会记录 planning error，并在任务结束后显示为 `partial`，不能把未规划的数据集误报为成功。
 
@@ -109,7 +109,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
 1. **单次请求内**：可重试的错误按 `defaults.retry.backoff_s`（默认 2、8、30 秒）退避后重试，每次尝试都写一行 `ops.api_call`。哪些错误可重试见 [错误处理](../interfaces/hithink_api.md#error_handling)。
 2. **任务级**：重试用尽后，任务标为 `failed`，`not_before` 推迟 5 分钟 × 已尝试次数；尝试次数达到 `max_attempts`（默认 4，配置项 `defaults.retry.max_attempts`）后标为 `dead`。不可重试的错误（1xxx、2xxx、3001 等）、配置或解析错误直接标为 `dead`。
 
-认领的任务带 10 分钟的租约。执行期间，执行者每分钟续租一次（刷新 `locked_at`），所以下载导出文件、长时间翻页这类超过 10 分钟的任务不会被当成崩溃。执行者崩溃后，任务停留在 `running`、不再续租。执行循环的 0 号槽位每分钟做一次维护，不论队列是否空闲：
+认领的任务带 10 分钟的租约。执行期间，执行者每分钟续租一次（刷新 `locked_at`），所以下载导出文件、长时间翻页这类超过 10 分钟的任务不会被当成崩溃。执行者崩溃后，任务停留在 `running`、不再续租。常驻服务的独立维护组件每分钟做一次维护，不论队列是否空闲；命令行 `niulai work` 由一个执行槽兼任维护：
 1. 调用 `ops.requeue_stale('10 minutes')`，把租约过期的任务放回 `failed`；如果尝试次数已达上限，则标为 `dead`。
 2. 找出状态仍是 `running`、但已经没有未完成任务的运行，把它结束。例如最后一个任务被回收后直接标为 `dead`，没有执行者处理过它，运行不会自己结束。
 3. 回补期间定期重算复权因子，见 [运行结束后的计算](#postprocess)。
@@ -147,7 +147,7 @@ raw 记录、类型化 sink 和游标在同一个任务事务中写入；事务�
 
 `try_complete` 在把运行置为终态的同一条条件 UPDATE 中写入 `ops.run.params.sync_event_pending`，因此最后一个任务完成后即使进程在接续波次、复权重算或事件发布前退出，也能由应用层重放。`executor` 在复权重算成功后补上准确的 `price_changed` 并发布 `SyncRunCompleted`，应用事件编排器再用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，并为每个账户生成 [调仓建议](../domains/accounts.md#generation)。事件处理成功后清除标记，进程重启或事件处理失败时由维护循环重放，避免只依赖进程内事件。分析或建议失败不会让后面的波次停掉，但会保留待处理标记。执行循环每分钟发布 `MaintenanceTick`，编排器消费后补齐缺的建议和巡检。策略过去表现和参考值回测只在用户主动研究时运行，不由维护事件自动重算。下一个波次在事件发布之前就已规划。复权的计算规则见 [复权](../domains/price_adjustment.md)。
 
-新的一天的日线不用重算就有复权价（落在最后一个分段里）。但一个回补运行可能要执行一两天，期间补回来的历史日线和公司行动会改变分段，只在运行结束时重算的话，这段时间的复权价是旧的。所以执行循环的维护（每分钟一次）还会检查：自上次重算以来有价格类任务写入了变化，并且距上次重算超过 5 分钟，就重算一次。上次重算的时刻记在 `ops.scheduler` 的 `adj_rebuild` 作业上，用条件 UPDATE 抢占；运行结束时的重算也会刷新这个时刻。重算不阻塞查询，见 [等比复权因子](../domains/price_adjustment.md#equal_ratio_factor)。
+新的一天的日线不用重算就有复权价（落在最后一个分段里）。但一个回补运行可能要执行一两天，期间补回来的历史日线和公司行动会改变分段，只在运行结束时重算的话，这段时间的复权价是旧的。所以维护组件（每分钟一次）还会检查：自上次重算以来有价格类任务写入了变化，并且距上次重算超过 5 分钟，就重算一次。上次重算的时刻记在 `ops.scheduler` 的 `adj_rebuild` 作业上，用条件 UPDATE 抢占；运行结束时的重算也会刷新这个时刻。重算不阻塞查询，见 [等比复权因子](../domains/price_adjustment.md#equal_ratio_factor)。
 
 <a id="scheduling"></a>
 ## 定时调度

@@ -8,7 +8,7 @@
 - 所有接口都在 `/api/v1` 下，响应是 JSON。默认监听 `127.0.0.1:8080`（`NIULAI_API_BIND`）。同一端口的其他路径是前端页面（配置了 `NIULAI_WEB_DIR` 时），未匹配的 `/api/` 路径返回 JSON 404，见 [由 niulai serve 提供](../architecture/frontend.md#serving)。
 - **要先登录**：除健康检查、登录/退出、OpenAPI 和监控指标外，所有接口都要带登录 Cookie，否则返回 401；普通用户调用管理员接口返回 403，见 [登录与权限](#auth)。默认只监听本机端口（`127.0.0.1:8080`），见 [部署](../operations/runbook.md#deployment)。
 - 请求标识：每个响应都带 `x-request-id` 头。请求中带了这个头时沿用，否则生成一个 UUID；日志中的 `request_id` 与它一致。
-- 超时：单个请求超过 120 秒返回 408。
+- 超时：单个请求超过 `NIULAI_API_TIMEOUT_S` 返回 408，默认是 300 秒。可取消的组合回测和信号统计仍由前端提供取消操作。
 - 数值格式：
   - 未复权价格和成交额是十进制字符串，保留数据库中的精度，例如 `"1312.9700"`、`"7537706223.71"`。
   - 复权价格也是字符串，保留 6 位小数。
@@ -129,7 +129,7 @@
 
 同花顺金融数据服务的 API Key 一般不在部署时提供，而是第一次打开网页时配置，实现在 `backend/src/setup.rs`：
 
-- `GET /setup` 的 `api_key_configured` 为 false 时，执行循环和定时调度暂停，前端把所有页面跳转到引导页。`api_key_url` 是生成 Key 的页面 <https://fuyao.aicubes.cn/admin/>。
+- `GET /setup` 的 `api_key_configured` 为 false 时，执行循环和定时调度暂停；管理员登录后的页面会跳转到引导页，普通用户不执行这项前端检查。`api_key_url` 是生成 Key 的页面 <https://fuyao.aicubes.cn/admin/>。
 - `PUT /setup/api-key` 先用这个 Key 请求一次交易日历接口：被拒绝时返回 400，连不上时返回 503，都不保存；成功后写入 `app.setting` 并立即生效。数据库里还没有任何回补运行时，同时规划 P0、P1 的全量回补，响应中的 `backfill_run_id` 是第一个波次的运行 ID。
 - Key 由环境变量 `HITHINK_FINANCE_API_KEY` 提供时，`api_key_source` 为 `env`，`PUT` 返回 409。
 - 响应中只有末尾 4 位（`api_key_hint`），不返回完整 Key。
