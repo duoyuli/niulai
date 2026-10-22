@@ -45,6 +45,9 @@
 | `GET /securities/{thscode}/bars` | 个股或 ETF 日线 | `adjust`（见 [复权参数](#adjust_param)；ETF 只支持 `none` / `qfq` / `hfq`）、`start`、`end`；`limit` 默认 500、最大 10,000，返回范围内**最近**的 N 根，按日期升序 |
 | `GET /backtest/strategy` | 单只股票或 ETF 的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
 | `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金和成本同上；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
+| `GET /backtest/runs` | 查询已保存的回测运行清单和结果摘要 | `strategy_id` 可选，`limit` 默认 50；用于复现实验和比较执行模型 |
+| `GET /backtest/validation-windows` | 生成带 embargo 的滚动训练/测试日期窗口 | `start`、`end`、`train_days`、`test_days`，`embargo_days` 默认 5 |
+| `GET /backtest/strategy-validation` | 对单只证券执行滚动样本外验证 | `strategy_id`、`thscode`、日期区间和训练/测试窗口；结果分别返回训练和测试收益与风险指标 |
 | `GET /strategies/catalog` | 指标、内置信号（含白话说明）、模板目录和默认股票池，前端据此生成条件编辑器 | — |
 | `GET /strategies` | 全部策略，含白话说明（`explained`）和最近一次巡检的数量 | — |
 | `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, show_on_today, template}`，`screening`、`show_on_today` 默认 true；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |
@@ -90,6 +93,7 @@
 | `POST` / `DELETE /accounts/{id}/advice/{advice_id}/items/{key}/skip` | 不做这一条 / 撤销「不做」 | 已执行的不能撤销 |
 | `GET /accounts/{id}/review` | 最近 180 天的建议之后 5、10、20 个交易日的涨跌和汇总 | 口径见 [建议回看](../domains/accounts.md#review) |
 | `POST /accounts/{id}/backtest` | 用这个账户的规则回测一段时间 | `start`、`end`（两头都包含）：开始日期默认今年 1 月 1 日，结束日期默认最新交易日、晚于它时取最新交易日；最长 5 年，开始不早于结束时返回 400；全市场计算，几十秒到一两分钟；口径见 [规则回测](../domains/accounts.md#rules_backtest) |
+| `GET /accounts/{id}/shadow-orders` | 查看理论订单与实际成交之间的价差、部分成交和取消状态 | `limit` 默认 250；建议生成、执行或跳过后自动更新 |
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
 | `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线 |
 | `GET /indices/{thscode}/members` | 指数成分 | `date` 默认今天；历史成分从开始采集那天起才有 |

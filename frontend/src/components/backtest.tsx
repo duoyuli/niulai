@@ -204,6 +204,7 @@ export function Result({
           sub={`${fmtPercent(m.exposure, 0).replace("+", "")} 的时间持有股票`}
         />
       </div>
+      <RiskLine risk={m.risk} />
       <div className="mt-5">
         <EquityChart points={equity} capital={m.capital} log={log} />
         <LogToggle log={log} onLog={onLog} note="蓝线是这个方法，灰线是一直拿着不动。" />
@@ -327,6 +328,7 @@ export function PortfolioView({
           sub={`平均每天持有 ${m.avg_positions.toFixed(1)} 只`}
         />
       </div>
+      <RiskLine risk={m.risk} />
       <div className="mt-5">
         <EquityChart points={data.equity} capital={m.capital} log={log} benchmarkLabel={bench ?? "基准"} />
         <LogToggle
@@ -417,6 +419,19 @@ export function PortfolioView({
         )}
       </details>
     </Card>
+  );
+}
+
+function RiskLine({ risk }: { risk: Summary["risk"] }) {
+  const value = (v: number | null | undefined, digits = 2) =>
+    v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toFixed(digits);
+  return (
+    <p className="mt-3 text-xs text-zinc-500">
+      风险调整：Sharpe {value(risk.sharpe)}；Sortino {value(risk.sortino)}；Calmar {value(risk.calmar)}；年化波动{" "}
+      {risk.annual_volatility === null || risk.annual_volatility === undefined
+        ? "—"
+        : fmtPercent(risk.annual_volatility)}
+    </p>
   );
 }
 

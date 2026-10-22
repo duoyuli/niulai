@@ -11,6 +11,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
+use crate::analysis::factors::{self, FactorInfo};
 use crate::analysis::indicators::{self, IndicatorInfo};
 use crate::analysis::screener::{self, Hit, ScreeningSummary};
 use crate::analysis::signal_lib;
@@ -32,6 +33,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
 #[derive(Serialize, ToSchema)]
 pub struct Catalog {
     pub indicators: Vec<IndicatorInfo>,
+    pub factors: Vec<FactorInfo>,
     pub signals: Vec<SignalInfo>,
     pub templates: Vec<Template>,
     /// 新建策略时的默认股票池
@@ -43,6 +45,7 @@ pub struct Catalog {
 async fn catalog() -> Json<Catalog> {
     Json(Catalog {
         indicators: indicators::CATALOG.to_vec(),
+        factors: factors::CATALOG.to_vec(),
         signals: signals::CATALOG.to_vec(),
         templates: templates(),
         default_universe: Universe::default(),

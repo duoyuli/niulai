@@ -5,6 +5,7 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { FactorInfo } from './factorInfo';
 import type { IndicatorInfo } from './indicatorInfo';
 import type { SignalInfo } from './signalInfo';
 import type { Template } from './template';
@@ -13,6 +14,7 @@ import type { Universe } from './universe';
 export interface Catalog {
   /** 新建策略时的默认股票池 */
   default_universe: Universe;
+  factors: FactorInfo[];
   indicators: IndicatorInfo[];
   signals: SignalInfo[];
   templates: Template[];

@@ -237,6 +237,8 @@ pub struct StockMeta {
     /// 当前简称含 ST（没有历史 ST 状态，整段历史都按当前状态计算）
     pub is_st: bool,
     pub list_date: Option<NaiveDate>,
+    /// 证券在本地数据中推断的退市日；交易日 >= 该日时不再进入股票池。
+    pub delisted_on: Option<NaiveDate>,
     pub asset_type: AssetType,
 }
 
@@ -375,6 +377,11 @@ impl<'a> Frame<'a> {
                 .find(|p| p.valid_from <= date && p.valid_to.is_none_or(|to| date < to))
         {
             return p.is_st;
+        }
+        // 历史简称没有覆盖的日期不能被当成“确定正常”。回测股票池排除 ST 时，
+        // 对未知区间采取保守排除，避免用当前简称把未来信息带回历史。
+        if self.st_history.is_some_and(|h| !h.is_empty()) {
+            return true;
         }
         self.meta.is_some_and(|m| m.is_st)
     }
@@ -1114,6 +1121,7 @@ pub(crate) mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            delisted_on: None,
             asset_type: AssetType::Stock,
         };
         let f = Frame::new(&b, Some(&main));
@@ -1123,6 +1131,7 @@ pub(crate) mod tests {
             board: "main".into(),
             is_st: true,
             list_date: None,
+            delisted_on: None,
             asset_type: AssetType::Stock,
         };
         let f = Frame::new(&b, Some(&st));
@@ -1131,6 +1140,7 @@ pub(crate) mod tests {
             board: "star".into(),
             is_st: false,
             list_date: None,
+            delisted_on: None,
             asset_type: AssetType::Stock,
         };
         let f = Frame::new(&b, Some(&star));
@@ -1144,6 +1154,7 @@ pub(crate) mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            delisted_on: None,
             asset_type: AssetType::Stock,
         };
         let history = [StPeriod {
@@ -1154,8 +1165,8 @@ pub(crate) mod tests {
         let f = Frame::with_st_history(&b, Some(&main), &history);
         let l = f.limits();
         assert!(
-            (l.up_price[1] - 11.0).abs() < 1e-9,
-            "历史区间外回退当前简称前仍应按主板 10%"
+            (l.up_price[1] - 10.5).abs() < 1e-9,
+            "历史区间外状态未知时保守按 ST 处理"
         );
         assert!(
             (l.up_price[2] - 11.03).abs() < 1e-9,
@@ -1168,6 +1179,7 @@ pub(crate) mod tests {
             board: board.into(),
             is_st,
             list_date: None,
+            delisted_on: None,
             asset_type: AssetType::Stock,
         }
     }

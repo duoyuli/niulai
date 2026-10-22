@@ -362,6 +362,7 @@ mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            delisted_on: None,
             asset_type: crate::analysis::indicators::AssetType::Stock,
         };
         let d = diagnose(&b, &meta, &[], None).unwrap();

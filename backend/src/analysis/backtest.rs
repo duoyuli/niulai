@@ -39,6 +39,18 @@ pub struct Costs {
     pub min_commission: f64,
     /// 印花税率，只在卖出时收
     pub stamp_tax_rate: f64,
+    /// 买卖双边过户费或交易所附加费，按成交金额计。
+    pub transfer_fee_rate: f64,
+    /// 持有现金的年化利息；回测按交易日折算。
+    pub cash_interest_rate: f64,
+    /// 分红税率；0 表示按税前金额入账。
+    pub dividend_tax_rate: f64,
+    /// 成交价口径：open / close / vwap。
+    pub deal_price: crate::analysis::execution::DealPrice,
+    /// 固定双边滑点，单位为基点。
+    pub slippage_bps: f64,
+    /// 每日最多成交量占比。
+    pub participation_rate: Option<f64>,
 }
 
 impl Default for Costs {
@@ -48,6 +60,12 @@ impl Default for Costs {
             commission_rate: 0.000_25,
             min_commission: 5.0,
             stamp_tax_rate: 0.000_5,
+            transfer_fee_rate: 0.0,
+            cash_interest_rate: 0.0,
+            dividend_tax_rate: 0.0,
+            deal_price: crate::analysis::execution::DealPrice::Open,
+            slippage_bps: 0.0,
+            participation_rate: None,
         }
     }
 }
@@ -55,6 +73,14 @@ impl Default for Costs {
 impl Costs {
     pub(crate) fn commission(&self, amount: f64) -> f64 {
         (amount * self.commission_rate).max(self.min_commission)
+    }
+
+    pub fn execution(&self) -> crate::analysis::execution::ExecutionConfig {
+        crate::analysis::execution::ExecutionConfig {
+            deal_price: self.deal_price,
+            slippage_bps: self.slippage_bps,
+            participation_rate: self.participation_rate,
+        }
     }
 }
 
@@ -185,6 +211,7 @@ pub struct Summary {
     pub benchmark_return: f64,
     pub benchmark_annual_return: Option<f64>,
     pub benchmark_max_drawdown: f64,
+    pub risk: crate::analysis::research::RiskMetrics,
     /// 已经卖出的交易笔数（不含期末仍持有的那笔）
     pub closed_trades: usize,
     pub wins: usize,
@@ -213,7 +240,7 @@ pub struct Outcome {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Side {
+pub enum Side {
     Buy,
     Sell,
 }
@@ -263,6 +290,7 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
     let (mut peak, mut max_dd, mut bench_peak, mut bench_dd) = (f64::MIN, 0.0f64, f64::MIN, 0.0f64);
     // 第一天及之前除权的事件与回测无关：第一天开盘时还没有持仓
     let mut ev = events.partition_point(|e| e.ex_date <= bars[first].date);
+    let execution = p.costs.execution();
 
     for i in first..bars.len() {
         let b = &bars[i];
@@ -270,7 +298,7 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
         while ev < events.len() && events[ev].ex_date <= b.date {
             let e = &events[ev];
             if let Some(o) = pos.as_mut() {
-                let cash_div = o.shares as f64 * e.cash_div;
+                let cash_div = o.shares as f64 * e.cash_div * (1.0 - p.costs.dividend_tax_rate);
                 o.dividends += cash_div;
                 dividends += cash_div;
                 cash += cash_div;
@@ -289,7 +317,6 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
             if blocked {
                 deferred += 1;
             } else {
-                pending = None;
                 match side {
                     Side::Buy => {
                         let mut shares =
@@ -310,16 +337,37 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
                         }
                         if shares == 0 {
                             skipped += 1;
-                        } else {
-                            let amount = shares as f64 * b.open;
-                            let fee = p.costs.commission(amount);
+                        } else if let Some(fill) =
+                            execution.fill(b, side, shares as f64, &p.costs, 0.0)
+                        {
+                            let filled_shares =
+                                (fill.filled / p.lot.step as f64).floor() * p.lot.step as f64;
+                            if filled_shares < p.lot.min as f64 {
+                                skipped += 1;
+                                pending = None;
+                                continue;
+                            }
+                            let Some(fill) = execution.fill(b, side, filled_shares, &p.costs, 0.0)
+                            else {
+                                skipped += 1;
+                                pending = None;
+                                continue;
+                            };
+                            let amount = fill.filled * fill.price;
+                            let fee = fill.commission + fill.transfer_fee;
+                            if amount + fee > cash + 1e-8 {
+                                skipped += 1;
+                                pending = None;
+                                continue;
+                            }
+                            pending = None;
                             cash -= amount + fee;
                             fees += fee;
                             pos = Some(Position {
                                 idx: i,
-                                entry_shares: shares,
-                                shares,
-                                price: b.open,
+                                entry_shares: fill.filled as i64,
+                                shares: fill.filled as i64,
+                                price: fill.price,
                                 q_price: b.q_open,
                                 cost: amount + fee,
                                 dividends: 0.0,
@@ -328,17 +376,41 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
                     }
                     Side::Sell => {
                         if let Some(o) = pos.take() {
-                            let gross = o.shares as f64 * b.open;
-                            let fee = p.costs.commission(gross) + gross * p.costs.stamp_tax_rate;
-                            cash += gross - fee;
-                            fees += fee;
-                            trades.push(close_trade(
-                                bars,
-                                &o,
-                                i,
-                                Some((b.open, sell_reason)),
-                                gross - fee,
-                            ));
+                            if let Some(fill) = execution.fill(
+                                b,
+                                side,
+                                o.shares as f64,
+                                &p.costs,
+                                p.costs.stamp_tax_rate,
+                            ) {
+                                let sold = fill.filled.floor() as i64;
+                                if sold <= 0 {
+                                    pos = Some(o);
+                                    pending = Some(Side::Sell);
+                                    continue;
+                                }
+                                let gross = sold as f64 * fill.price;
+                                let fee = fill.commission + fill.transfer_fee + fill.stamp_tax;
+                                cash += gross - fee;
+                                fees += fee;
+                                if sold < o.shares {
+                                    let mut rest = o;
+                                    rest.shares -= sold;
+                                    pos = Some(rest);
+                                    pending = Some(Side::Sell);
+                                } else {
+                                    pending = None;
+                                    trades.push(close_trade(
+                                        bars,
+                                        &o,
+                                        i,
+                                        Some((fill.price, sell_reason)),
+                                        gross - fee,
+                                    ));
+                                }
+                            } else {
+                                pos = Some(o);
+                            }
                         }
                     }
                 }
@@ -346,6 +418,9 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
         }
 
         // 3. 收盘：按未复权收盘价计算账户总值
+        if p.costs.cash_interest_rate > 0.0 {
+            cash *= 1.0 + p.costs.cash_interest_rate / 252.0;
+        }
         let value = cash + pos.as_ref().map_or(0.0, |o| o.shares as f64 * b.close);
         let bench_value = bench.cash + bench.shares * b.close;
         peak = peak.max(value);
@@ -399,6 +474,12 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
     let final_equity = equity.last().map_or(p.capital, |e| e.equity);
     let total_return = final_equity / p.capital - 1.0;
     let benchmark_return = equity.last().map_or(0.0, |e| e.benchmark / p.capital - 1.0);
+    let annual_return = annualize(total_return, start, last.date);
+    let risk = crate::analysis::research::risk_metrics(
+        &equity.iter().map(|e| e.equity).collect::<Vec<_>>(),
+        annual_return,
+        max_dd,
+    );
     let closed: Vec<&Trade> = trades.iter().filter(|t| t.exit_date.is_some()).collect();
     let wins = closed.iter().filter(|t| t.pnl > 0.0).count();
     let payoff_ratio = payoff(&closed.iter().map(|t| t.pnl).collect::<Vec<_>>());
@@ -409,11 +490,12 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
         capital: p.capital,
         final_equity,
         total_return,
-        annual_return: annualize(total_return, start, last.date),
+        annual_return,
         max_drawdown: max_dd,
         benchmark_return,
         benchmark_annual_return: annualize(benchmark_return, start, last.date),
         benchmark_max_drawdown: bench_dd,
+        risk,
         closed_trades: closed.len(),
         wins,
         win_rate: (!closed.is_empty()).then(|| wins as f64 / closed.len() as f64),
@@ -504,6 +586,7 @@ mod tests {
                 commission_rate: 0.0,
                 min_commission: 0.0,
                 stamp_tax_rate: 0.0,
+                ..Costs::default()
             },
             risk: Risk::default(),
             lot: LotRule::default(),

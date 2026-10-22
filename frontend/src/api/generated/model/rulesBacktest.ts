@@ -5,6 +5,7 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { BacktestManifest } from './backtestManifest';
 import type { RulesBacktestSummary } from './rulesBacktestSummary';
 import type { RulesEquityPoint } from './rulesEquityPoint';
 import type { RulesTrade } from './rulesTrade';
@@ -12,6 +13,7 @@ import type { RulesTrade } from './rulesTrade';
 export interface RulesBacktest {
   /** 每周一个点 */
   equity: RulesEquityPoint[];
+  manifest: BacktestManifest;
   summary: RulesBacktestSummary;
   /** 全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，存下来的结果里没有这一项 */
   trades?: RulesTrade[];

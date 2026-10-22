@@ -5,9 +5,17 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { DealPrice } from './dealPrice';
 
 export interface BacktestCosts {
+  cash_interest_rate: number;
   commission_rate: number;
+  deal_price: DealPrice;
+  dividend_tax_rate: number;
   min_commission: number;
+  /** @nullable */
+  participation_rate?: number | null;
+  slippage_bps: number;
   stamp_tax_rate: number;
+  transfer_fee_rate: number;
 }

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { BacktestCosts } from './backtestCosts';
+import type { BacktestManifest } from './backtestManifest';
 import type { EquityPoint } from './equityPoint';
 import type { Summary } from './summary';
 import type { Trade } from './trade';
@@ -13,6 +14,7 @@ import type { Trade } from './trade';
 export interface StrategyBacktestResult {
   costs: BacktestCosts;
   equity: EquityPoint[];
+  manifest: BacktestManifest;
   name: string;
   strategy_id: number;
   strategy_name: string;

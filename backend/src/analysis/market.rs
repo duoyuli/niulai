@@ -18,22 +18,31 @@ pub struct Securities {
     pub st_history: HashMap<String, Vec<StPeriod>>,
 }
 
-type InstrumentRow = (String, String, String, Option<String>, Option<NaiveDate>);
+type InstrumentRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<NaiveDate>,
+    Option<NaiveDate>,
+);
 
 pub async fn securities(pool: &PgPool) -> sqlx::Result<Securities> {
-    let rows: Vec<InstrumentRow> =
-        sqlx::query_as("SELECT thscode, name, board, asset_type, list_date FROM ref.instrument")
-            .fetch_all(pool)
-            .await?;
+    let rows: Vec<InstrumentRow> = sqlx::query_as(
+        "SELECT thscode, name, board, asset_type, list_date, delisted_on FROM ref.instrument",
+    )
+    .fetch_all(pool)
+    .await?;
     let mut meta = HashMap::new();
     let mut names = HashMap::new();
-    for (code, name, board, asset_type, list_date) in rows {
+    for (code, name, board, asset_type, list_date, delisted_on) in rows {
         meta.insert(
             code.clone(),
             StockMeta {
                 board,
                 is_st: name.contains("ST"),
                 list_date,
+                delisted_on,
                 asset_type: AssetType::from_db(asset_type.as_deref()),
             },
         );
@@ -182,7 +191,8 @@ pub async fn sector_strength(
            WHERE i.category = $1 AND x.trade_date <= $2 AND x.trade_date > $2 - ($3 * 2 + 20))
          SELECT i.thscode, i.name,
                 max(b.close) FILTER (WHERE b.rn = 1) / nullif(max(b.close) FILTER (WHERE b.rn = $3 + 1), 0) * 100 - 100,
-                (SELECT count(*) FROM ref.index_member m WHERE m.index_code = i.thscode AND m.valid_to IS NULL)
+                (SELECT count(*) FROM ref.index_member m WHERE m.index_code = i.thscode
+                    AND m.valid_from <= $2 AND (m.valid_to IS NULL OR m.valid_to > $2))
          FROM ref.index_info i JOIN b ON b.thscode = i.thscode
          WHERE i.category = $1 GROUP BY i.thscode, i.name",
     )
@@ -210,7 +220,7 @@ pub async fn sector_strength(
     Ok(out)
 }
 
-/// 属于排名前 top_pct% 的板块的股票（按当前成分）
+/// 属于排名前 top_pct% 的板块的股票（按 date 当日有效成分）
 pub async fn stocks_in_top_sectors(
     pool: &PgPool,
     category: &str,
@@ -225,8 +235,9 @@ pub async fn stocks_in_top_sectors(
         .take(keep)
         .map(|s| s.thscode.as_str())
         .collect();
-    let members: Vec<String> = sqlx::query_scalar("SELECT DISTINCT thscode FROM ref.index_member WHERE index_code = ANY($1) AND valid_to IS NULL")
+    let members: Vec<String> = sqlx::query_scalar("SELECT DISTINCT thscode FROM ref.index_member WHERE index_code = ANY($1) AND valid_from <= $2 AND (valid_to IS NULL OR valid_to > $2)")
         .bind(&codes)
+        .bind(date)
         .fetch_all(pool)
         .await?;
     Ok(members.into_iter().collect())

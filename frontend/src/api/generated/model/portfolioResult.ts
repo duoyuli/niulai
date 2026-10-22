@@ -6,10 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { BacktestCosts } from './backtestCosts';
+import type { BacktestManifest } from './backtestManifest';
 import type { PortfolioOutcome } from './portfolioOutcome';
 
 export type PortfolioResult = PortfolioOutcome & {
   costs: BacktestCosts;
+  manifest: BacktestManifest;
   /** @minimum 0 */
   max_positions: number;
   strategy_id: number;

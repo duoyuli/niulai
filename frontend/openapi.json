@@ -1085,6 +1085,63 @@
         }
       }
     },
+    "/accounts/{account_id}/shadow-orders": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "影子执行记录：理论订单与实际成交的价差和未成交状态",
+        "operationId": "shadow_orders",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ShadowOrder"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "账户不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/accounts/{account_id}/trades": {
       "get": {
         "tags": [
@@ -1505,6 +1562,117 @@
               ],
               "format": "double"
             }
+          },
+          {
+            "name": "transfer_fee_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "dividend_tax_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "cash_interest_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "deal_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/DealPrice"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "name": "slippage_bps",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "participation_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "max_weight_pct",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "target_vol_pct",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "max_turnover_pct",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
           }
         ],
         "responses": {
@@ -1534,6 +1702,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backtest/runs": {
+      "get": {
+        "tags": [
+          "backtest"
+        ],
+        "summary": "已保存的回测运行清单，供复现实验和比较不同执行模型。",
+        "operationId": "backtest_runs",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BacktestRunBrief"
+                  }
                 }
               }
             }
@@ -1638,6 +1856,81 @@
               ],
               "format": "double"
             }
+          },
+          {
+            "name": "transfer_fee_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "dividend_tax_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "cash_interest_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "deal_price",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/DealPrice"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "name": "slippage_bps",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "participation_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
           }
         ],
         "responses": {
@@ -1663,6 +1956,198 @@
           },
           "404": {
             "description": "证券或策略不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backtest/strategy-validation": {
+      "get": {
+        "tags": [
+          "backtest"
+        ],
+        "summary": "对单只证券执行滚动训练/样本外验证；测试窗口只使用测试日以前的数据。",
+        "operationId": "strategy_validation",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "thscode",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "train_days",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "test_days",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "embargo_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyValidationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法或历史不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "证券或策略不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backtest/validation-windows": {
+      "get": {
+        "tags": [
+          "backtest"
+        ],
+        "summary": "生成滚动样本外验证窗口；窗口只描述日期，不自动挑选最优参数。",
+        "operationId": "validation_windows",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "train_days",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "test_days",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "embargo_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ValidationWindow"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "日期或窗口参数不合法",
             "content": {
               "application/json": {
                 "schema": {
@@ -5071,10 +5556,26 @@
         "required": [
           "commission_rate",
           "min_commission",
-          "stamp_tax_rate"
+          "stamp_tax_rate",
+          "transfer_fee_rate",
+          "dividend_tax_rate",
+          "cash_interest_rate",
+          "deal_price",
+          "slippage_bps"
         ],
         "properties": {
+          "cash_interest_rate": {
+            "type": "number",
+            "format": "double"
+          },
           "commission_rate": {
+            "type": "number",
+            "format": "double"
+          },
+          "deal_price": {
+            "$ref": "#/components/schemas/DealPrice"
+          },
+          "dividend_tax_rate": {
             "type": "number",
             "format": "double"
           },
@@ -5082,10 +5583,141 @@
             "type": "number",
             "format": "double"
           },
+          "participation_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "slippage_bps": {
+            "type": "number",
+            "format": "double"
+          },
           "stamp_tax_rate": {
             "type": "number",
             "format": "double"
+          },
+          "transfer_fee_rate": {
+            "type": "number",
+            "format": "double"
           }
+        }
+      },
+      "BacktestManifest": {
+        "type": "object",
+        "required": [
+          "strategy_definition_hash",
+          "data_start",
+          "data_end",
+          "price_basis",
+          "execution_model",
+          "point_in_time_universe",
+          "derived_versions",
+          "trial_count",
+          "validation_kind",
+          "coverage",
+          "delisted_policy"
+        ],
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/Coverage"
+          },
+          "data_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "data_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "delisted_policy": {
+            "type": "string"
+          },
+          "derived_versions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "execution_model": {
+            "type": "string"
+          },
+          "point_in_time_universe": {
+            "type": "boolean"
+          },
+          "price_basis": {
+            "type": "string"
+          },
+          "strategy_definition_hash": {
+            "type": "string"
+          },
+          "trial_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "validation_kind": {
+            "type": "string"
+          }
+        }
+      },
+      "BacktestRunBrief": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "mode",
+          "start_date",
+          "end_date",
+          "definition_hash",
+          "manifest",
+          "summary",
+          "created_at"
+        ],
+        "properties": {
+          "account_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "definition_hash": {
+            "type": "string"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/BacktestManifest"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "strategy_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "summary": {}
         }
       },
       "BackupFile": {
@@ -5242,6 +5874,7 @@
         "type": "object",
         "required": [
           "indicators",
+          "factors",
           "signals",
           "templates",
           "default_universe"
@@ -5250,6 +5883,12 @@
           "default_universe": {
             "$ref": "#/components/schemas/Universe",
             "description": "新建策略时的默认股票池"
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorInfo"
+            }
           },
           "indicators": {
             "type": "array",
@@ -5449,6 +6088,37 @@
           }
         ],
         "description": "条件：一句话的判断，结果是「是」或「否」。信号、策略的买入和卖出都用这一种写法。\n时间范围：默认看当天；within_days > 1 表示最近 N 个交易日内出现过，streak_days > 1 表示连续 N 个交易日都满足"
+      },
+      "Coverage": {
+        "type": "object",
+        "required": [
+          "instruments",
+          "observed_bars",
+          "missing_instruments",
+          "unknown_state_instruments"
+        ],
+        "properties": {
+          "instruments": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "missing_instruments": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "observed_bars": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unknown_state_instruments": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "CreateRun": {
         "type": "object",
@@ -5814,6 +6484,14 @@
             "$ref": "#/components/schemas/SignalTarget"
           }
         }
+      },
+      "DealPrice": {
+        "type": "string",
+        "enum": [
+          "open",
+          "close",
+          "vwap"
+        ]
       },
       "Definition": {
         "type": "object",
@@ -6207,6 +6885,38 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "FactorId": {
+        "type": "string",
+        "enum": [
+          "momentum",
+          "reversal",
+          "volatility",
+          "liquidity"
+        ]
+      },
+      "FactorInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "higher_is_better"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "higher_is_better": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/FactorId"
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -7993,11 +8703,15 @@
               "strategy_id",
               "strategy_name",
               "max_positions",
-              "costs"
+              "costs",
+              "manifest"
             ],
             "properties": {
               "costs": {
                 "$ref": "#/components/schemas/BacktestCosts"
+              },
+              "manifest": {
+                "$ref": "#/components/schemas/BacktestManifest"
               },
               "max_positions": {
                 "type": "integer",
@@ -8024,10 +8738,12 @@
           "final_equity",
           "total_return",
           "max_drawdown",
+          "risk",
           "closed_trades",
           "wins",
           "avg_positions",
           "fees",
+          "turnover",
           "signals",
           "skipped_full"
         ],
@@ -8100,6 +8816,9 @@
             ],
             "format": "double"
           },
+          "risk": {
+            "$ref": "#/components/schemas/RiskMetrics"
+          },
           "signals": {
             "type": "integer",
             "description": "区间内出现的买入信号总数",
@@ -8117,6 +8836,11 @@
           "total_return": {
             "type": "number",
             "format": "double"
+          },
+          "turnover": {
+            "type": "number",
+            "format": "double",
+            "description": "买卖成交金额合计 / 初始资金。"
           },
           "win_rate": {
             "type": [
@@ -8606,6 +9330,51 @@
           }
         }
       },
+      "RiskMetrics": {
+        "type": "object",
+        "properties": {
+          "annual_volatility": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "年化波动率。"
+          },
+          "average_daily_return": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "每日平均收益。"
+          },
+          "calmar": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "年化收益 / 最大回撤。"
+          },
+          "sharpe": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "无风险利率为 0 的年化 Sharpe。"
+          },
+          "sortino": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "只使用负收益的年化 Sortino。"
+          }
+        }
+      },
       "Role": {
         "type": "string",
         "enum": [
@@ -8694,6 +9463,7 @@
         "type": "object",
         "required": [
           "summary",
+          "manifest",
           "equity"
         ],
         "properties": {
@@ -8703,6 +9473,9 @@
               "$ref": "#/components/schemas/RulesEquityPoint"
             },
             "description": "每周一个点"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/BacktestManifest"
           },
           "summary": {
             "$ref": "#/components/schemas/RulesBacktestSummary"
@@ -8723,6 +9496,7 @@
           "end",
           "total_return",
           "max_drawdown",
+          "risk",
           "trades",
           "avg_positions",
           "avg_cash_ratio",
@@ -8772,6 +9546,9 @@
             "type": "number",
             "format": "double",
             "description": "最大回撤（0.2 表示从最高点跌了 20%）"
+          },
+          "risk": {
+            "$ref": "#/components/schemas/RiskMetrics"
           },
           "start": {
             "type": "string",
@@ -9364,6 +10141,95 @@
           "backfill_planned": {
             "type": "boolean",
             "description": "是否已经规划过全量回补"
+          }
+        }
+      },
+      "ShadowOrder": {
+        "type": "object",
+        "required": [
+          "shadow_order_id",
+          "item_key",
+          "trade_date",
+          "thscode",
+          "side",
+          "planned_shares",
+          "reference_price",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "actual_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "actual_shares": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "actual_slippage_bps": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "advice_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "expected_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "expected_slippage_bps": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "item_key": {
+            "type": "string"
+          },
+          "planned_shares": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reference_price": {
+            "type": "number",
+            "format": "double"
+          },
+          "shadow_order_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "side": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date"
           }
         }
       },
@@ -10019,6 +10885,7 @@
           "strategy_id",
           "strategy_name",
           "costs",
+          "manifest",
           "summary",
           "trades",
           "equity"
@@ -10032,6 +10899,9 @@
             "items": {
               "$ref": "#/components/schemas/EquityPoint"
             }
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/BacktestManifest"
           },
           "name": {
             "type": "string"
@@ -10261,6 +11131,38 @@
           }
         }
       },
+      "StrategyValidationResult": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "strategy_id",
+          "manifest",
+          "windows",
+          "robustness"
+        ],
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/BacktestManifest"
+          },
+          "robustness": {
+            "$ref": "#/components/schemas/ValidationRobustness",
+            "description": "多窗口的选择偏差近似；不是完整的 DSR/PBO 统计检验。"
+          },
+          "strategy_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "thscode": {
+            "type": "string"
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidationWindowResult"
+            }
+          }
+        }
+      },
       "Summary": {
         "type": "object",
         "required": [
@@ -10273,6 +11175,7 @@
           "max_drawdown",
           "benchmark_return",
           "benchmark_max_drawdown",
+          "risk",
           "closed_trades",
           "wins",
           "exposure",
@@ -10366,6 +11269,9 @@
             ],
             "format": "double",
             "description": "盈亏比：赚钱的交易平均赚多少 ÷ 亏钱的交易平均亏多少；大于 1 表示赚的时候比亏的时候多"
+          },
+          "risk": {
+            "$ref": "#/components/schemas/RiskMetrics"
           },
           "skipped_buys": {
             "type": "integer",
@@ -11050,6 +11956,81 @@
           },
           "user": {
             "$ref": "#/components/schemas/User"
+          }
+        }
+      },
+      "ValidationRobustness": {
+        "type": "object",
+        "properties": {
+          "deflated_sharpe_proxy": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "pbo_proxy": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "ValidationWindow": {
+        "type": "object",
+        "required": [
+          "train_start",
+          "train_end",
+          "test_start",
+          "test_end"
+        ],
+        "properties": {
+          "test_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "test_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "train_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "train_start": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "ValidationWindowResult": {
+        "type": "object",
+        "required": [
+          "window",
+          "train_return",
+          "test_return",
+          "train_risk",
+          "test_risk"
+        ],
+        "properties": {
+          "test_return": {
+            "type": "number",
+            "format": "double"
+          },
+          "test_risk": {
+            "$ref": "#/components/schemas/RiskMetrics"
+          },
+          "train_return": {
+            "type": "number",
+            "format": "double"
+          },
+          "train_risk": {
+            "$ref": "#/components/schemas/RiskMetrics"
+          },
+          "window": {
+            "$ref": "#/components/schemas/ValidationWindow"
           }
         }
       },

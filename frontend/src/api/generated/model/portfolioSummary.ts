@@ -5,6 +5,7 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { RiskMetrics } from './riskMetrics';
 
 export interface PortfolioSummary {
   /** @nullable */
@@ -31,6 +32,7 @@ export interface PortfolioSummary {
   max_drawdown: number;
   /** @nullable */
   payoff_ratio?: number | null;
+  risk: RiskMetrics;
   /**
      * 区间内出现的买入信号总数
      * @minimum 0
@@ -43,6 +45,8 @@ export interface PortfolioSummary {
   skipped_full: number;
   start: string;
   total_return: number;
+  /** 买卖成交金额合计 / 初始资金。 */
+  turnover: number;
   /** @nullable */
   win_rate?: number | null;
   /** @minimum 0 */

@@ -5,6 +5,7 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { DealPrice } from './dealPrice';
 
 export type StrategyBacktestParams = {
 strategy_id: number;
@@ -36,4 +37,25 @@ min_commission?: number | null;
  * @nullable
  */
 stamp_tax_rate?: number | null;
+/**
+ * @nullable
+ */
+transfer_fee_rate?: number | null;
+/**
+ * @nullable
+ */
+dividend_tax_rate?: number | null;
+/**
+ * @nullable
+ */
+cash_interest_rate?: number | null;
+deal_price?: DealPrice | null;
+/**
+ * @nullable
+ */
+slippage_bps?: number | null;
+/**
+ * @nullable
+ */
+participation_rate?: number | null;
 };

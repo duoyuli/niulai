@@ -776,6 +776,7 @@ impl Definition {
                 || !(u.exclude_st && f.is_st(i)))
             && u.min_price.is_none_or(|p| b.close >= p)
             && u.min_amount.is_none_or(|a| b.amount >= a)
+            && meta.delisted_on.is_none_or(|d| b.date < d)
             && u.min_listed_days.is_none_or(|d| i + 1 >= d as usize)
     }
 

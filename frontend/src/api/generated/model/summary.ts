@@ -5,6 +5,7 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { RiskMetrics } from './riskMetrics';
 
 export interface Summary {
   /**
@@ -49,6 +50,7 @@ export interface Summary {
      * @nullable
      */
   payoff_ratio?: number | null;
+  risk: RiskMetrics;
   /**
      * 资金不够买一手而放弃的买入信号次数
      * @minimum 0

@@ -352,6 +352,7 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
             board: "main".into(),
             is_st: false,
             list_date: None,
+            delisted_on: None,
             asset_type: AssetType::Stock,
         });
         let bars =

@@ -46,6 +46,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(current_advice))
         .routes(routes!(refresh_advice))
         .routes(routes!(advice_history))
+        .routes(routes!(shadow_orders))
         .routes(routes!(execute_item))
         .routes(routes!(skip_item, clear_item))
         .routes(routes!(account_review))
@@ -700,6 +701,26 @@ async fn advice_history(
     ))
 }
 
+#[derive(Deserialize, IntoParams)]
+pub struct ShadowOrderQuery {
+    pub limit: Option<i64>,
+}
+
+/// 影子执行记录：理论订单与实际成交的价差和未成交状态
+#[utoipa::path(get, path = "/accounts/{account_id}/shadow-orders", tag = "accounts", params(("account_id" = i64, Path), ShadowOrderQuery),
+    responses((status = 200, description = "成功", body = [crate::advice::ShadowOrder]), (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
+async fn shadow_orders(
+    State(s): State<AppState>,
+    me: CurrentUser,
+    Path(id): Path<i64>,
+    Query(q): Query<ShadowOrderQuery>,
+) -> ApiResult<Json<Vec<advice::ShadowOrder>>> {
+    account::get(&s.pool, me.user_id, id).await?;
+    Ok(Json(
+        advice::shadow_orders(&s.pool, id, q.limit.unwrap_or(250).clamp(1, 1000)).await?,
+    ))
+}
+
 #[derive(Deserialize, ToSchema, Default)]
 pub struct ExecuteInput {
     /// 实际成交的股数；默认按建议
@@ -762,6 +783,23 @@ async fn execute_item(
         None
     };
     account::record_advice(&s.pool, me.user_id, id, advice_id, &key, &trade, strategy).await?;
+    let actual_shares = trade.shares.unwrap_or(item.shares);
+    let slippage_bps = (price / item.ref_price - 1.0) * 10_000.0;
+    sqlx::query(
+        "UPDATE app.shadow_order
+         SET actual_shares = $4, actual_price = $5, actual_slippage_bps = $6,
+             status = CASE WHEN $4 >= planned_shares THEN 'filled' ELSE 'partial' END,
+             updated_at = now()
+         WHERE account_id = $1 AND advice_id = $2 AND item_key = $3",
+    )
+    .bind(id)
+    .bind(advice_id)
+    .bind(&key)
+    .bind(actual_shares)
+    .bind(price)
+    .bind(slippage_bps)
+    .execute(&s.pool)
+    .await?;
     Ok(Json(advice_response(&s, id, Some(a.trade_date)).await?))
 }
 
@@ -782,6 +820,12 @@ async fn skip_item(
         return Err(ApiError::NotFound("没有这一条".into()));
     }
     sqlx::query("INSERT INTO app.advice_item_state (advice_id, item_key, state) VALUES ($1, $2, 'skipped') ON CONFLICT (advice_id, item_key) DO NOTHING")
+        .bind(advice_id)
+        .bind(&key)
+        .execute(&s.pool)
+        .await?;
+    sqlx::query("UPDATE app.shadow_order SET status = 'cancelled', reason = '用户选择不做', updated_at = now() WHERE account_id = $1 AND advice_id = $2 AND item_key = $3")
+        .bind(id)
         .bind(advice_id)
         .bind(&key)
         .execute(&s.pool)
@@ -849,10 +893,23 @@ async fn account_backtest(
     let (start, end) =
         backtest::resolve_range(latest, q.start, q.end).map_err(ApiError::BadRequest)?;
     let defs = screener::screening_strategies(&s.pool).await?;
-    backtest::run(&s.pool, &acc.rules, &defs, start, end, acc.fees)
+    let result = backtest::run(&s.pool, &acc.rules, &defs, start, end, acc.fees)
         .await?
-        .map(Json)
         .ok_or_else(|| {
             ApiError::BadRequest("本地还没有足够的日线，或勾选的策略都没有参加巡检".into())
-        })
+        })?;
+    sqlx::query(
+        "INSERT INTO ops.backtest_run
+         (account_id, mode, start_date, end_date, definition_hash, manifest, summary)
+         VALUES ($1, 'account', $2, $3, $4, $5, $6)",
+    )
+    .bind(id)
+    .bind(result.summary.start)
+    .bind(result.summary.end)
+    .bind(&result.manifest.strategy_definition_hash)
+    .bind(serde_json::to_value(&result.manifest).map_err(|e| ApiError::Internal(e.into()))?)
+    .bind(serde_json::to_value(&result.summary).map_err(|e| ApiError::Internal(e.into()))?)
+    .execute(&s.pool)
+    .await?;
+    Ok(Json(result))
 }

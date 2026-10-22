@@ -21,11 +21,17 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  BacktestRunBrief,
+  BacktestRunsParams,
   ErrorBody,
   PortfolioBacktestParams,
   PortfolioResult,
   StrategyBacktestParams,
-  StrategyBacktestResult
+  StrategyBacktestResult,
+  StrategyValidationParams,
+  StrategyValidationResult,
+  ValidationWindow,
+  ValidationWindowsParams
 } from '../model';
 
 import { apiFetch } from '../../fetcher';
@@ -157,6 +163,113 @@ export function usePortfolioBacktest<TData = Awaited<ReturnType<typeof portfolio
 
 
 
+export const getBacktestRunsUrl = (params?: BacktestRunsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/backtest/runs?${stringifiedParams}` : `/api/v1/backtest/runs`
+}
+
+/**
+ * @summary 已保存的回测运行清单，供复现实验和比较不同执行模型。
+ */
+export const backtestRuns = async (params?: BacktestRunsParams, options?: Parameters<typeof apiFetch>[1]): Promise<BacktestRunBrief[]> => {
+
+  return apiFetch<BacktestRunBrief[]>(getBacktestRunsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getBacktestRunsQueryKey = (params?: BacktestRunsParams,) => {
+    return [
+    `/api/v1/backtest/runs`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getBacktestRunsQueryOptions = <TData = Awaited<ReturnType<typeof backtestRuns>>, TError = unknown>(params?: BacktestRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof backtestRuns>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getBacktestRunsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof backtestRuns>>> = ({ signal }) => backtestRuns(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof backtestRuns>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type BacktestRunsQueryResult = NonNullable<Awaited<ReturnType<typeof backtestRuns>>>
+export type BacktestRunsQueryError = unknown
+
+
+export function useBacktestRuns<TData = Awaited<ReturnType<typeof backtestRuns>>, TError = unknown>(
+ params: undefined |  BacktestRunsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof backtestRuns>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof backtestRuns>>,
+          TError,
+          Awaited<ReturnType<typeof backtestRuns>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useBacktestRuns<TData = Awaited<ReturnType<typeof backtestRuns>>, TError = unknown>(
+ params?: BacktestRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof backtestRuns>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof backtestRuns>>,
+          TError,
+          Awaited<ReturnType<typeof backtestRuns>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useBacktestRuns<TData = Awaited<ReturnType<typeof backtestRuns>>, TError = unknown>(
+ params?: BacktestRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof backtestRuns>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 已保存的回测运行清单，供复现实验和比较不同执行模型。
+ */
+
+export function useBacktestRuns<TData = Awaited<ReturnType<typeof backtestRuns>>, TError = unknown>(
+ params?: BacktestRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof backtestRuns>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getBacktestRunsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 export const getStrategyBacktestUrl = (params: StrategyBacktestParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -253,6 +366,220 @@ export function useStrategyBacktest<TData = Awaited<ReturnType<typeof strategyBa
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getStrategyBacktestQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getStrategyValidationUrl = (params: StrategyValidationParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/backtest/strategy-validation?${stringifiedParams}` : `/api/v1/backtest/strategy-validation`
+}
+
+/**
+ * @summary 对单只证券执行滚动训练/样本外验证；测试窗口只使用测试日以前的数据。
+ */
+export const strategyValidation = async (params: StrategyValidationParams, options?: Parameters<typeof apiFetch>[1]): Promise<StrategyValidationResult> => {
+
+  return apiFetch<StrategyValidationResult>(getStrategyValidationUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getStrategyValidationQueryKey = (params?: StrategyValidationParams,) => {
+    return [
+    `/api/v1/backtest/strategy-validation`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getStrategyValidationQueryOptions = <TData = Awaited<ReturnType<typeof strategyValidation>>, TError = ErrorBody>(params: StrategyValidationParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyValidation>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getStrategyValidationQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof strategyValidation>>> = ({ signal }) => strategyValidation(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof strategyValidation>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type StrategyValidationQueryResult = NonNullable<Awaited<ReturnType<typeof strategyValidation>>>
+export type StrategyValidationQueryError = ErrorBody
+
+
+export function useStrategyValidation<TData = Awaited<ReturnType<typeof strategyValidation>>, TError = ErrorBody>(
+ params: StrategyValidationParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyValidation>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof strategyValidation>>,
+          TError,
+          Awaited<ReturnType<typeof strategyValidation>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useStrategyValidation<TData = Awaited<ReturnType<typeof strategyValidation>>, TError = ErrorBody>(
+ params: StrategyValidationParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyValidation>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof strategyValidation>>,
+          TError,
+          Awaited<ReturnType<typeof strategyValidation>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useStrategyValidation<TData = Awaited<ReturnType<typeof strategyValidation>>, TError = ErrorBody>(
+ params: StrategyValidationParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyValidation>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 对单只证券执行滚动训练/样本外验证；测试窗口只使用测试日以前的数据。
+ */
+
+export function useStrategyValidation<TData = Awaited<ReturnType<typeof strategyValidation>>, TError = ErrorBody>(
+ params: StrategyValidationParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof strategyValidation>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getStrategyValidationQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getValidationWindowsUrl = (params: ValidationWindowsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/backtest/validation-windows?${stringifiedParams}` : `/api/v1/backtest/validation-windows`
+}
+
+/**
+ * @summary 生成滚动样本外验证窗口；窗口只描述日期，不自动挑选最优参数。
+ */
+export const validationWindows = async (params: ValidationWindowsParams, options?: Parameters<typeof apiFetch>[1]): Promise<ValidationWindow[]> => {
+
+  return apiFetch<ValidationWindow[]>(getValidationWindowsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getValidationWindowsQueryKey = (params?: ValidationWindowsParams,) => {
+    return [
+    `/api/v1/backtest/validation-windows`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getValidationWindowsQueryOptions = <TData = Awaited<ReturnType<typeof validationWindows>>, TError = ErrorBody>(params: ValidationWindowsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof validationWindows>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getValidationWindowsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof validationWindows>>> = ({ signal }) => validationWindows(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof validationWindows>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ValidationWindowsQueryResult = NonNullable<Awaited<ReturnType<typeof validationWindows>>>
+export type ValidationWindowsQueryError = ErrorBody
+
+
+export function useValidationWindows<TData = Awaited<ReturnType<typeof validationWindows>>, TError = ErrorBody>(
+ params: ValidationWindowsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof validationWindows>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof validationWindows>>,
+          TError,
+          Awaited<ReturnType<typeof validationWindows>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useValidationWindows<TData = Awaited<ReturnType<typeof validationWindows>>, TError = ErrorBody>(
+ params: ValidationWindowsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof validationWindows>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof validationWindows>>,
+          TError,
+          Awaited<ReturnType<typeof validationWindows>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useValidationWindows<TData = Awaited<ReturnType<typeof validationWindows>>, TError = ErrorBody>(
+ params: ValidationWindowsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof validationWindows>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 生成滚动样本外验证窗口；窗口只描述日期，不自动挑选最优参数。
+ */
+
+export function useValidationWindows<TData = Awaited<ReturnType<typeof validationWindows>>, TError = ErrorBody>(
+ params: ValidationWindowsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof validationWindows>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getValidationWindowsQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

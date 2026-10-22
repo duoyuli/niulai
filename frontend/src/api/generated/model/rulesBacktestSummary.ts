@@ -5,6 +5,7 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { RiskMetrics } from './riskMetrics';
 
 export interface RulesBacktestSummary {
   /** @nullable */
@@ -21,6 +22,7 @@ export interface RulesBacktestSummary {
   end: string;
   /** 最大回撤（0.2 表示从最高点跌了 20%） */
   max_drawdown: number;
+  risk: RiskMetrics;
   start: string;
   /**
      * 参考了几个策略，以及回测期间平均有几个算作有效

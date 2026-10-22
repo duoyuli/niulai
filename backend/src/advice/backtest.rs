@@ -18,6 +18,7 @@ use utoipa::ToSchema;
 use crate::account::history::{self, HistorySeries};
 use crate::account::lots::{Fees, round2};
 use crate::account::rules::{Preset, Rules, WeakMarket};
+use crate::analysis::backtest::{Costs, Side};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef};
 use crate::analysis::market::{self, calendar_days_for};
 use crate::analysis::points;
@@ -60,6 +61,7 @@ pub struct RulesBacktestSummary {
     pub annual_return: Option<f64>,
     /// 最大回撤（0.2 表示从最高点跌了 20%）
     pub max_drawdown: f64,
+    pub risk: crate::analysis::research::RiskMetrics,
     pub benchmark_name: Option<String>,
     pub benchmark_return: Option<f64>,
     /// 已卖出的交易笔数
@@ -112,6 +114,7 @@ pub struct RulesTrade {
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug)]
 pub struct RulesBacktest {
     pub summary: RulesBacktestSummary,
+    pub manifest: crate::analysis::research::BacktestManifest,
     /// 每周一个点
     pub equity: Vec<RulesEquityPoint>,
     /// 全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，存下来的结果里没有这一项
@@ -135,6 +138,8 @@ struct Stock {
     buy: Vec<u64>,
     /// 第 k 天哪些策略的卖出条件满足，按位
     exit: Vec<u64>,
+    /// 第 k 天是否处于 ST 状态。
+    st: Vec<bool>,
     amount: Vec<f32>,
 }
 
@@ -278,6 +283,7 @@ pub async fn run(
                 one_price: Vec::with_capacity(n),
                 buy,
                 exit: Vec::with_capacity(n),
+                st: Vec::with_capacity(n),
                 amount: Vec::with_capacity(n),
             };
             let mut dates = Vec::with_capacity(n);
@@ -298,6 +304,7 @@ pub async fn run(
                 s.q_close.push(b.q_close as f32);
                 s.one_price.push(b.high == b.low);
                 s.exit.push(em);
+                s.st.push(f.is_st(i));
                 s.amount.push(b.amount as f32);
             }
             raw.push((dates, s));
@@ -355,6 +362,26 @@ pub async fn run(
         fees,
     );
     r.summary.strategies = defs.len();
+    let versions: std::collections::BTreeMap<String, String> =
+        sqlx::query_as("SELECT name, updated_at::text FROM ops.derived_version ORDER BY name")
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .collect();
+    let manifest = crate::analysis::research::BacktestManifest {
+        strategy_definition_hash: crate::analysis::research::definition_hash(&defs),
+        data_start: r.summary.start,
+        data_end: r.summary.end,
+        price_basis: "forward_adjusted_account_approx".into(),
+        execution_model: "account_rules;daily_open;partial_fill=false".into(),
+        point_in_time_universe: true,
+        derived_versions: versions,
+        trial_count: 1,
+        validation_kind: "single_run_unvalidated".into(),
+        coverage: crate::analysis::research::Coverage::default(),
+        delisted_policy: "exclude_after_point_in_time_delisted_on;unknown_st_conservative".into(),
+    };
+    r.manifest = manifest;
     Ok(Some(r))
 }
 
@@ -410,6 +437,13 @@ fn simulate(
     defs: &[&Definition],
     fees: Fees,
 ) -> RulesBacktest {
+    let execution_costs = Costs {
+        commission_rate: fees.commission_rate,
+        min_commission: fees.min_commission,
+        stamp_tax_rate: 0.0005,
+        ..Costs::default()
+    };
+    let execution = execution_costs.execution();
     let mut cash = CAPITAL;
     let mut held: Vec<Held> = vec![];
     let mut pending_sell: Vec<PendingSell> = vec![];
@@ -457,8 +491,31 @@ fn simulate(
             }
             if let Some(pos) = held.iter().position(|h| h.stock == ps.stock) {
                 let h = held.swap_remove(pos);
-                let gross = h.units * s.q_open[k] as f64;
-                let net = gross - fees.sell_fee_for(&s.asset_type, gross);
+                let bar = crate::analysis::prices::DailyBar {
+                    date: *date,
+                    open: s.q_open[k] as f64,
+                    high: s.q_open[k] as f64,
+                    low: s.q_open[k] as f64,
+                    close: s.q_close[k] as f64,
+                    q_open: s.q_open[k] as f64,
+                    q_high: s.q_open[k] as f64,
+                    q_low: s.q_open[k] as f64,
+                    q_close: s.q_close[k] as f64,
+                    volume: f64::INFINITY,
+                    amount: 0.0,
+                };
+                let Some(fill) = execution.fill(
+                    &bar,
+                    Side::Sell,
+                    h.units,
+                    &execution_costs,
+                    if s.asset_type == "etf" { 0.0 } else { 0.0005 },
+                ) else {
+                    still.push(ps);
+                    continue;
+                };
+                let gross = fill.filled * fill.price;
+                let net = gross - fill.commission - fill.transfer_fee - fill.stamp_tax;
                 cash += net;
                 closed += 1;
                 wins += (net > h.cost) as usize;
@@ -481,15 +538,33 @@ fn simulate(
                 continue;
             }
             let invest = b.budget.min(cash);
-            let fee = fees.commission(invest);
-            if invest <= fee * 2.0 {
+            let bar = crate::analysis::prices::DailyBar {
+                date: *date,
+                open,
+                high: open,
+                low: open,
+                close: s.q_close[k] as f64,
+                q_open: open,
+                q_high: open,
+                q_low: open,
+                q_close: s.q_close[k] as f64,
+                volume: f64::INFINITY,
+                amount: 0.0,
+            };
+            let Some(fill) = execution.fill(&bar, Side::Buy, invest / open, &execution_costs, 0.0)
+            else {
+                continue;
+            };
+            let fee = fill.commission + fill.transfer_fee;
+            let total_cost = fill.filled * fill.price + fee;
+            if total_cost <= fee || total_cost > cash + 1e-8 {
                 continue;
             }
-            cash -= invest;
+            cash -= total_cost;
             held.push(Held {
                 stock: b.stock,
-                units: (invest - fee) / open,
-                cost: invest,
+                units: fill.filled,
+                cost: total_cost,
                 entry_q: open,
                 origin: b.origin,
                 last_close: open,
@@ -532,7 +607,9 @@ fn simulate(
             let ret = close / h.entry_q - 1.0;
             let strategy_index = h.origin.trailing_zeros() as usize;
             let strategy = defs.get(strategy_index).copied();
-            let reason = if s.exit[k] & h.origin != 0 {
+            let reason = if p.sell_st && s.st[k] {
+                Some("账户规则：当天被实施风险警示（ST）".to_string())
+            } else if s.exit[k] & h.origin != 0 {
                 Some(format!(
                     "「{}」的卖出条件",
                     names_of(h.origin, strategy_names).join("")
@@ -626,13 +703,20 @@ fn simulate(
     });
     let last = equity.last().map_or(1.0, |e| e.value);
     let days = (calendar[n - 1] - calendar[0]).num_days();
+    let annual_return = (days >= 90).then(|| last.powf(365.25 / days as f64) - 1.0);
+    let risk = crate::analysis::research::risk_metrics(
+        &equity.iter().map(|e| e.value).collect::<Vec<_>>(),
+        annual_return,
+        max_dd,
+    );
     RulesBacktest {
         summary: RulesBacktestSummary {
             start: calendar[0],
             end: calendar[n - 1],
             total_return: last - 1.0,
-            annual_return: (days >= 90).then(|| last.powf(365.25 / days as f64) - 1.0),
+            annual_return,
             max_drawdown: max_dd,
+            risk,
             benchmark_name: bench.as_ref().map(|(name, _)| name.clone()),
             benchmark_return: equity
                 .iter()
@@ -645,6 +729,19 @@ fn simulate(
             avg_cash_ratio: cash_ratio_sum / n as f64,
             strategies: 0,
             avg_effective: eff_sum / n as f64,
+        },
+        manifest: crate::analysis::research::BacktestManifest {
+            strategy_definition_hash: String::new(),
+            data_start: calendar[0],
+            data_end: calendar[n - 1],
+            price_basis: String::new(),
+            execution_model: String::new(),
+            point_in_time_universe: false,
+            derived_versions: std::collections::BTreeMap::new(),
+            trial_count: 0,
+            validation_kind: String::new(),
+            coverage: crate::analysis::research::Coverage::default(),
+            delisted_policy: String::new(),
         },
         equity,
         trades,
@@ -721,6 +818,7 @@ mod tests {
                 .map(|i| if buy_days.contains(&i) { bits } else { 0 })
                 .collect(),
             exit: vec![0; 10],
+            st: vec![false; 10],
             amount: vec![1e9; 10],
         };
         let a = mk(

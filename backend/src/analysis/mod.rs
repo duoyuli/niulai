@@ -5,6 +5,8 @@
 
 pub mod backtest;
 pub mod diagnosis;
+pub mod execution;
+pub mod factors;
 pub mod indicators;
 pub mod limit_pool;
 pub mod ma;
@@ -12,6 +14,7 @@ pub mod market;
 pub mod points;
 pub mod portfolio;
 pub mod prices;
+pub mod research;
 pub mod screener;
 pub mod signal_lib;
 pub mod signal_stats;

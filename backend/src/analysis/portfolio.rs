@@ -33,7 +33,20 @@ pub struct Params {
     pub capital: f64,
     pub costs: Costs,
     pub max_positions: usize,
+    pub risk: PortfolioRisk,
 }
+
+#[derive(Clone, Copy, Debug, Serialize, ToSchema, Default)]
+pub struct PortfolioRisk {
+    /// 单票最多占总资产的百分比；为空表示不额外限制。
+    pub max_weight_pct: Option<f64>,
+    /// 目标年化波动率；为空表示等额分配。
+    pub target_vol_pct: Option<f64>,
+    /// 单日成交金额占期初本金的上限；为空表示不限制。
+    pub max_turnover_pct: Option<f64>,
+}
+
+type ExitTuple = (NaiveDate, f64, f64, f64, f64, f64, f64, ExitReason);
 
 #[derive(Serialize, ToSchema, Debug)]
 pub struct PortfolioTrade {
@@ -72,6 +85,7 @@ pub struct PortfolioSummary {
     pub total_return: f64,
     pub annual_return: Option<f64>,
     pub max_drawdown: f64,
+    pub risk: crate::analysis::research::RiskMetrics,
     /// 基准指数的名称和区间涨跌；没有指数日线时为空
     pub benchmark_name: Option<String>,
     pub benchmark_return: Option<f64>,
@@ -83,6 +97,8 @@ pub struct PortfolioSummary {
     /// 平均每天持有几只
     pub avg_positions: f64,
     pub fees: f64,
+    /// 买卖成交金额合计 / 初始资金。
+    pub turnover: f64,
     /// 区间内出现的买入信号总数
     pub signals: usize,
     /// 因为仓位已满而没有买入的信号数
@@ -105,10 +121,15 @@ struct Candidate {
     entry_date: NaiveDate,
     entry_q: f64,
     entry_raw: f64,
-    /// (卖出日, 前复权开盘价, 未复权开盘价, 原因)；期末仍持有时为空
-    exit: Option<(NaiveDate, f64, f64, ExitReason)>,
+    entry_high: f64,
+    entry_low: f64,
+    entry_close: f64,
+    entry_volume: f64,
+    /// (卖出日, 前复权开盘价, 未复权开盘价, 最高, 最低, 收盘, 成交量, 原因)
+    exit: Option<ExitTuple>,
     bars_held: i64,
     sort_value: f64,
+    volatility: f64,
 }
 
 struct Stock {
@@ -132,13 +153,31 @@ fn candidates(
         .into_iter()
         .filter_map(|t| {
             let si = bars.binary_search_by_key(&t.signal_date, |b| b.date).ok()?;
-            let entry_q = bars[bars.binary_search_by_key(&t.entry_date, |b| b.date).ok()?].q_open;
+            let entry_bar = &bars[bars.binary_search_by_key(&t.entry_date, |b| b.date).ok()?];
+            let entry_q = entry_bar.q_open;
             let exit = match (t.exit_date, t.exit_reason) {
                 (Some(date), Some(reason)) => {
                     let x = &bars[bars.binary_search_by_key(&date, |b| b.date).ok()?];
-                    Some((date, x.q_open, x.open, reason))
+                    Some((
+                        date, x.q_open, x.open, x.high, x.low, x.close, x.volume, reason,
+                    ))
                 }
                 _ => None,
+            };
+            let vol = bars
+                .iter()
+                .take(si)
+                .rev()
+                .take(20)
+                .map(|b| b.q_close)
+                .collect::<Vec<_>>();
+            let volatility = if vol.len() >= 2 {
+                let mean = vol.iter().sum::<f64>() / vol.len() as f64;
+                let variance =
+                    vol.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (vol.len() - 1) as f64;
+                (variance.sqrt() / mean.max(1e-9)).abs() * 252.0_f64.sqrt()
+            } else {
+                0.0
             };
             Some(Candidate {
                 stock,
@@ -147,9 +186,14 @@ fn candidates(
                 entry_date: t.entry_date,
                 entry_q,
                 entry_raw: t.entry_price,
+                entry_high: entry_bar.high,
+                entry_low: entry_bar.low,
+                entry_close: entry_bar.close,
+                entry_volume: entry_bar.volume,
                 exit,
                 bars_held: t.bars_held,
                 sort_value: f.at(d.sort.by, si),
+                volatility,
             })
         })
         .collect()
@@ -235,8 +279,8 @@ pub async fn run(
     let mut held: Vec<Held> = vec![];
     let mut trades: Vec<PortfolioTrade> = vec![];
     let mut equity: Vec<PortfolioPoint> = vec![];
-    let (mut fees, mut skipped, mut peak, mut max_dd, mut pos_days) =
-        (0.0, 0usize, f64::MIN, 0.0f64, 0usize);
+    let (mut fees, mut skipped, mut peak, mut max_dd, mut pos_days, mut turnover) =
+        (0.0, 0usize, f64::MIN, 0.0f64, 0usize, 0.0f64);
     let name = |c: &Candidate| {
         sec.names
             .get(&stocks[c.stock].code)
@@ -251,7 +295,7 @@ pub async fn run(
         entry_price: c.entry_raw,
         exit_date: if closed { c.exit.map(|e| e.0) } else { None },
         exit_price: if closed { c.exit.map(|e| e.2) } else { None },
-        exit_reason: if closed { c.exit.map(|e| e.3) } else { None },
+        exit_reason: if closed { c.exit.map(|e| e.7) } else { None },
         return_pct: ret,
         bars_held: c.bars_held,
     };
@@ -260,20 +304,50 @@ pub async fn run(
         let mut k = 0;
         while k < held.len() {
             let c = &cands[held[k].cand];
-            if let Some((date, q, _, _)) = c.exit
+            if let Some((date, q, raw_open, high, low, close, volume, _)) = c.exit
                 && date == day
             {
-                let gross = held[k].units * q;
+                let bar = DailyBar {
+                    date,
+                    open: raw_open,
+                    high,
+                    low,
+                    close,
+                    q_open: q,
+                    q_high: q,
+                    q_low: q,
+                    q_close: q,
+                    volume,
+                    amount: 0.0,
+                };
+                let exec = costs.execution();
+                let Some(fill) = exec.fill(
+                    &bar,
+                    super::backtest::Side::Sell,
+                    held[k].units,
+                    &costs,
+                    extension(c.asset_type).stamp_tax_rate(),
+                ) else {
+                    k += 1;
+                    continue;
+                };
+                let gross = fill.filled * fill.price;
+                turnover += gross;
                 let stamp_tax_rate = if extension(c.asset_type).stamp_tax_rate() == 0.0 {
                     0.0
                 } else {
                     costs.stamp_tax_rate
                 };
-                let fee = costs.commission(gross) + gross * stamp_tax_rate;
+                let fee = fill.commission + fill.transfer_fee + gross * stamp_tax_rate;
                 fees += fee;
                 cash += gross - fee;
-                trades.push(trade(c, (gross - fee) / held[k].cost - 1.0, true));
-                held.swap_remove(k);
+                if fill.filled >= held[k].units - 1e-9 {
+                    trades.push(trade(c, (gross - fee) / held[k].cost - 1.0, true));
+                    held.swap_remove(k);
+                } else {
+                    held[k].units -= fill.filled;
+                    k += 1;
+                }
             } else {
                 k += 1;
             }
@@ -290,18 +364,58 @@ pub async fn run(
                     skipped += 1;
                     continue;
                 }
-                let invest = cash / free as f64;
-                let fee = costs.commission(invest);
-                if invest <= fee {
+                let mut invest = cash / free as f64;
+                if let Some(max_weight) = p.risk.max_weight_pct {
+                    invest = invest.min(p.capital * max_weight / 100.0);
+                }
+                if let Some(target_vol) = p.risk.target_vol_pct
+                    && c.volatility > 0.0
+                {
+                    invest = invest.min(cash / free as f64 * target_vol / 100.0 / c.volatility);
+                }
+                if let Some(max_turnover) = p.risk.max_turnover_pct
+                    && turnover + invest > p.capital * max_turnover / 100.0
+                {
+                    skipped += 1;
+                    continue;
+                }
+                let bar = DailyBar {
+                    date: day,
+                    open: c.entry_raw,
+                    high: c.entry_high,
+                    low: c.entry_low,
+                    close: c.entry_close,
+                    q_open: c.entry_q,
+                    q_high: c.entry_q,
+                    q_low: c.entry_q,
+                    q_close: c.entry_q,
+                    volume: c.entry_volume,
+                    amount: 0.0,
+                };
+                let exec = costs.execution();
+                let Some(fill) = exec.fill(
+                    &bar,
+                    super::backtest::Side::Buy,
+                    invest / c.entry_q,
+                    &costs,
+                    0.0,
+                ) else {
+                    skipped += 1;
+                    continue;
+                };
+                let fee = fill.commission + fill.transfer_fee;
+                let total_cost = fill.filled * fill.price + fee;
+                if total_cost <= fee || total_cost > cash + 1e-8 {
                     skipped += 1;
                     continue;
                 }
                 fees += fee;
-                cash -= invest;
+                turnover += fill.filled * fill.price;
+                cash -= total_cost;
                 held.push(Held {
                     cand: ci,
-                    units: (invest - fee) / c.entry_q,
-                    cost: invest,
+                    units: fill.filled,
+                    cost: total_cost,
                     cursor: 0,
                     last_close: c.entry_q,
                 });
@@ -343,6 +457,11 @@ pub async fn run(
     let wins = closed.iter().filter(|t| t.return_pct > 0.0).count();
     let days = (end - start).num_days();
     let annual = (days >= 90).then(|| (1.0 + total_return).powf(365.25 / days as f64) - 1.0);
+    let risk = crate::analysis::research::risk_metrics(
+        &equity.iter().map(|e| e.equity).collect::<Vec<_>>(),
+        annual,
+        max_dd,
+    );
     let benchmark_return = equity
         .iter()
         .rev()
@@ -357,6 +476,7 @@ pub async fn run(
         total_return,
         annual_return: annual,
         max_drawdown: max_dd,
+        risk,
         benchmark_name: bench.as_ref().map(|(n, _)| n.clone()),
         benchmark_return,
         closed_trades: closed.len(),
@@ -367,6 +487,7 @@ pub async fn run(
             .then(|| closed.iter().map(|t| t.bars_held as f64).sum::<f64>() / closed.len() as f64),
         avg_positions: pos_days as f64 / equity.len() as f64,
         fees,
+        turnover: turnover / p.capital,
         signals: cands.len(),
         skipped_full: skipped,
     };
@@ -452,6 +573,7 @@ mod tests {
             board: "main".into(),
             is_st: false,
             list_date: None,
+            delisted_on: None,
             asset_type: crate::analysis::indicators::AssetType::Stock,
         };
         let d: Definition = serde_json::from_value(serde_json::json!({
@@ -469,7 +591,7 @@ mod tests {
             assert_eq!((c.signal_date, c.entry_date), (t.signal_date, t.entry_date));
             assert_eq!(c.entry_raw, t.entry_price);
             assert_eq!(c.bars_held, t.bars_held);
-            assert_eq!(c.exit.map(|e| (e.0, e.3)), t.exit_date.zip(t.exit_reason));
+            assert_eq!(c.exit.map(|e| (e.0, e.7)), t.exit_date.zip(t.exit_reason));
         }
     }
 }

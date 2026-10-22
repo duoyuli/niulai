@@ -34,6 +34,81 @@ pub struct StoredAdvice {
     pub states: std::collections::BTreeMap<String, String>,
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct ShadowOrder {
+    pub shadow_order_id: i64,
+    pub advice_id: Option<i64>,
+    pub item_key: String,
+    pub trade_date: NaiveDate,
+    pub thscode: String,
+    pub side: String,
+    pub planned_shares: i64,
+    pub reference_price: f64,
+    pub expected_price: Option<f64>,
+    pub actual_shares: Option<i64>,
+    pub actual_price: Option<f64>,
+    pub expected_slippage_bps: Option<f64>,
+    pub actual_slippage_bps: Option<f64>,
+    pub status: String,
+    pub reason: String,
+}
+
+type ShadowOrderRow = (
+    i64,
+    Option<i64>,
+    String,
+    NaiveDate,
+    String,
+    String,
+    i64,
+    f64,
+    Option<f64>,
+    Option<i64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+    String,
+    String,
+);
+
+pub async fn shadow_orders(
+    pool: &PgPool,
+    account_id: i64,
+    limit: i64,
+) -> anyhow::Result<Vec<ShadowOrder>> {
+    let rows: Vec<ShadowOrderRow> = sqlx::query_as(
+        "SELECT shadow_order_id, advice_id, item_key, trade_date, thscode, side,
+                planned_shares, reference_price::float8, expected_price::float8,
+                actual_shares, actual_price::float8, expected_slippage_bps::float8,
+                actual_slippage_bps::float8, status, reason
+         FROM app.shadow_order WHERE account_id = $1 ORDER BY trade_date DESC, shadow_order_id DESC LIMIT $2",
+    )
+    .bind(account_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ShadowOrder {
+            shadow_order_id: r.0,
+            advice_id: r.1,
+            item_key: r.2,
+            trade_date: r.3,
+            thscode: r.4,
+            side: r.5,
+            planned_shares: r.6,
+            reference_price: r.7,
+            expected_price: r.8,
+            actual_shares: r.9,
+            actual_price: r.10,
+            expected_slippage_bps: r.11,
+            actual_slippage_bps: r.12,
+            status: r.13,
+            reason: r.14,
+        })
+        .collect())
+}
+
 /// 生成并保存一个账户在最新交易日的建议；同一天已有的一份标记为被取代
 pub async fn generate_for(
     pool: &PgPool,
@@ -67,6 +142,34 @@ pub async fn generate_for(
         .bind(serde_json::to_value(&advice)?)
         .execute(&mut *tx)
         .await?;
+    for item in &advice.items {
+        let side = match item.action {
+            generate::Action::Buy => Some("buy"),
+            generate::Action::Sell | generate::Action::Reduce => Some("sell"),
+            _ => None,
+        };
+        let Some(side) = side else { continue };
+        if item.shares <= 0 || item.ref_price <= 0.0 {
+            continue;
+        }
+        sqlx::query(
+            "INSERT INTO app.shadow_order
+             (account_id, advice_id, item_key, trade_date, thscode, side, planned_shares, reference_price, expected_price)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             ON CONFLICT (advice_id, item_key) DO NOTHING",
+        )
+        .bind(acc.account_id)
+        .bind(id)
+        .bind(&item.key)
+        .bind(advice.next_date)
+        .bind(&item.thscode)
+        .bind(side)
+        .bind(item.shares)
+        .bind(item.ref_price)
+        .bind(item.limit_price.unwrap_or(item.ref_price))
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
     Ok(id)
 }

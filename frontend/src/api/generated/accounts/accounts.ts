@@ -47,6 +47,8 @@ import type {
   Review,
   RulesBacktest,
   RulesGuide,
+  ShadowOrder,
+  ShadowOrdersParams,
   TradeInput
 } from '../model';
 
@@ -1860,6 +1862,121 @@ export function useAccountReview<TData = Awaited<ReturnType<typeof accountReview
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getAccountReviewQueryOptions(accountId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getShadowOrdersUrl = (accountId: number,
+    params?: ShadowOrdersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/accounts/${accountId}/shadow-orders?${stringifiedParams}` : `/api/v1/accounts/${accountId}/shadow-orders`
+}
+
+/**
+ * @summary 影子执行记录：理论订单与实际成交的价差和未成交状态
+ */
+export const shadowOrders = async (accountId: number,
+    params?: ShadowOrdersParams, options?: Parameters<typeof apiFetch>[1]): Promise<ShadowOrder[]> => {
+
+  return apiFetch<ShadowOrder[]>(getShadowOrdersUrl(accountId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getShadowOrdersQueryKey = (accountId: number,
+    params?: ShadowOrdersParams,) => {
+    return [
+    `/api/v1/accounts/${accountId}/shadow-orders`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getShadowOrdersQueryOptions = <TData = Awaited<ReturnType<typeof shadowOrders>>, TError = ErrorBody>(accountId: number,
+    params?: ShadowOrdersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof shadowOrders>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getShadowOrdersQueryKey(accountId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof shadowOrders>>> = ({ signal }) => shadowOrders(accountId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: accountId !== null && accountId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof shadowOrders>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ShadowOrdersQueryResult = NonNullable<Awaited<ReturnType<typeof shadowOrders>>>
+export type ShadowOrdersQueryError = ErrorBody
+
+
+export function useShadowOrders<TData = Awaited<ReturnType<typeof shadowOrders>>, TError = ErrorBody>(
+ accountId: number,
+    params: undefined |  ShadowOrdersParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof shadowOrders>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof shadowOrders>>,
+          TError,
+          Awaited<ReturnType<typeof shadowOrders>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useShadowOrders<TData = Awaited<ReturnType<typeof shadowOrders>>, TError = ErrorBody>(
+ accountId: number,
+    params?: ShadowOrdersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof shadowOrders>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof shadowOrders>>,
+          TError,
+          Awaited<ReturnType<typeof shadowOrders>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useShadowOrders<TData = Awaited<ReturnType<typeof shadowOrders>>, TError = ErrorBody>(
+ accountId: number,
+    params?: ShadowOrdersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof shadowOrders>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 影子执行记录：理论订单与实际成交的价差和未成交状态
+ */
+
+export function useShadowOrders<TData = Awaited<ReturnType<typeof shadowOrders>>, TError = ErrorBody>(
+ accountId: number,
+    params?: ShadowOrdersParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof shadowOrders>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getShadowOrdersQueryOptions(accountId,params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 

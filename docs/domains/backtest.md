@@ -1,6 +1,6 @@
 # 回测
 
-本文说明回测的交易规则、分红送转与交易成本的处理、各项指标的含义，以及目前没有模拟的情况。回测有两种：单只证券的选股策略（`backend/src/analysis/backtest.rs`）和全市场组合（`backend/src/analysis/portfolio.rs`）。现在的「均线交叉」（15 日 / 30 日）是内置策略，个股回测默认使用它。接口是 `GET /api/v1/backtest/strategy`、`/backtest/portfolio`（见 [REST API](../interfaces/rest_api.md#endpoints)）。均线和交叉的判定见 [均线与交叉信号](ma_signals.md)，策略的条件见 [选股策略与诊断](strategies.md#definition)，价格口径见 [复权](price_adjustment.md)。
+本文说明回测的交易规则、分红送转与交易成本的处理、各项指标的含义，以及执行模型和研究清单。回测有两种：单只证券的选股策略（`backend/src/analysis/backtest.rs`）和全市场组合（`backend/src/analysis/portfolio.rs`）。现在的「均线交叉」（15 日 / 30 日）是内置策略，个股回测默认使用它。接口是 `GET /api/v1/backtest/strategy`、`/backtest/portfolio`（见 [REST API](../interfaces/rest_api.md#endpoints)）。均线和交叉的判定见 [均线与交叉信号](ma_signals.md)，策略的条件见 [选股策略与诊断](strategies.md#definition)，价格口径见 [复权](price_adjustment.md)。
 
 ## 章节导航
 
@@ -42,7 +42,9 @@
 - **配股：** 不参与认购。持有期间遇到配股，除权后市值会下降，与真实情况下放弃配股一致。
 - **佣金：** 买卖都收，默认万分之 2.5，单笔不足 5 元按 5 元收。
 - **印花税：** 股票只在卖出时收，默认千分之 0.5（2023-08-28 起的税率）；ETF 不收股票印花税。更早的股票区间实际税率是千分之 1，需要时用参数 `stamp_tax_rate` 调整。
-- **没有计入：** 过户费、滑点（成交价与开盘价的差）、资金利息。
+- **默认未计入：** 过户费、滑点和资金利息；接口可以显式设置这些参数，默认值保持旧回测结果兼容。
+
+执行模型由 `analysis::execution` 统一：成交价可选开盘、收盘或日线 VWAP，支持固定基点滑点和成交量参与率；参与率不足时保留未完成订单，停牌和一字板继续顺延。费用支持过户费、分红税和现金利息。回测响应包含 `risk`（波动率、Sharpe、Sortino、Calmar）和 `manifest`（策略哈希、数据范围、派生版本和执行模型）。
 
 <a id="metrics"></a>
 ## 指标
@@ -108,3 +110,5 @@
 - 单只股票回测是满仓进出，没有分批建仓。资金较少而股价很高时（例如十万元买贵州茅台），大部分现金买不满一手，这部分现金不产生收益，策略会因此落后于可以买零股的基准。
 - 只用本地已有的日线：回补尚未完成的股票，区间会比预期短。开始采集之后退市的股票，日线到退市为止，期末仍持有时按最后一天的收盘价计算市值；代码表不含已退市证券，开始采集之前就退市的股票本地没有，回测有幸存者偏差，结果偏乐观。
 - 回测不保存结果，每次按参数重新计算（单只股票十年约 30 毫秒，全市场 3 年约 6 秒）。
+- 每次单股、组合或账户回测都会保存到 `ops.backtest_run`，可通过 `GET /api/v1/backtest/runs` 查询。`trial_count` 默认为 1，表示这次运行没有替代参数试验，不能把它解释为样本外验证。
+- 单证券可通过 `GET /api/v1/backtest/strategy-validation` 执行带 embargo 的滚动训练/测试窗口；训练收益和测试收益分别返回，测试窗口只读取测试日以前的行情。响应中的 `pbo_proxy` 和 `deflated_sharpe_proxy` 是多窗口的筛选偏差近似值，不替代完整的 DSR/PBO 统计检验。
