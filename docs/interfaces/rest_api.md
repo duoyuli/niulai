@@ -45,7 +45,7 @@
 | `GET /securities/{thscode}/bars` | 个股或 ETF 日线 | `adjust`（见 [复权参数](#adjust_param)；ETF 只支持 `none` / `qfq` / `hfq`）、`start`、`end`；`limit` 默认 500、最大 10,000，返回范围内**最近**的 N 根，按日期升序 |
 | `GET /backtest/strategy` | 单只股票或 ETF 的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
 | `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金和成本同上；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
-| `GET /backtest/runs` | 查询已保存的回测运行清单和结果摘要 | `strategy_id` 可选，`limit` 默认 50；用于复现实验和比较执行模型 |
+| `GET /backtest/runs` | 查询已保存的回测运行清单和结果摘要 | `strategy_id` 可选，`limit` 默认 50；用于复现实验和比较执行模型。普通用户只能看到不关联账户的运行和自己账户的运行，管理员可看全部 |
 | `GET /backtest/validation-windows` | 生成带 embargo 的滚动训练/测试日期窗口 | `start`、`end`、`train_days`、`test_days`，`embargo_days` 默认 5 |
 | `GET /backtest/strategy-validation` | 对单只证券执行滚动样本外验证 | `strategy_id`、`thscode`、日期区间和训练/测试窗口；结果分别返回训练和测试收益与风险指标 |
 | `GET /strategies/catalog` | 指标、内置信号（含白话说明）、模板目录和默认股票池，前端据此生成条件编辑器 | — |

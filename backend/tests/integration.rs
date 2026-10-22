@@ -1309,6 +1309,131 @@ async fn users_are_added_by_admins_and_members_only_touch_their_own_data() {
 }
 
 #[tokio::test]
+async fn backtest_runs_only_show_own_account_runs_to_members() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let app = niulai::api::router(
+        Engine::new(
+            bare_settings("http://127.0.0.1:1", Some("test")),
+            db.pool.clone(),
+        )
+        .await
+        .unwrap(),
+    );
+    let admin = login(&app, "admin", "secret-pass").await.unwrap();
+    let (r, v) = call_as(
+        &app,
+        Some(&admin),
+        "POST",
+        "/api/v1/users",
+        Some(json!({"username": "mama", "password": "mama-pass-1"})),
+    )
+    .await;
+    assert_eq!(r.status(), StatusCode::CREATED, "{v}");
+    let mama = login(&app, "mama", "mama-pass-1").await.unwrap();
+
+    let account_id = |v: &Value| v["summary"]["account"]["account_id"].as_i64().unwrap();
+    let (r, v) = call_as(
+        &app,
+        Some(&admin),
+        "POST",
+        "/api/v1/accounts",
+        Some(json!({"name": "管理员的账户", "cash": 100000})),
+    )
+    .await;
+    assert_eq!(r.status(), StatusCode::CREATED, "{v}");
+    let admin_account = account_id(&v);
+    let (r, v) = call_as(
+        &app,
+        Some(&mama),
+        "POST",
+        "/api/v1/accounts",
+        Some(json!({"name": "成员的账户", "cash": 100000})),
+    )
+    .await;
+    assert_eq!(r.status(), StatusCode::CREATED, "{v}");
+    let mama_account = account_id(&v);
+
+    let manifest = json!({
+        "strategy_definition_hash": "test",
+        "data_start": "2025-01-01",
+        "data_end": "2025-01-31",
+        "price_basis": "test",
+        "execution_model": "test",
+        "point_in_time_universe": true,
+        "derived_versions": {},
+        "trial_count": 1,
+        "validation_kind": "single_run_unvalidated",
+        "coverage": {
+            "instruments": 0,
+            "observed_bars": 0,
+            "missing_instruments": 0,
+            "unknown_state_instruments": 0
+        },
+        "delisted_policy": "test"
+    });
+    for account in [None, Some(admin_account), Some(mama_account)] {
+        sqlx::query(
+            "INSERT INTO ops.backtest_run
+             (account_id, mode, start_date, end_date, definition_hash, manifest, summary)
+             VALUES ($1, $2, '2025-01-01', '2025-01-31', 'test', $3, '[]'::jsonb)",
+        )
+        .bind(account)
+        .bind(if account.is_some() {
+            "account"
+        } else {
+            "single"
+        })
+        .bind(&manifest)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+
+    let (r, v) = call_as(
+        &app,
+        Some(&admin),
+        "GET",
+        "/api/v1/backtest/runs?limit=10",
+        None,
+    )
+    .await;
+    assert_eq!(r.status(), StatusCode::OK, "{v}");
+    assert_eq!(v.as_array().unwrap().len(), 3, "管理员应看到全部运行：{v}");
+
+    let (r, v) = call_as(
+        &app,
+        Some(&mama),
+        "GET",
+        "/api/v1/backtest/runs?limit=10",
+        None,
+    )
+    .await;
+    assert_eq!(r.status(), StatusCode::OK, "{v}");
+    let account_ids = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["account_id"].as_i64())
+        .collect::<Vec<_>>();
+    assert!(
+        account_ids.contains(&None),
+        "普通用户应看到不带账户的运行：{v}"
+    );
+    assert!(
+        account_ids.contains(&Some(mama_account)),
+        "普通用户应看到自己账户的运行：{v}"
+    );
+    assert!(
+        !account_ids.contains(&Some(admin_account)),
+        "普通用户不能看到别人账户的运行：{v}"
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn one_click_upgrade_hands_request_to_upgrader() {
     let Some(db) = TestDb::create().await else {
         eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");

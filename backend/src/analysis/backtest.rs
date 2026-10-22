@@ -79,6 +79,23 @@ impl Costs {
         (amount * self.commission_rate).max(self.min_commission)
     }
 
+    /// 在包含佣金和过户费的预算内，最多能成交多少金额（不含费用本身）。
+    /// 佣金有最低额，先判断按比例收的佣金是否已经超过最低佣金，避免低估费用。
+    pub fn affordable_amount(&self, budget: f64) -> f64 {
+        if !budget.is_finite() || budget <= 0.0 {
+            return 0.0;
+        }
+        let transfer = self.transfer_fee_rate.max(0.0);
+        let commission_rate = self.commission_rate.max(0.0);
+        let min_commission = self.min_commission.max(0.0);
+        let full = budget / (1.0 + transfer + commission_rate);
+        if full * commission_rate >= min_commission {
+            full
+        } else {
+            ((budget - min_commission) / (1.0 + transfer)).max(0.0)
+        }
+    }
+
     pub fn execution(&self) -> crate::analysis::execution::ExecutionConfig {
         crate::analysis::execution::ExecutionConfig {
             deal_price: self.deal_price,
@@ -287,10 +304,14 @@ struct Position {
     entry_shares: i64,
     shares: i64,
     price: f64,
-    /// 买入时的前复权开盘价，判断止损止盈用
+    /// 买入成交价折算成前复权价，判断止损止盈用
     q_price: f64,
     cost: f64,
     dividends: f64,
+    /// 分批卖出时已经收到的净回款
+    proceeds: f64,
+    /// 分批卖出时已经卖出的股数
+    sold_shares: i64,
 }
 
 /// 买入持有基准：不计费用、可以买零股，分红留作现金、送转增加股数
@@ -348,107 +369,133 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
             ev += 1;
         }
 
-        // 2. 开盘：执行昨天收盘后下的单
-        if let Some(side) = pending {
-            // 一字板：全天只有一个价格。按前复权价和前一天比较，除权日也不会误判
-            let prev = if i > 0 { bars[i - 1].q_close } else { b.q_open };
-            let blocked = order_blocked(matches!(side, Side::Buy), b.high == b.low, b.q_open, prev);
-            if blocked {
-                deferred += 1;
-            } else {
-                match side {
-                    Side::Buy => {
-                        let mut shares =
-                            (cash / (b.open * (1.0 + p.costs.commission_rate)) / p.lot.step as f64)
-                                .floor() as i64
+        // 2. 开盘：执行昨天收盘后下的单。跳过某笔订单时也必须继续当天的收盘记账，
+        // 所以这里用带标签的块代替 continue。
+        'exec: {
+            if let Some(side) = pending {
+                // 一字板：全天只有一个价格。按前复权价和前一天比较，除权日也不会误判
+                let prev = if i > 0 { bars[i - 1].q_close } else { b.q_open };
+                let blocked =
+                    order_blocked(matches!(side, Side::Buy), b.high == b.low, b.q_open, prev);
+                if blocked {
+                    deferred += 1;
+                } else {
+                    match side {
+                        Side::Buy => {
+                            let Some(price) = execution.estimate_price(b, Side::Buy) else {
+                                pending = None;
+                                skipped += 1;
+                                break 'exec;
+                            };
+                            // 按实际成交口径估算价格，并先留出佣金和过户费
+                            let affordable = p.costs.affordable_amount(cash);
+                            let mut shares = (affordable / price / p.lot.step as f64).floor()
+                                as i64
                                 * p.lot.step;
-                        if shares < p.lot.min {
-                            shares = 0;
-                        }
-                        while shares >= p.lot.min
-                            && shares as f64 * b.open + p.costs.commission(shares as f64 * b.open)
-                                > cash
-                        {
-                            shares -= p.lot.step;
-                        }
-                        if shares < p.lot.min {
-                            shares = 0;
-                        }
-                        if shares == 0 {
-                            skipped += 1;
-                        } else if let Some(fill) =
-                            execution.fill(b, side, shares as f64, &p.costs, 0.0)
-                        {
+                            while shares >= p.lot.min {
+                                let amount = shares as f64 * price;
+                                if amount
+                                    + p.costs.commission(amount)
+                                    + amount * p.costs.transfer_fee_rate
+                                    <= cash + 1e-8
+                                {
+                                    break;
+                                }
+                                shares -= p.lot.step;
+                            }
+                            if shares < p.lot.min {
+                                // 资金不够最小交易单位，放弃这次信号，不再每天重试
+                                pending = None;
+                                skipped += 1;
+                                break 'exec;
+                            }
+                            let Some(fill) = execution.fill(b, side, shares as f64, &p.costs, 0.0)
+                            else {
+                                // 成交量不足时保留买单，次日继续尝试；这不是资金不够，不计入 skipped_buys
+                                break 'exec;
+                            };
                             let filled_shares =
                                 (fill.filled / p.lot.step as f64).floor() * p.lot.step as f64;
                             if filled_shares < p.lot.min as f64 {
-                                skipped += 1;
                                 pending = None;
-                                continue;
+                                skipped += 1;
+                                break 'exec;
                             }
                             let Some(fill) = execution.fill(b, side, filled_shares, &p.costs, 0.0)
                             else {
-                                skipped += 1;
                                 pending = None;
-                                continue;
+                                skipped += 1;
+                                break 'exec;
                             };
                             let amount = fill.filled * fill.price;
                             let fee = fill.commission + fill.transfer_fee;
                             if amount + fee > cash + 1e-8 {
-                                skipped += 1;
+                                // 估算已留出费用，正常不会走到这里；仍按买不起来处理
                                 pending = None;
-                                continue;
+                                skipped += 1;
+                                break 'exec;
                             }
                             pending = None;
                             cash -= amount + fee;
                             fees += fee;
+                            let adjust = if b.open.is_finite()
+                                && b.open > 0.0
+                                && b.q_open.is_finite()
+                                && b.q_open > 0.0
+                            {
+                                b.q_open / b.open
+                            } else {
+                                1.0
+                            };
                             pos = Some(Position {
                                 idx: i,
                                 entry_shares: fill.filled as i64,
                                 shares: fill.filled as i64,
                                 price: fill.price,
-                                q_price: b.q_open,
+                                q_price: fill.price * adjust,
                                 cost: amount + fee,
                                 dividends: 0.0,
+                                proceeds: 0.0,
+                                sold_shares: 0,
                             });
                         }
-                    }
-                    Side::Sell => {
-                        if let Some(o) = pos.take() {
-                            if let Some(fill) = execution.fill(
-                                b,
-                                side,
-                                o.shares as f64,
-                                &p.costs,
-                                p.costs.stamp_tax_rate,
-                            ) {
-                                let sold = fill.filled.floor() as i64;
-                                if sold <= 0 {
-                                    pos = Some(o);
-                                    pending = Some(Side::Sell);
-                                    continue;
-                                }
-                                let gross = sold as f64 * fill.price;
-                                let fee = fill.commission + fill.transfer_fee + fill.stamp_tax;
-                                cash += gross - fee;
-                                fees += fee;
-                                if sold < o.shares {
-                                    let mut rest = o;
-                                    rest.shares -= sold;
-                                    pos = Some(rest);
-                                    pending = Some(Side::Sell);
+                        Side::Sell => {
+                            if let Some(o) = pos.take() {
+                                if let Some(fill) = execution.fill(
+                                    b,
+                                    side,
+                                    o.shares as f64,
+                                    &p.costs,
+                                    p.costs.stamp_tax_rate,
+                                ) {
+                                    let sold = fill.filled.floor() as i64;
+                                    if sold <= 0 {
+                                        pos = Some(o);
+                                        break 'exec;
+                                    }
+                                    let gross = sold as f64 * fill.price;
+                                    let fee = fill.commission + fill.transfer_fee + fill.stamp_tax;
+                                    cash += gross - fee;
+                                    fees += fee;
+                                    if sold < o.shares {
+                                        let mut rest = o;
+                                        rest.shares -= sold;
+                                        rest.proceeds += gross - fee;
+                                        rest.sold_shares += sold;
+                                        pos = Some(rest);
+                                    } else {
+                                        pending = None;
+                                        trades.push(close_trade(
+                                            bars,
+                                            &o,
+                                            i,
+                                            Some((fill.price, sell_reason)),
+                                            gross - fee,
+                                        ));
+                                    }
                                 } else {
-                                    pending = None;
-                                    trades.push(close_trade(
-                                        bars,
-                                        &o,
-                                        i,
-                                        Some((fill.price, sell_reason)),
-                                        gross - fee,
-                                    ));
+                                    pos = Some(o);
                                 }
-                            } else {
-                                pos = Some(o);
                             }
                         }
                     }
@@ -577,17 +624,23 @@ fn close_trade(
     exit: Option<(f64, ExitReason)>,
     proceeds: f64,
 ) -> Trade {
-    let pnl = proceeds + o.dividends - o.cost;
+    // 分批卖出时，之前的净回款已经累计在 o.proceeds 里
+    let total_proceeds = o.proceeds + proceeds;
+    let pnl = total_proceeds + o.dividends - o.cost;
     Trade {
         entry_date: bars[o.idx].date,
         entry_price: o.price,
         shares: o.entry_shares,
         exit_date: exit.map(|_| bars[exit_idx].date),
         exit_price: exit.map(|(p, _)| p),
-        exit_shares: o.shares,
+        exit_shares: if exit.is_some() {
+            o.shares + o.sold_shares
+        } else {
+            o.shares
+        },
         exit_reason: exit.map(|(_, r)| r),
         cost: o.cost,
-        proceeds,
+        proceeds: total_proceeds,
         dividends: o.dividends,
         pnl,
         return_pct: pnl / o.cost,
@@ -833,5 +886,60 @@ mod tests {
     fn payoff_ratio() {
         assert_eq!(payoff(&[30.0, 10.0, -10.0]), Some(2.0));
         assert_eq!(payoff(&[5.0]), None);
+    }
+
+    #[test]
+    fn affordable_amount_reserves_fees() {
+        let c = Costs::default();
+        // 最低佣金 5 元时，10005 元只能成交 10000 元，剩下的 5 元刚好付佣金
+        assert!((c.affordable_amount(10_005.0) - 10_000.0).abs() < 1e-9);
+        assert_eq!(c.affordable_amount(5.0), 0.0);
+        assert_eq!(c.affordable_amount(4.0), 0.0);
+        let proportional = Costs {
+            commission_rate: 0.001,
+            min_commission: 0.0,
+            transfer_fee_rate: 0.000_1,
+            ..Costs::default()
+        };
+        // 1001.1 元预算：成交金额 A 满足 A × (1 + 0.001 + 0.0001) = 1001.1
+        assert!((proportional.affordable_amount(1001.1) - 1000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn partial_sell_retries_next_day_and_accumulates_proceeds() {
+        let mut b = bars(&[10.0, 10.0, 10.0, 12.0]);
+        // 卖出日成交量只够成交 2 股，剩余部分顺延到下一交易日
+        b[2].volume = 2.0;
+        let entry = [true, false, false, false];
+        let exit = [false, true, false, false];
+        let costs = Costs {
+            participation_rate: Some(1.0),
+            ..Costs::default()
+        };
+        let out = run(
+            &b,
+            &[],
+            &Signals {
+                entry: &entry,
+                exit: &exit,
+            },
+            &Params {
+                start: None,
+                capital: 10_000.0,
+                costs,
+                risk: Risk::default(),
+                lot: LotRule::default(),
+            },
+        )
+        .unwrap();
+        let t = &out.trades[0];
+        // 10000 元先留 5 元最低佣金，能买 900 股（每股 10 元）
+        assert_eq!((t.shares, t.exit_shares), (900, 900));
+        assert_eq!(t.exit_date, Some(b[3].date), "剩余部分次日继续卖");
+        assert_eq!(t.exit_reason, Some(ExitReason::Signal));
+        // 第一天卖 2 股：20 − 5 佣金 − 0.01 印花税；第二天卖 898 股：10776 − 5 − 5.388
+        let expected = (20.0 - 5.0 - 0.01) + (898.0 * 12.0 - 5.0 - 898.0 * 12.0 * 0.0005);
+        assert!((t.proceeds - expected).abs() < 1e-6, "{}", t.proceeds);
+        assert!((t.pnl - (expected - t.cost)).abs() < 1e-6);
     }
 }

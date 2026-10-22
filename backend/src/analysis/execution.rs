@@ -59,6 +59,13 @@ impl ExecutionConfig {
         }
     }
 
+    /// 按成交价口径和滑点估算每单位成交价。下单前用它计算能买多少，避免到成交时才发现资金不够。
+    pub fn estimate_price(self, bar: &DailyBar, side: Side) -> Option<f64> {
+        let direction = if side == Side::Buy { 1.0 } else { -1.0 };
+        let price = self.base_price(bar) * (1.0 + direction * self.slippage_bps / 10_000.0);
+        (price.is_finite() && price > 0.0).then_some(price)
+    }
+
     /// 计算一笔日线成交。涨跌停排队仍由上层状态机决定；这里负责成交价、参与率和费用。
     pub fn fill(
         self,
@@ -79,12 +86,8 @@ impl ExecutionConfig {
         if filled <= 0.0 {
             return None;
         }
-        let direction = if side == Side::Buy { 1.0 } else { -1.0 };
         let base = self.base_price(bar);
-        let price = base * (1.0 + direction * self.slippage_bps / 10_000.0);
-        if !price.is_finite() || price <= 0.0 {
-            return None;
-        }
+        let price = self.estimate_price(bar, side)?;
         let amount = filled * price;
         let commission = costs.commission(amount);
         let transfer_fee = amount * costs.transfer_fee_rate;

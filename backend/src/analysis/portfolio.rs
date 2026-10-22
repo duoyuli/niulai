@@ -46,7 +46,10 @@ pub struct PortfolioRisk {
     pub max_turnover_pct: Option<f64>,
 }
 
-type ExitTuple = (NaiveDate, f64, f64, f64, f64, f64, f64, ExitReason);
+struct ExitInfo {
+    date: NaiveDate,
+    reason: ExitReason,
+}
 
 #[derive(Serialize, ToSchema, Debug)]
 pub struct PortfolioTrade {
@@ -119,14 +122,15 @@ struct Candidate {
     asset_type: AssetType,
     signal_date: NaiveDate,
     entry_date: NaiveDate,
+    /// 前复权开盘价，实际成交价
     entry_q: f64,
+    /// 未复权开盘价，只用于交易记录展示
     entry_raw: f64,
-    entry_high: f64,
-    entry_low: f64,
-    entry_close: f64,
+    entry_q_high: f64,
+    entry_q_low: f64,
+    entry_q_close: f64,
     entry_volume: f64,
-    /// (卖出日, 前复权开盘价, 未复权开盘价, 最高, 最低, 收盘, 成交量, 原因)
-    exit: Option<ExitTuple>,
+    exit: Option<ExitInfo>,
     bars_held: i64,
     sort_value: f64,
     volatility: f64,
@@ -134,8 +138,25 @@ struct Candidate {
 
 struct Stock {
     code: String,
-    /// 区间内每天的前复权收盘价，用于每天计算持仓市值
-    closes: Vec<(NaiveDate, f64)>,
+    /// 区间内的日线；收盘价用于每天计算持仓市值，完整日线用于分批成交在后续交易日继续执行
+    bars: Vec<DailyBar>,
+}
+
+/// 把一根未复权日线换成只用前复权价参与成交的执行用日线。
+fn q_bar(b: &DailyBar) -> DailyBar {
+    DailyBar {
+        date: b.date,
+        open: b.q_open,
+        high: b.q_high,
+        low: b.q_low,
+        close: b.q_close,
+        q_open: b.q_open,
+        q_high: b.q_high,
+        q_low: b.q_low,
+        q_close: b.q_close,
+        volume: b.volume,
+        amount: b.amount,
+    }
 }
 
 /// 按策略的买卖点规则（`points::run`，与每日巡检、K 线买卖点、单股回测同一套）从第 from 根日线
@@ -156,26 +177,33 @@ fn candidates(
             let entry_bar = &bars[bars.binary_search_by_key(&t.entry_date, |b| b.date).ok()?];
             let entry_q = entry_bar.q_open;
             let exit = match (t.exit_date, t.exit_reason) {
-                (Some(date), Some(reason)) => {
-                    let x = &bars[bars.binary_search_by_key(&date, |b| b.date).ok()?];
-                    Some((
-                        date, x.q_open, x.open, x.high, x.low, x.close, x.volume, reason,
-                    ))
-                }
+                (Some(date), Some(reason)) => Some(ExitInfo { date, reason }),
                 _ => None,
             };
-            let vol = bars
+            // 用信号日以前的 20 个日收益率计算年化波动率；直接用价格水平会把上涨趋势误当成高波动
+            let mut closes: Vec<f64> = bars
                 .iter()
                 .take(si)
                 .rev()
-                .take(20)
+                .take(21)
                 .map(|b| b.q_close)
-                .collect::<Vec<_>>();
-            let volatility = if vol.len() >= 2 {
-                let mean = vol.iter().sum::<f64>() / vol.len() as f64;
-                let variance =
-                    vol.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (vol.len() - 1) as f64;
-                (variance.sqrt() / mean.max(1e-9)).abs() * 252.0_f64.sqrt()
+                .collect();
+            closes.reverse();
+            let volatility = if closes.len() >= 3 {
+                let returns: Vec<f64> = closes
+                    .windows(2)
+                    .filter(|w| w[0] > 0.0)
+                    .map(|w| w[1] / w[0] - 1.0)
+                    .filter(|r| r.is_finite())
+                    .collect();
+                if returns.len() >= 2 {
+                    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+                    let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>()
+                        / (returns.len() - 1) as f64;
+                    variance.sqrt() * 252.0_f64.sqrt()
+                } else {
+                    0.0
+                }
             } else {
                 0.0
             };
@@ -186,9 +214,9 @@ fn candidates(
                 entry_date: t.entry_date,
                 entry_q,
                 entry_raw: t.entry_price,
-                entry_high: entry_bar.high,
-                entry_low: entry_bar.low,
-                entry_close: entry_bar.close,
+                entry_q_high: entry_bar.q_high,
+                entry_q_low: entry_bar.q_low,
+                entry_q_close: entry_bar.q_close,
                 entry_volume: entry_bar.volume,
                 exit,
                 bars_held: t.bars_held,
@@ -238,7 +266,7 @@ pub async fn run(
         cands.extend(found);
         stocks.push(Stock {
             code: code.to_string(),
-            closes: bars[first..].iter().map(|b| (b.date, b.q_close)).collect(),
+            bars: bars[first..].to_vec(),
         });
     })
     .await?;
@@ -272,6 +300,8 @@ pub async fn run(
         cand: usize,
         units: f64,
         cost: f64,
+        /// 分批卖出时已经收到的净回款
+        proceeds: f64,
         cursor: usize,
         last_close: f64,
     }
@@ -287,72 +317,78 @@ pub async fn run(
             .cloned()
             .unwrap_or_default()
     };
-    let trade = |c: &Candidate, ret: f64, closed: bool| PortfolioTrade {
+    let trade = |c: &Candidate, ret: f64, exit: Option<(NaiveDate, f64)>| PortfolioTrade {
         thscode: stocks[c.stock].code.clone(),
         name: name(c),
         signal_date: c.signal_date,
         entry_date: c.entry_date,
         entry_price: c.entry_raw,
-        exit_date: if closed { c.exit.map(|e| e.0) } else { None },
-        exit_price: if closed { c.exit.map(|e| e.2) } else { None },
-        exit_reason: if closed { c.exit.map(|e| e.7) } else { None },
+        exit_date: exit.map(|e| e.0),
+        exit_price: exit.map(|e| e.1),
+        exit_reason: exit.and_then(|_| c.exit.as_ref().map(|e| e.reason)),
         return_pct: ret,
         bars_held: c.bars_held,
     };
     for &day in &calendar {
-        // 开盘：先卖出到期的持仓
+        // 当天买卖成交金额合计，用来执行单日换手上限；不按整个区间累计
+        let mut day_turnover = 0.0;
+        // 开盘：先卖出到期的持仓。成交量参与率导致只成交一部分时，后续交易日继续卖
         let mut k = 0;
         while k < held.len() {
             let c = &cands[held[k].cand];
-            if let Some((date, q, raw_open, high, low, close, volume, _)) = c.exit
-                && date == day
-            {
-                let bar = DailyBar {
-                    date,
-                    open: raw_open,
-                    high,
-                    low,
-                    close,
-                    q_open: q,
-                    q_high: q,
-                    q_low: q,
-                    q_close: q,
-                    volume,
-                    amount: 0.0,
-                };
-                let exec = costs.execution();
-                let Some(fill) = exec.fill(
-                    &bar,
-                    super::backtest::Side::Sell,
-                    held[k].units,
-                    &costs,
-                    extension(c.asset_type).stamp_tax_rate(),
-                ) else {
-                    k += 1;
-                    continue;
-                };
-                let gross = fill.filled * fill.price;
-                turnover += gross;
-                let stamp_tax_rate = if extension(c.asset_type).stamp_tax_rate() == 0.0 {
-                    0.0
-                } else {
-                    costs.stamp_tax_rate
-                };
-                let fee = fill.commission + fill.transfer_fee + gross * stamp_tax_rate;
-                fees += fee;
-                cash += gross - fee;
-                if fill.filled >= held[k].units - 1e-9 {
-                    trades.push(trade(c, (gross - fee) / held[k].cost - 1.0, true));
-                    held.swap_remove(k);
-                } else {
-                    held[k].units -= fill.filled;
-                    k += 1;
-                }
+            if !c.exit.as_ref().is_some_and(|e| e.date <= day) {
+                k += 1;
+                continue;
+            }
+            let Some(bar) = stocks[c.stock]
+                .bars
+                .binary_search_by_key(&day, |b| b.date)
+                .ok()
+                .map(|pos| &stocks[c.stock].bars[pos])
+            else {
+                // 停牌：没有日线，下一个交易日再试
+                k += 1;
+                continue;
+            };
+            let raw_open = bar.open;
+            let bar = q_bar(bar);
+            let exec = costs.execution();
+            let Some(fill) = exec.fill(
+                &bar,
+                super::backtest::Side::Sell,
+                held[k].units,
+                &costs,
+                extension(c.asset_type).stamp_tax_rate(),
+            ) else {
+                k += 1;
+                continue;
+            };
+            if fill.filled <= 0.0 {
+                k += 1;
+                continue;
+            }
+            let gross = fill.filled * fill.price;
+            day_turnover += gross;
+            turnover += gross;
+            let stamp_tax_rate = if extension(c.asset_type).stamp_tax_rate() == 0.0 {
+                0.0
             } else {
+                costs.stamp_tax_rate
+            };
+            let fee = fill.commission + fill.transfer_fee + gross * stamp_tax_rate;
+            fees += fee;
+            cash += gross - fee;
+            held[k].proceeds += gross - fee;
+            if fill.filled >= held[k].units - 1e-9 {
+                let ret = held[k].proceeds / held[k].cost - 1.0;
+                trades.push(trade(c, ret, Some((day, raw_open))));
+                held.swap_remove(k);
+            } else {
+                held[k].units -= fill.filled;
                 k += 1;
             }
         }
-        // 再买入当天的候选：空余仓位平分现金
+        // 再买入当天的候选：空余仓位平分现金，并先留出佣金和过户费
         if let Some(list) = by_entry.get(&day) {
             for &ci in list {
                 let free = p.max_positions - held.len();
@@ -364,39 +400,49 @@ pub async fn run(
                     skipped += 1;
                     continue;
                 }
-                let mut invest = cash / free as f64;
+                let mut budget = cash / free as f64;
                 if let Some(max_weight) = p.risk.max_weight_pct {
-                    invest = invest.min(p.capital * max_weight / 100.0);
+                    budget = budget.min(p.capital * max_weight / 100.0);
                 }
                 if let Some(target_vol) = p.risk.target_vol_pct
                     && c.volatility > 0.0
                 {
-                    invest = invest.min(cash / free as f64 * target_vol / 100.0 / c.volatility);
+                    budget = budget.min(cash / free as f64 * target_vol / 100.0 / c.volatility);
                 }
-                if let Some(max_turnover) = p.risk.max_turnover_pct
-                    && turnover + invest > p.capital * max_turnover / 100.0
-                {
-                    skipped += 1;
-                    continue;
-                }
+                budget = budget.min(cash);
                 let bar = DailyBar {
                     date: day,
-                    open: c.entry_raw,
-                    high: c.entry_high,
-                    low: c.entry_low,
-                    close: c.entry_close,
+                    open: c.entry_q,
+                    high: c.entry_q_high,
+                    low: c.entry_q_low,
+                    close: c.entry_q_close,
                     q_open: c.entry_q,
-                    q_high: c.entry_q,
-                    q_low: c.entry_q,
-                    q_close: c.entry_q,
+                    q_high: c.entry_q_high,
+                    q_low: c.entry_q_low,
+                    q_close: c.entry_q_close,
                     volume: c.entry_volume,
                     amount: 0.0,
                 };
                 let exec = costs.execution();
+                let Some(price) = exec.estimate_price(&bar, super::backtest::Side::Buy) else {
+                    skipped += 1;
+                    continue;
+                };
+                let affordable = costs.affordable_amount(budget);
+                if affordable < price {
+                    skipped += 1;
+                    continue;
+                }
+                if let Some(max_turnover) = p.risk.max_turnover_pct
+                    && day_turnover + affordable > p.capital * max_turnover / 100.0
+                {
+                    skipped += 1;
+                    continue;
+                }
                 let Some(fill) = exec.fill(
                     &bar,
                     super::backtest::Side::Buy,
-                    invest / c.entry_q,
+                    affordable / price,
                     &costs,
                     0.0,
                 ) else {
@@ -405,17 +451,19 @@ pub async fn run(
                 };
                 let fee = fill.commission + fill.transfer_fee;
                 let total_cost = fill.filled * fill.price + fee;
-                if total_cost <= fee || total_cost > cash + 1e-8 {
+                if fill.filled <= 0.0 || total_cost <= fee || total_cost > cash + 1e-8 {
                     skipped += 1;
                     continue;
                 }
                 fees += fee;
+                day_turnover += fill.filled * fill.price;
                 turnover += fill.filled * fill.price;
                 cash -= total_cost;
                 held.push(Held {
                     cand: ci,
                     units: fill.filled,
                     cost: total_cost,
+                    proceeds: 0.0,
                     cursor: 0,
                     last_close: c.entry_q,
                 });
@@ -424,9 +472,9 @@ pub async fn run(
         // 收盘：按前复权收盘价计算市值；停牌的股票用最近一个收盘价
         let mut value = cash;
         for h in held.iter_mut() {
-            let closes = &stocks[cands[h.cand].stock].closes;
-            while h.cursor < closes.len() && closes[h.cursor].0 <= day {
-                h.last_close = closes[h.cursor].1;
+            let bars = &stocks[cands[h.cand].stock].bars;
+            while h.cursor < bars.len() && bars[h.cursor].date <= day {
+                h.last_close = bars[h.cursor].q_close;
                 h.cursor += 1;
             }
             value += h.units * h.last_close;
@@ -444,10 +492,14 @@ pub async fn run(
             benchmark: b,
         });
     }
-    // 期末仍持有的按最后收盘价计算，不扣卖出费用
+    // 期末仍持有的按最后收盘价计算，不扣卖出费用；分批卖出过的部分计入已收到的回款
     for h in &held {
         let c = &cands[h.cand];
-        trades.push(trade(c, h.units * h.last_close / h.cost - 1.0, false));
+        trades.push(trade(
+            c,
+            (h.proceeds + h.units * h.last_close) / h.cost - 1.0,
+            None,
+        ));
     }
 
     let (start, end) = (*calendar.first().unwrap(), *calendar.last().unwrap());
@@ -591,7 +643,10 @@ mod tests {
             assert_eq!((c.signal_date, c.entry_date), (t.signal_date, t.entry_date));
             assert_eq!(c.entry_raw, t.entry_price);
             assert_eq!(c.bars_held, t.bars_held);
-            assert_eq!(c.exit.map(|e| (e.0, e.7)), t.exit_date.zip(t.exit_reason));
+            assert_eq!(
+                c.exit.as_ref().map(|e| (e.date, e.reason)),
+                t.exit_date.zip(t.exit_reason)
+            );
         }
     }
 }

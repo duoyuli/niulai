@@ -50,23 +50,57 @@ pub struct ValidationWindow {
     pub test_end: NaiveDate,
 }
 
+/// 单个训练或测试窗口的最大自然日数（约 10 年）。
+pub const MAX_WINDOW_DAYS: i64 = 3650;
+/// embargo 的最大天数。
+pub const MAX_EMBARGO_DAYS: i64 = 365;
+/// 一次请求最多生成多少个窗口。每个窗口要跑两次回测，必须有上限。
+pub const MAX_WINDOWS: usize = 200;
+
 /// 生成滚动样本外窗口。测试区间永远晚于训练区间，并留出 embargo 天数。
+/// 参数超出合理范围时返回错误，避免日期运算溢出或窗口数失控。
 pub fn walk_forward_windows(
     start: NaiveDate,
     end: NaiveDate,
     train_days: i64,
     test_days: i64,
     embargo_days: i64,
-) -> Vec<ValidationWindow> {
-    if train_days <= 0 || test_days <= 0 || start >= end {
-        return vec![];
+) -> Result<Vec<ValidationWindow>, String> {
+    if start >= end {
+        return Err("开始日期要早于结束日期".into());
     }
+    if train_days <= 0 || test_days <= 0 {
+        return Err("训练天数和测试天数必须大于 0".into());
+    }
+    if train_days > MAX_WINDOW_DAYS || test_days > MAX_WINDOW_DAYS {
+        return Err(format!("训练天数和测试天数都不能超过 {MAX_WINDOW_DAYS} 天"));
+    }
+    if !(0..=MAX_EMBARGO_DAYS).contains(&embargo_days) {
+        return Err(format!("embargo_days 应在 0 到 {MAX_EMBARGO_DAYS} 之间"));
+    }
+    let offset = train_days
+        .checked_add(embargo_days)
+        .ok_or_else(|| "日期范围溢出".to_string())?;
+    let mut test_start = start
+        .checked_add_signed(chrono::Duration::days(offset))
+        .ok_or_else(|| "日期范围溢出".to_string())?;
     let mut out = vec![];
-    let mut test_start = start + chrono::Duration::days(train_days + embargo_days);
     while test_start <= end {
-        let test_end = (test_start + chrono::Duration::days(test_days - 1)).min(end);
-        let train_end = test_start - chrono::Duration::days(embargo_days + 1);
-        let train_start = train_end - chrono::Duration::days(train_days - 1);
+        if out.len() >= MAX_WINDOWS {
+            return Err(format!(
+                "验证窗口超过 {MAX_WINDOWS} 个，请缩短区间或加大测试天数"
+            ));
+        }
+        let test_end = test_start
+            .checked_add_signed(chrono::Duration::days(test_days - 1))
+            .ok_or_else(|| "日期范围溢出".to_string())?
+            .min(end);
+        let train_end = test_start
+            .checked_sub_signed(chrono::Duration::days(embargo_days + 1))
+            .ok_or_else(|| "日期范围溢出".to_string())?;
+        let train_start = train_end
+            .checked_sub_signed(chrono::Duration::days(train_days - 1))
+            .ok_or_else(|| "日期范围溢出".to_string())?;
         if train_start >= start && train_end < test_start {
             out.push(ValidationWindow {
                 train_start,
@@ -75,9 +109,11 @@ pub fn walk_forward_windows(
                 test_end,
             });
         }
-        test_start = test_end + chrono::Duration::days(1);
+        test_start = test_end
+            .checked_add_signed(chrono::Duration::days(1))
+            .ok_or_else(|| "日期范围溢出".to_string())?;
     }
-    out
+    Ok(out)
 }
 
 pub fn definition_hash<T: Serialize>(value: &T) -> String {
@@ -148,8 +184,21 @@ mod tests {
     fn walk_forward_windows_have_embargo() {
         let s = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let e = NaiveDate::from_ymd_opt(2021, 1, 1).unwrap();
-        let windows = walk_forward_windows(s, e, 60, 20, 5);
+        let windows = walk_forward_windows(s, e, 60, 20, 5).unwrap();
         assert!(!windows.is_empty());
         assert!(windows.iter().all(|w| w.train_end < w.test_start));
+    }
+
+    #[test]
+    fn walk_forward_windows_reject_unbounded_parameters() {
+        let s = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let e = NaiveDate::from_ymd_opt(2021, 1, 1).unwrap();
+        assert!(walk_forward_windows(s, e, 0, 20, 5).is_err());
+        assert!(walk_forward_windows(s, e, 60, 0, 5).is_err());
+        assert!(walk_forward_windows(s, e, MAX_WINDOW_DAYS + 1, 20, 5).is_err());
+        assert!(walk_forward_windows(s, e, 60, 20, -1).is_err());
+        assert!(walk_forward_windows(s, e, 60, 20, MAX_EMBARGO_DAYS + 1).is_err());
+        // 每天一个测试窗口，区间太长时直接拒绝
+        assert!(walk_forward_windows(s, e, 60, 1, 0).is_err());
     }
 }

@@ -5,8 +5,9 @@
 //! - 排序：同时选中的策略数 → 成交额，至少 `min_picks` 个；
 //! - 卖出：买入依据策略的完整卖出规则；最多持几只、单只上限、保留现金、弱市、追高上限。
 //!
-//! 近似：价格用前复权价（分红送转已在价格里），允许零股，佣金和印花税照扣；ST 按现在的简称判断，持有中被 ST 不卖；
-//! 不做单只超过上限时的减仓。规则见 docs/domains/accounts.md#rules_backtest。
+//! 近似：价格用前复权价（分红送转已在价格里），允许零股，佣金和印花税照扣；ST 按本地历史简称判断，
+//! 没有记录时回退当前简称，启用 `sell_st` 时持有中被 ST 会在下一个交易日卖出；不做单只超过上限时的减仓。
+//! 规则见 docs/domains/accounts.md#rules_backtest。
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -18,7 +19,7 @@ use utoipa::ToSchema;
 use crate::account::history::{self, HistorySeries};
 use crate::account::lots::{Fees, round2};
 use crate::account::rules::{Preset, Rules, WeakMarket};
-use crate::analysis::backtest::{Costs, Side};
+use crate::analysis::backtest::{Costs, Side, TRAILING_ATR_PERIOD};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef};
 use crate::analysis::market::{self, calendar_days_for};
 use crate::analysis::points;
@@ -132,7 +133,10 @@ struct Stock {
     /// 未复权开盘价：交易记录里展示用
     open: Vec<f32>,
     q_open: Vec<f32>,
+    q_high: Vec<f32>,
     q_close: Vec<f32>,
+    /// ATR(14)，用于买入依据策略的吊灯止损
+    atr: Vec<f32>,
     one_price: Vec<bool>,
     /// 第 k 天哪些策略出现买点，按位
     buy: Vec<u64>,
@@ -267,6 +271,10 @@ pub async fn run(
             let Some(f0) = first else { return };
             ew.add(&base_def, bars, &f, meta, f0);
             let ma20 = f.get(IndicatorRef::new(IndicatorId::Ma, Some(20)));
+            let atr = f.get(IndicatorRef::new(
+                IndicatorId::Atr,
+                Some(TRAILING_ATR_PERIOD),
+            ));
             let exits: Vec<Vec<bool>> = defs.iter().map(|d| d.exit_series(&f)).collect();
             let mut s = Stock {
                 code: code.to_string(),
@@ -279,7 +287,9 @@ pub async fn run(
                 day: vec![],
                 open: Vec::with_capacity(n),
                 q_open: Vec::with_capacity(n),
+                q_high: Vec::with_capacity(n),
                 q_close: Vec::with_capacity(n),
+                atr: Vec::with_capacity(n),
                 one_price: Vec::with_capacity(n),
                 buy,
                 exit: Vec::with_capacity(n),
@@ -301,7 +311,9 @@ pub async fn run(
                 dates.push(b.date);
                 s.open.push(b.open as f32);
                 s.q_open.push(b.q_open as f32);
+                s.q_high.push(b.q_high as f32);
                 s.q_close.push(b.q_close as f32);
+                s.atr.push(atr[i] as f32);
                 s.one_price.push(b.high == b.low);
                 s.exit.push(em);
                 s.st.push(f.is_st(i));
@@ -373,13 +385,14 @@ pub async fn run(
         data_start: r.summary.start,
         data_end: r.summary.end,
         price_basis: "forward_adjusted_account_approx".into(),
-        execution_model: "account_rules;daily_open;partial_fill=false".into(),
+        execution_model: "account_rules;daily_open;full_fill;trailing_stop_atr".into(),
         point_in_time_universe: true,
         derived_versions: versions,
         trial_count: 1,
         validation_kind: "single_run_unvalidated".into(),
         coverage: crate::analysis::research::Coverage::default(),
-        delisted_policy: "exclude_after_point_in_time_delisted_on;unknown_st_conservative".into(),
+        delisted_policy: "exclude_after_point_in_time_delisted_on;unknown_st_fallback_current"
+            .into(),
     };
     r.manifest = manifest;
     Ok(Some(r))
@@ -393,6 +406,8 @@ struct Held {
     /// 买入依据的策略（位）
     origin: u64,
     last_close: f64,
+    /// 持有期间的最高前复权价，用于 ATR 吊灯止损
+    peak: f64,
     /// 信号日、买入日（全局日历下标）、未复权买入价、当时选中它的有效策略（位）
     signal_day: u32,
     entry_day: u32,
@@ -471,6 +486,8 @@ fn simulate(
     let (mut closed, mut wins) = (0usize, 0usize);
     let (mut pos_sum, mut cash_ratio_sum, mut eff_sum) = (0.0, 0.0, 0.0);
     let mut equity: Vec<RulesEquityPoint> = vec![];
+    // 风险指标按日收益计算；响应里的 equity 仍每周一个点
+    let mut daily_equity: Vec<f64> = Vec::with_capacity(calendar.len());
     let mut last_week = None;
     let none = YearEdge::default();
     for (d, date) in calendar.iter().enumerate() {
@@ -537,7 +554,7 @@ fn simulate(
             {
                 continue;
             }
-            let invest = b.budget.min(cash);
+            let budget = b.budget.min(cash);
             let bar = crate::analysis::prices::DailyBar {
                 date: *date,
                 open,
@@ -551,13 +568,22 @@ fn simulate(
                 volume: f64::INFINITY,
                 amount: 0.0,
             };
-            let Some(fill) = execution.fill(&bar, Side::Buy, invest / open, &execution_costs, 0.0)
+            let Some(price) = execution.estimate_price(&bar, Side::Buy) else {
+                continue;
+            };
+            // 先留出佣金和过户费，最后一份预算也能真正买进
+            let affordable = execution_costs.affordable_amount(budget);
+            if affordable < price {
+                continue;
+            }
+            let Some(fill) =
+                execution.fill(&bar, Side::Buy, affordable / price, &execution_costs, 0.0)
             else {
                 continue;
             };
             let fee = fill.commission + fill.transfer_fee;
             let total_cost = fill.filled * fill.price + fee;
-            if total_cost <= fee || total_cost > cash + 1e-8 {
+            if fill.filled <= 0.0 || total_cost <= fee || total_cost > cash + 1e-8 {
                 continue;
             }
             cash -= total_cost;
@@ -568,6 +594,7 @@ fn simulate(
                 entry_q: open,
                 origin: b.origin,
                 last_close: open,
+                peak: s.q_high[k] as f64,
                 signal_day: b.signal_day,
                 entry_day: d32,
                 entry_raw: s.open[k] as f64,
@@ -575,15 +602,17 @@ fn simulate(
             });
         }
 
-        // 收盘：市值
+        // 收盘：市值和持有期最高价
         for h in held.iter_mut() {
             if let Some(k) = stocks[h.stock].at(d32) {
                 h.last_close = stocks[h.stock].q_close[k] as f64;
+                h.peak = h.peak.max(stocks[h.stock].q_high[k] as f64);
             }
         }
         let value = cash + held.iter().map(|h| h.units * h.last_close).sum::<f64>();
         peak = peak.max(value);
         max_dd = max_dd.max(1.0 - value / peak);
+        daily_equity.push(value / CAPITAL);
         pos_sum += held.len() as f64;
         cash_ratio_sum += cash / value.max(1.0);
         let week = date.format("%G-%V").to_string();
@@ -607,9 +636,9 @@ fn simulate(
             let ret = close / h.entry_q - 1.0;
             let strategy_index = h.origin.trailing_zeros() as usize;
             let strategy = defs.get(strategy_index).copied();
-            let reason = if p.sell_st && s.st[k] {
-                Some("账户规则：当天被实施风险警示（ST）".to_string())
-            } else if s.exit[k] & h.origin != 0 {
+            // 与单股回测、每日建议一致：策略卖出条件 → 止损 → 止盈 → ATR 吊灯 → 最长持有，
+            // 策略规则都没有触发时才看账户的 sell_st。
+            let reason = if s.exit[k] & h.origin != 0 {
                 Some(format!(
                     "「{}」的卖出条件",
                     names_of(h.origin, strategy_names).join("")
@@ -632,11 +661,25 @@ fn simulate(
                     ret * 100.0,
                     profit
                 ))
+            } else if let Some(multiple) = strategy
+                .and_then(|d| d.exit.trailing_stop_atr)
+                .filter(|m| m.is_finite() && *m > 0.0)
+            {
+                let atr = s.atr[k] as f64;
+                let hit = d32 > h.entry_day
+                    && atr.is_finite()
+                    && atr > 0.0
+                    && close < h.peak - multiple * atr;
+                hit.then(|| format!("策略回撤止损：收盘价跌破 {multiple} 倍 ATR(14) 的吊灯线"))
+            } else if let Some(days) = strategy
+                .and_then(|d| d.exit.max_hold_days)
+                .filter(|days| d32 + 1 - h.entry_day >= *days)
+            {
+                Some(format!("策略持有满 {days} 个交易日"))
+            } else if p.sell_st && s.st[k] {
+                Some("账户规则：当天被实施风险警示（ST）".to_string())
             } else {
-                strategy
-                    .and_then(|d| d.exit.max_hold_days)
-                    .filter(|days| d32 + 1 - h.entry_day >= *days)
-                    .map(|days| format!("策略持有满 {days} 个交易日"))
+                None
             };
             if let Some(reason) = reason {
                 pending_sell.push(PendingSell {
@@ -704,11 +747,7 @@ fn simulate(
     let last = equity.last().map_or(1.0, |e| e.value);
     let days = (calendar[n - 1] - calendar[0]).num_days();
     let annual_return = (days >= 90).then(|| last.powf(365.25 / days as f64) - 1.0);
-    let risk = crate::analysis::research::risk_metrics(
-        &equity.iter().map(|e| e.value).collect::<Vec<_>>(),
-        annual_return,
-        max_dd,
-    );
+    let risk = crate::analysis::research::risk_metrics(&daily_equity, annual_return, max_dd);
     RulesBacktest {
         summary: RulesBacktestSummary {
             start: calendar[0],
@@ -812,7 +851,9 @@ mod tests {
             day: (0..10).collect(),
             open: (0..10).map(|i| closes[i.max(1) - 1]).collect(),
             q_open: (0..10).map(|i| closes[i.max(1) - 1]).collect(),
+            q_high: closes.clone(),
             q_close: closes.clone(),
+            atr: vec![1.0; 10],
             one_price: vec![false; 10],
             buy: (0..10)
                 .map(|i| if buy_days.contains(&i) { bits } else { 0 })
@@ -906,6 +947,62 @@ mod tests {
         );
         assert_eq!(r.summary.trades, 1);
         assert!(r.summary.total_return < 0.0);
+    }
+
+    #[test]
+    fn trailing_stop_uses_atr_and_precedes_sell_st() {
+        let cal: Vec<NaiveDate> = (0..6)
+            .map(|i| NaiveDate::from_ymd_opt(2026, 9, 1).unwrap() + chrono::Duration::days(i))
+            .collect();
+        let closes = [10.0f32, 10.0, 10.0, 10.0, 8.0, 8.0];
+        let stock = Stock {
+            code: "T".into(),
+            name: "测试".into(),
+            asset_type: "stock".into(),
+            day: (0..6).collect(),
+            open: vec![10.0, 10.0, 10.0, 10.0, 8.0, 8.0],
+            q_open: vec![10.0, 10.0, 10.0, 10.0, 8.0, 8.0],
+            q_high: closes.to_vec(),
+            q_close: closes.to_vec(),
+            atr: vec![1.0; 6],
+            one_price: vec![false; 6],
+            buy: vec![1, 0, 0, 0, 0, 0],
+            exit: vec![0; 6],
+            // 第 4 天同时被 ST：策略吊灯止损应先触发
+            st: vec![false, false, false, false, true, true],
+            amount: vec![1e9; 6],
+        };
+        let stocks = vec![stock];
+        let breadth: HashMap<NaiveDate, (u32, u32)> = cal.iter().map(|d| (*d, (60, 100))).collect();
+        let mut strategy = Definition::any_assets(vec!["stock".into()]);
+        strategy.exit.trailing_stop_atr = Some(1.0);
+        let defs = [&strategy];
+        let names = vec!["策略一".to_string()];
+        let edges: HashMap<i32, YearEdge> = HashMap::from([(2026, YearEdge { mask: 1 })]);
+        let rules = Preset::Balanced.rules();
+        assert!(rules.sell_st);
+        let r = simulate(
+            &rules,
+            &stocks,
+            &signals(&stocks),
+            &cal,
+            &breadth,
+            &edges,
+            None,
+            &names,
+            &defs,
+            Fees::default(),
+        );
+        let t = &r.trades[0];
+        assert_eq!(t.entry_date, cal[1]);
+        assert_eq!(t.exit_date, Some(cal[5]), "第 4 天收盘触发，次一交易日卖出");
+        assert!(
+            t.exit_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("回撤止损")),
+            "{:?}",
+            t.exit_reason
+        );
     }
 
     #[test]

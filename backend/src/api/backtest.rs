@@ -12,6 +12,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
+use super::auth::CurrentUser;
 use crate::analysis::backtest::{self, Costs, EquityPoint, LotRule, Risk, Signals, Summary, Trade};
 use crate::analysis::execution::DealPrice;
 use crate::analysis::indicators::Frame;
@@ -20,6 +21,7 @@ use crate::analysis::portfolio::{self, PortfolioOutcome};
 use crate::analysis::research::{self, BacktestManifest, Coverage};
 use crate::analysis::strategy::Definition;
 use crate::analysis::{market, prices};
+use crate::auth::Role;
 use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -47,17 +49,15 @@ pub struct ValidationWindowQuery {
 async fn validation_windows(
     Query(q): Query<ValidationWindowQuery>,
 ) -> ApiResult<Json<Vec<crate::analysis::research::ValidationWindow>>> {
-    if q.start >= q.end || q.train_days <= 0 || q.test_days <= 0 || q.embargo_days.unwrap_or(0) < 0
-    {
-        return Err(ApiError::BadRequest("验证窗口参数不合法".into()));
-    }
-    Ok(Json(crate::analysis::research::walk_forward_windows(
+    let windows = crate::analysis::research::walk_forward_windows(
         q.start,
         q.end,
         q.train_days,
         q.test_days,
         q.embargo_days.unwrap_or(5),
-    )))
+    )
+    .map_err(ApiError::BadRequest)?;
+    Ok(Json(windows))
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -160,16 +160,14 @@ async fn strategy_validation(
         .meta
         .remove(&q.thscode)
         .ok_or_else(|| ApiError::NotFound(format!("证券不存在：{}", q.thscode)))?;
-    if q.start >= q.end || q.train_days <= 0 || q.test_days <= 0 {
-        return Err(ApiError::BadRequest("验证区间或窗口不合法".into()));
-    }
     let windows = crate::analysis::research::walk_forward_windows(
         q.start,
         q.end,
         q.train_days,
         q.test_days,
         q.embargo_days.unwrap_or(5),
-    );
+    )
+    .map_err(ApiError::BadRequest)?;
     if windows.is_empty() {
         return Err(ApiError::BadRequest("没有可用的训练/测试窗口".into()));
     }
@@ -303,14 +301,27 @@ pub struct BacktestRunsQuery {
     responses((status = 200, description = "成功", body = [BacktestRunBrief])))]
 async fn backtest_runs(
     State(s): State<AppState>,
+    me: CurrentUser,
     Query(q): Query<BacktestRunsQuery>,
 ) -> ApiResult<Json<Vec<BacktestRunBrief>>> {
     let rows: Vec<BacktestRunRow> = sqlx::query_as(
-        "SELECT run_id, strategy_id, account_id, mode, start_date, end_date, definition_hash, manifest, summary, created_at
-         FROM ops.backtest_run WHERE ($1::bigint IS NULL OR strategy_id = $1)
-         ORDER BY created_at DESC LIMIT $2",
+        "SELECT r.run_id, r.strategy_id, r.account_id, r.mode, r.start_date, r.end_date,
+                r.definition_hash, r.manifest, r.summary, r.created_at
+         FROM ops.backtest_run r
+         WHERE ($1::bigint IS NULL OR r.strategy_id = $1)
+           AND (
+             r.account_id IS NULL
+             OR $2
+             OR EXISTS (
+               SELECT 1 FROM app.account a
+               WHERE a.account_id = r.account_id AND a.user_id = $3
+             )
+           )
+         ORDER BY r.created_at DESC LIMIT $4",
     )
     .bind(q.strategy_id)
+    .bind(me.role == Role::Admin)
+    .bind(me.user_id)
     .bind(q.limit.unwrap_or(50).clamp(1, 500))
     .fetch_all(&s.pool)
     .await?;
@@ -449,7 +460,8 @@ async fn manifest(
         trial_count: 1,
         validation_kind: "single_run_unvalidated".into(),
         coverage: Coverage::default(),
-        delisted_policy: "exclude_after_point_in_time_delisted_on;unknown_st_conservative".into(),
+        delisted_policy: "exclude_after_point_in_time_delisted_on;unknown_st_fallback_current"
+            .into(),
     })
 }
 

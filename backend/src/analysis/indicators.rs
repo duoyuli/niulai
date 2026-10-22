@@ -378,11 +378,8 @@ impl<'a> Frame<'a> {
         {
             return p.is_st;
         }
-        // 历史简称没有覆盖的日期不能被当成“确定正常”。回测股票池排除 ST 时，
-        // 对未知区间采取保守排除，避免用当前简称把未来信息带回历史。
-        if self.st_history.is_some_and(|h| !h.is_empty()) {
-            return true;
-        }
+        // 历史区间没有覆盖的日期（大多是开始采集以前）回退当前简称，与口径文档一致；
+        // 不做「未知即 ST」的保守排除，否则几年的回测区间会被整体排除。
         self.meta.is_some_and(|m| m.is_st)
     }
 
@@ -1165,8 +1162,8 @@ pub(crate) mod tests {
         let f = Frame::with_st_history(&b, Some(&main), &history);
         let l = f.limits();
         assert!(
-            (l.up_price[1] - 10.5).abs() < 1e-9,
-            "历史区间外状态未知时保守按 ST 处理"
+            (l.up_price[1] - 11.0).abs() < 1e-9,
+            "历史区间外回退当前简称，按 10% 处理"
         );
         assert!(
             (l.up_price[2] - 11.03).abs() < 1e-9,
