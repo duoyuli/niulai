@@ -134,6 +134,7 @@ async fn run_single_segment(
             risk: Risk {
                 stop_loss_pct: strategy.exit.stop_loss_pct,
                 take_profit_pct: strategy.exit.take_profit_pct,
+                trailing_stop_atr: strategy.exit.trailing_stop_atr,
                 max_hold_days: strategy.exit.max_hold_days,
             },
             lot: LotRule { min, step },
@@ -676,6 +677,7 @@ async fn strategy_backtest(
     let risk = Risk {
         stop_loss_pct: d.exit.stop_loss_pct,
         take_profit_pct: d.exit.take_profit_pct,
+        trailing_stop_atr: d.exit.trailing_stop_atr,
         max_hold_days: d.exit.max_hold_days,
     };
     let params = backtest::Params {

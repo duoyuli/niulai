@@ -71,6 +71,7 @@ export const EXIT_REASONS: Record<ExitReason, string> = {
   signal: "卖出信号",
   stop_loss: "止损",
   take_profit: "止盈",
+  trailing_stop: "回撤止损",
   max_hold: "持有到期",
 };
 

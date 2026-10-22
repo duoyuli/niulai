@@ -6810,12 +6810,13 @@
           "signal",
           "stop_loss",
           "take_profit",
+          "trailing_stop",
           "max_hold"
         ]
       },
       "ExitRule": {
         "type": "object",
-        "description": "卖出规则：满足任一条件，或触发止损、止盈、最长持有天数时，在下一个交易日开盘卖出",
+        "description": "卖出规则：满足任一条件，或触发止损、止盈、ATR 吊灯回撤、最长持有天数时，在下一个交易日开盘卖出",
         "properties": {
           "any": {
             "type": "array",
@@ -6847,6 +6848,14 @@
             ],
             "format": "double",
             "description": "盈利达到这个百分比时卖出"
+          },
+          "trailing_stop_atr": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "从买入后的最高价回撤这么多倍 ATR(14) 时卖出，例如 3 表示 3 倍 ATR；为空表示不用"
           }
         }
       },
@@ -10465,7 +10474,8 @@
           "limit_up",
           "limit_down",
           "broken_limit_up",
-          "consecutive_limit_up"
+          "consecutive_limit_up",
+          "first_limit_up"
         ]
       },
       "SignalInfo": {

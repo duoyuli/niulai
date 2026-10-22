@@ -71,6 +71,7 @@ pub enum SignalId {
     LimitDown,
     BrokenLimitUp,
     ConsecutiveLimitUp,
+    FirstLimitUp,
 }
 
 /// 信号参数的说明
@@ -719,6 +720,16 @@ pub const CATALOG: &[SignalInfo] = &[
         usage: "市场炒作最热的股票，波动和风险都极大，不适合普通投资者追。",
         params: &[p("n", "连板数", 2.0, 2.0, 10.0, true)],
     },
+    SignalInfo {
+        id: S::FirstLimitUp,
+        name: "首板（首次涨停）",
+        group: "涨跌停",
+        tone: Bullish,
+        kind: Event,
+        description: "当天收盘涨停，且前一个交易日没有涨停；有供应商名单的日期用名单给出的连板数",
+        usage: "首板是短线情绪的起点，次日能不能高开、有没有资金承接，决定它会不会走成连板。波动极大，追高容易快速亏损，只适合小仓位短线，并先看大盘和板块情绪。",
+        params: NONE,
+    },
 ];
 
 pub fn info_of(id: SignalId) -> &'static SignalInfo {
@@ -1014,7 +1025,8 @@ pub fn definition(id: SignalId, params: &Params) -> Option<SignalDef> {
         | S::LimitUp
         | S::LimitDown
         | S::BrokenLimitUp
-        | S::ConsecutiveLimitUp => None,
+        | S::ConsecutiveLimitUp
+        | S::FirstLimitUp => None,
     }
 }
 
@@ -1196,6 +1208,13 @@ fn special(f: &Frame, id: SignalId, params: &Params) -> Vec<bool> {
                 .map(|&run| run >= k)
                 .collect()
         }
+        // 连板数为 1 就是首板；和 ConsecutiveLimitUp 一样，有权威池的日期以池里的连板数为准
+        S::FirstLimitUp => f
+            .limits()
+            .consecutive_up
+            .iter()
+            .map(|&run| run == 1)
+            .collect(),
         _ => unreachable!("能写成条件的信号走 definition"),
     }
 }
@@ -1252,6 +1271,7 @@ pub fn special_rule(id: SignalId) -> Option<&'static str> {
             "当天在供应商的炸板股名单里（2025-10-16 起）；名单没有覆盖的日期按「最高价触及涨停价、收盘没封住」判断"
         }
         S::ConsecutiveLimitUp => "连续 N 个交易日收盘涨停；有供应商名单的日期用名单给出的连板数",
+        S::FirstLimitUp => "当天收盘涨停，且前一个交易日没有涨停（连板数为 1）",
         _ => return None,
     })
 }
@@ -1796,6 +1816,23 @@ mod tests {
             series(&f, SignalId::VolumeSurge, &Params::new())
                 .iter()
                 .all(|v| !v)
+        );
+    }
+
+    #[test]
+    fn first_limit_up_only_fires_on_the_first_board() {
+        // 10 → 11 → 12.1 连续两个涨停，12.1 → 12.2 断板，随后 13.42 再次涨停
+        let b = bars_from(&[10.0, 11.0, 12.1, 12.2, 13.42]);
+        let f = Frame::new(&b, None);
+        assert_eq!(
+            *series(&f, SignalId::FirstLimitUp, &Params::new()),
+            vec![false, true, false, false, true]
+        );
+        let mut p = Params::new();
+        p.insert("n".into(), 2.0);
+        assert_eq!(
+            *series(&f, SignalId::ConsecutiveLimitUp, &p),
+            vec![false, false, true, false, false]
         );
     }
 

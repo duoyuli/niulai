@@ -8,7 +8,7 @@
 import type { Condition } from './condition';
 
 /**
- * 卖出规则：满足任一条件，或触发止损、止盈、最长持有天数时，在下一个交易日开盘卖出
+ * 卖出规则：满足任一条件，或触发止损、止盈、ATR 吊灯回撤、最长持有天数时，在下一个交易日开盘卖出
  */
 export interface ExitRule {
   any?: Condition[];
@@ -28,4 +28,9 @@ export interface ExitRule {
      * @nullable
      */
   take_profit_pct?: number | null;
+  /**
+     * 从买入后的最高价回撤这么多倍 ATR(14) 时卖出，例如 3 表示 3 倍 ATR；为空表示不用
+     * @nullable
+     */
+  trailing_stop_atr?: number | null;
 }

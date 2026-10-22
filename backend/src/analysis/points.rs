@@ -64,6 +64,10 @@ fn exit_text(d: &Definition, f: &Frame, k: usize, reason: ExitReason) -> String 
         ExitReason::TakeProfit => {
             format!("盈利达到 {}% 止盈", r.take_profit_pct.unwrap_or_default())
         }
+        ExitReason::TrailingStop => format!(
+            "从持有期最高价回撤 {} 倍 ATR(14)",
+            r.trailing_stop_atr.unwrap_or_default()
+        ),
         ExitReason::MaxHold => format!("持有满 {} 个交易日", r.max_hold_days.unwrap_or_default()),
     }
 }
@@ -126,11 +130,16 @@ pub fn run(bars: &[DailyBar], f: &Frame, meta: &StockMeta, d: &Definition, from:
                 trades[t].return_pct = (bars[k].q_close / q - 1.0) * 100.0;
                 trades[t].bars_held = (k - j) as i64;
                 let ret = bars[k].q_close / q - 1.0;
+                let trailing = d
+                    .exit
+                    .trailing_stop_atr
+                    .is_some_and(|m| super::backtest::trailing_stop_hit(f, bars, j, k, m));
                 let reason = super::backtest::exit_reason(
                     sell[k],
                     ret,
                     d.exit.stop_loss_pct,
                     d.exit.take_profit_pct,
+                    trailing,
                     d.exit.max_hold_days,
                     k + 1 - j,
                 );
@@ -300,7 +309,7 @@ mod tests {
             "universe": {"exclude_st": false},
             "all": [{"kind": "compare", "left": {"id": "close"}, "op": "crosses_above", "right": {"id": "ma", "n": 5}}],
             "exit": {"any": [{"kind": "compare", "left": {"id": "close"}, "op": "crosses_below", "right": {"id": "ma", "n": 10}}],
-                     "stop_loss_pct": 6, "take_profit_pct": 15, "max_hold_days": 12}
+                     "stop_loss_pct": 6, "take_profit_pct": 15, "trailing_stop_atr": 3, "max_hold_days": 12}
         }));
         for seed in 1..=8 {
             let b = random_bars(500, seed);
@@ -313,6 +322,7 @@ mod tests {
             let risk = Risk {
                 stop_loss_pct: d.exit.stop_loss_pct,
                 take_profit_pct: d.exit.take_profit_pct,
+                trailing_stop_atr: d.exit.trailing_stop_atr,
                 max_hold_days: d.exit.max_hold_days,
             };
             let params = Params {

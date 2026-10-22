@@ -16,5 +16,6 @@ export const ExitReason = {
   signal: 'signal',
   stop_loss: 'stop_loss',
   take_profit: 'take_profit',
+  trailing_stop: 'trailing_stop',
   max_hold: 'max_hold',
 } as const;

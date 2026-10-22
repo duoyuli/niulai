@@ -45,7 +45,13 @@ type Draft = Omit<StrategyInput, "definition"> & {
   };
 };
 
-const DEFAULT_EXIT: Required<ExitRule> = { any: [], stop_loss_pct: 8, take_profit_pct: null, max_hold_days: 20 };
+const DEFAULT_EXIT: Required<ExitRule> = {
+  any: [],
+  stop_loss_pct: 8,
+  take_profit_pct: null,
+  trailing_stop_atr: null,
+  max_hold_days: 20,
+};
 const DEFAULT_SORT: Sort = { by: { id: "amount" }, desc: true };
 
 function toDraft(catalog: Catalog, x: StrategyInput): Draft {
@@ -309,6 +315,13 @@ function Editor({
                   allowEmpty
                 />
               </Labeled>
+              <Labeled label="回撤（倍 ATR）时止损">
+                <NumInput
+                  value={def.exit.trailing_stop_atr}
+                  onChange={(v) => setDef({ exit: { ...def.exit, trailing_stop_atr: v } })}
+                  allowEmpty
+                />
+              </Labeled>
               <Labeled label="最多持有（交易日）">
                 <NumInput
                   value={def.exit.max_hold_days}
@@ -318,6 +331,10 @@ function Editor({
                 />
               </Labeled>
             </div>
+            <p className="text-xs text-zinc-500">
+              回撤止损用 ATR(14) 的吊灯线：买入次日起，收盘价跌破「持有期最高价 − N 倍
+              ATR(14)」时卖出，适合让趋势单多拿一段；和上面的固定百分比止损可以同时设，先触发哪条就用哪条。
+            </p>
             <ConditionList
               title="出现这些情况时卖出"
               hint="满足任意一条就卖出"

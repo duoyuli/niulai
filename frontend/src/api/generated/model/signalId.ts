@@ -66,4 +66,5 @@ export const SignalId = {
   limit_down: 'limit_down',
   broken_limit_up: 'broken_limit_up',
   consecutive_limit_up: 'consecutive_limit_up',
+  first_limit_up: 'first_limit_up',
 } as const;

@@ -181,7 +181,7 @@ pub enum Operand {
     Indicator(IndicatorRef),
 }
 
-/// 卖出规则：满足任一条件，或触发止损、止盈、最长持有天数时，在下一个交易日开盘卖出
+/// 卖出规则：满足任一条件，或触发止损、止盈、ATR 吊灯回撤、最长持有天数时，在下一个交易日开盘卖出
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug, Default)]
 pub struct ExitRule {
     #[serde(default)]
@@ -192,6 +192,9 @@ pub struct ExitRule {
     /// 盈利达到这个百分比时卖出
     #[serde(default)]
     pub take_profit_pct: Option<f64>,
+    /// 从买入后的最高价回撤这么多倍 ATR(14) 时卖出，例如 3 表示 3 倍 ATR；为空表示不用
+    #[serde(default)]
+    pub trailing_stop_atr: Option<f64>,
     /// 最多持有多少个交易日
     #[serde(default)]
     pub max_hold_days: Option<u32>,
@@ -605,6 +608,11 @@ impl Definition {
                 return Err("止损、止盈的百分比应在 0.5 到 90 之间".into());
             }
         }
+        if let Some(v) = self.exit.trailing_stop_atr
+            && !(0.5..=10.0).contains(&v)
+        {
+            return Err("ATR 跟踪止损的倍数应在 0.5 到 10 之间".into());
+        }
         if let Some(d) = self.exit.max_hold_days
             && !(1..=250).contains(&d)
         {
@@ -882,6 +890,7 @@ fn default_exit() -> ExitRule {
         any: vec![sig(SignalId::PriceCrossBelowMa, &[("n", 20.0)], 1)],
         stop_loss_pct: Some(8.0),
         take_profit_pct: None,
+        trailing_stop_atr: None,
         max_hold_days: Some(20),
     }
 }
@@ -905,6 +914,27 @@ fn by(id: IndicatorId, n: Option<u32>, desc: bool) -> Sort {
     }
 }
 
+/// 把比较条件改成「最近 N 个交易日内出现过」
+fn within(mut c: Condition, days: u32) -> Condition {
+    if let Condition::Compare { within_days, .. } = &mut c {
+        *within_days = days;
+    }
+    c
+}
+
+/// 在默认卖出规则上替换固定止损、ATR 吊灯倍数和最长持有天数；`None` 表示不限制
+fn exit_with(
+    mut d: Definition,
+    stop_loss_pct: f64,
+    trailing_stop_atr: Option<f64>,
+    max_hold_days: Option<u32>,
+) -> Definition {
+    d.exit.stop_loss_pct = Some(stop_loss_pct);
+    d.exit.trailing_stop_atr = trailing_stop_atr;
+    d.exit.max_hold_days = max_hold_days;
+    d
+}
+
 // @project-doc docs/domains/strategies.md#templates
 pub fn templates() -> Vec<Template> {
     use IndicatorId as I;
@@ -923,6 +953,7 @@ pub fn templates() -> Vec<Template> {
                     any: vec![cmp_ind(I::Ma, Some(15), Op::CrossesBelow, I::Ma, Some(30))],
                     stop_loss_pct: None,
                     take_profit_pct: None,
+                    trailing_stop_atr: None,
                     max_hold_days: None,
                 },
                 sort: amount.clone(),
@@ -1053,6 +1084,7 @@ pub fn templates() -> Vec<Template> {
                     any: vec![sig(S::SupertrendDown, &[], 1)],
                     stop_loss_pct: Some(10.0),
                     take_profit_pct: None,
+                    trailing_stop_atr: None,
                     max_hold_days: None,
                 },
                 ..def(vec![sig(S::SupertrendUp, &[], 1)], amount.clone())
@@ -1083,6 +1115,130 @@ pub fn templates() -> Vec<Template> {
                     sig(S::VolumeShrink, &[("ratio", 0.7)], 1),
                 ],
                 amount.clone(),
+            ),
+        },
+        Template {
+            key: "etf_trend_rotation",
+            name: "ETF 趋势轮动（近似）",
+            description: "在 ETF 里选收盘价在 20 日均线上方、近 20 日动量最强的，跌破 20 日均线卖出；按排序每天补位，不是严格的定期轮动",
+            definition: Definition {
+                universe: Universe {
+                    asset_types: vec!["etf".into()],
+                    exclude_st: false,
+                    min_price: Some(0.3),
+                    min_amount: Some(1e7),
+                    min_listed_days: Some(60),
+                    ..Universe::default()
+                },
+                all: vec![cmp_ind(I::Close, None, Op::Gt, I::Ma, Some(20))],
+                any: vec![],
+                exit: ExitRule {
+                    any: vec![cmp_ind(I::Close, None, Op::CrossesBelow, I::Ma, Some(20))],
+                    stop_loss_pct: Some(8.0),
+                    take_profit_pct: None,
+                    trailing_stop_atr: Some(3.0),
+                    max_hold_days: None,
+                },
+                sort: by(I::Momentum, Some(20), true),
+                limit: 10,
+                lib: SignalLib::default(),
+            },
+        },
+        Template {
+            key: "first_board_relay",
+            name: "首板接力",
+            description: "当天首次涨停且成交额不低于 1 亿元，赌次日的情绪溢价；最多持有 2 个交易日，亏损 5% 或从最高价回撤 2 倍 ATR 就卖。波动极大，只适合小仓位",
+            definition: Definition {
+                universe: Universe::default(),
+                all: vec![
+                    sig(S::FirstLimitUp, &[], 1),
+                    cmp(I::Amount, None, Op::Ge, 1e8),
+                ],
+                any: vec![],
+                exit: ExitRule {
+                    any: vec![],
+                    stop_loss_pct: Some(5.0),
+                    take_profit_pct: None,
+                    trailing_stop_atr: Some(2.0),
+                    max_hold_days: Some(2),
+                },
+                sort: by(I::Amount, None, true),
+                limit: 20,
+                lib: SignalLib::default(),
+            },
+        },
+        Template {
+            key: "trend_acceleration",
+            name: "趋势加速",
+            description: "ADX 高于 25、+DI 在 −DI 上方、收盘站上 20 日均线，且近 20 日涨幅超过 5%：趋势明确并且正在加速",
+            definition: exit_with(
+                def(
+                    vec![
+                        cmp(I::Adx, Some(14), Op::Gt, 25.0),
+                        cmp_ind(I::PlusDi, Some(14), Op::Gt, I::MinusDi, Some(14)),
+                        cmp_ind(I::Close, None, Op::Gt, I::Ma, Some(20)),
+                        cmp(I::Momentum, Some(20), Op::Gt, 5.0),
+                    ],
+                    by(I::Momentum, Some(20), true),
+                ),
+                8.0,
+                Some(3.0),
+                None,
+            ),
+        },
+        Template {
+            key: "gap_and_go",
+            name: "跳空高开高走",
+            description: "向上跳空、当天涨超 2% 且成交量放大到前 5 天平均的 1.5 倍以上，短线顺势跟进；最多持有 3 天，亏损 5% 或回撤 2 倍 ATR 就卖",
+            definition: exit_with(
+                def(
+                    vec![
+                        sig(S::GapUp, &[], 1),
+                        sig(S::BigUp, &[("pct", 2.0)], 1),
+                        sig(S::VolumeSurge, &[("ratio", 1.5)], 1),
+                    ],
+                    by(I::VolRatio, Some(5), true),
+                ),
+                5.0,
+                Some(2.0),
+                Some(3),
+            ),
+        },
+        Template {
+            key: "squeeze_breakout",
+            name: "波动收缩后突破",
+            description: "过去 5 天布林带宽度收窄到 12% 以内，今天突破布林带上轨并放量 1.5 倍：横盘越久，突破后走得越远",
+            definition: exit_with(
+                def(
+                    vec![
+                        within(cmp(I::BollWidth, Some(20), Op::Lt, 12.0), 5),
+                        sig(S::BollBreakUpper, &[], 1),
+                        sig(S::VolumeSurge, &[("ratio", 1.5)], 1),
+                    ],
+                    by(I::VolRatio, Some(5), true),
+                ),
+                8.0,
+                Some(3.0),
+                None,
+            ),
+        },
+        Template {
+            key: "mid_term_momentum",
+            name: "中期强势（60 日动量）",
+            description: "收盘在 20 日均线上方、20 日均线在 60 日均线上方、近 60 日涨幅不低于 20%，且离 120 日高点不到 10%：只做中期最强的一批",
+            definition: exit_with(
+                def(
+                    vec![
+                        cmp_ind(I::Close, None, Op::Gt, I::Ma, Some(20)),
+                        cmp_ind(I::Ma, Some(20), Op::Gt, I::Ma, Some(60)),
+                        cmp(I::Momentum, Some(60), Op::Ge, 20.0),
+                        cmp(I::PctFromHigh, Some(120), Op::Ge, -10.0),
+                    ],
+                    by(I::Momentum, Some(60), true),
+                ),
+                8.0,
+                Some(3.0),
+                None,
             ),
         },
     ]

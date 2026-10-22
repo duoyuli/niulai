@@ -280,11 +280,19 @@ fn strategy_exit_text(
                 .or_else(|| Some(bars[i].close / cost - 1.0))
         })
         .unwrap_or(0.0);
+    let trailing = opened_on
+        .and_then(|d| bars.iter().position(|b| b.date >= d))
+        .is_some_and(|entry| {
+            def.exit.trailing_stop_atr.is_some_and(|m| {
+                crate::analysis::backtest::trailing_stop_hit(frame, bars, entry, i, m)
+            })
+        });
     let reason = crate::analysis::backtest::exit_reason(
         signal,
         ret,
         def.exit.stop_loss_pct,
         def.exit.take_profit_pct,
+        trailing,
         def.exit.max_hold_days,
         bars_held.unwrap_or_default().max(0) as usize,
     )?;
@@ -301,6 +309,10 @@ fn strategy_exit_text(
         crate::analysis::backtest::ExitReason::TakeProfit => reasons.push(format!(
             "盈利达到 {}% 止盈",
             def.exit.take_profit_pct.unwrap_or_default()
+        )),
+        crate::analysis::backtest::ExitReason::TrailingStop => reasons.push(format!(
+            "从持有期最高价回撤 {} 倍 ATR(14)",
+            def.exit.trailing_stop_atr.unwrap_or_default()
         )),
         crate::analysis::backtest::ExitReason::MaxHold => reasons.push(format!(
             "持有满 {} 个交易日",

@@ -9,8 +9,8 @@ import { EXIT_REASONS } from "../lib/strategy";
 import { EquityChart } from "./EquityChart";
 import { Card, Empty, ErrorState, Field, inputClass, Segmented, Spinner, Stat, Table } from "./ui";
 
-/** 交易成本的默认值，与后端一致：佣金万 2.5、最低 5 元，卖出印花税千分之 0.5 */
-export const COST_DEFAULTS = { capital: "100000", commission: "2.5", minFee: "5", stamp: "0.5" };
+/** 交易成本的默认值：佣金、最低佣金、印花税与后端一致；滑点默认 10 基点，比后端的 0 保守 */
+export const COST_DEFAULTS = { capital: "100000", commission: "2.5", minFee: "5", stamp: "0.5", slippage: "10" };
 type CostState = typeof COST_DEFAULTS;
 
 /** 页面上的成本输入换成接口参数 */
@@ -20,6 +20,7 @@ export function costParams(s: CostState) {
     commission_rate: Number(s.commission) / 10000,
     min_commission: Number(s.minFee),
     stamp_tax_rate: Number(s.stamp) / 1000,
+    slippage_bps: Number(s.slippage) || 0,
   };
 }
 
@@ -48,6 +49,12 @@ export function CostFields({ s, set }: { s: CostState; set: (patch: Partial<Cost
             hint="国家收的税，只在卖出时收；2023 年 8 月 28 日起为千分之 0.5"
             value={s.stamp}
             onCommit={(stamp) => set({ stamp })}
+          />
+          <NumberField
+            label="滑点（基点）"
+            hint="每次成交在开盘价上让出的价差，10 基点 = 0.1%，买卖两边都收。建议 10～20"
+            value={s.slippage}
+            onCommit={(slippage) => set({ slippage })}
           />
         </div>
       </details>

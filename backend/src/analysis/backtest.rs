@@ -10,10 +10,14 @@ use chrono::NaiveDate;
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use super::indicators::{Frame, IndicatorId, IndicatorRef};
 use super::prices::{CorpEvent, DailyBar};
 
 /// 回测区间短于这么多自然日时不计算年化收益：时间太短，年化后的数字没有意义
 const MIN_DAYS_FOR_ANNUAL: i64 = 90;
+
+/// ATR 吊灯止损使用的 ATR 周期
+pub const TRAILING_ATR_PERIOD: u32 = 14;
 
 /// 单证券回测的申报单位。由资产扩展提供，默认值保持 A 股主板的 100 股一手。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +104,8 @@ pub struct Risk {
     /// 例如 8 表示亏损 8% 时卖出
     pub stop_loss_pct: Option<f64>,
     pub take_profit_pct: Option<f64>,
+    /// 从持有期最高价回撤这么多倍 ATR(14) 时卖出
+    pub trailing_stop_atr: Option<f64>,
     pub max_hold_days: Option<u32>,
 }
 
@@ -117,17 +123,20 @@ pub enum ExitReason {
     Signal,
     StopLoss,
     TakeProfit,
+    /// 从持有期最高价回撤到 ATR 吊灯线
+    TrailingStop,
     /// 持有满最长天数
     MaxHold,
 }
 
-/// 统一的收盘后卖出优先级：策略卖出条件、止损、止盈、最长持有期。
+/// 统一的收盘后卖出优先级：策略卖出条件、止损、止盈、ATR 吊灯、最长持有期。
 /// 交易执行（下一个交易日开盘、涨跌停顺延）由各回测状态机负责，原因判断只保留这一处。
 pub fn exit_reason(
     signal: bool,
     return_ratio: f64,
     stop_loss_pct: Option<f64>,
     take_profit_pct: Option<f64>,
+    trailing_stop: bool,
     max_hold_days: Option<u32>,
     held_days: usize,
 ) -> Option<ExitReason> {
@@ -137,11 +146,39 @@ pub fn exit_reason(
         Some(ExitReason::StopLoss)
     } else if take_profit_pct.is_some_and(|v| return_ratio >= v / 100.0) {
         Some(ExitReason::TakeProfit)
+    } else if trailing_stop {
+        Some(ExitReason::TrailingStop)
     } else if max_hold_days.is_some_and(|v| held_days >= v as usize) {
         Some(ExitReason::MaxHold)
     } else {
         None
     }
+}
+
+/// ATR 吊灯止损：买入次日起，收盘价跌破「持有期最高价 − multiple × ATR(14)」时成立。
+/// 最高价和收盘价都用前复权价；ATR 不足或不是正数时不判断。
+pub fn trailing_stop_hit(
+    f: &Frame,
+    bars: &[DailyBar],
+    entry: usize,
+    i: usize,
+    multiple: f64,
+) -> bool {
+    if i <= entry || !multiple.is_finite() || multiple <= 0.0 {
+        return false;
+    }
+    let atr = f.at(
+        IndicatorRef::new(IndicatorId::Atr, Some(TRAILING_ATR_PERIOD)),
+        i,
+    );
+    if !atr.is_finite() || atr <= 0.0 {
+        return false;
+    }
+    let peak = bars[entry..=i]
+        .iter()
+        .map(|b| b.q_high)
+        .fold(f64::NEG_INFINITY, f64::max);
+    bars[i].q_close < peak - multiple * atr
 }
 
 /// A 股一字板的成交约束：买单遇到向上封板、卖单遇到向下封板时顺延。
@@ -291,6 +328,8 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
     // 第一天及之前除权的事件与回测无关：第一天开盘时还没有持仓
     let mut ev = events.partition_point(|e| e.ex_date <= bars[first].date);
     let execution = p.costs.execution();
+    // 只用来算 ATR 吊灯止损；其他指标已经由调用方算好
+    let frame = Frame::new(bars, None);
 
     for i in first..bars.len() {
         let b = &bars[i];
@@ -439,11 +478,16 @@ pub fn run(bars: &[DailyBar], events: &[CorpEvent], sig: &Signals, p: &Params) -
         match &pos {
             Some(o) => {
                 let r = b.q_close / o.q_price - 1.0;
+                let trailing = p
+                    .risk
+                    .trailing_stop_atr
+                    .is_some_and(|m| trailing_stop_hit(&frame, bars, o.idx, i, m));
                 let reason = exit_reason(
                     sig.exit[i],
                     r,
                     p.risk.stop_loss_pct,
                     p.risk.take_profit_pct,
+                    trailing,
                     p.risk.max_hold_days,
                     i + 1 - o.idx,
                 );
@@ -760,6 +804,29 @@ mod tests {
         .unwrap();
         let t = &out.trades[0];
         assert_eq!((t.bars_held, t.exit_reason), (3, Some(ExitReason::MaxHold)));
+    }
+
+    #[test]
+    fn trailing_stop_priority() {
+        assert_eq!(
+            exit_reason(true, 0.0, None, None, true, None, 1),
+            Some(ExitReason::Signal),
+            "卖出条件优先于回撤止损"
+        );
+        assert_eq!(
+            exit_reason(false, -0.10, Some(8.0), None, true, None, 1),
+            Some(ExitReason::StopLoss),
+            "固定止损优先于回撤止损"
+        );
+        assert_eq!(
+            exit_reason(false, 0.0, None, None, true, Some(1), 1),
+            Some(ExitReason::TrailingStop),
+            "回撤止损优先于最长持有"
+        );
+        assert_eq!(
+            exit_reason(false, 0.0, None, None, false, Some(1), 1),
+            Some(ExitReason::MaxHold)
+        );
     }
 
     #[test]

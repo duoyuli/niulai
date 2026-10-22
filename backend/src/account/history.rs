@@ -52,6 +52,7 @@ impl HistorySeries {
             risk: Risk {
                 stop_loss_pct: def.exit.stop_loss_pct,
                 take_profit_pct: def.exit.take_profit_pct,
+                trailing_stop_atr: def.exit.trailing_stop_atr,
                 max_hold_days: def.exit.max_hold_days,
             },
             warmup: def.warmup() as usize,
