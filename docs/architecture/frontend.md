@@ -24,7 +24,8 @@
 | `src/components/overlays.tsx`、`SampleChart.tsx` | K 线叠加：指标线、信号出现的日子、策略的买卖点，选择写在 URL 的 `overlay` 参数；信号页和指标页的「画在 K 线上」 |
 | `src/components/conditions.tsx` | 条件编辑器：策略和自定义信号共用，每条条件下实时显示白话 |
 | `src/components/DiagnosisCard.tsx`、`SignalChip.tsx` | 个股诊断卡片；信号标签 |
-| `src/components/SignalStats.tsx`、`StrategyNav.tsx` | 信号的过去表现和今天出现的股票；「策略」栏目下三页的切换 |
+| `src/components/SignalStats.tsx`、`StrategyNav.tsx` | 信号的过去表现和今天出现的股票；「策略」栏目下策略、信号、指标、因子研究四页的切换 |
+| `src/components/FactorCharts.tsx`、`src/lib/factors.ts` | 因子研究的多曲线图（各组净值）；选中因子和权重在 URL 里的写法、结论的颜色 |
 | `src/components/backtest.tsx` | 回测的共用部分：交易成本、结果展示、规则说明 |
 | `src/components/DataCheck.tsx` | 同步页的数据核检卡片 |
 | `src/components/SecuritySearch.tsx`、`WatchButton.tsx` | 股票搜索框；收藏星标 |
@@ -52,6 +53,7 @@
 | `/signals`、`/signals/:key` | 信号列表（我的信号和按分组的内置信号）；详情：怎么判断、怎么看、画在 K 线上、过去表现、今天出现的股票、被哪些策略用 | `GET /signals`、`/signals/{key}`、`POST /signals/today`、`/signals/stats`、`/securities/{thscode}/signal-days`、`GET /securities/{thscode}/indicator` |
 | `/signals/new`、`/:key/edit` | 信号编辑器：名称、偏多偏空、全部或任一满足、条件；「试一试」不保存就看结果。`?from=<key>` 复制，`?cond=<条件 JSON>` 从常用写法开始 | `GET /strategies/catalog`、`POST /signals`、`PUT /signals/my/{id}`、`POST /signals/today`、`/signals/stats` |
 | `/indicators`、`/indicators/:id` | 指标：是什么、怎么算、画在 K 线上、常用写法（点一下新建信号）、被哪些信号和策略用 | `GET /indicators`、`/securities/{thscode}/indicator` |
+| `/research` | 因子研究：选因子（组合模式下可填权重），「因子检验」看 RankIC、分组净值、IC 衰减、挑选偏差和因子相关性，「多因子组合」看净值、超额、信息比率、Deflated Sharpe 和最新得分前列；参数写在 URL，点「开始计算」才算，可以取消 | `GET /research/factors`、`/research/factor-test`、`/research/factor-portfolio` |
 | `/watchlist` | 自选：涨跌、趋势和最近信号，可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
 | `/securities/:thscode` | 证券（股票或 ETF）：页头是最新价、收藏、上市日期和本地日线范围。「走势与诊断」先是诊断，再是 K 线和基本面摘要；股票的基本面显示估值历史、最近一期三张报表和财务指标，并标出披露日期；ETF 显示「ETF 基本资料」（最新收盘、单位净值、基金规模、管理费、管理人、历史日线根数、最新日期和价格口径），K 线只提供不复权、前复权、后复权，价格按供应商前复权口径保存。「回测」默认使用内置的均线交叉策略，也可以选择任一策略回测这只证券 | `GET /securities/{thscode}`、`/fundamentals`、`/bars`、`/diagnosis`、`/indicator`、`/signal-days`、`/strategy-points`、`GET /backtest/strategy` |
 | `/hot` | 今日热点：顶部是涨停、跌停、炸板家数、最高连板和封板率；下面按连板高度分组列出涨停股（涨停原因、封单额、首次涨停时间）、跌停和炸板；日期框可往回看，没有同步时显示白话空态。不加主导航项，从首页卡片进入 | `GET /market/hot` |

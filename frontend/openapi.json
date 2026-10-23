@@ -2742,6 +2742,480 @@
         }
       }
     },
+    "/research/factor-portfolio": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "多因子组合回测：每隔 rebalance 个交易日按合成得分持有前 top_n 只，下一个交易日开盘调仓",
+        "operationId": "factor_portfolio",
+        "parameters": [
+          {
+            "name": "factors",
+            "in": "query",
+            "description": "逗号分隔的因子，可带权重：`reversal:1,idio_vol:1,roe:0.5`。权重作用在按预期方向统一后的得分上",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "description": "开始日，默认结束日前 3 年；区间最长 5 年",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "rebalance",
+            "in": "query",
+            "description": "每隔几个交易日调仓，5 到 60，默认 20（约一个月）",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "top_n",
+            "in": "query",
+            "description": "持有只数，5 到 100，默认 30",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "buffer",
+            "in": "query",
+            "description": "缓冲区：已持有的股票排名在 top_n × (1 + buffer) 以内时不卖，0 到 2，默认 0.5",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "capital",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "commission_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "min_commission",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "stamp_tax_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "transfer_fee_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "slippage_bps",
+            "in": "query",
+            "description": "滑点（基点），默认 10",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "neutralize",
+            "in": "query",
+            "description": "对行业和规模（成交额）中性化，默认是",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "exclude_small_pct",
+            "in": "query",
+            "description": "每个取样日剔除成交额最小的百分之几，0 到 50，默认 0",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "boards",
+            "in": "query",
+            "description": "只看这些板块，逗号分隔：main、chinext、star、bse；为空表示全部",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "exclude_st",
+            "in": "query",
+            "description": "排除 ST，默认是",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "min_price",
+            "in": "query",
+            "description": "最低股价（元），默认 2",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "min_amount",
+            "in": "query",
+            "description": "最低当日成交额（元），默认 5000 万",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "min_listed_days",
+            "in": "query",
+            "description": "上市满多少个交易日，默认 60",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactorPortfolioResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法，或区间内没有足够的数据",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/research/factor-test": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "因子检验：按持有期取样，统计 RankIC、分组收益、多空收益、换手、衰减和挑选偏差（PBO、Deflated Sharpe）",
+        "operationId": "factor_test",
+        "parameters": [
+          {
+            "name": "factors",
+            "in": "query",
+            "description": "逗号分隔的因子 ID，例如 `reversal,idio_vol,roe`；两个以上时额外检验等权合成",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "description": "开始日，默认结束日前 5 年；区间最长 8 年",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "horizon",
+            "in": "query",
+            "description": "持有期（交易日）：5、10 或 20，默认 5；取样间隔等于持有期，前后两期不重叠",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "quantiles",
+            "in": "query",
+            "description": "分几组，3 到 10，默认 5",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "neutralize",
+            "in": "query",
+            "description": "对行业和规模（成交额）中性化，默认是",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "exclude_small_pct",
+            "in": "query",
+            "description": "每个取样日剔除成交额最小的百分之几，0 到 50，默认 0",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "boards",
+            "in": "query",
+            "description": "只看这些板块，逗号分隔：main、chinext、star、bse；为空表示全部",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "exclude_st",
+            "in": "query",
+            "description": "排除 ST，默认是",
+            "required": false,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "min_price",
+            "in": "query",
+            "description": "最低股价（元），默认 2",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "min_amount",
+            "in": "query",
+            "description": "最低当日成交额（元），默认 5000 万",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "min_listed_days",
+            "in": "query",
+            "description": "上市满多少个交易日，默认 60",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactorTestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法，或区间内没有足够的数据",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/research/factors": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "因子目录：每个因子的口径、类别、预期方向和依据",
+        "operationId": "factor_catalog",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FactorInfo"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/rules/guide": {
       "get": {
         "tags": [
@@ -6897,13 +7371,109 @@
           }
         }
       },
+      "FactorCategory": {
+        "type": "string",
+        "enum": [
+          "price_volume",
+          "fundamental"
+        ]
+      },
+      "FactorConfig": {
+        "type": "object",
+        "description": "配置的可复现描述，写入运行记录并计算哈希",
+        "required": [
+          "factors",
+          "weights",
+          "neutralize",
+          "exclude_small_pct",
+          "universe",
+          "horizon"
+        ],
+        "properties": {
+          "buffer": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "exclude_small_pct": {
+            "type": "number",
+            "format": "double"
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorId"
+            }
+          },
+          "horizon": {
+            "type": "integer",
+            "description": "检验的持有期或组合的调仓间隔（交易日）",
+            "minimum": 0
+          },
+          "neutralize": {
+            "type": "boolean"
+          },
+          "top_n": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "组合持有只数；因子检验为空",
+            "minimum": 0
+          },
+          "universe": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "股票池的白话描述"
+          },
+          "weights": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      },
+      "FactorDecayPoint": {
+        "type": "object",
+        "required": [
+          "horizon"
+        ],
+        "properties": {
+          "horizon": {
+            "type": "integer",
+            "description": "持有期（交易日）",
+            "minimum": 0
+          },
+          "rank_ic": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
       "FactorId": {
         "type": "string",
         "enum": [
           "momentum",
           "reversal",
+          "momentum12m",
           "volatility",
-          "liquidity"
+          "idio_vol",
+          "max_return",
+          "liquidity",
+          "abnormal_turnover",
+          "illiquidity",
+          "roe",
+          "profit_growth",
+          "accruals"
         ]
       },
       "FactorInfo": {
@@ -6912,19 +7482,667 @@
           "id",
           "name",
           "description",
-          "higher_is_better"
+          "category",
+          "higher_is_better",
+          "rationale"
         ],
         "properties": {
+          "category": {
+            "$ref": "#/components/schemas/FactorCategory"
+          },
           "description": {
             "type": "string"
           },
           "higher_is_better": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "A 股历史研究中数值越大、后续收益越高为真；合成和分组的「好的一端」按它定方向"
           },
           "id": {
             "$ref": "#/components/schemas/FactorId"
           },
           "name": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string",
+            "description": "为什么可能有效（或无效）的白话依据"
+          }
+        }
+      },
+      "FactorOverfit": {
+        "type": "object",
+        "required": [
+          "candidates",
+          "combinations"
+        ],
+        "properties": {
+          "best": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "多空 Sharpe 最高的候选"
+          },
+          "candidates": {
+            "type": "integer",
+            "description": "参与比较的候选（各因子的多空组合）",
+            "minimum": 0
+          },
+          "combinations": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deflated_sharpe": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最好候选的 Deflated Sharpe：考虑挑选次数之后真实 Sharpe 大于 0 的概率"
+          },
+          "pbo": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "回测过拟合概率（CSCV）：在这些候选里按样本内 Sharpe 挑最好的，样本外排到后一半的概率"
+          }
+        }
+      },
+      "FactorPick": {
+        "type": "object",
+        "required": [
+          "thscode",
+          "name",
+          "score",
+          "rank",
+          "held"
+        ],
+        "properties": {
+          "held": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "合成得分（标准化后）"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "FactorPortfolioOutcome": {
+        "type": "object",
+        "required": [
+          "summary",
+          "equity",
+          "rebalances",
+          "picks",
+          "thin_days"
+        ],
+        "properties": {
+          "equity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorPortfolioPoint"
+            }
+          },
+          "picks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorPick"
+            },
+            "description": "最近一个取样日按合成得分排出的前 top_n 只"
+          },
+          "picks_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "rebalances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorRebalance"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/FactorPortfolioSummary"
+          },
+          "thin_days": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        }
+      },
+      "FactorPortfolioPoint": {
+        "type": "object",
+        "required": [
+          "date",
+          "equity",
+          "positions"
+        ],
+        "properties": {
+          "benchmark": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "equity": {
+            "type": "number",
+            "format": "double"
+          },
+          "positions": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "FactorPortfolioResult": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FactorPortfolioOutcome"
+          },
+          {
+            "type": "object",
+            "required": [
+              "config",
+              "costs",
+              "manifest"
+            ],
+            "properties": {
+              "config": {
+                "$ref": "#/components/schemas/FactorConfig"
+              },
+              "costs": {
+                "$ref": "#/components/schemas/BacktestCosts"
+              },
+              "deflated_sharpe": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double",
+                "description": "考虑这类回测此前试过的配置数之后，真实 Sharpe 大于 0 的概率；通常要求高于 0.95"
+              },
+              "manifest": {
+                "$ref": "#/components/schemas/BacktestManifest"
+              }
+            }
+          }
+        ]
+      },
+      "FactorPortfolioSummary": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "days",
+          "capital",
+          "final_equity",
+          "total_return",
+          "max_drawdown",
+          "risk",
+          "benchmark_name",
+          "fees",
+          "turnover_annual",
+          "rebalances",
+          "avg_positions",
+          "skipped_buys"
+        ],
+        "properties": {
+          "annual_return": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "avg_positions": {
+            "type": "number",
+            "format": "double"
+          },
+          "benchmark_annual": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "benchmark_name": {
+            "type": "string"
+          },
+          "benchmark_return": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "capital": {
+            "type": "number",
+            "format": "double"
+          },
+          "days": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end": {
+            "type": "string",
+            "format": "date"
+          },
+          "excess_annual": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "年化收益减基准年化收益"
+          },
+          "fees": {
+            "type": "number",
+            "format": "double"
+          },
+          "final_equity": {
+            "type": "number",
+            "format": "double"
+          },
+          "information_ratio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "信息比率：年化超额 ÷ 跟踪误差"
+          },
+          "max_drawdown": {
+            "type": "number",
+            "format": "double"
+          },
+          "rebalances": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "risk": {
+            "$ref": "#/components/schemas/RiskMetrics"
+          },
+          "skipped_buys": {
+            "type": "integer",
+            "description": "买不进（停牌、一字涨停）后被下一次调仓取消的买单",
+            "minimum": 0
+          },
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "total_return": {
+            "type": "number",
+            "format": "double"
+          },
+          "tracking_error": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "跟踪误差：每日超额收益的年化标准差"
+          },
+          "turnover_annual": {
+            "type": "number",
+            "format": "double",
+            "description": "年化单边换手：每年买入金额 ÷ 平均账户总值"
+          }
+        }
+      },
+      "FactorRebalance": {
+        "type": "object",
+        "required": [
+          "date",
+          "buys",
+          "sells",
+          "turnover"
+        ],
+        "properties": {
+          "buys": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "sells": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "turnover": {
+            "type": "number",
+            "format": "double",
+            "description": "本次计划换掉的持仓占目标只数的比例"
+          }
+        }
+      },
+      "FactorTestOutcome": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "horizon",
+          "quantiles",
+          "factors",
+          "correlation",
+          "overfit",
+          "thin_days"
+        ],
+        "properties": {
+          "correlation": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            },
+            "description": "因子之间的平均横截面秩相关，行列顺序同 `factors`"
+          },
+          "end": {
+            "type": "string",
+            "format": "date"
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorTestStats"
+            }
+          },
+          "horizon": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "overfit": {
+            "$ref": "#/components/schemas/FactorOverfit"
+          },
+          "quantiles": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "thin_days": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "区间内因同步缺口跳过的交易日"
+          }
+        }
+      },
+      "FactorTestPoint": {
+        "type": "object",
+        "required": [
+          "date",
+          "long_short_nav",
+          "quantile_navs"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "ic": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "long_short_nav": {
+            "type": "number",
+            "format": "double",
+            "description": "多空组合（最好一组减最差一组）的累计净值，第一期前为 1"
+          },
+          "quantile_navs": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "各组的累计净值，第一组是预期最差的一组"
+          },
+          "rank_ic": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "FactorTestResult": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FactorTestOutcome"
+          },
+          {
+            "type": "object",
+            "required": [
+              "config",
+              "manifest"
+            ],
+            "properties": {
+              "config": {
+                "$ref": "#/components/schemas/FactorConfig"
+              },
+              "manifest": {
+                "$ref": "#/components/schemas/BacktestManifest"
+              }
+            }
+          }
+        ]
+      },
+      "FactorTestStats": {
+        "type": "object",
+        "required": [
+          "name",
+          "higher_is_better",
+          "periods",
+          "avg_stocks",
+          "quantile_returns",
+          "quantile_annual",
+          "long_short_max_drawdown",
+          "decay",
+          "consistent",
+          "significant",
+          "verdict",
+          "points"
+        ],
+        "properties": {
+          "avg_stocks": {
+            "type": "number",
+            "format": "double"
+          },
+          "consistent": {
+            "type": "boolean",
+            "description": "方向与预期一致（RankIC 均值为正）"
+          },
+          "decay": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorDecayPoint"
+            }
+          },
+          "higher_is_better": {
+            "type": "boolean"
+          },
+          "hit_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "RankIC 与预期方向一致的期数占比"
+          },
+          "ic_mean": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FactorId",
+                "description": "合成因子为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "long_short_annual": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "long_short_max_drawdown": {
+            "type": "number",
+            "format": "double"
+          },
+          "long_short_sharpe": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "long_short_t": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "monotonicity": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "组序号与组收益的秩相关：1 表示从最差组到最好组单调上升"
+          },
+          "name": {
+            "type": "string"
+          },
+          "periods": {
+            "type": "integer",
+            "description": "有效的取样期数",
+            "minimum": 0
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorTestPoint"
+            }
+          },
+          "quantile_annual": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "各组年化收益"
+          },
+          "quantile_returns": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "各组每期平均收益，第一组是预期最差的一组"
+          },
+          "rank_ic_mean": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "rank_ic_std": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "rank_ic_t": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "RankIC 均值的 t 值；Harvey、Liu、Zhu 建议新因子 |t| ≥ 3 才算显著"
+          },
+          "rank_icir": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "RankIC 均值 ÷ 标准差"
+          },
+          "significant": {
+            "type": "boolean",
+            "description": "|RankIC t| ≥ 3 且方向一致"
+          },
+          "top_excess_annual": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最好一组相对股票池平均的年化超额"
+          },
+          "top_turnover": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最好一组每期换掉的比例"
+          },
+          "verdict": {
             "type": "string"
           }
         }
@@ -12347,6 +13565,10 @@
     {
       "name": "backtest",
       "description": "回测"
+    },
+    {
+      "name": "research",
+      "description": "因子研究：因子检验与多因子组合回测"
     },
     {
       "name": "sync",

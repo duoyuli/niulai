@@ -5,9 +5,10 @@ const TABS = [
   { to: "/strategies", label: "策略", hint: "买入条件 + 卖出规则，每天收盘后给出买点和卖点" },
   { to: "/signals", label: "信号", hint: "起了名字的条件，例如「均线交叉」「放量」；可以自己定义" },
   { to: "/indicators", label: "指标", hint: "每天算出的一个数，例如均线、RSI；信号和策略都由它们组成" },
+  { to: "/research", label: "因子研究", hint: "检验因子有没有预测力，用多个因子合成打分做组合回测" },
 ];
 
-/** 策略栏目下的三页：策略由信号和指标组成，三者互相链接 */
+/** 策略栏目下的四页：策略由信号和指标组成，三者互相链接；因子研究是横截面的选股方法 */
 export function StrategyNav() {
   return (
     <nav className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800">

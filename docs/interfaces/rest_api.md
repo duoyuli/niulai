@@ -48,6 +48,9 @@
 | `GET /backtest/runs` | 查询已保存的回测运行清单和结果摘要 | `strategy_id` 可选，`limit` 默认 50；用于复现实验和比较执行模型。普通用户只能看到不关联账户的运行和自己账户的运行，管理员可看全部 |
 | `GET /backtest/validation-windows` | 生成带 embargo 的滚动训练/测试日期窗口 | `start`、`end`、`train_days`、`test_days`，`embargo_days` 默认 5 |
 | `GET /backtest/strategy-validation` | 对单只证券执行滚动样本外验证 | `strategy_id`、`thscode`、日期区间和训练/测试窗口；结果分别返回训练和测试收益与风险指标 |
+| `GET /research/factors` | 因子目录：口径、类别（价量或财务）、预期方向和依据 | 见 [因子目录](../domains/factor_research.md#catalog) |
+| `GET /research/factor-test` | 因子检验：RankIC、分组收益、多空、换手、衰减、因子相关性、PBO 和 Deflated Sharpe；两个以上因子时额外检验等权合成 | `factors`（必填，逗号分隔的因子 ID）、`start` 默认结束日前 5 年、`end`，区间 90 天到 8 年；`horizon` 5、10 或 20（默认 5）；`quantiles` 3 到 10（默认 5）；`neutralize` 默认 true；`exclude_small_pct` 0 到 50；股票池参数 `boards`、`exclude_st`、`min_price`、`min_amount`、`min_listed_days`；规则见 [因子检验](../domains/factor_research.md#test) |
+| `GET /research/factor-portfolio` | 多因子组合回测：定期按合成得分持有前若干只，返回净值、超额、信息比率、换手、Deflated Sharpe 和最新得分前列 | `factors`（必填，可带权重，例如 `reversal:1,idio_vol:0.5`）、`start` 默认结束日前 3 年、区间最长 5 年；`rebalance` 5 到 60（默认 20）；`top_n` 5 到 100（默认 30）；`buffer` 0 到 2（默认 0.5）；资金和成本同组合回测，`slippage_bps` 默认 10；股票池和预处理参数同因子检验；规则见 [多因子组合回测](../domains/factor_research.md#portfolio) |
 | `GET /strategies/catalog` | 指标、内置信号（含白话说明）、模板目录和默认股票池，前端据此生成条件编辑器 | — |
 | `GET /strategies` | 全部策略，含白话说明（`explained`）和最近一次巡检的数量 | — |
 | `POST /strategies` | 新建策略，返回 201 | 请求体 `{name, description, definition, screening, show_on_today, template}`，`screening`、`show_on_today` 默认 true；名称 1 到 40 字；定义的校验见 [策略定义](../domains/strategies.md#definition) |

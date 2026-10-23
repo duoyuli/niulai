@@ -23,6 +23,7 @@ const IndicatorsPage = page(() => import("./pages/IndicatorsPage"), "IndicatorsP
 const IndicesPage = page(() => import("./pages/IndicesPage"), "IndicesPage");
 const MePage = page(() => import("./pages/MePage"), "MePage");
 const OperationLogsPage = page(() => import("./pages/OperationLogsPage"), "OperationLogsPage");
+const ResearchPage = page(() => import("./pages/ResearchPage"), "ResearchPage");
 const RunDetailPage = page(() => import("./pages/RunDetailPage"), "RunDetailPage");
 const SecurityDetailPage = page(() => import("./pages/SecurityDetailPage"), "SecurityDetailPage");
 const SetupPage = page(() => import("./pages/SetupPage"), "SetupPage");
@@ -86,6 +87,7 @@ export const router = createBrowserRouter([
             ),
           },
           { path: "/indicators", element: <IndicatorsPage /> },
+          { path: "/research", element: <ResearchPage /> },
           { path: "/indicators/:id", element: <IndicatorDetailPage /> },
           { path: "/watchlist", element: <WatchlistPage /> },
           { path: "/securities/:thscode", element: <SecurityDetailPage /> },

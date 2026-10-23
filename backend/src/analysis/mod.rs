@@ -6,6 +6,7 @@
 pub mod backtest;
 pub mod diagnosis;
 pub mod execution;
+pub mod factor_lab;
 pub mod factors;
 pub mod indicators;
 pub mod limit_pool;

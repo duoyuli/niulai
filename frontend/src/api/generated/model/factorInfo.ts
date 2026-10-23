@@ -5,11 +5,16 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { FactorCategory } from './factorCategory';
 import type { FactorId } from './factorId';
 
 export interface FactorInfo {
+  category: FactorCategory;
   description: string;
+  /** A 股历史研究中数值越大、后续收益越高为真；合成和分组的「好的一端」按它定方向 */
   higher_is_better: boolean;
   id: FactorId;
   name: string;
+  /** 为什么可能有效（或无效）的白话依据 */
+  rationale: string;
 }

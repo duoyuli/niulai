@@ -257,7 +257,7 @@ export function WinStat({
 }
 
 /** 曲线下方：坐标切换和说明 */
-function LogToggle({ log, onLog, note }: { log: boolean; onLog: (v: boolean) => void; note: string }) {
+export function LogToggle({ log, onLog, note }: { log: boolean; onLog: (v: boolean) => void; note: string }) {
   return (
     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-500">
       <span>{note}</span>

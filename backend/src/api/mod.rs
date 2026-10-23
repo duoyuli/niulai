@@ -8,6 +8,7 @@ pub mod market;
 pub mod metrics;
 pub mod operation_log;
 pub mod precompute;
+pub mod research;
 pub mod setup;
 pub mod signal;
 pub mod strategy;
@@ -82,6 +83,7 @@ pub(crate) fn derived_cache_key(
         (name = "strategy", description = "选股策略与每日巡检"),
         (name = "signal", description = "指标、信号与买卖点"),
         (name = "backtest", description = "回测"),
+        (name = "research", description = "因子研究：因子检验与多因子组合回测"),
         (name = "sync", description = "数据集与同步运行"),
     )
 )]
@@ -168,6 +170,7 @@ fn routes() -> OpenApiRouter<AppState> {
         .merge(watchlist::routes())
         .merge(accounts::routes())
         .merge(backtest::routes())
+        .merge(research::routes())
         .merge(sync::routes())
 }
 

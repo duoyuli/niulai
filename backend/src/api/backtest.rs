@@ -365,19 +365,19 @@ fn rate(v: Option<f64>, default: f64, name: &str) -> ApiResult<f64> {
     Ok(v)
 }
 
-struct CostOptions {
-    commission_rate: Option<f64>,
-    min_commission: Option<f64>,
-    stamp_tax_rate: Option<f64>,
-    transfer_fee_rate: Option<f64>,
-    dividend_tax_rate: Option<f64>,
-    cash_interest_rate: Option<f64>,
-    deal_price: Option<DealPrice>,
-    slippage_bps: Option<f64>,
-    participation_rate: Option<f64>,
+pub(super) struct CostOptions {
+    pub commission_rate: Option<f64>,
+    pub min_commission: Option<f64>,
+    pub stamp_tax_rate: Option<f64>,
+    pub transfer_fee_rate: Option<f64>,
+    pub dividend_tax_rate: Option<f64>,
+    pub cash_interest_rate: Option<f64>,
+    pub deal_price: Option<DealPrice>,
+    pub slippage_bps: Option<f64>,
+    pub participation_rate: Option<f64>,
 }
 
-fn costs(o: CostOptions) -> ApiResult<Costs> {
+pub(super) fn costs(o: CostOptions) -> ApiResult<Costs> {
     let d = Costs::default();
     let c = Costs {
         commission_rate: rate(o.commission_rate, d.commission_rate, "commission_rate")?,
@@ -411,7 +411,7 @@ fn costs(o: CostOptions) -> ApiResult<Costs> {
     Ok(c)
 }
 
-fn capital(v: Option<f64>) -> ApiResult<f64> {
+pub(super) fn capital(v: Option<f64>) -> ApiResult<f64> {
     let c = v.unwrap_or(100_000.0);
     if !(1_000.0..=1e10).contains(&c) {
         return Err(ApiError::BadRequest(
@@ -421,7 +421,7 @@ fn capital(v: Option<f64>) -> ApiResult<f64> {
     Ok(c)
 }
 
-fn costs_echo(c: &Costs) -> BacktestCosts {
+pub(super) fn costs_echo(c: &Costs) -> BacktestCosts {
     BacktestCosts {
         commission_rate: c.commission_rate,
         min_commission: c.min_commission,
@@ -435,9 +435,9 @@ fn costs_echo(c: &Costs) -> BacktestCosts {
     }
 }
 
-async fn manifest(
+pub(super) async fn manifest(
     pool: &sqlx::PgPool,
-    strategy: &Definition,
+    strategy: &impl Serialize,
     start: NaiveDate,
     end: NaiveDate,
     costs: &Costs,
@@ -465,7 +465,7 @@ async fn manifest(
     })
 }
 
-async fn coverage(
+pub(super) async fn coverage(
     pool: &sqlx::PgPool,
     start: NaiveDate,
     end: NaiveDate,
@@ -548,7 +548,7 @@ async fn record_run(
     Ok(())
 }
 
-fn check_range(start: Option<NaiveDate>, end: Option<NaiveDate>) -> ApiResult<()> {
+pub(super) fn check_range(start: Option<NaiveDate>, end: Option<NaiveDate>) -> ApiResult<()> {
     if let (Some(a), Some(b)) = (start, end)
         && a > b
     {

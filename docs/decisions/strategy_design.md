@@ -1,6 +1,6 @@
 # ADR：选股策略使用 JSON 定义
 
-- 状态：已采纳（accepted），2026-10-16；信号边界由 [ADR：信号是起了名字的条件](custom_signals.md) 细化，账户建议边界由 [ADR：账户的每日调仓建议](account_advice.md) 细化。
+- 状态：已采纳（accepted），2026-10-16；信号边界由 [ADR：信号是起了名字的条件](custom_signals.md) 细化，账户建议边界由 [ADR：账户的每日调仓建议](account_advice.md) 细化；取舍第 1 条中的「因子打分」由 [ADR：用横截面因子研究检验选股方法](cross_sectional_factors.md) 细化为策略之外的独立研究工具。
 - 当前实现：[选股策略与诊断](../domains/strategies.md)、[回测](../domains/backtest.md) 和 [REST API](../interfaces/rest_api.md#endpoints)。
 
 ## 背景
