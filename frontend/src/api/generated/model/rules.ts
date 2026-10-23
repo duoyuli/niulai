@@ -5,6 +5,7 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { FactorPlan } from './factorPlan';
 import type { HistoryCheck } from './historyCheck';
 import type { WeakMarket } from './weakMarket';
 
@@ -14,6 +15,7 @@ import type { WeakMarket } from './weakMarket';
 export interface Rules {
   /** 第二天开盘比参考价高多少（%）就不买 */
   chase_limit_pct?: number;
+  factor?: FactorPlan | null;
   history_check?: HistoryCheck | null;
   /**
      * 最多同时持有几只

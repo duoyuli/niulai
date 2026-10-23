@@ -92,7 +92,7 @@ pub struct RulesGuide {
     pub strategies: Vec<StrategyQuality>,
 }
 
-/// 设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和可勾选策略
+/// 设置规则时的辅助：参考值（稳健型、均衡型、积极型和多因子月度调仓）和可勾选策略
 #[utoipa::path(get, path = "/rules/guide", tag = "accounts", responses((status = 200, description = "成功", body = RulesGuide)))]
 async fn rules_guide(State(s): State<AppState>) -> ApiResult<Json<RulesGuide>> {
     let list: Vec<(i64, String, bool)> =
@@ -878,7 +878,7 @@ pub struct BacktestQuery {
 /// 用这个账户的规则回测一段时间（两头都包含），默认今年以来，最长 5 年。全市场计算，要几十秒到一两分钟
 #[utoipa::path(post, path = "/accounts/{account_id}/backtest", tag = "accounts", params(("account_id" = i64, Path), BacktestQuery),
     responses((status = 200, description = "成功", body = RulesBacktest),
-              (status = 400, description = "区间不对，或本地还没有日线", body = crate::error::ErrorBody),
+              (status = 400, description = "区间不对、本地还没有日线，或多因子账户（请用因子研究的组合回测）", body = crate::error::ErrorBody),
               (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
 async fn account_backtest(
     State(s): State<AppState>,
@@ -887,6 +887,11 @@ async fn account_backtest(
     Query(q): Query<BacktestQuery>,
 ) -> ApiResult<Json<RulesBacktest>> {
     let acc = account::get(&s.pool, me.user_id, id).await?;
+    if acc.rules.factor.is_some() {
+        return Err(ApiError::BadRequest(
+            "多因子账户按因子排名调仓，请在「因子研究 → 组合回测」用同样的因子回测".into(),
+        ));
+    }
     let latest = crate::analysis::market::resolve_date(&s.pool, None)
         .await?
         .ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;

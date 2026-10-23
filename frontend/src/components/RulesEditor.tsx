@@ -1,7 +1,17 @@
 import { clsx } from "clsx";
+import { Link } from "react-router";
 import { useRulesGuide } from "../api/generated/accounts/accounts";
-import type { HistoryWindow, Rules, RulesBacktest, StrategyQuality, WeakMarket } from "../api/generated/model";
+import type {
+  FactorPlan,
+  HistoryWindow,
+  Rules,
+  RulesBacktest,
+  StrategyQuality,
+  WeakMarket,
+} from "../api/generated/model";
+import { useFactorCatalog } from "../api/generated/research/research";
 import { WEAK_MARKET } from "../lib/accounts";
+import { planResearchLink } from "../lib/factors";
 import { fmtPercent, upDownClass } from "../lib/format";
 import { Field, inputClass, QueryView } from "./ui";
 
@@ -16,8 +26,21 @@ const HISTORY_WINDOWS: { value: HistoryWindow; label: string; months: number }[]
   { value: "five_years", label: "5 年", months: 60 },
 ];
 
+/** 已持有的股票排名在这个名次以内时继续拿 */
+export function keepLimit(plan: FactorPlan): number {
+  return Math.ceil(plan.top_n * (1 + plan.buffer));
+}
+
 /** 规则写成几句白话 */
 export function rulesText(p: FullRules): string[] {
+  if (p.factor) {
+    return [
+      `多因子月度调仓：每月最后一个交易日收盘按 ${p.factor.factors.length} 个因子的合成得分给全市场排名，持有前 ${p.factor.top_n} 只`,
+      `每只约占总资产的 1/${p.factor.top_n}${p.min_cash_pct > 0 ? `，至少留 ${p.min_cash_pct}% 现金` : ""}；已持有的跌出前 ${keepLimit(p.factor)} 名才卖`,
+      "没有持满时（例如刚建账户）每天按排名补仓",
+      `${p.sell_st ? "持有的股票被 ST 时卖出；" : ""}第二天开盘比参考价高 ${p.chase_limit_pct}% 以上就不追`,
+    ];
+  }
   return [
     `参考${p.strategies ? `勾选的 ${p.strategies.length} 个策略` : "全部策略"}：至少 ${p.min_picks} 个勾选的策略同时看好才买`,
     ...(p.history_check
@@ -56,7 +79,63 @@ export function BacktestLine({ b }: { b: RulesBacktest }) {
   );
 }
 
+/** 多因子账户的选股：因子名单（只读，按研究记录的组合 E）、持有只数和缓冲区 */
+function FactorSection({ plan, onChange }: { plan: FactorPlan; onChange: (p: FactorPlan | null) => void }) {
+  const catalog = useFactorCatalog();
+  const info = (id: string) => catalog.data?.find((f) => f.id === id);
+  // 权重为负时反过来用
+  const label = (id: string, weight: number) => {
+    const f = info(id);
+    if (!f) return id;
+    return `${f.name}${f.higher_is_better === weight > 0 ? "高" : "低"}`;
+  };
+  return (
+    <section>
+      <h3 className="text-sm font-medium">选股：多因子月度调仓</h3>
+      <p className="mt-1 text-xs text-zinc-500">
+        不看买卖信号和勾选的策略。每月最后一个交易日收盘，按下面这些因子的合成得分给全市场排名（股票池、去极值和行业、规模中性化与因子研究的默认值相同），下一个交易日开盘调仓。
+      </p>
+      <ul className="mt-2 flex flex-wrap gap-2 text-sm">
+        {plan.factors.map((f) => (
+          <li key={f.factor} className="rounded bg-zinc-100 px-2 py-0.5 dark:bg-zinc-800">
+            {label(f.factor, f.weight)}
+            {f.weight !== 1 && <span className="ml-1 text-xs text-zinc-500">× {f.weight}</span>}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <Field label="持有几只（5 到 50）">
+          <input
+            className={inputClass}
+            inputMode="numeric"
+            value={plan.top_n}
+            onChange={(e) => onChange({ ...plan, top_n: Number(e.target.value) || 0 })}
+          />
+        </Field>
+        <Field label={`缓冲区（0 到 2）：跌出前 ${keepLimit(plan)} 名才卖`}>
+          <input
+            className={inputClass}
+            inputMode="decimal"
+            value={plan.buffer}
+            onChange={(e) => onChange({ ...plan, buffer: Number(e.target.value) || 0 })}
+          />
+        </Field>
+      </div>
+      <p className="mt-2 flex flex-wrap gap-4 text-xs">
+        <Link className="text-accent hover:underline" to={planResearchLink(plan)}>
+          在因子研究里回测这组因子
+        </Link>
+        <button type="button" className="text-zinc-500 hover:underline" onClick={() => onChange(null)}>
+          改回按勾选的策略选股
+        </button>
+      </p>
+    </section>
+  );
+}
+
 type NumKey = "max_positions" | "max_weight_pct" | "min_cash_pct" | "weak_threshold_pct" | "chase_limit_pct";
+/** 多因子账户只用到这几个参数 */
+const FACTOR_FIELDS: NumKey[] = ["min_cash_pct", "chase_limit_pct"];
 const RISK_FIELDS: { key: NumKey; label: string }[] = [
   { key: "max_positions", label: "最多持有几只" },
   { key: "max_weight_pct", label: "单只最多占总资产（%）" },
@@ -98,7 +177,8 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
         return (
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="flex flex-col gap-5 lg:col-span-2">
-              <section>
+              {value.factor && <FactorSection plan={value.factor} onChange={(factor) => set({ factor })} />}
+              <section className={clsx(value.factor && "hidden")}>
                 <h3 className="text-sm font-medium">选股</h3>
                 <div className="mt-2 grid gap-3 sm:grid-cols-2">
                   <Field label="至少几个勾选的策略同时看好才买">
@@ -147,7 +227,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                 <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-zinc-800">{g.strategies.map(row)}</ul>
               </section>
 
-              <section>
+              <section className={clsx(value.factor && "hidden")}>
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <input
                     type="checkbox"
@@ -220,7 +300,7 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
               <section>
                 <h3 className="text-sm font-medium">组合约束与保护</h3>
                 <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {RISK_FIELDS.map((f) => (
+                  {RISK_FIELDS.filter((f) => !value.factor || FACTOR_FIELDS.includes(f.key)).map((f) => (
                     <Field key={f.key} label={f.label}>
                       <input
                         className={inputClass}
@@ -230,19 +310,21 @@ export function RulesEditor({ value, onChange }: { value: FullRules; onChange: (
                       />
                     </Field>
                   ))}
-                  <Field label="弱市时">
-                    <select
-                      className={inputClass}
-                      value={value.weak_market}
-                      onChange={(e) => set({ weak_market: e.target.value as WeakMarket })}
-                    >
-                      {(Object.keys(WEAK_MARKET) as WeakMarket[]).map((k) => (
-                        <option key={k} value={k}>
-                          {WEAK_MARKET[k]}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
+                  {!value.factor && (
+                    <Field label="弱市时">
+                      <select
+                        className={inputClass}
+                        value={value.weak_market}
+                        onChange={(e) => set({ weak_market: e.target.value as WeakMarket })}
+                      >
+                        {(Object.keys(WEAK_MARKET) as WeakMarket[]).map((k) => (
+                          <option key={k} value={k}>
+                            {WEAK_MARKET[k]}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
                   <label className="flex items-center gap-2 self-end pb-2 text-sm">
                     <input
                       type="checkbox"

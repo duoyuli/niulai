@@ -1,7 +1,8 @@
 # ADR：用横截面因子研究检验选股方法
 
 - 状态：已采纳（accepted），2026-10-23。细化 [ADR：选股策略使用 JSON 定义](strategy_design.md) 取舍第 1 条中「不开放因子打分」：策略定义仍然不含因子打分，因子打分只在独立的因子研究里使用。
-- 当前实现：[因子研究](../domains/factor_research.md)、[REST API](../interfaces/rest_api.md#endpoints)、前端 `/research`。
+- 补充（2026-10-23）：决策第 1 条中「与账户建议互不依赖」已部分改变：新增多因子账户，账户可以选择按因子排名每月调仓，排名复用因子研究的计算，见决策第 6 条。
+- 当前实现：[因子研究](../domains/factor_research.md)、[多因子账户](../domains/accounts.md#factor_plan)、[REST API](../interfaces/rest_api.md#endpoints)、前端 `/research`。
 
 ## 背景
 
@@ -18,6 +19,7 @@ A 股的异象研究（Hsu 等、Jansen 等）发现，价格动量在 A 股为�
 3. 因子检验报告 RankIC、ICIR、t 值、分组收益、多空收益、换手和衰减；显著性按 Harvey、Liu、Zhu 的建议用 t ≥ 3。每次运行写入 `ops.backtest_run`，用配置哈希去重统计试过多少组，用于 Deflated Sharpe；同一次检验的多个候选用 CSCV 估计 PBO。
 4. 财务因子按法定披露截止日推断可用日，不使用会被之后的报告覆盖的供应商报告日期。
 5. 不改变已有策略的 JSON 定义和按策略选股的流程；因子研究的结果不作为选股的门槛（选股流程不展示也不使用回测数字的约定不变）。
+6. 账户可以选「多因子月度调仓」作为选股方式（规则里的 `factor`）：按固定的因子和权重给全市场排名，每月最后一个交易日调仓。排名直接决定买卖，不读取任何回测、IC 或 Deflated Sharpe 数字；参考值的因子组合来自研究记录，写死在代码里，改因子组合要改参考值或账户规则。
 
 ## 取舍
 

@@ -52,3 +52,21 @@ export function fmtNum(v: number | null | undefined, digits = 2): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "—";
   return v.toFixed(digits);
 }
+
+/** 多因子账户的规则换成因子研究页「组合回测」的链接：同样的因子、持有只数和缓冲区，每 20 个交易日调仓 */
+export function planResearchLink(plan: {
+  factors: { factor: string; weight: number }[];
+  top_n: number;
+  buffer: number;
+}) {
+  const f = formatFactors(plan.factors.map((x) => ({ id: x.factor, weight: x.weight })));
+  const q = new URLSearchParams({
+    tab: "portfolio",
+    f,
+    top: String(plan.top_n),
+    buffer: String(plan.buffer),
+    reb: "20",
+    range: "5",
+  });
+  return `/research?${q.toString()}`;
+}

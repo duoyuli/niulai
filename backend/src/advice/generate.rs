@@ -13,8 +13,8 @@ use crate::account::lots::{self, Fees, round2};
 use crate::account::rules::{Rules, WeakMarket};
 
 /// 生成规则的版本：规则改了就加一，历史建议记着当时的版本。
-/// 账户退出语义由买入策略负责，历史建议按规则版本区分。
-pub const RULES_VERSION: i32 = 4;
+/// 账户退出语义由买入策略负责，历史建议按规则版本区分；5 起支持多因子账户。
+pub const RULES_VERSION: i32 = 5;
 /// 「没选上的候选」最多列几只
 const MAX_SKIPPED: usize = 8;
 
@@ -134,6 +134,9 @@ pub struct Input {
     pub strategies: Vec<StrategyIn>,
     /// 之前连续几份建议都给出了同一条卖出或减仓、且没有执行：键是 item key
     pub streaks: BTreeMap<String, u32>,
+    /// 多因子账户的排名；按策略选股的账户为空
+    #[serde(default)]
+    pub factor: Option<super::factor::FactorIn>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -169,7 +172,7 @@ pub struct Note {
     pub text: String,
 }
 
-fn note(kind: &str, text: impl Into<String>) -> Note {
+pub(super) fn note(kind: &str, text: impl Into<String>) -> Note {
     Note {
         kind: kind.into(),
         text: text.into(),
@@ -280,6 +283,9 @@ pub fn yuan(v: f64) -> String {
 
 // @project-doc docs/domains/accounts.md#generation
 pub fn generate(inp: &Input) -> Advice {
+    if let Some(plan) = &inp.rules.factor {
+        return super::factor::generate(inp, plan, inp.factor.as_ref());
+    }
     let p = &inp.rules;
     let price_of = |h: &HoldingIn| h.snap.as_ref().map(|s| s.close);
     let market_value: f64 = inp
@@ -477,39 +483,7 @@ pub fn generate(inp: &Input) -> Advice {
     skipped.truncate(MAX_SKIPPED);
 
     // 第 5 步：汇总
-    let buy_cost: f64 = buys.iter().map(|b| b.amount + b.fee).sum();
-    let cash_after = round2(inp.cash + proceeds - buy_cost);
-    let mut weights: Vec<Weight> = vec![];
-    for it in &items {
-        let left = match it.action {
-            Action::Sell => 0,
-            Action::Reduce => inp
-                .holdings
-                .iter()
-                .find(|h| h.thscode == it.thscode)
-                .map_or(0, |h| h.shares - it.shares),
-            _ => it.shares,
-        };
-        if left > 0 {
-            weights.push(Weight {
-                thscode: it.thscode.clone(),
-                name: it.name.clone(),
-                weight_pct: left as f64 * it.ref_price / total.max(1.0) * 100.0,
-            });
-        }
-    }
-    weights.extend(buys.iter().map(|b| Weight {
-        thscode: b.thscode.clone(),
-        name: b.name.clone(),
-        weight_pct: b.weight_pct,
-    }));
-    weights.sort_by(|a, b| b.weight_pct.total_cmp(&a.weight_pct));
-    let after = After {
-        cash: cash_after,
-        cash_pct: cash_after / total.max(1.0) * 100.0,
-        positions: weights.len(),
-        weights,
-    };
+    let after = after_of(inp, &items, &buys, total, proceeds);
 
     let n_sell = items.iter().filter(|i| i.action == Action::Sell).count();
     let n_reduce = items.iter().filter(|i| i.action == Action::Reduce).count();
@@ -585,14 +559,6 @@ pub fn generate(inp: &Input) -> Advice {
         ));
     }
 
-    // 卖出、减仓、买入、继续拿、不动
-    let order = |a: Action| match a {
-        Action::Sell => 0,
-        Action::Reduce => 1,
-        Action::Buy => 2,
-        Action::Hold => 3,
-        Action::Wait => 4,
-    };
     items.extend(buys);
     items.sort_by_key(|i| order(i.action));
     Advice {
@@ -612,9 +578,63 @@ pub fn generate(inp: &Input) -> Advice {
     }
 }
 
-fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
-    let p = &inp.rules;
-    let base = |action: Action, headline: String, rule: String| Item {
+/// 卖出、减仓、买入、继续拿、不动
+pub(super) fn order(a: Action) -> u8 {
+    match a {
+        Action::Sell => 0,
+        Action::Reduce => 1,
+        Action::Buy => 2,
+        Action::Hold => 3,
+        Action::Wait => 4,
+    }
+}
+
+/// 照着建议做完之后的现金和各持仓占比
+pub(super) fn after_of(
+    inp: &Input,
+    items: &[Item],
+    buys: &[Item],
+    total: f64,
+    proceeds: f64,
+) -> After {
+    let buy_cost: f64 = buys.iter().map(|b| b.amount + b.fee).sum();
+    let cash_after = round2(inp.cash + proceeds - buy_cost);
+    let mut weights: Vec<Weight> = vec![];
+    for it in items {
+        let left = match it.action {
+            Action::Sell => 0,
+            Action::Reduce => inp
+                .holdings
+                .iter()
+                .find(|h| h.thscode == it.thscode)
+                .map_or(0, |h| h.shares - it.shares),
+            _ => it.shares,
+        };
+        if left > 0 {
+            weights.push(Weight {
+                thscode: it.thscode.clone(),
+                name: it.name.clone(),
+                weight_pct: left as f64 * it.ref_price / total.max(1.0) * 100.0,
+            });
+        }
+    }
+    weights.extend(buys.iter().map(|b| Weight {
+        thscode: b.thscode.clone(),
+        name: b.name.clone(),
+        weight_pct: b.weight_pct,
+    }));
+    weights.sort_by(|a, b| b.weight_pct.total_cmp(&a.weight_pct));
+    After {
+        cash: cash_after,
+        cash_pct: cash_after / total.max(1.0) * 100.0,
+        positions: weights.len(),
+        weights,
+    }
+}
+
+/// 一只持仓的基本条目：股数、参考价都按持仓填好，其余由调用方补
+pub(super) fn holding_item(h: &HoldingIn, action: Action, headline: String, rule: String) -> Item {
+    Item {
         key: format!("{}-{}", action.key(), h.thscode),
         action,
         thscode: h.thscode.clone(),
@@ -632,7 +652,52 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
         limit_price: None,
         streak: 0,
         weight_pct: 0.0,
-    };
+    }
+}
+
+/// 卖出全部：连续没执行时注明第几天
+pub(super) fn sell_all(
+    inp: &Input,
+    h: &HoldingIn,
+    total: f64,
+    headline: String,
+    rule: String,
+    evidence: Vec<Note>,
+    cautions: Vec<Note>,
+) -> Item {
+    let value = h.shares as f64 * h.snap.as_ref().map_or(0.0, |s| s.close);
+    let amount = round2(value);
+    let key = format!("sell-{}", h.thscode);
+    let streak = inp.streaks.get(&key).copied().unwrap_or(0) + 1;
+    let mut ev = evidence;
+    if streak > 1 {
+        ev.insert(
+            0,
+            note("rule", format!("已连续 {streak} 天建议卖出，还没有执行")),
+        );
+    }
+    Item {
+        amount,
+        fee: inp.fees.sell_fee_for(&h.asset_type, amount),
+        evidence: ev,
+        cautions,
+        plan: vec![
+            format!(
+                "下一个交易日（{}）开盘后卖出全部 {} 股",
+                inp.next_date, h.shares
+            ),
+            "开盘一字跌停卖不出时，下一份建议会继续提示".into(),
+        ],
+        streak,
+        weight_pct: value / total.max(1.0) * 100.0,
+        ..holding_item(h, Action::Sell, headline, rule)
+    }
+}
+
+pub(super) fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
+    let p = &inp.rules;
+    let base =
+        |action: Action, headline: String, rule: String| holding_item(h, action, headline, rule);
     let Some(s) = h.snap.as_ref() else {
         return base(
             Action::Wait,
@@ -696,32 +761,7 @@ fn judge_holding(inp: &Input, h: &HoldingIn, total: f64) -> Item {
     }
 
     let sell = |headline: String, rule: String, evidence: Vec<Note>, cautions: Vec<Note>| {
-        let amount = round2(value);
-        let key = format!("sell-{}", h.thscode);
-        let streak = inp.streaks.get(&key).copied().unwrap_or(0) + 1;
-        let mut ev = evidence;
-        if streak > 1 {
-            ev.insert(
-                0,
-                note("rule", format!("已连续 {streak} 天建议卖出，还没有执行")),
-            );
-        }
-        Item {
-            amount,
-            fee: inp.fees.sell_fee_for(&h.asset_type, amount),
-            evidence: ev,
-            cautions,
-            plan: vec![
-                format!(
-                    "下一个交易日（{}）开盘后卖出全部 {} 股",
-                    inp.next_date, h.shares
-                ),
-                "开盘一字跌停卖不出时，下一份建议会继续提示".into(),
-            ],
-            streak,
-            weight_pct: weight,
-            ..base(Action::Sell, headline, rule)
-        }
+        sell_all(inp, h, total, headline, rule, evidence, cautions)
     };
 
     if let (Some(text), Some(st)) = (&h.strategy_exit, &h.strategy) {
@@ -907,46 +947,7 @@ fn buy_item(
         evidence.push(note("market", m));
     }
 
-    let mut cautions = vec![];
-    if let Some(rsi) = s.rsi
-        && rsi >= 70.0
-    {
-        cautions.push(note(
-            "diagnosis",
-            format!("RSI(14) 为 {rsi:.0}，短期涨得较多（超买）"),
-        ));
-    }
-    if let Some(pos) = s.range60_pos
-        && pos >= 0.9
-    {
-        cautions.push(note(
-            "diagnosis",
-            format!(
-                "处在近 60 个交易日价格区间的 {:.0}% 位置，接近高点",
-                pos * 100.0
-            ),
-        ));
-    }
-    if let Some(m) = s.momentum20
-        && m >= 20.0
-    {
-        cautions.push(note("diagnosis", format!("近 20 个交易日已经涨了 {m:.0}%")));
-    }
-    if s.trend_weak {
-        cautions.push(note(
-            "diagnosis",
-            "诊断的趋势偏弱（均线空头排列），属于逆势买入",
-        ));
-    }
-    if s.amount < 1e8 {
-        cautions.push(note(
-            "risk",
-            format!(
-                "当天成交额 {:.2} 亿元，偏小，买卖可能不太顺畅",
-                s.amount / 1e8
-            ),
-        ));
-    }
+    let mut cautions = buy_cautions(s);
     if half {
         cautions.push(note("market", "弱市：按本账户的规则，用于买新股票的钱减半"));
     } else if weak {
@@ -991,6 +992,51 @@ fn buy_item(
         streak: 0,
         weight_pct: amount / total.max(1.0) * 100.0,
     }
+}
+
+/// 买入前要知道的反面信息：超买、接近高点、近期涨幅大、逆势、成交额小
+pub(super) fn buy_cautions(s: &Snapshot) -> Vec<Note> {
+    let mut cautions = vec![];
+    if let Some(rsi) = s.rsi
+        && rsi >= 70.0
+    {
+        cautions.push(note(
+            "diagnosis",
+            format!("RSI(14) 为 {rsi:.0}，短期涨得较多（超买）"),
+        ));
+    }
+    if let Some(pos) = s.range60_pos
+        && pos >= 0.9
+    {
+        cautions.push(note(
+            "diagnosis",
+            format!(
+                "处在近 60 个交易日价格区间的 {:.0}% 位置，接近高点",
+                pos * 100.0
+            ),
+        ));
+    }
+    if let Some(m) = s.momentum20
+        && m >= 20.0
+    {
+        cautions.push(note("diagnosis", format!("近 20 个交易日已经涨了 {m:.0}%")));
+    }
+    if s.trend_weak {
+        cautions.push(note(
+            "diagnosis",
+            "诊断的趋势偏弱（均线空头排列），属于逆势买入",
+        ));
+    }
+    if s.amount < 1e8 {
+        cautions.push(note(
+            "risk",
+            format!(
+                "当天成交额 {:.2} 亿元，偏小，买卖可能不太顺畅",
+                s.amount / 1e8
+            ),
+        ));
+    }
+    cautions
 }
 
 fn format_name(n: &str) -> String {
@@ -1104,6 +1150,7 @@ mod tests {
                 },
             ],
             streaks: BTreeMap::new(),
+            factor: None,
         }
     }
 

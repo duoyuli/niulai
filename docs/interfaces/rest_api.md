@@ -76,9 +76,9 @@
 | `GET /watchlist` | 当前用户的自选股及诊断（每个用户各自一份）：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast` 默认 15、`slow` 默认 30，都在 2 到 250 之间且 `fast < slow`；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |
-| `GET /rules/guide` | 设置规则时的辅助：三组风控参考值（适合什么样的账户、怎么设计），以及可勾选的巡检策略 | 见 [选股和风控规则](../domains/accounts.md#rules) |
+| `GET /rules/guide` | 设置规则时的辅助：参考值（稳健型、均衡型、积极型和多因子月度调仓，适合什么样的账户、怎么设计），以及可勾选的巡检策略 | 见 [选股和风控规则](../domains/accounts.md#rules) |
 | `GET /accounts` | 当前用户的账户：总资产、当日盈亏、已实现盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的；已实现盈亏见 [撤销流水和已实现盈亏](../domains/accounts.md#undo) |
-| `POST /accounts` | 新建账户（规则用均衡型的参考值），返回 201 和详情，并生成第一份建议 | 请求体 `{name, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
+| `POST /accounts` | 新建账户（规则用 `preset` 指定的参考值，默认均衡型；`factor` 建多因子账户），返回 201 和详情，并生成第一份建议 | 请求体 `{name, cash?, note?, preset?}`；同一用户下重名返回 409，超过 10 个返回 400 |
 | `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比和盈亏）；修改名字、规则 `rules`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [选股和风控规则](../domains/accounts.md#rules)，之后重新生成建议 |
 | `POST /accounts/{id}/positions/parse` | 识别粘贴的持仓文字，只返回预览 | 请求体 `{text}`，最多 20,000 字；规则见 [持仓](../domains/accounts.md#positions) |
 | `PUT /accounts/{id}/positions` | 校准：整体替换持仓和现金，差异记为校准流水，之后重新生成建议 | 请求体 `{cash, positions: [{thscode, shares, cost_price?, opened_on?}]}`；代码不存在、股数不大于 0、重复时返回 400 |
@@ -95,7 +95,7 @@
 | `POST /accounts/{id}/advice/{advice_id}/items/{key}/execute` | 已执行：按实际成交记一笔，持仓和现金更新，这份建议不重新生成 | 请求体 `{shares?, price?, fee?, trade_date?}`，默认按建议；同一条执行两次、这条不需要操作时返回 400 |
 | `POST` / `DELETE /accounts/{id}/advice/{advice_id}/items/{key}/skip` | 不做这一条 / 撤销「不做」 | 已执行的不能撤销 |
 | `GET /accounts/{id}/review` | 最近 180 天的建议之后 5、10、20 个交易日的涨跌和汇总 | 口径见 [建议回看](../domains/accounts.md#review) |
-| `POST /accounts/{id}/backtest` | 用这个账户的规则回测一段时间 | `start`、`end`（两头都包含）：开始日期默认今年 1 月 1 日，结束日期默认最新交易日、晚于它时取最新交易日；最长 5 年，开始不早于结束时返回 400；全市场计算，几十秒到一两分钟；口径见 [规则回测](../domains/accounts.md#rules_backtest) |
+| `POST /accounts/{id}/backtest` | 用这个账户的规则回测一段时间 | `start`、`end`（两头都包含）：开始日期默认今年 1 月 1 日，结束日期默认最新交易日、晚于它时取最新交易日；最长 5 年，开始不早于结束时返回 400；多因子账户返回 400（改用 `GET /research/factor-portfolio`）；全市场计算，几十秒到一两分钟；口径见 [规则回测](../domains/accounts.md#rules_backtest) |
 | `GET /accounts/{id}/shadow-orders` | 查看理论订单与实际成交之间的价差、部分成交和取消状态 | `limit` 默认 250、最大 1,000；建议生成、执行或跳过后自动更新 |
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
 | `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线；指数没有复权，`adjust` 参数会被忽略 |

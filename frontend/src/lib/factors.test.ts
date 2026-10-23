@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatFactors, parseFactors, toggleFactor, verdictTone } from "./factors";
+import { formatFactors, parseFactors, planResearchLink, toggleFactor, verdictTone } from "./factors";
 
 describe("factor selection", () => {
   it("parses ids with optional weights", () => {
@@ -29,5 +29,24 @@ describe("verdictTone", () => {
     expect(verdictTone({ significant: false, consistent: true, rank_ic_t: 2.5 })).toBe("warn");
     expect(verdictTone({ significant: false, consistent: false, rank_ic_t: -3.5 })).toBe("bad");
     expect(verdictTone({ significant: false, consistent: true, rank_ic_t: 0.4 })).toBe("muted");
+  });
+});
+
+describe("planResearchLink", () => {
+  it("把账户的因子计划带到组合回测", () => {
+    const link = planResearchLink({
+      factors: [
+        { factor: "volatility", weight: 1 },
+        { factor: "accruals", weight: 0.5 },
+      ],
+      top_n: 30,
+      buffer: 1.5,
+    });
+    const q = new URLSearchParams(link.split("?")[1]);
+    expect(link.startsWith("/research?")).toBe(true);
+    expect(q.get("tab")).toBe("portfolio");
+    expect(q.get("f")).toBe("volatility,accruals:0.5");
+    expect(q.get("top")).toBe("30");
+    expect(q.get("buffer")).toBe("1.5");
   });
 });

@@ -174,6 +174,9 @@ pub struct NewAccount {
     pub cash: f64,
     #[serde(default)]
     pub note: String,
+    /// 用哪组参考值建规则；为空时用均衡型。`factor` 建一个多因子月度调仓账户
+    #[serde(default)]
+    pub preset: Option<rules::Preset>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -357,7 +360,7 @@ pub async fn create(pool: &PgPool, user_id: i64, input: &NewAccount) -> Result<A
     .await?;
     let rules = Rules {
         strategies: Some(strategy_ids),
-        ..Rules::default()
+        ..input.preset.unwrap_or(rules::Preset::Balanced).rules()
     };
     let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO app.account (user_id, name, rules, cash, note) VALUES ($1, $2, $3, round($4::float8::numeric, 2), $5)

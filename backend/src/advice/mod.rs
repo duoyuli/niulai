@@ -1,14 +1,16 @@
 //! 每日调仓建议：每次同步加巡检完成后，为每个账户生成一份「明天怎么操作」。
 //!
 //! - `generate`：纯函数，从输入算出建议和每条的理由；
+//! - `factor`：多因子账户的排名和调仓建议；
 //! - `inputs`：从数据库组装输入；
-//! - `stats`、`backtest`：策略的过去表现和账户规则回测，供用户主动研究；不参与账户建议，也不由后台定期重算；
+//! - `backtest`：账户规则回测，供用户主动研究；不参与账户建议，也不由后台定期重算；
 //! - `review`：过去的建议之后 5、10、20 个交易日的实际涨跌；
 //! - 本文件：保存、重新生成和每天为所有账户生成建议。
 //!
 //! 依赖方向：advice 读 account 和 analysis，analysis 不知道账户的存在。规则见 docs/domains/accounts.md。
 
 pub mod backtest;
+pub mod factor;
 pub mod generate;
 pub mod inputs;
 pub mod review;

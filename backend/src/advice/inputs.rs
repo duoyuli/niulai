@@ -7,11 +7,12 @@ use chrono::{Datelike, NaiveDate, Weekday};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
+use super::factor::{self, FactorCandidate, FactorIn};
 use super::generate::{
     CandidateIn, HoldingIn, Input, MarketIn, Pick, Snapshot, StrategyIn, StrategyRef,
 };
 use crate::account::history::{HistoryReturn, HistorySeries};
-use crate::account::rules::{HistoryWindow, Rules};
+use crate::account::rules::{FactorPlan, HistoryWindow, Rules};
 use crate::account::{self, Account};
 use crate::analysis::diagnosis::{self, Verdict};
 use crate::analysis::indicators::{AssetType, Frame, IndicatorId, IndicatorRef, StockMeta};
@@ -420,6 +421,26 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         });
     }
 
+    // 多因子账户不看策略的买点，候选来自因子排名
+    if let Some(plan) = &rules.factor {
+        let held: Vec<&str> = positions.iter().map(|p| p.thscode.as_str()).collect();
+        let factor = factor_input(pool, sh, plan, &held).await?;
+        return Ok(Input {
+            trade_date: sh.trade_date,
+            next_date: sh.next_date,
+            rules,
+            fees: acc.fees,
+            cash: acc.cash,
+            market: sh.market,
+            holdings,
+            candidates: vec![],
+            history_rejected: 0,
+            strategies: vec![],
+            streaks: streaks(pool, acc.account_id, sh.trade_date).await?,
+            factor: Some(factor),
+        });
+    }
+
     // 候选：参考的策略今天的买点，按股票合并；先按和生成时相同的优先级预选，只细看前面的
     let ids: Vec<i64> = sh
         .screening
@@ -521,6 +542,59 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         history_rejected,
         strategies,
         streaks: streaks(pool, acc.account_id, sh.trade_date).await?,
+        factor: None,
+    })
+}
+
+/// 多因子账户的排名：持仓的名次，以及排名靠前、还没持有的候选（够填满空位再多看几只）
+async fn factor_input(
+    pool: &PgPool,
+    sh: &Shared,
+    plan: &FactorPlan,
+    held: &[&str],
+) -> anyhow::Result<FactorIn> {
+    let ranked = factor::ranking(pool, sh.trade_date, plan).await?;
+    let holding_ranks: BTreeMap<String, usize> = ranked
+        .iter()
+        .enumerate()
+        .filter(|(_, (code, _))| held.contains(&code.as_str()))
+        .map(|(r, (code, _))| (code.clone(), r + 1))
+        .collect();
+    let mut candidates = vec![];
+    let wanted = plan.top_n as usize + factor::EXTRA_CANDIDATES;
+    for (r, (code, score)) in ranked.iter().enumerate() {
+        if candidates.len() >= wanted {
+            break;
+        }
+        if held.contains(&code.as_str()) {
+            continue;
+        }
+        let Some(meta) = sh.sec.meta.get(code) else {
+            continue;
+        };
+        let bars = prices::recent_instrument_bars_until(pool, code, sh.trade_date, BARS).await?;
+        let Some(snap) = snapshot(&bars, meta, Some((&sh.limits, code))) else {
+            continue;
+        };
+        candidates.push(FactorCandidate {
+            rank: r + 1,
+            score: *score,
+            stock: CandidateIn {
+                thscode: code.clone(),
+                name: sh.sec.names.get(code).cloned().unwrap_or_default(),
+                board: meta.board.clone(),
+                asset_type: "stock".into(),
+                is_st: meta.is_st,
+                picks: vec![],
+                snap,
+            },
+        });
+    }
+    Ok(FactorIn {
+        rebalance: factor::month_end(sh.trade_date, sh.next_date),
+        ranked: ranked.len(),
+        holding_ranks,
+        candidates,
     })
 }
 

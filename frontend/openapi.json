@@ -634,7 +634,7 @@
             }
           },
           "400": {
-            "description": "区间不对，或本地还没有日线",
+            "description": "区间不对、本地还没有日线，或多因子账户（请用因子研究的组合回测）",
             "content": {
               "application/json": {
                 "schema": {
@@ -3221,7 +3221,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "设置规则时的辅助：三组参考值（保守型、稳健型、进取型）和可勾选策略",
+        "summary": "设置规则时的辅助：参考值（稳健型、均衡型、积极型和多因子月度调仓）和可勾选策略",
         "operationId": "rules_guide",
         "responses": {
           "200": {
@@ -7580,6 +7580,34 @@
           }
         }
       },
+      "FactorPlan": {
+        "type": "object",
+        "description": "多因子组合选股：每月最后一个交易日收盘按合成得分排名，持有前 `top_n` 只，等权买入",
+        "required": [
+          "factors",
+          "top_n",
+          "buffer"
+        ],
+        "properties": {
+          "buffer": {
+            "type": "number",
+            "format": "double",
+            "description": "已持有的股票排名在 top_n × (1 + buffer) 以内时继续拿，减少换手"
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorWeight"
+            }
+          },
+          "top_n": {
+            "type": "integer",
+            "format": "int32",
+            "description": "持有几只",
+            "minimum": 0
+          }
+        }
+      },
       "FactorPortfolioOutcome": {
         "type": "object",
         "required": [
@@ -8144,6 +8172,23 @@
           },
           "verdict": {
             "type": "string"
+          }
+        }
+      },
+      "FactorWeight": {
+        "type": "object",
+        "description": "多因子组合里的一个因子和它的权重（按因子的预期方向合成）",
+        "required": [
+          "factor",
+          "weight"
+        ],
+        "properties": {
+          "factor": {
+            "$ref": "#/components/schemas/FactorId"
+          },
+          "weight": {
+            "type": "number",
+            "format": "double"
           }
         }
       },
@@ -9295,6 +9340,17 @@
           },
           "note": {
             "type": "string"
+          },
+          "preset": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Preset",
+                "description": "用哪组参考值建规则；为空时用均衡型。`factor` 建一个多因子月度调仓账户"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -10264,11 +10320,12 @@
       },
       "Preset": {
         "type": "string",
-        "description": "三组参考值：只是辅助，套用后还可以改",
+        "description": "参考值：只是辅助，套用后还可以改。前三组按勾选的策略选股，`Factor` 改用多因子组合",
         "enum": [
           "conservative",
           "balanced",
-          "aggressive"
+          "aggressive",
+          "factor"
         ]
       },
       "PresetInfo": {
@@ -10618,6 +10675,18 @@
             "format": "double",
             "description": "第二天开盘比参考价高多少（%）就不买",
             "default": 5.0
+          },
+          "factor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FactorPlan",
+                "description": "多因子组合选股；不为空时不看勾选的策略、至少几个策略、最多持有只数和弱市规则"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "history_check": {
             "oneOf": [

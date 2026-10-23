@@ -2818,7 +2818,7 @@ async fn accounts_positions_and_daily_advice() {
     .await;
     assert_eq!(st(&r), StatusCode::OK, "只改是否在今日展示可以：{v}");
 
-    // 规则的辅助：只返回三组风控参考值和全部可勾选的巡检策略，不展示历史回测数字
+    // 规则的辅助：只返回参考值（三组风控参考值和多因子月度调仓）和全部可勾选的巡检策略，不展示历史回测数字
     sqlx::query(
         "INSERT INTO app.preset_stat (preset, rules_hash, end_date, result) VALUES ('balanced', 'h', '2026-06-30', $1)",
     )
@@ -2830,7 +2830,7 @@ async fn accounts_positions_and_daily_advice() {
     .unwrap();
     let (r, guide) = call_as(&app, Some(&mama), "GET", "/api/v1/rules/guide", None).await;
     assert_eq!(st(&r), StatusCode::OK, "{guide}");
-    assert_eq!(guide["presets"].as_array().unwrap().len(), 3);
+    assert_eq!(guide["presets"].as_array().unwrap().len(), 4);
     assert!(!guide["presets"][0]["design"].as_array().unwrap().is_empty());
     assert!(
         guide["presets"]
@@ -4669,5 +4669,34 @@ async fn factor_research_end_to_end() {
     )
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // 多因子账户：建账户时选参考值，排名和因子研究同一套计算
+    let (s, acc) = call(
+        &app,
+        "POST",
+        "/api/v1/accounts",
+        Some(serde_json::json!({"name": "组合 E", "cash": 1000000, "preset": "factor"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{acc}");
+    let rules = &acc["summary"]["account"]["rules"];
+    assert_eq!(rules["factor"]["top_n"], 30);
+    assert_eq!(rules["factor"]["factors"].as_array().unwrap().len(), 5);
+    let id = acc["summary"]["account"]["account_id"].as_i64().unwrap();
+    let (s, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/accounts/{id}/backtest"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "多因子账户不走规则回测");
+    let plan = niulai::account::rules::FactorPlan::combo_e();
+    let date = chrono::NaiveDate::from_ymd_opt(2025, 8, 29).unwrap();
+    let ranked = niulai::advice::factor::ranking(&db.pool, date, &plan)
+        .await
+        .unwrap();
+    assert!(ranked.len() >= 50, "{}", ranked.len());
+    assert!(ranked.windows(2).all(|w| w[0].1 >= w[1].1));
     db.drop().await;
 }

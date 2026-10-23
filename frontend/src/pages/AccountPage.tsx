@@ -45,6 +45,7 @@ import {
 } from "../components/ui";
 import { useSearchState } from "../hooks/useSearchState";
 import { ACTIONS, TRADE_KINDS, TRADE_SOURCES, yuan } from "../lib/accounts";
+import { planResearchLink } from "../lib/factors";
 import { BACKTEST_RANGES, fmtDateTime, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
 import { ASSET_TYPES } from "../lib/labels";
 import { invalidateAccountQueries } from "../lib/queryInvalidation";
@@ -819,46 +820,61 @@ function Settings({ d }: { d: AccountDetail }) {
         {saved && <span className="text-sm text-emerald-600">已保存</span>}
         {!!update.error && <span className="text-sm text-red-600">{errorText(update.error)}</span>}
       </div>
-      <Card title="用这个账户的规则回测">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          按保存后的规则，假设这段时间每天都照着建议做，账户会怎样。点快捷区间会把起止日期填进框里，也可以直接改日期（最长
-          5
-          年，结束日期最晚到最新交易日）。勾选的策略都会参与，按同时命中的策略数和成交额排序。全市场计算，通常要几十秒到一两分钟，算的时候可以取消；改日期不会自动重算。
-        </p>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <RangePicker value={range} options={BACKTEST_RANGES} onChange={(p) => setRange((r) => ({ ...r, ...p }))} />
-          {backtestRunning ? (
-            <TaskRunning
-              text="正在按账户规则逐只计算全市场的日线"
-              seconds={backtestSeconds}
-              onCancel={cancelBacktest}
-            />
-          ) : (
-            <>
-              <button type="button" className={buttonClass("ghost")} onClick={startBacktest}>
-                {backtestRun && backtestChanged ? "按新日期重新计算" : backtestRun ? "重新回测" : "开始回测"}
-              </button>
-              <span className="text-xs text-zinc-500" title="依据：文档实测账户规则回测本地约几十秒到一两分钟">
-                全市场计算，通常几十秒到一两分钟
-              </span>
-            </>
-          )}
-        </div>
-        {backtestChanged && !backtestRunning && (
-          <p className="mt-2 text-xs text-amber-600">
-            日期已改，下面显示的还是上一次按旧日期算的结果；点「按新日期重新计算」。
+      {acc.rules.factor ? (
+        <Card title="回测这组因子">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            多因子账户按因子排名调仓，不走按策略买点的规则回测。可以在因子研究的「组合回测」里用同样的因子、持有只数和缓冲区回测（每
+            20 个交易日调仓，和每月调仓接近）。
           </p>
-        )}
-        {backtest.data && (
-          <div className="mt-2">
-            <BacktestLine b={backtest.data} />
-            <BacktestTrades trades={backtest.data.trades ?? []} />
+          <Link
+            className="mt-2 inline-block text-sm text-accent hover:underline"
+            to={planResearchLink(acc.rules.factor)}
+          >
+            打开组合回测
+          </Link>
+        </Card>
+      ) : (
+        <Card title="用这个账户的规则回测">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            按保存后的规则，假设这段时间每天都照着建议做，账户会怎样。点快捷区间会把起止日期填进框里，也可以直接改日期（最长
+            5
+            年，结束日期最晚到最新交易日）。勾选的策略都会参与，按同时命中的策略数和成交额排序。全市场计算，通常要几十秒到一两分钟，算的时候可以取消；改日期不会自动重算。
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <RangePicker value={range} options={BACKTEST_RANGES} onChange={(p) => setRange((r) => ({ ...r, ...p }))} />
+            {backtestRunning ? (
+              <TaskRunning
+                text="正在按账户规则逐只计算全市场的日线"
+                seconds={backtestSeconds}
+                onCancel={cancelBacktest}
+              />
+            ) : (
+              <>
+                <button type="button" className={buttonClass("ghost")} onClick={startBacktest}>
+                  {backtestRun && backtestChanged ? "按新日期重新计算" : backtestRun ? "重新回测" : "开始回测"}
+                </button>
+                <span className="text-xs text-zinc-500" title="依据：文档实测账户规则回测本地约几十秒到一两分钟">
+                  全市场计算，通常几十秒到一两分钟
+                </span>
+              </>
+            )}
           </div>
-        )}
-        {!!backtest.error && !backtestRunning && (
-          <p className="mt-2 text-sm text-red-600">{errorText(backtest.error)}</p>
-        )}
-      </Card>
+          {backtestChanged && !backtestRunning && (
+            <p className="mt-2 text-xs text-amber-600">
+              日期已改，下面显示的还是上一次按旧日期算的结果；点「按新日期重新计算」。
+            </p>
+          )}
+          {backtest.data && (
+            <div className="mt-2">
+              <BacktestLine b={backtest.data} />
+              <BacktestTrades trades={backtest.data.trades ?? []} />
+            </div>
+          )}
+          {!!backtest.error && !backtestRunning && (
+            <p className="mt-2 text-sm text-red-600">{errorText(backtest.error)}</p>
+          )}
+        </Card>
+      )}
       <Card title="删除账户">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           持仓、流水和所有历史建议都会删除，不能恢复。输入账户名「{acc.name}」确认：

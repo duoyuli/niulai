@@ -5,10 +5,12 @@
  * A 股数据工作台：行情、复权、均线信号与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { Preset } from './preset';
 
 export interface NewAccount {
   /** 现在的现金（元） */
   cash?: number;
   name: string;
   note?: string;
+  preset?: Preset | null;
 }

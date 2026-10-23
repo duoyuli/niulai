@@ -7,7 +7,7 @@
  */
 
 /**
- * 三组参考值：只是辅助，套用后还可以改
+ * 参考值：只是辅助，套用后还可以改。前三组按勾选的策略选股，`Factor` 改用多因子组合
  */
 export type Preset = typeof Preset[keyof typeof Preset];
 
@@ -16,4 +16,5 @@ export const Preset = {
   conservative: 'conservative',
   balanced: 'balanced',
   aggressive: 'aggressive',
+  factor: 'factor',
 } as const;

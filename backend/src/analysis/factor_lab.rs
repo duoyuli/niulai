@@ -643,6 +643,29 @@ fn process(panel: &Panel, k: usize, prep: Prep, weights: &[f64]) -> Processed {
     Processed { stocks, columns }
 }
 
+/// 最后一个取样日按合成得分从高到低排出的股票（代码、得分）；当天数据太少时为空。账户的多因子调仓用它
+pub fn ranking(panel: &Panel, prep: Prep, weights: &[f64]) -> Vec<(String, f64)> {
+    let Some(k) = panel.evals.len().checked_sub(1) else {
+        return vec![];
+    };
+    if panel.thin[panel.eval_days[k]] {
+        return vec![];
+    }
+    let pr = process(panel, k, prep, weights);
+    let Some(score) = pr.columns.last() else {
+        return vec![];
+    };
+    let mut ranked: Vec<(String, f64)> = pr
+        .stocks
+        .iter()
+        .zip(score)
+        .filter(|(_, v)| v.is_finite())
+        .map(|(s, v)| (panel.stocks[*s as usize].code.clone(), *v))
+        .collect();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ranked
+}
+
 // ───────────────────────── 因子检验 ─────────────────────────
 
 /// 前向收益：取样日 day 收盘后决定，下一个交易日开盘买入，horizon 个交易日后的开盘卖出（前复权价）。

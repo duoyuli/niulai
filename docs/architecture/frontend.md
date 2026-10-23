@@ -27,7 +27,7 @@
 | `src/components/SignalStats.tsx`、`StrategyNav.tsx` | 信号的过去表现和今天出现的股票；「策略」栏目下策略、信号、指标、因子研究四页的切换 |
 | `src/components/FactorCharts.tsx`、`src/lib/factors.ts` | 因子研究的多曲线图（各组净值）；选中因子和权重在 URL 里的写法、结论的颜色 |
 | `src/components/backtest.tsx`、`BacktestTrades.tsx`、`longTask.tsx` | 回测的共用部分：交易成本、结果展示、规则说明；账户规则回测的交易记录；长任务的等待和取消 |
-| `src/components/AdviceView.tsx`、`RulesEditor.tsx`、`PositionsEditor.tsx`、`AccountEquityChart.tsx`、`TodayAccounts.tsx` | 账户：调仓建议和理由、选股和风控规则编辑、持仓录入与粘贴识别、净值曲线、首页的账户卡片 |
+| `src/components/AdviceView.tsx`、`RulesEditor.tsx`、`PositionsEditor.tsx`、`AccountEquityChart.tsx`、`TodayAccounts.tsx` | 账户：调仓建议和理由、选股和风控规则编辑（多因子账户显示因子、持有只数和缓冲区，并链接到组合回测）、持仓录入与粘贴识别、净值曲线、首页的账户卡片 |
 | `src/components/UserMenu.tsx`、`AdminOnly.tsx`、`RouteError.tsx` | 用户名的悬浮菜单；管理员页面的拦截说明；页面出错时的兜底 |
 | `src/components/DataCheck.tsx` | 同步页的数据核检卡片 |
 | `src/components/SecuritySearch.tsx`、`WatchButton.tsx` | 股票搜索框；收藏星标 |
@@ -48,7 +48,7 @@
 | --- | --- | --- |
 | `/` | 首页：核心数据还在首次下载时顶部提示「正在准备核心数据」和大约还要多久；顶部依次显示我的账户（最多 3 个，每个账户一行：总资产、当日盈亏、「10-19（周一）运营建议：……」）和我的自选（最多 6 只，按最近信号排序）；超出时点击「查看更多」进入对应独立页；其后标题写明数据截至哪天收盘（「10-16（周五）收盘」）、大盘概况、今日热点（涨停、跌停、炸板家数，最高连板和每个连板高度前几只股票，点进个股 K 线）、近 5 日最强行业、「在首页展示」的策略最近一次巡检的买点（新入选在前） | `GET /accounts`、`/market/overview`、`/market/hot`、`/market/sectors`、`/strategies`、`/strategies/{id}/results`、`/watchlist` |
 | `/accounts` | 我的账户：每个账户一张卡片（总资产、当日盈亏、现金、持仓只数、下个交易日的运营建议、核对提醒） | `GET /accounts` |
-| `/accounts/new` | 新建账户，两步：名字；现金和持仓（`PositionsEditor`，可粘贴，可跳过）。规则用默认值，不在主流程里选 | `POST /accounts`、`POST /accounts/{id}/positions/parse`、`PUT /accounts/{id}/positions` |
+| `/accounts/new` | 新建账户，两步：名字和选股方式（按策略的买卖点用均衡型、多因子月度调仓用 `factor` 参考值）；现金和持仓（`PositionsEditor`，可粘贴，可跳过）。其余规则以后在设置里调 | `POST /accounts`、`POST /accounts/{id}/positions/parse`、`PUT /accounts/{id}/positions` |
 | `/accounts/:id` | 一个账户，四个标签：运营（下个交易日的买卖建议、执行、不做、理由和提醒）；持仓；记录；设置（账户名称、勾选策略、至少同时看好的策略数、风控参数、费率和用户主动发起的规则回测） | `GET /accounts/{id}` 及其下的 `advice`、`trades`、`review` 等 |
 | `/strategies` | 策略：每个策略最近一次的买点、卖点、持有中数量，内置策略标「内置」；管理员点击「排序」打开弹窗，在弹窗内拖动策略并点击「保存」后调整显示顺序；立即巡检、新建（管理员） | `GET /strategies`、`PUT /strategies/order`、`POST /screening/run` |
 | `/strategies/:id` | 策略详情：规则的白话；「最新买卖点」按交易日看买点、卖点（原因）、持有中；「过去表现如何」点「开始回测」做全市场组合回测 | `GET` / `PUT` / `DELETE /strategies/{id}`、`/results`、`POST /screening/run`、`GET /backtest/portfolio` |
