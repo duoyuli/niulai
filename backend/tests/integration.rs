@@ -1884,6 +1884,69 @@ async fn data_check_finds_gaps_refetches_and_confirms_suspensions() {
 }
 
 #[tokio::test]
+async fn data_check_stops_at_delisting_date() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let pool = db.pool.clone();
+    let engine = Engine::new(
+        bare_settings("http://127.0.0.1:1", Some("test")),
+        pool.clone(),
+    )
+    .await
+    .unwrap();
+    // 一只股票 01-12 起推断为退市（被吸收合并），供应商之后对它返回 1002：退市日以后不能算缺口，
+    // 否则每次核检都会安排一次注定失败的重取
+    sqlx::query(
+        "INSERT INTO raw.record (dataset_id, rkey, thscode, payload, payload_hash)
+         VALUES ('meta.tickers', '601059.SH', '601059.SH', jsonb_build_object('thscode', '601059.SH', 'asset_type', 'a-share', 'list_date', '2026-01-05'), 'x')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO ref.security (thscode, ticker, name, exchange, board, list_date, first_seen, last_seen, delisted_on)
+         VALUES ('601059.SH', '601059', '信达证券', 'SH', 'main', '2026-01-05', '2026-01-05', '2026-01-11', '2026-01-12')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO ref.trading_day SELECT d::date, 'api' FROM generate_series('2026-01-05'::date, '2026-01-16'::date, '1 day') d WHERE extract(isodow FROM d) < 6")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let run_id: i64 =
+        sqlx::query_scalar("INSERT INTO ops.run (kind) VALUES ('backfill') RETURNING run_id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO mkt.stock_bar_1d (thscode, trade_date, open, high, low, close, volume, amount, run_id)
+         SELECT '601059.SH', cal_date, 10, 10, 10, 10, 100, 1000, $1 FROM ref.trading_day WHERE cal_date < '2026-01-12'",
+    )
+    .bind(run_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    niulai::sync::check::run(&engine, "manual")
+        .await
+        .unwrap()
+        .unwrap();
+    let gaps: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.bar_gap")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let refetch: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM ops.task WHERE dataset_id = 'a_share.bar_1d'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((gaps, refetch), (0, 0), "退市日以后的交易日不应算成缺口");
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn old_tasks_and_call_logs_are_pruned() {
     let Some(db) = TestDb::create().await else {
         eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");

@@ -139,12 +139,15 @@ async fn check_dataset(
     .fetch_all(pool)
     .await?;
 
-    // 每只证券的检查起点：数据集起点和上市日中较晚的；不知道上市日（指数）时从第一条日线开始，一条都没有就不查
+    // 每只证券的检查起点：数据集起点和上市日中较晚的；不知道上市日（指数）时从第一条日线开始，一条都没有就不查。
+    // 终点：已推断退市的证券查到退市日前一天，之后供应商不再认这个代码（1002），算成缺口只会每次核检都重取失败
     let ranges = format!(
         "WITH sec AS (
            SELECT u.thscode,
-                  greatest($2::date, st.base) lo
+                  greatest($2::date, st.base) lo,
+                  least($1::date, coalesce(i.delisted_on - 1, $1::date)) hi
            FROM (SELECT DISTINCT ON (thscode) thscode, list_date FROM ops.v_universe WHERE thscode IS NOT NULL AND ({universe})) u
+           LEFT JOIN ref.instrument i ON i.thscode = u.thscode
            LEFT JOIN LATERAL (SELECT min(b.trade_date) first FROM {table} b WHERE b.thscode = u.thscode) f ON true
            -- 上市日和第一条日线都没有（例如还没上市的新股）时 base 为空，不查；greatest 会忽略空值，所以先单独算
            CROSS JOIN LATERAL (SELECT CASE WHEN $3 THEN coalesce(u.list_date, f.first) ELSE f.first END base) st
@@ -153,8 +156,8 @@ async fn check_dataset(
     // 审计：universe 来自受信任的配置文件 config/datasets.yaml；table 是本文件中的常量
     let (securities, security_days): (i64, Option<i64>) = sqlx::query_as(AssertSqlSafe(format!(
         "{ranges}
-         SELECT count(*), sum((SELECT count(*) FROM ref.trading_day d WHERE d.cal_date BETWEEN s.lo AND $1))::bigint
-         FROM sec s WHERE s.lo IS NOT NULL AND s.lo <= $1"
+         SELECT count(*), sum((SELECT count(*) FROM ref.trading_day d WHERE d.cal_date BETWEEN s.lo AND s.hi))::bigint
+         FROM sec s WHERE s.lo IS NOT NULL AND s.lo <= s.hi"
     )))
     .bind(end)
     .bind(floor)
@@ -166,7 +169,7 @@ async fn check_dataset(
     // 审计：同上
     let gaps: Vec<(String, NaiveDate)> = sqlx::query_as(AssertSqlSafe(format!(
         "{ranges}
-         SELECT s.thscode, d.cal_date FROM sec s JOIN ref.trading_day d ON d.cal_date BETWEEN s.lo AND $1
+         SELECT s.thscode, d.cal_date FROM sec s JOIN ref.trading_day d ON d.cal_date BETWEEN s.lo AND s.hi
          WHERE NOT EXISTS (SELECT 1 FROM {table} b WHERE b.thscode = s.thscode AND b.trade_date = d.cal_date)
          ORDER BY 1, 2"
     )))
