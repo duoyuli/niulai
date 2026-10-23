@@ -43,11 +43,11 @@
 | `GET /securities/{thscode}` | 证券详情：简称历史、本地日线的范围和根数 | 不存在时返回 404 |
 | `GET /securities/{thscode}/fundamentals` | 股票的最近估值历史、三张报表和财务指标；ETF 返回行情范围、供应商前复权标记和基金资料；股票报表同时返回披露日期 | `limit` 默认 90、最大 365（ETF 忽略） |
 | `GET /securities/{thscode}/bars` | 个股或 ETF 日线 | `adjust`（见 [复权参数](#adjust_param)；ETF 只支持 `none` / `qfq` / `hfq`）、`start`、`end`；`limit` 默认 500、最大 10,000，返回范围内**最近**的 N 根，按日期升序 |
-| `GET /backtest/strategy` | 单只股票或 ETF 的选股策略回测，响应结构同均线交叉回测，交易记录带卖出原因 | `strategy_id`、`thscode`（必填），其余同均线交叉回测；规则见 [回测](../domains/backtest.md#rules) |
-| `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金和成本同上；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
-| `GET /backtest/runs` | 查询已保存的回测运行清单和结果摘要 | `strategy_id` 可选，`limit` 默认 50；用于复现实验和比较执行模型。普通用户只能看到不关联账户的运行和自己账户的运行，管理员可看全部 |
-| `GET /backtest/validation-windows` | 生成带 embargo 的滚动训练/测试日期窗口 | `start`、`end`、`train_days`、`test_days`，`embargo_days` 默认 5 |
-| `GET /backtest/strategy-validation` | 对单只证券执行滚动样本外验证 | `strategy_id`、`thscode`、日期区间和训练/测试窗口；结果分别返回训练和测试收益与风险指标 |
+| `GET /backtest/strategy` | 单只股票或 ETF 的选股策略回测：汇总指标、每日账户总值和基准、交易记录（带卖出原因）、运行清单 | `strategy_id`、`thscode`（必填）；`start`、`end`；`capital` 默认 10 万、范围 1000 到 100 亿；成本 `commission_rate`（默认 0.00025）、`min_commission`（默认 5，0 到 100）、`stamp_tax_rate`（默认 0.0005，ETF 固定为 0）、`transfer_fee_rate`、`dividend_tax_rate`、`cash_interest_rate`（默认都是 0），费率都在 0 到 0.01 之间；执行模型 `deal_price`（`open` 默认 / `close` / `vwap`）、`slippage_bps`（默认 0，最大 500）、`participation_rate`（0 到 1）；规则见 [回测](../domains/backtest.md#rules) |
+| `GET /backtest/portfolio` | 全市场组合回测：每天用策略选股，最多同时持有若干只 | `strategy_id`（必填）、`start` 默认结束日前 3 年、`end` 默认最新交易日，区间最长 5 年；`max_positions` 默认 5、范围 1 到 20；资金、成本和执行模型同单只股票回测；组合约束 `max_weight_pct`（单只买入金额最多占期初本金的百分比）、`target_vol_pct`（按信号前 20 日波动率缩小仓位的目标年化波动）、`max_turnover_pct`（单日成交金额占期初本金的上限，超出时放弃后面的买入），都在 0 到 100 之间、默认不限制；最多返回最近 500 笔交易；规则见 [全市场组合回测](../domains/backtest.md#portfolio) |
+| `GET /backtest/runs` | 查询已保存的回测运行清单和结果摘要 | `strategy_id` 可选，`limit` 默认 50、最大 500；用于复现实验和比较执行模型；因子研究的运行（`mode` 为 `factor_test`、`factor_portfolio`）也在其中。普通用户只能看到不关联账户的运行和自己账户的运行，管理员可看全部 |
+| `GET /backtest/validation-windows` | 生成带 embargo 的滚动训练/测试日期窗口 | `start`、`end`、`train_days`、`test_days`，`embargo_days` 默认 5；范围同滚动样本外验证 |
+| `GET /backtest/strategy-validation` | 对单只证券执行滚动样本外验证 | `strategy_id`、`thscode`、`start`、`end`、`train_days`、`test_days`（都必填，单个窗口最长 3,650 天，最多 200 个窗口）、`embargo_days`（默认 5，0 到 365）；本金和成本固定为默认值；结果分别返回训练和测试收益与风险指标 |
 | `GET /research/factors` | 因子目录：口径、类别（价量或财务）、预期方向和依据 | 见 [因子目录](../domains/factor_research.md#catalog) |
 | `GET /research/factor-test` | 因子检验：RankIC、分组收益、多空、换手、衰减、因子相关性、PBO 和 Deflated Sharpe；两个以上因子时额外检验等权合成 | `factors`（必填，逗号分隔的因子 ID）、`start` 默认结束日前 5 年、`end`，区间 90 天到 8 年；`horizon` 5、10 或 20（默认 5）；`quantiles` 3 到 10（默认 5）；`neutralize` 默认 true；`exclude_small_pct` 0 到 50；股票池参数 `boards`、`exclude_st`、`min_price`、`min_amount`、`min_listed_days`；规则见 [因子检验](../domains/factor_research.md#test) |
 | `GET /research/factor-portfolio` | 多因子组合回测：定期按合成得分持有前若干只，返回净值、超额、信息比率、换手、Deflated Sharpe 和最新得分前列 | `factors`（必填，可带权重，例如 `reversal:1,idio_vol:0.5`）、`start` 默认结束日前 3 年、区间最长 5 年；`rebalance` 5 到 60（默认 20）；`top_n` 5 到 100（默认 30）；`buffer` 0 到 2（默认 0.5）；资金和成本同组合回测，`slippage_bps` 默认 10；股票池和预处理参数同因子检验；规则见 [多因子组合回测](../domains/factor_research.md#portfolio) |
@@ -73,12 +73,12 @@
 | `GET /market/overview` | 市场概况：涨跌家数、涨跌停数、涨跌幅中位数、站上 20 日均线的比例 | `date` 默认最新交易日 |
 | `GET /market/sectors` | 板块强弱排名 | `category`（`industry` 默认 / `cn_concept`）、`days` 默认 5、范围 1 到 60、`date`；规则见 [市场环境](../domains/strategies.md#market) |
 | `GET /market/hot` | 今日热点：权威涨停池按连板高度分组、跌停、炸板、封板率等统计；普通用户可看 | `date` 是截止日期，默认最新交易日；每组和每个列表最多 50 只，全部家数在 `*_total`；数据按交易日同步，这一天的数据还没同步时 `available` 为 `false`、`note` 用白话说明原因；口径和空态见 [今日热点](../domains/hotspots.md) |
-| `GET /watchlist` | 当前用户的自选股及诊断（每个用户各自一份）：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast`、`slow`，同均线接口；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
+| `GET /watchlist` | 当前用户的自选股及诊断（每个用户各自一份）：最新收盘、近 1 日和 20 日涨跌、均线状态、最近一次交叉、最近 5 个交易日的信号；按收藏时间倒序 | `fast` 默认 15、`slow` 默认 30，都在 2 到 250 之间且 `fast < slow`；诊断规则见 [自选股诊断](../domains/ma_signals.md#watchlist) |
 | `PUT /watchlist/{thscode}` | 收藏一只股票，重复收藏不报错；返回 204 | 证券不存在时返回 404 |
 | `DELETE /watchlist/{thscode}` | 取消收藏，本来没有收藏也返回 204 | — |
 | `GET /rules/guide` | 设置规则时的辅助：三组风控参考值（适合什么样的账户、怎么设计），以及可勾选的巡检策略 | 见 [选股和风控规则](../domains/accounts.md#rules) |
 | `GET /accounts` | 当前用户的账户：总资产、当日盈亏、已实现盈亏、持仓只数、最新建议的摘要、核对提醒 | 只返回自己的；已实现盈亏见 [撤销流水和已实现盈亏](../domains/accounts.md#undo) |
-| `POST /accounts` | 新建账户（规则用稳健型的参考值），返回 201 和详情，并生成第一份建议 | 请求体 `{name, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
+| `POST /accounts` | 新建账户（规则用均衡型的参考值），返回 201 和详情，并生成第一份建议 | 请求体 `{name, cash?, note?}`；同一用户下重名返回 409，超过 10 个返回 400 |
 | `GET` / `PUT` / `DELETE /accounts/{id}` | 账户详情（持仓带现价、市值、占比和盈亏）；修改名字、规则 `rules`、费率 `fees`、备注；删除（连同持仓、流水和建议） | 别人的账户返回 404（管理员也一样）；`PUT` 的参数范围见 [选股和风控规则](../domains/accounts.md#rules)，之后重新生成建议 |
 | `POST /accounts/{id}/positions/parse` | 识别粘贴的持仓文字，只返回预览 | 请求体 `{text}`，最多 20,000 字；规则见 [持仓](../domains/accounts.md#positions) |
 | `PUT /accounts/{id}/positions` | 校准：整体替换持仓和现金，差异记为校准流水，之后重新生成建议 | 请求体 `{cash, positions: [{thscode, shares, cost_price?, opened_on?}]}`；代码不存在、股数不大于 0、重复时返回 400 |
@@ -96,9 +96,9 @@
 | `POST` / `DELETE /accounts/{id}/advice/{advice_id}/items/{key}/skip` | 不做这一条 / 撤销「不做」 | 已执行的不能撤销 |
 | `GET /accounts/{id}/review` | 最近 180 天的建议之后 5、10、20 个交易日的涨跌和汇总 | 口径见 [建议回看](../domains/accounts.md#review) |
 | `POST /accounts/{id}/backtest` | 用这个账户的规则回测一段时间 | `start`、`end`（两头都包含）：开始日期默认今年 1 月 1 日，结束日期默认最新交易日、晚于它时取最新交易日；最长 5 年，开始不早于结束时返回 400；全市场计算，几十秒到一两分钟；口径见 [规则回测](../domains/accounts.md#rules_backtest) |
-| `GET /accounts/{id}/shadow-orders` | 查看理论订单与实际成交之间的价差、部分成交和取消状态 | `limit` 默认 250；建议生成、执行或跳过后自动更新 |
+| `GET /accounts/{id}/shadow-orders` | 查看理论订单与实际成交之间的价差、部分成交和取消状态 | `limit` 默认 250、最大 1,000；建议生成、执行或跳过后自动更新 |
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
-| `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线 |
+| `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线；指数没有复权，`adjust` 参数会被忽略 |
 | `GET /indices/{thscode}/members` | 指数成分 | `date` 默认今天；历史成分从开始采集那天起才有 |
 | `GET /datasets` | 数据集列表（只含配置中现有的数据集）：中文名、分类、一句话说明、更新频率和所属同步计划（`schedule`：`daily`、`weekly`、`monthly`、`report_season`、`manual`）、是否只有当天值、开关、最近完成时间、未完成任务数、没有解决的失败任务数、历史回补的进度 | — |
 | `GET /sync/health` | 同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口（能否补回）、没有解决的失败（白话原因）、历史回补的进度和剩余时间 | 规则见 [完整性核对与兜底补偿](../architecture/sync_pipeline.md#audit) |

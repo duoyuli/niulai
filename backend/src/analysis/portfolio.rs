@@ -38,7 +38,7 @@ pub struct Params {
 
 #[derive(Clone, Copy, Debug, Serialize, ToSchema, Default)]
 pub struct PortfolioRisk {
-    /// 单票最多占总资产的百分比；为空表示不额外限制。
+    /// 单票买入金额最多占期初本金的百分比；为空表示不额外限制。
     pub max_weight_pct: Option<f64>,
     /// 目标年化波动率；为空表示等额分配。
     pub target_vol_pct: Option<f64>,

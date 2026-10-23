@@ -1,6 +1,6 @@
 # 均线与交叉信号
 
-本文说明均线的计算口径、上穿和下穿的判定规则，以及自选股诊断的范围。价格口径的背景见 [复权](price_adjustment.md)，接口参数见 [REST API](../interfaces/rest_api.md#endpoints)。计算在 `backend/src/analysis/ma.rs`。[交叉判定](#cross_rule) 是全项目通用的：条件里所有「上穿」「下穿」都用它。自选股诊断和均线交叉 [回测](backtest.md) 用同一套计算；K 线上的均线是叠加的指标，见 [选股策略与诊断](strategies.md)。为什么不在 SQL 中计算，见 [ADR：指标在 Rust 中计算](../decisions/indicator_compute.md)。
+本文说明均线的计算口径、上穿和下穿的判定规则，以及自选股诊断的范围。价格口径的背景见 [复权](price_adjustment.md)，接口参数见 [REST API](../interfaces/rest_api.md#endpoints)。计算在 `backend/src/analysis/ma.rs`。[交叉判定](#cross_rule) 是全项目通用的：条件里所有「上穿」「下穿」都用它。自选股诊断直接用 `ma.rs` 计算；内置的「均线交叉」策略和 [回测](backtest.md) 里的均线交叉由条件「`ma(fast)` 上穿 `ma(slow)`」表达，判定规则相同；K 线上的均线是叠加的指标，见 [选股策略与诊断](strategies.md)。为什么不在 SQL 中计算，见 [ADR：指标在 Rust 中计算](../decisions/indicator_compute.md)。
 
 <a id="ma_definition"></a>
 ## 均线口径
@@ -9,7 +9,7 @@
 - 均线：简单移动平均。N 日均线是当天及之前共 N 根 K 线收盘价的平均值；停牌日没有 K 线，不计入。按滑动窗口加补偿求和计算，与逐个相加求平均的相对差小于 1e-13。
 - 周期：快线 `fast` 默认 15，慢线 `slow` 默认 30。两者都必须在 2 到 250 之间，且 `fast < slow`。
 - 只输出 K 线数量达到 `slow` 根之后的点；上市初期不足 `slow` 根时，没有均线和信号。
-- 查询指定 `start` 时，均线仍然用 `start` 之前的历史计算，只是不返回 `start` 之前的点；指定 `end` 时，只用 `end` 及之前的数据。
+- 指标接口（`GET /securities/{thscode}/indicator`）指定 `start` 时，均线仍然用 `start` 之前的历史计算，只是不返回 `start` 之前的点；指定 `end` 时，只用 `end` 及之前的数据。
 
 <a id="cross_rule"></a>
 ## 交叉判定

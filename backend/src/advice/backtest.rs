@@ -1,5 +1,5 @@
-//! 规则回测：假设过去一段时间每天都按一组规则操作，账户总值怎么变。参考值的回测结果不参与账户建议，
-//! 账户可以用自己的规则现算一次。和每日建议用同一套选股优先级和风控规则：
+//! 规则回测：假设过去一段时间每天都按一组规则操作，账户总值怎么变。只在用户主动发起时用账户自己的规则现算，
+//! 结果不参与账户建议。和每日建议用同一套选股优先级和风控规则：
 //! - 候选：参考的策略当天的买点（和巡检相同的买卖点规则）；启用 `history_check` 时，按信号日以前的数据检查各个回看周期；
 //! - 未启用 `history_check` 时，所有勾选策略都可提供候选；启用后只有通过回看的策略才计入 `min_picks`；
 //! - 排序：同时选中的策略数 → 成交额，至少 `min_picks` 个；
@@ -18,7 +18,7 @@ use utoipa::ToSchema;
 
 use crate::account::history::{self, HistorySeries};
 use crate::account::lots::{Fees, round2};
-use crate::account::rules::{Preset, Rules, WeakMarket};
+use crate::account::rules::{Rules, WeakMarket};
 use crate::analysis::backtest::{Costs, Side, TRAILING_ATR_PERIOD};
 use crate::analysis::indicators::{Frame, IndicatorId, IndicatorRef};
 use crate::analysis::market::{self, calendar_days_for};
@@ -26,7 +26,7 @@ use crate::analysis::points;
 use crate::analysis::prices;
 use crate::analysis::strategy::Definition;
 
-/// 判断有效策略往前看几年；参考值的回测区间也是这么长
+/// 买卖点从回测开始日之前几年空仓起步推算，开始日那天的持有状态才和巡检一致；只取开始日之后的买点
 pub const YEARS: i64 = 3;
 
 /// 回测区间最长几年
@@ -118,7 +118,7 @@ pub struct RulesBacktest {
     pub manifest: crate::analysis::research::BacktestManifest,
     /// 每周一个点
     pub equity: Vec<RulesEquityPoint>,
-    /// 全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，存下来的结果里没有这一项
+    /// 全部交易，买入日新的在前；还持有的也在里面
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trades: Vec<RulesTrade>,
 }
@@ -210,7 +210,7 @@ pub async fn run(
         .and_then(|c| c.windows.iter().map(|w| w.start(start)).min())
         .unwrap_or(edge_from);
     let lo = edge_from.min(history_start) - chrono::Duration::days(calendar_days_for(warmup));
-    // 权威涨跌停池：参考值回测里的买卖点同样以供应商的名单为准
+    // 权威涨跌停池：规则回测里的买卖点同样以供应商的名单为准
     let limits = crate::analysis::limit_pool::LimitPool::load(pool, lo, end).await?;
     let events = if rules.history_check.is_some() {
         prices::corp_events_for_window(pool, lo, end).await?
@@ -787,57 +787,10 @@ fn simulate(
     }
 }
 
-/// 三组参考值的回测：仅供用户主动研究，结果存在 `app.preset_stat`，不由账户建议流程读取。
-pub async fn refresh_presets(pool: &PgPool) -> anyhow::Result<()> {
-    let defs = crate::analysis::screener::screening_strategies(pool).await?;
-    for preset in Preset::ALL {
-        let rules = preset.rules();
-        let started = std::time::Instant::now();
-        let Some(latest) = market::resolve_date(pool, None).await? else {
-            return Ok(());
-        };
-        let start = latest
-            .checked_sub_months(chrono::Months::new(12 * YEARS as u32))
-            .unwrap_or(latest);
-        let Some(mut r) = run(pool, &rules, &defs, start, latest, Fees::default()).await? else {
-            continue;
-        };
-        // 参考值只展示汇总，不保存几百笔交易记录
-        r.trades.clear();
-        sqlx::query(
-            "INSERT INTO app.preset_stat (preset, rules_hash, end_date, result) VALUES ($1, $2, $3, $4)
-             ON CONFLICT (preset) DO UPDATE SET rules_hash = EXCLUDED.rules_hash, end_date = EXCLUDED.end_date, result = EXCLUDED.result, computed_at = now()",
-        )
-        .bind(preset.key())
-        .bind(super::stats::rules_hash(&rules))
-        .bind(r.summary.end)
-        .bind(serde_json::to_value(&r)?)
-        .execute(pool)
-        .await?;
-        tracing::info!(
-            preset = preset.key(),
-            total_return = r.summary.total_return,
-            max_drawdown = r.summary.max_drawdown,
-            ms = started.elapsed().as_millis() as u64,
-            "参考值回测完成"
-        );
-    }
-    Ok(())
-}
-
-pub async fn load_presets(pool: &PgPool) -> anyhow::Result<HashMap<String, RulesBacktest>> {
-    let rows: Vec<(String, serde_json::Value)> =
-        sqlx::query_as("SELECT preset, result FROM app.preset_stat")
-            .fetch_all(pool)
-            .await?;
-    rows.into_iter()
-        .map(|(k, v)| Ok((k, serde_json::from_value(v)?)))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::rules::Preset;
 
     /// 两只股票、10 天：A 只被策略 1 选中、一路上涨；B 被两个策略选中、之后跌破止损。开盘价等于前一天收盘价
     fn stocks() -> (Vec<Stock>, Vec<NaiveDate>) {

@@ -37,7 +37,7 @@ niulai 是面向 A 股股票和交易所 ETF 的诊断工作台。数据来自�
 | `.agents/skills/project-doc/` | 维护本文档库的 skill（`.claude/skills/project-doc` 是指向它的符号链接） |
 | `AGENTS.md` | 仓库说明与工作约定（`CLAUDE.md` 是指向它的符号链接） |
 
-后端模块：`sync`（同步框架和领域事件）、`bootstrap`（应用初始化与事件编排）、`vendor`（供应商客户端与限速）、`analysis`（指标、信号、策略、巡检、诊断、回测）、`account`（账户、持仓、流水和规则）、`advice`（调仓建议、建议回看和规则回测）、`api`（REST API 和页面）、`auth`（用户、密码和登录会话）、`instrument`（股票与 ETF 的跨资产抽象）、`operation_log`（操作日志）、`upgrader`（一键升级助手），以及 `config`、`db`、`time`、`version` 等基础模块。
+后端模块：`sync`（同步框架和领域事件）、`bootstrap`（应用初始化与事件编排）、`vendor`（供应商客户端与限速）、`analysis`（指标、信号、策略、巡检、诊断、回测）、`account`（账户、持仓、流水和规则）、`advice`（调仓建议、建议回看和规则回测）、`api`（REST API 和页面）、`auth`（用户、密码和登录会话）、`instrument`（股票与 ETF 的跨资产抽象）、`operation_log`（操作日志）、`upgrader`（一键升级助手）、`setup`（首次登录引导）、`server`（常驻服务的组件编排）、`cache`（Redis 共享读取缓存），以及 `config`、`db`、`telemetry`、`time`、`version` 等基础模块。
 
 <a id="processes"></a>
 ## 进程
@@ -48,6 +48,6 @@ niulai 是面向 A 股股票和交易所 ETF 的诊断工作台。数据来自�
 | --- | --- |
 | `niulai serve` | 常驻服务：一个进程同时运行 REST API、页面、同步任务执行和定时调度，启动时执行数据库迁移 |
 | `niulai upgrader` | 一键升级助手，在 Docker 部署的 upgrader 容器中运行，不连数据库，见 [一键升级](operations/runbook.md#one_click_upgrade) |
-| 其他子命令 | 运维命令，执行完就退出：迁移、规划运行、在前台执行任务、数据核检、查看状态、重算复权、列出用户和重置密码、导出 OpenAPI（`niulai --help`） |
+| 其他子命令 | 运维命令，执行完就退出：迁移（`migrate`）、校验并同步数据集注册表（`registry`）、规划运行（`plan`）、立即发起每日增量（`daily`）、在前台执行任务（`work`）、数据核检（`check`）、重算复权（`recompute`）、查看状态（`status`）、列出用户和重置密码（`user`）、导出 OpenAPI（`openapi`），见 `niulai --help` |
 
 数据、任务队列和进度都在 PostgreSQL 中，不依赖其他服务。同一时刻只有一个进程执行同步任务，限速在进程内，见 [ADR：单进程服务](decisions/single_process_service.md)。

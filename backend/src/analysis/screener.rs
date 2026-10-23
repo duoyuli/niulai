@@ -2,7 +2,7 @@
 //! 全市场的日线按股票逐只读入，每只股票上依次判断所有策略，所以同时运行多个策略的耗时和运行一个差不多。
 //! 规则见 docs/domains/strategies.md#screening。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use chrono::NaiveDate;
 use serde::Serialize;
@@ -477,25 +477,4 @@ pub async fn sync_builtin_strategies(pool: &PgPool) -> anyhow::Result<()> {
     sqlx::query("UPDATE app.strategy SET builtin_key = NULL WHERE builtin_key IS NOT NULL AND NOT (builtin_key = ANY($1))").bind(&keys).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
-}
-
-/// 内置策略的编号，按模板 key
-pub async fn builtin_ids(pool: &PgPool) -> sqlx::Result<HashMap<String, i64>> {
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT builtin_key, strategy_id FROM app.strategy WHERE builtin_key IS NOT NULL",
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.into_iter().collect())
-}
-
-/// 已保存的巡检结果中，每只股票最近入选了哪些策略（个股诊断用）
-pub async fn latest_hits_for(pool: &PgPool, code: &str) -> sqlx::Result<HashMap<i64, NaiveDate>> {
-    let rows: Vec<(i64, NaiveDate)> = sqlx::query_as(
-        "SELECT r.strategy_id, max(r.trade_date) FROM app.screen_hit h JOIN app.screen_run r USING (run_id) WHERE h.thscode = $1 GROUP BY 1",
-    )
-    .bind(code)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.into_iter().collect())
 }

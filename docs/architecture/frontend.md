@@ -26,12 +26,15 @@
 | `src/components/DiagnosisCard.tsx`、`SignalChip.tsx` | 个股诊断卡片；信号标签 |
 | `src/components/SignalStats.tsx`、`StrategyNav.tsx` | 信号的过去表现和今天出现的股票；「策略」栏目下策略、信号、指标、因子研究四页的切换 |
 | `src/components/FactorCharts.tsx`、`src/lib/factors.ts` | 因子研究的多曲线图（各组净值）；选中因子和权重在 URL 里的写法、结论的颜色 |
-| `src/components/backtest.tsx` | 回测的共用部分：交易成本、结果展示、规则说明 |
+| `src/components/backtest.tsx`、`BacktestTrades.tsx`、`longTask.tsx` | 回测的共用部分：交易成本、结果展示、规则说明；账户规则回测的交易记录；长任务的等待和取消 |
+| `src/components/AdviceView.tsx`、`RulesEditor.tsx`、`PositionsEditor.tsx`、`AccountEquityChart.tsx`、`TodayAccounts.tsx` | 账户：调仓建议和理由、选股和风控规则编辑、持仓录入与粘贴识别、净值曲线、首页的账户卡片 |
+| `src/components/UserMenu.tsx`、`AdminOnly.tsx`、`RouteError.tsx` | 用户名的悬浮菜单；管理员页面的拦截说明；页面出错时的兜底 |
 | `src/components/DataCheck.tsx` | 同步页的数据核检卡片 |
 | `src/components/SecuritySearch.tsx`、`WatchButton.tsx` | 股票搜索框；收藏星标 |
 | `src/lib/strategy.ts`、`tone.ts`、`runs.ts` | 名称模板和条件的白话（与后端写法一致）；信号偏多、偏空、中性的样式；一次同步各批的合计 |
+| `src/lib/accounts.ts`、`csv.ts`、`queryInvalidation.ts` | 账户的金额格式，建议动作和流水类型的中文名与颜色；导出 CSV；记账、校准等操作之后要刷新的查询 |
 | `src/lib/format.ts`、`labels.ts` | 数字和日期格式化、涨跌颜色；后端枚举值的中文名 |
-| `src/hooks/` | URL 状态（`useSearchState`）、防抖、深色模式、自选股列表 |
+| `src/hooks/` | URL 状态（`useSearchState`）、防抖、深色模式、是否管理员（`useIsAdmin`）、自选股列表 |
 | `src/api/fetcher.ts` | 所有请求经过的函数，把错误响应转为 `ApiError` |
 | `src/api/generated/` | orval 生成的类型和 hooks，不手工修改 |
 | `openapi.json` | 后端导出的接口规范，生成客户端的输入，提交到版本库 |
@@ -91,7 +94,7 @@
 - **URL 参数：** 搜索词、复权口径、区间、叠加项等写在查询参数里，刷新或分享后保持；等于默认值的参数不写入 URL。
 - **K 线指标：** 「指标」菜单中的均线提供 15、20、30、60 日四个常用周期，其余带周期的指标先列目录默认周期；需要时可以在指标详情中查看定义。
 - **大数和时间：** 成交额、成交量用「万」「亿」，成交量单位是股；时间按上海时间显示，见 [时区](../interfaces/configuration.md#time_zone)。
-- **长任务要点按钮才算：** 组合回测、信号的过去表现这类要算全市场几年日线的操作，改参数不会自动重算，点按钮才开始；计算中显示已等待秒数和「取消」，取消会中断请求，改参数时保留上一次的结果并提示参数已改。单只股票回测只要几十毫秒，仍然改参数就自动重算。实现见 `src/components/longTask.tsx`。
+- **长任务要点按钮才算：** 组合回测、账户规则回测、信号的过去表现、因子检验和多因子组合这类要算全市场几年日线的操作，改参数不会自动重算，点按钮才开始；计算中显示已等待秒数和「取消」，取消会中断请求，改参数时保留上一次的结果并提示参数已改。单只股票回测只要几十毫秒，仍然改参数就自动重算。实现见 `src/components/longTask.tsx`。
 - **回测结果可以导出：** 单只股票回测、组合回测、账户规则回测的交易记录都有「下载 CSV」，导出的文件带 UTF-8 BOM，Excel 直接打开中文不乱码。实现见 `src/lib/csv.ts`。
 - **面向非专业用户：** 术语（复权、均线交叉、成分股等）都附一句说明。
 

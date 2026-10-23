@@ -337,7 +337,7 @@ pub async fn bar_count_between(
 /// 不限制的话几个页面同时打开就会占满数据库连接和 CPU，拖慢接口和同步任务；多出来的排队等待
 pub const MARKET_SCANS: usize = 2;
 static SCAN_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MARKET_SCANS);
-/// 后台计算（每日巡检、调仓建议、每周的策略统计和参考值回测）另有一个槽位：页面上同时开几个回测，也不会让它们排不上
+/// 后台计算（每日巡检、调仓建议）另有一个槽位：页面上同时开几个回测，也不会让它们排不上
 static BACKGROUND_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 tokio::task_local! {
@@ -466,33 +466,6 @@ pub fn run_cpu<R>(f: impl FnOnce() -> R) -> R {
     } else {
         f()
     }
-}
-
-/// 前复权收盘价序列，按股票分组、日期升序
-pub type CloseSeries = HashMap<String, Vec<(NaiveDate, f64)>>;
-
-/// 指定股票各自最近 n 根前复权收盘价
-pub async fn recent_closes(pool: &PgPool, codes: &[String], n: i64) -> sqlx::Result<CloseSeries> {
-    let rows: Vec<(String, NaiveDate, f64)> = sqlx::query_as(
-        "SELECT c.code, x.trade_date, x.close FROM unnest($1::text[]) AS c(code)
-         CROSS JOIN LATERAL (SELECT trade_date, close FROM mkt.v_stock_bar_qfq v WHERE v.thscode = c.code
-                             ORDER BY trade_date DESC LIMIT $2) x
-         ORDER BY c.code, x.trade_date",
-    )
-    .bind(codes)
-    .bind(n)
-    .fetch_all(pool)
-    .await?;
-    Ok(group(rows))
-}
-
-/// 按代码分组；输入已按 (代码, 日期) 排序
-fn group(rows: Vec<(String, NaiveDate, f64)>) -> CloseSeries {
-    let mut out: CloseSeries = HashMap::new();
-    for (code, date, close) in rows {
-        out.entry(code).or_default().push((date, close));
-    }
-    out
 }
 
 /// 一次除权除息：每股现金分红（税前）和每股送转股

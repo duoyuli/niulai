@@ -356,7 +356,7 @@ async fn list_accounts(
     Ok(Json(out))
 }
 
-/// 新建账户：名字、现在的现金，规则用稳健型的参考值（之后在高级设置里改）。持仓之后添加或粘贴
+/// 新建账户：名字、现在的现金，规则用均衡型的参考值（之后在设置里改）。持仓之后添加或粘贴
 #[utoipa::path(post, path = "/accounts", tag = "accounts", request_body = NewAccount,
     responses((status = 201, description = "已创建", body = AccountDetail),
               (status = 400, description = "名字不合法、现金为负或账户太多", body = crate::error::ErrorBody),

@@ -15,6 +15,6 @@ export interface RulesBacktest {
   equity: RulesEquityPoint[];
   manifest: BacktestManifest;
   summary: RulesBacktestSummary;
-  /** 全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，存下来的结果里没有这一项 */
+  /** 全部交易，买入日新的在前；还持有的也在里面 */
   trades?: RulesTrade[];
 }

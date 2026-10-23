@@ -2,7 +2,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router";
 import type { EquityPoint, PortfolioResult, Summary, Trade } from "../api/generated/model";
-import { useListStrategies } from "../api/generated/strategy/strategy";
 import { downloadCsv } from "../lib/csv";
 import { fmtBig, fmtInt, fmtPercent, fmtPrice, upDownClass } from "../lib/format";
 import { EXIT_REASONS } from "../lib/strategy";
@@ -99,23 +98,6 @@ export function Loaded<T>({
       </Card>
     );
   return <>{children(query.data)}</>;
-}
-
-export function StrategySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const list = useListStrategies();
-  const items = list.data ?? [];
-  return (
-    <Field label="策略">
-      <select className={`${inputClass} w-48`} value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">{list.isPending ? "加载中…" : items.length ? "选择一个策略" : "还没有策略"}</option>
-        {items.map((x) => (
-          <option key={x.strategy_id} value={x.strategy_id}>
-            {x.name}
-          </option>
-        ))}
-      </select>
-    </Field>
-  );
 }
 
 /** 数字输入：失焦或回车时提交 */

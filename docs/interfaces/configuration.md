@@ -8,7 +8,7 @@
 优先级从低到高：
 
 1. 内置默认值。
-2. `.env` 文件：从当前目录开始，依次查找 `.env` 和 `backend/.env`，找不到就到上一级目录继续找，最多向上 3 层。所以在仓库根目录或 `backend/` 下运行都能读到 `backend/.env`。
+2. `.env` 文件：从当前目录开始，依次查找 `.env` 和 `backend/.env`，找不到就到上一级目录继续找，一共查 3 层（当前目录和往上两层）。所以在仓库根目录或 `backend/` 下运行都能读到 `backend/.env`。
 3. 进程环境变量，覆盖 `.env` 中的同名项。
 
 `.env` 每行是 `KEY=VALUE`；忽略空行和 `#` 开头的注释，去掉值两侧的引号。模板是 `backend/.env.example`。`.env` 含密码和 API Key，不提交到版本库；生产环境用部署平台的环境变量或密钥管理注入。
@@ -54,7 +54,7 @@
 | `HOSTNAME` | 否 | `local` | 用于生成执行者标识（`ops.task.locked_by`） |
 | `NIULAI_TEST_DATABASE_URL` | 仅测试 | — | 集成测试使用的、有建库权限的连接串，见 [运维手册](../operations/runbook.md#testing) |
 
-启动时校验：缺少 `DATABASE_URL`、并发或限速为 0、调度时间格式不对，都会让程序报错退出。没有 API Key 不是错误：服务照常启动，同步暂停，直到在网页上配置。
+启动时校验：缺少 `DATABASE_URL`、并发或限速为 0，都会让程序报错退出。同步时间保存在数据库（`app.setting` 的 `sync_schedule`），在同步页修改时校验，不在启动时检查。没有 API Key 不是错误：服务照常启动，同步暂停，直到在网页上配置。
 
 <a id="deploy_env"></a>
 ## 部署配置
@@ -86,5 +86,5 @@ Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.examp
 | `frontend/vite.config.ts` | Vite 配置；开发时把 `/api` 转发到 `NIULAI_API_URL`（默认 `http://127.0.0.1:8080`） |
 | `deploy/Dockerfile` | 镜像构建：先构建前端，再编译后端，构建上下文是仓库根目录（`.dockerignore` 在根目录） |
 | `.github/workflows/ci.yml` | CI：PR 和推送到 `main` 只检查代码，推送 `v*` 标签时才构建 amd64、arm64 镜像并推送到 GHCR，见 [CI：构建镜像](../operations/runbook.md#release_image) |
-| `deploy/compose.yml` | Docker 部署：内置 PostgreSQL、niulai 和一键升级助手 upgrader（`niulai upgrader`，见 [一键升级](../operations/runbook.md#one_click_upgrade)），配置读取 `deploy/.env` |
+| `deploy/compose.yml` | Docker 部署：内置 PostgreSQL、Redis（共享读取缓存）、niulai 和一键升级助手 upgrader（`niulai upgrader`，见 [一键升级](../operations/runbook.md#one_click_upgrade)），配置读取 `deploy/.env` |
 | `deploy/.env`、`deploy/.env.example` | Docker 部署的配置和模板，见 [部署配置](#deploy_env)；`.env` 含密码，不提交 |

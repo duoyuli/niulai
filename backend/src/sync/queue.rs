@@ -136,19 +136,6 @@ impl TaskQueue {
         Ok(n > 0)
     }
 
-    /// Fence side effects after a lease is lost or the task is requeued.
-    pub async fn assert_owned(&self, task_id: i64) -> anyhow::Result<()> {
-        let owned: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM ops.task WHERE task_id = $1 AND locked_by = $2 AND status = 'running')",
-        )
-        .bind(task_id)
-        .bind(&self.worker_id)
-        .fetch_one(&self.pool)
-        .await?;
-        anyhow::ensure!(owned, "任务租约已失效：{task_id}");
-        Ok(())
-    }
-
     /// 任务结束，同时累加所属运行的完成数（运行结束时会按任务表重新统计）
     pub async fn finish(
         &self,

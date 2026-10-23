@@ -12,7 +12,6 @@ pub mod backtest;
 pub mod generate;
 pub mod inputs;
 pub mod review;
-pub mod stats;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;

@@ -36,7 +36,7 @@
         "tags": [
           "accounts"
         ],
-        "summary": "新建账户：名字、现在的现金，规则用稳健型的参考值（之后在高级设置里改）。持仓之后添加或粘贴",
+        "summary": "新建账户：名字、现在的现金，规则用均衡型的参考值（之后在设置里改）。持仓之后添加或粘贴",
         "operationId": "create_account",
         "requestBody": {
           "content": {
@@ -10712,7 +10712,7 @@
             "items": {
               "$ref": "#/components/schemas/RulesTrade"
             },
-            "description": "全部交易，买入日新的在前；还持有的也在里面。参考值的回测不保存交易记录，存下来的结果里没有这一项"
+            "description": "全部交易，买入日新的在前；还持有的也在里面"
           }
         }
       },

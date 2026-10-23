@@ -183,7 +183,7 @@ export const getCreateAccountUrl = () => {
 }
 
 /**
- * @summary 新建账户：名字、现在的现金，规则用稳健型的参考值（之后在高级设置里改）。持仓之后添加或粘贴
+ * @summary 新建账户：名字、现在的现金，规则用均衡型的参考值（之后在设置里改）。持仓之后添加或粘贴
  */
 export const createAccount = async (newAccount: NewAccount, options?: Parameters<typeof apiFetch>[1]): Promise<AccountDetail> => {
 
@@ -249,7 +249,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type CreateAccountMutationVariables = {data: NewAccount}
 
     /**
- * @summary 新建账户：名字、现在的现金，规则用稳健型的参考值（之后在高级设置里改）。持仓之后添加或粘贴
+ * @summary 新建账户：名字、现在的现金，规则用均衡型的参考值（之后在设置里改）。持仓之后添加或粘贴
  */
 export const useCreateAccount = <TError = ErrorBody,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAccount>>, TError,CreateAccountMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}

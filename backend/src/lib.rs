@@ -2,7 +2,8 @@
 //!
 //! - `sync`：通用同步框架。读取 `config/datasets.yaml`，规划任务、执行请求、写入 PostgreSQL。
 //! - `vendor`：同花顺金融数据服务（fuyao）客户端与全局限速。
-//! - `analysis`：均线与交叉信号、全市场扫描、策略回测。
+//! - `analysis`：指标、信号、策略与巡检、诊断、回测、因子研究。
+//! - `account`、`advice`：账户、持仓、流水，每日调仓建议与规则回测。
 //! - `api`：对外的 REST API（Axum + utoipa）。
 //! - `server`：常驻服务，在一个进程中运行 API、任务执行和定时调度。
 //! - `setup`：首次登录引导，在网页上配置 API Key。

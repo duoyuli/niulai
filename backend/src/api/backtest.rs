@@ -1,5 +1,5 @@
-//! 回测接口：选股策略（单只股票）和选股策略（全市场组合）。
-//! 回测不保存结果，每次按参数重新计算。规则见 docs/domains/backtest.md。
+//! 回测接口：选股策略（单只股票）、选股策略（全市场组合）、滚动样本外验证和运行记录。
+//! 每次按参数重新计算，不缓存结果；汇总和运行清单写入 `ops.backtest_run`。规则见 docs/domains/backtest.md。
 
 use std::collections::BTreeMap;
 

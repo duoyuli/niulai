@@ -12,19 +12,7 @@ use sqlx::PgPool;
 use super::spec::{DatasetSpec, Partition};
 
 // @project-doc docs/architecture/sync_pipeline.md#record_writes
-/// 任务成功后推进游标
-pub async fn advance(
-    pool: &PgPool,
-    spec: &DatasetSpec,
-    task_id: i64,
-    vars: &Map<String, Value>,
-) -> anyhow::Result<()> {
-    let mut tx = pool.begin().await?;
-    advance_in_tx(&mut tx, spec, task_id, vars).await?;
-    tx.commit().await?;
-    Ok(())
-}
-
+/// 任务成功后，在写入记录的同一个事务里推进游标
 pub async fn advance_in_tx(
     conn: &mut sqlx::PgConnection,
     spec: &DatasetSpec,

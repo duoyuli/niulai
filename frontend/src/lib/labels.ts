@@ -117,13 +117,6 @@ export function runSource(kind: string, params: unknown): string {
   }
 }
 
-export const PRIORITIES: Record<string, string> = {
-  P0: "P0 核心",
-  P1: "P1 重要",
-  P2: "P2 补充",
-  P3: "P3 可选",
-};
-
 /** 财务指标接口返回的 index_id 中文名。供应商不同版本会给成长指标加 calculate_ 前缀，统一映射到同一个展示名。 */
 export const FINANCIAL_INDICATOR_NAMES: Record<string, string> = {
   total_assets_growth_ratio: "总资产增长率",
