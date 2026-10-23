@@ -109,13 +109,9 @@ pub async fn review(pool: &PgPool, account_id: i64) -> anyhow::Result<Review> {
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
+    // 分析价格（股票等比前复权、ETF 供应商前复权）只从 mkt.v_analysis_bar 读
     let series: Vec<(String, NaiveDate, f64, f64)> = sqlx::query_as(
-        "SELECT thscode, trade_date, open::float8, close::float8
-         FROM mkt.v_stock_bar_qfq
-         WHERE thscode = ANY($1) AND trade_date >= $2
-         UNION ALL
-         SELECT thscode, trade_date, open::float8, close::float8
-         FROM mkt.etf_bar_1d
+        "SELECT thscode, trade_date, q_open, q_close FROM mkt.v_analysis_bar
          WHERE thscode = ANY($1) AND trade_date >= $2
          ORDER BY thscode, trade_date",
     )

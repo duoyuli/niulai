@@ -1,7 +1,6 @@
-//! 因子研究接口：因子目录、因子检验、多因子组合回测。只计算、不改业务数据；每次运行写入 `ops.backtest_run`，
-//! 用于统计试过多少组配置。规则见 docs/domains/factor_research.md。
-
-use std::collections::HashMap;
+//! 因子研究接口：因子目录、因子检验、多因子组合回测。这里只把查询参数转换成类型化的配置
+//! （`analysis::research_run::FactorConfig`），执行、运行记录和试验次数在 `analysis::research_run`。
+//! 规则见 docs/domains/factor_research.md。
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -13,14 +12,22 @@ use utoipa_axum::routes;
 
 use super::AppState;
 use crate::analysis::costs::Costs;
-use crate::analysis::factor_lab::{
-    self, FactorPortfolioOutcome, FactorTestOutcome, PortfolioParams, Prep, Spec, TestParams,
-};
+use crate::analysis::factor_lab::{self, FactorPortfolioOutcome, FactorTestOutcome, Prep};
 use crate::analysis::factors::{self, FactorId, FactorInfo};
-use crate::analysis::research::{self, RunManifest};
+use crate::analysis::market;
+use crate::analysis::research::RunManifest;
+use crate::analysis::research_run::{self, FactorConfig, RunError};
 use crate::analysis::universe::Universe;
-use crate::analysis::{market, securities};
 use crate::error::{ApiError, ApiResult};
+
+impl From<RunError> for ApiError {
+    fn from(e: RunError) -> Self {
+        match e {
+            RunError::NoData(m) => ApiError::BadRequest(m.into()),
+            RunError::Internal(e) => ApiError::Internal(e),
+        }
+    }
+}
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -170,78 +177,6 @@ async fn range(
     Ok((start, end))
 }
 
-/// 配置的可复现描述，写入运行记录并计算哈希
-#[derive(Serialize, ToSchema, Clone)]
-pub struct FactorConfig {
-    pub factors: Vec<FactorId>,
-    pub weights: Vec<f64>,
-    pub neutralize: bool,
-    pub exclude_small_pct: f64,
-    /// 股票池的白话描述
-    pub universe: Vec<String>,
-    /// 检验的持有期或组合的调仓间隔（交易日）
-    pub horizon: usize,
-    /// 组合持有只数；因子检验为空
-    pub top_n: Option<usize>,
-    pub buffer: Option<f64>,
-}
-
-async fn record(
-    pool: &sqlx::PgPool,
-    mode: &str,
-    start: NaiveDate,
-    end: NaiveDate,
-    manifest: &RunManifest,
-    summary: &impl Serialize,
-) -> ApiResult<()> {
-    sqlx::query(
-        "INSERT INTO ops.backtest_run (mode, start_date, end_date, definition_hash, manifest, summary)
-         VALUES ($1,$2,$3,$4,$5,$6)",
-    )
-    .bind(mode)
-    .bind(start)
-    .bind(end)
-    .bind(&manifest.definition_hash)
-    .bind(serde_json::to_value(manifest).map_err(|e| ApiError::Internal(e.into()))?)
-    .bind(serde_json::to_value(summary).map_err(|e| ApiError::Internal(e.into()))?)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-/// 运行清单：配置哈希、试验次数、派生数据版本、覆盖范围和已知偏差
-async fn run_manifest(
-    s: &AppState,
-    config: &FactorConfig,
-    start: NaiveDate,
-    end: NaiveDate,
-    kind: &str,
-    trials: u64,
-) -> ApiResult<RunManifest> {
-    let versions: Vec<(String, String)> =
-        sqlx::query_as("SELECT name, updated_at::text FROM ops.derived_version ORDER BY name")
-            .fetch_all(&s.pool)
-            .await?;
-    let (instruments, observed_bars): (i64, i64) = sqlx::query_as(
-        "SELECT count(DISTINCT thscode), count(*) FROM mkt.stock_bar_1d WHERE trade_date BETWEEN $1 AND $2",
-    )
-    .bind(start)
-    .bind(end)
-    .fetch_one(&s.pool)
-    .await?;
-    Ok(RunManifest {
-        definition_hash: research::definition_hash(config),
-        data_start: start,
-        data_end: end,
-        kind: kind.into(),
-        trial_count: trials,
-        derived_versions: versions.into_iter().collect(),
-        instruments: instruments.max(0) as u64,
-        observed_bars: observed_bars.max(0) as u64,
-        bias: "survivorship_biased:no_history_before_collection;current_industry;fundamentals_at_statutory_deadline".into(),
-    })
-}
-
 /// 成本参数：费率在 0 到 0.01 之间，最低佣金 0 到 100 元，滑点 0 到 500 基点
 fn costs(q: &FactorPortfolioQuery) -> ApiResult<Costs> {
     let d = Costs::default();
@@ -275,31 +210,6 @@ fn costs(q: &FactorPortfolioQuery) -> ApiResult<Costs> {
         ));
     }
     Ok(c)
-}
-
-/// 同一模式下此前试过多少组不同配置（按配置哈希去重，含这一次），以及各组最近一次的每期 Sharpe
-async fn trials(
-    s: &AppState,
-    mode: &str,
-    hash: &str,
-    sharpe_path: Option<&str>,
-) -> ApiResult<(u64, Vec<f64>)> {
-    let rows: Vec<(String, Option<f64>)> = sqlx::query_as(
-        "SELECT DISTINCT ON (definition_hash) definition_hash, (summary #>> $2::text[])::float8
-         FROM ops.backtest_run WHERE mode = $1 ORDER BY definition_hash, created_at DESC",
-    )
-    .bind(mode)
-    .bind(sharpe_path.map(|p| p.split('.').collect::<Vec<_>>()))
-    .fetch_all(&s.pool)
-    .await?;
-    let seen = rows.iter().any(|(h, _)| h == hash);
-    let n = rows.len() as u64 + u64::from(!seen);
-    Ok((
-        n,
-        rows.into_iter()
-            .filter_map(|(h, v)| (h != hash).then_some(v).flatten())
-            .collect(),
-    ))
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -359,73 +269,24 @@ async fn factor_test(
     let universe = pool.universe()?;
     let prep = pool.prep()?;
     let (start, end) = range(&s, q.start, q.end, 5, factor_lab::MAX_TEST_YEARS).await?;
-    let spec = Spec {
-        start,
-        end,
-        factors: ids.clone(),
-        universe: universe.clone(),
-        step: horizon,
-    };
-    let panel = factor_lab::load(&s.pool, &spec)
-        .await?
-        .ok_or_else(|| ApiError::BadRequest("所选区间内没有日线".into()))?;
-    let outcome = crate::analysis::prices::run_cpu(|| {
-        factor_lab::evaluate(
-            &panel,
-            &TestParams {
-                horizon,
-                quantiles,
-                prep,
-            },
-        )
-    })
-    .ok_or_else(|| ApiError::BadRequest("区间太短，没有完整的持有期".into()))?;
-    drop(panel);
     let config = FactorConfig {
         weights: vec![1.0; ids.len()],
         factors: ids,
         neutralize: prep.neutralize,
         exclude_small_pct: prep.exclude_small_pct,
-        universe: universe.describe(),
+        universe_text: universe.describe(),
+        universe,
         horizon,
+        quantiles: Some(quantiles),
         top_n: None,
         buffer: None,
+        capital: None,
+        costs: None,
     };
-    let hash = research::definition_hash(&config);
-    let (n, _) = trials(&s, "factor_test", &hash, None).await?;
-    let m = run_manifest(
-        &s,
-        &config,
-        outcome.start,
-        outcome.end,
-        "cross_sectional_factor_test",
-        n,
-    )
-    .await?;
-    #[derive(Serialize)]
-    struct Brief<'a> {
-        factors: Vec<(&'a str, Option<f64>, Option<f64>)>,
-        pbo: Option<f64>,
-    }
-    record(
-        &s.pool,
-        "factor_test",
-        outcome.start,
-        outcome.end,
-        &m,
-        &Brief {
-            factors: outcome
-                .factors
-                .iter()
-                .map(|f| (f.name.as_str(), f.rank_ic_mean, f.rank_ic_t))
-                .collect(),
-            pbo: outcome.overfit.pbo,
-        },
-    )
-    .await?;
+    let (manifest, outcome) = research_run::factor_test(&s.pool, &config, start, end).await?;
     Ok(Json(FactorTestResult {
         config,
-        manifest: m,
+        manifest,
         outcome,
     }))
 }
@@ -510,80 +371,27 @@ async fn factor_portfolio(
     let universe = pool.universe()?;
     let prep = pool.prep()?;
     let (start, end) = range(&s, q.start, q.end, 3, factor_lab::MAX_PORTFOLIO_YEARS).await?;
-    let spec = Spec {
-        start,
-        end,
-        factors: ids.clone(),
-        universe: universe.clone(),
-        step: rebalance,
-    };
-    let names: HashMap<String, String> = securities::load(&s.pool).await?.names;
-    let panel = factor_lab::load(&s.pool, &spec)
-        .await?
-        .ok_or_else(|| ApiError::BadRequest("所选区间内没有日线".into()))?;
-    let params = PortfolioParams {
-        weights: weights.clone(),
-        prep,
-        top_n,
-        buffer,
-        capital,
-        costs: cost,
-    };
-    let outcome =
-        crate::analysis::prices::run_cpu(|| factor_lab::simulate(&panel, &params, &names))
-            .ok_or_else(|| ApiError::BadRequest("所选区间内没有日线".into()))?;
-    drop(panel);
     let config = FactorConfig {
         factors: ids,
         weights,
         neutralize: prep.neutralize,
         exclude_small_pct: prep.exclude_small_pct,
-        universe: universe.describe(),
+        universe_text: universe.describe(),
+        universe,
         horizon: rebalance,
+        quantiles: None,
         top_n: Some(top_n),
         buffer: Some(buffer),
+        capital: Some(capital),
+        costs: Some(cost),
     };
-    let hash = research::definition_hash(&config);
-    let (n, others) = trials(&s, "factor_portfolio", &hash, Some("risk.sharpe")).await?;
-    // 运行记录里是年化 Sharpe，换成每日 Sharpe 再算各组之间的方差
-    let daily: Vec<f64> = others.iter().map(|v| v / 252.0_f64.sqrt()).collect();
-    let returns: Vec<f64> = outcome
-        .equity
-        .windows(2)
-        .map(|w| w[1].equity / w[0].equity - 1.0)
-        .collect();
-    let mut all = daily.clone();
-    if let Some(sr) = outcome.summary.risk.sharpe {
-        all.push(sr / 252.0_f64.sqrt());
-    }
-    let var = (all.len() >= 2).then(|| {
-        let m = all.iter().sum::<f64>() / all.len() as f64;
-        all.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (all.len() - 1) as f64
-    });
-    let dsr = research::deflated_sharpe(&returns, n, var);
-    let m = run_manifest(
-        &s,
-        &config,
-        outcome.summary.start,
-        outcome.summary.end,
-        "factor_portfolio",
-        n,
-    )
-    .await?;
-    record(
-        &s.pool,
-        "factor_portfolio",
-        outcome.summary.start,
-        outcome.summary.end,
-        &m,
-        &outcome.summary,
-    )
-    .await?;
+    let (manifest, deflated_sharpe, outcome) =
+        research_run::factor_portfolio(&s.pool, &config, start, end).await?;
     Ok(Json(FactorPortfolioResult {
         config,
         costs: cost,
-        manifest: m,
-        deflated_sharpe: dsr,
+        manifest,
+        deflated_sharpe,
         outcome,
     }))
 }

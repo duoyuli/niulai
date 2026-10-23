@@ -8,6 +8,7 @@
 - [页面与接口](#pages)：想知道某个页面用了哪些接口时。
 - [接口客户端](#api_client)：后端接口变更后，或修改请求与错误处理时。
 - [展示约定](#conventions)：涉及价格、涨跌颜色、复权口径、K 线、URL 参数时。
+- [账户修改后的刷新](#account_invalidation)：新增账户写操作或账户派生的查询时。
 - [由 niulai serve 提供](#serving)：修改部署、缓存或路由回退时。
 
 <a id="structure"></a>
@@ -25,10 +26,10 @@
 | `src/components/longTask.tsx` | 长任务的等待秒数和取消 |
 | `src/components/AdviceView.tsx`、`RulesForm.tsx`、`PositionsEditor.tsx`、`AccountEquityChart.tsx`、`TodayAccounts.tsx` | 账户：调仓建议和理由（后台重新生成时轮询）、调仓规则（因子带方向，持有只数、缓冲区、留现金、追高上限、ST）、持仓录入与粘贴识别、净值曲线、首页的账户卡片 |
 | `src/components/UserMenu.tsx`、`AdminOnly.tsx`、`RouteError.tsx` | 用户名的悬浮菜单；管理员页面的拦截说明；页面出错时的兜底 |
-| `src/components/DataCheck.tsx` | 同步页的数据核检卡片 |
+| `src/components/DataCheck.tsx`、`ChainProgress.tsx` | 同步页的数据核检卡片；一次同步的进度条，同步记录和同步详情共用（页面之间不互相引用组件） |
 | `src/components/SecuritySearch.tsx`、`WatchButton.tsx` | 股票搜索框；收藏星标 |
 | `src/lib/runs.ts` | 一次同步各批的合计 |
-| `src/lib/accounts.ts`、`queryInvalidation.ts` | 账户的金额格式，建议动作、理由种类和流水类型的中文名与颜色；记账、校准等操作之后要刷新的查询 |
+| `src/lib/accounts.ts`、`queryInvalidation.ts` | 账户的金额格式，建议动作、理由种类和流水类型的中文名与颜色；账户修改之后要刷新的查询，见 [账户修改后的刷新](#account_invalidation) |
 | `src/lib/format.ts`、`labels.ts` | 数字和日期格式化、涨跌颜色；后端枚举值的中文名 |
 | `src/hooks/` | URL 状态（`useSearchState`）、防抖、深色模式、自选股列表 |
 | `src/api/fetcher.ts` | 所有请求经过的函数，把错误响应转为 `ApiError` |
@@ -52,7 +53,7 @@
 | `/hot` | 今日热点：顶部是涨停、跌停、炸板家数、最高连板和封板率；下面按连板高度分组列出涨停股（涨停原因、封单额、首次涨停时间）、跌停和炸板；日期框可往回看，没有同步时显示白话空态。不加主导航项，从首页卡片进入 | `GET /market/hot` |
 | `/guide` | 说明：因子、排名、组合、账户调仓四步，以及建议怎么执行 | — |
 | `/indices`、`/indices/:thscode` | 指数与板块列表；指数 K 线和当前成分股 | `GET /indices`、`/indices/{thscode}/bars`、`/members` |
-| `/sync`（管理员） | 数据同步，从上到下：「立即同步全部」「手动同步」（按计划全选或勾选到单个数据集，选增量或全部重取）；一句话状态；「股票与 ETF 行情同步」卡片（ETF 日线、基金行情快照、基金资料三个数据集的状态和最近完成时间）；同步计划（时间可改，可「现在同步一次」）；数据核检；同步记录（标明来源，几批合成一行）；需要注意（缺口和失败，一键补齐）；按分类的数据集 | `GET /sync/health`、`/sync/schedule`、`/sync/runs`、`/sync/check`、`/datasets`，`PUT /sync/schedule`，`POST /sync/runs`、`/sync/repair`、`/sync/check` |
+| `/sync`（管理员） | 数据同步，从上到下：「立即同步全部」「手动同步」（按计划全选或勾选到单个数据集，选增量或全部重取）；一句话状态；「股票与 ETF 行情同步」卡片（后端标记 `etf_market` 的数据集，即写 ETF 日线或 ETF 资料的数据集的状态和最近完成时间）；同步计划（时间可改，可「现在同步一次」）；数据核检；同步记录（标明来源，几批合成一行）；需要注意（缺口和失败，一键补齐）；按分类的数据集（分类的先后用后端给的 `category_order`，即分类在 `datasets.yaml` 中第一次出现的顺序；前端不抄数据集 ID 和分类名） | `GET /sync/health`、`/sync/schedule`、`/sync/runs`、`/sync/check`、`/datasets`，`PUT /sync/schedule`，`POST /sync/runs`、`/sync/repair`、`/sync/check` |
 | `/sync/runs/:runId` | 一次同步的详情（任意一批的编号都行）：各批状态、还没开始的批次、各数据集进度、没有新建任务的数据及原因、失败的任务；合计与同步记录用同一个函数（`lib/runs.ts`） | `GET /sync/runs/{run_id}`、`/datasets` |
 | `/login` | 登录，成功后回到 `next` 参数指向的页面；不在 `Layout` 中 | `POST /auth/login` |
 | `/setup` | API Key 引导和更换：验证并保存，显示来源和末尾 4 位（管理员） | `GET /setup`、`PUT /setup/api-key` |
@@ -85,6 +86,17 @@
 - **大数和时间：** 成交额、成交量用「万」「亿」，成交量单位是股；时间按上海时间显示，见 [时区](../interfaces/configuration.md#time_zone)。
 - **长任务要点按钮才算：** 因子检验和多因子组合这类要算全市场几年日线的操作，改参数不会自动重算，点按钮才开始；计算中显示已等待秒数和「取消」，取消会中断请求，改参数时保留上一次的结果并提示参数已改。实现见 `src/components/longTask.tsx`。
 - **面向非专业用户：** 术语（复权、因子、成分股等）都附一句说明。
+
+<a id="account_invalidation"></a>
+**账户修改后的刷新**：所有账户写操作成功后都调 `invalidateAccountQueries(qc, 账户, 修改类型, 接口返回的新结果)`（`src/lib/queryInvalidation.ts`），不在组件里各自列刷新清单。修改类型决定刷新哪些查询：
+
+| 修改类型 | 什么时候 | 刷新 |
+| --- | --- | --- |
+| `ledger` | 记一笔、撤销、校准、配股认购或暂不处理 | 账户列表、账户详情、建议、历史建议、建议回看、影子订单、净值、流水、待处理的配股 |
+| `advice` | 已执行、不做、撤销不做（「已执行」会记流水） | 同上，除了待处理的配股 |
+| `settings` | 改名字、规则、费率 | 账户列表、账户详情、建议、历史建议 |
+
+接口已经返回的账户详情或建议直接放进缓存，不再请求一次。新增账户派生的查询时，只在这个文件里登记它受哪类修改影响；对应的测试在 `queryInvalidation.test.ts`。
 
 <a id="serving"></a>
 ## 由 niulai serve 提供

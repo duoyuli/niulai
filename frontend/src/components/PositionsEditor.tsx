@@ -1,15 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import {
-  getCurrentAdviceQueryKey,
-  getGetAccountQueryKey,
-  getGetEquityQueryKey,
-  getListAccountsQueryKey,
-  useCalibrate,
-  useParsePositions,
-} from "../api/generated/accounts/accounts";
+import { useCalibrate, useParsePositions } from "../api/generated/accounts/accounts";
 import { useGetSecurity } from "../api/generated/market/market";
 import type { AccountDetail, ParsedRow } from "../api/generated/model";
+import { invalidateAccountQueries } from "../lib/queryInvalidation";
 import { SecuritySearch } from "./SecuritySearch";
 import { buttonClass, errorText, Field, inputClass } from "./ui";
 
@@ -57,10 +51,7 @@ export function PositionsEditor({
   const save = useCalibrate({
     mutation: {
       onSuccess: (d) => {
-        qc.setQueryData(getGetAccountQueryKey(id), d);
-        qc.invalidateQueries({ queryKey: getListAccountsQueryKey() });
-        qc.invalidateQueries({ queryKey: getCurrentAdviceQueryKey(id) });
-        qc.invalidateQueries({ queryKey: getGetEquityQueryKey(id) });
+        invalidateAccountQueries(qc, id, "ledger", { account: d });
         onDone();
       },
     },

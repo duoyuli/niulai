@@ -18,6 +18,21 @@ use super::securities;
 use super::universe::Universe;
 use crate::instrument::AssetType;
 
+/// 因子的非价格输入中只写 `raw.record` 的数据集：三张季度财报（[`load_fundamentals`]）
+pub const INPUT_DATASETS: [&str; 3] = [INCOME, BALANCE, CASHFLOW];
+/// 因子的非价格输入所在的类型化表（`datasets.yaml` 的 sink）：行业成分（[`load_industries`]），
+/// 证券信息、名称和 ST（`securities::load`）。这些数据或 [`INPUT_DATASETS`] 有变化时，
+/// 应用层更新 `ops.derived_version` 的 `factor_input` 行，账户的因子排名据此失效；价格的变化由 `adj_factor` 表示
+pub const INPUT_TABLES: [&str; 4] = [
+    "ref.index_member",
+    "ref.index_info",
+    "ref.security",
+    "ref.etf_security",
+];
+const INCOME: &str = "a_share.income_q";
+const BALANCE: &str = "a_share.balance_q";
+const CASHFLOW: &str = "a_share.cashflow_q";
+
 /// 组合回测的基准：全市场等权（含分红）
 pub const EQUAL_WEIGHT_NAME: &str = "全市场等权（含分红）";
 /// 因子检验的区间最长几年：全市场日线压缩后约每年 15 MB
@@ -338,28 +353,31 @@ async fn load_fundamentals(
     let income: Vec<IncomeRow> = sqlx::query_as(
         "SELECT thscode, (payload->>'fiscal_year')::int, payload->>'fiscal_period',
                 (payload->>'report_date_ms')::bigint, (payload->>'parent_holder_net_profit')::float8
-         FROM raw.record WHERE dataset_id = 'a_share.income_q' AND thscode IS NOT NULL
+         FROM raw.record WHERE dataset_id = $2 AND thscode IS NOT NULL
            AND (payload->>'fiscal_year')::int >= $1",
     )
     .bind(from_year)
+    .bind(INCOME)
     .fetch_all(pool)
     .await?;
     let balance: Vec<BalanceRow> = sqlx::query_as(
         "SELECT thscode, (payload->>'fiscal_year')::int, payload->>'fiscal_period',
                 (payload->>'holder_equity_total')::float8, (payload->>'assets_total')::float8
-         FROM raw.record WHERE dataset_id = 'a_share.balance_q' AND thscode IS NOT NULL
+         FROM raw.record WHERE dataset_id = $2 AND thscode IS NOT NULL
            AND (payload->>'fiscal_year')::int >= $1",
     )
     .bind(from_year)
+    .bind(BALANCE)
     .fetch_all(pool)
     .await?;
     let cash: Vec<CashRow> = sqlx::query_as(
         "SELECT thscode, (payload->>'fiscal_year')::int, payload->>'fiscal_period',
                 (payload->>'act_cash_flow_net')::float8
-         FROM raw.record WHERE dataset_id = 'a_share.cashflow_q' AND thscode IS NOT NULL
+         FROM raw.record WHERE dataset_id = $2 AND thscode IS NOT NULL
            AND (payload->>'fiscal_year')::int >= $1",
     )
     .bind(from_year)
+    .bind(CASHFLOW)
     .fetch_all(pool)
     .await?;
     let quarter = |p: &str| match p {

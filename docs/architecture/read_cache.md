@@ -10,11 +10,11 @@
 
 ## 键与失效
 
-缓存键使用 `niulai:v1:` 前缀，并包含 `ops.derived_version` 中 `adj_factor`、`limit_pool` 的时间戳、交易日和接口参数。行情或权威涨跌停池发生变化时，新的版本自然生成新键；旧键由 Redis TTL 和 `allkeys-lru` 回收，不执行影响业务数据的删除操作。默认 TTL 为 15 分钟。
+缓存键使用 `niulai:v1:` 前缀，并包含 `ops.derived_version` 中 `adj_factor`、`limit_pool` 的时间戳（`CacheVersions::market_token`）、交易日和接口参数，由 `cache::derived_key` 统一生成。接口和预热都通过 `Cache::cached_json` / `warm_json` 读写：先读缓存，没有再计算并回填，Redis 故障只记调试日志，键格式、TTL 和降级只在 `backend/src/cache.rs` 一处。行情或权威涨跌停池发生变化时，新的版本自然生成新键；旧键由 Redis TTL 和 `allkeys-lru` 回收，不执行影响业务数据的删除操作。默认 TTL 为 15 分钟。
 
 ## 页面预热
 
-启用 Redis 时，服务启动一个后台预热组件。它启动后立即计算最新交易日的市场概况、行业和概念板块近 5 日排名、今日热点，之后每 5 分钟检查一次。预热只写入缺失键；没有行情时不做计算。预热失败会在下一轮重试，API 请求仍可按需计算并回填缓存。
+启用 Redis 时，服务启动一个后台预热组件（`backend/src/precompute.rs`，由 `server` 监督，计算在 `analysis`，占后台的全市场计算槽位，不和页面请求抢前台槽位）。它启动后立即计算最新交易日的市场概况、行业和概念板块近 5 日排名、今日热点，之后每 5 分钟检查一次。预热只写入缺失键；没有行情时不做计算。预热失败会在下一轮重试，API 请求仍可按需计算并回填缓存。
 
 ## 部署
 

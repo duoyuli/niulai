@@ -77,7 +77,7 @@ pub async fn set_total(conn: &mut PgConnection, run_id: i64, total: usize) -> an
                               WHEN $2 = 0 THEN 'partial' ELSE status END,
                 finished_at = CASE WHEN $2 = 0 THEN now() END,
                 params = CASE WHEN $2 = 0
-                    THEN jsonb_set(params, '{sync_event_pending}', jsonb_build_object('price_changed', true, 'completion', 'pending'), true)
+                    THEN jsonb_set(params, '{sync_event_pending}', jsonb_build_object('stage', 'ready', 'price_changed', false), true)
                     ELSE params END
          WHERE run_id = $1",
     )
@@ -109,7 +109,7 @@ pub async fn try_complete(pool: &PgPool, run_id: i64) -> anyhow::Result<Option<S
             params       = jsonb_set(
                 r.params,
                 '{sync_event_pending}',
-                jsonb_build_object('price_changed', true, 'completion', 'pending'),
+                jsonb_build_object('stage', 'postprocess', 'claimed_at', now()),
                 true
             )
          FROM (SELECT count(*) FILTER (WHERE status IN ('done', 'empty', 'skipped')) ok,
@@ -189,25 +189,41 @@ pub async fn planned_since_runs(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
     .await?)
 }
 
-/// 运行结束后需要由应用层消费的同步完成事件。标记写入 `ops.run.params`，进程重启后可以重放。
-pub async fn pending_sync_events(pool: &PgPool) -> anyhow::Result<Vec<(i64, bool)>> {
-    Ok(sqlx::query_as(
-        "SELECT run_id, coalesce((params->'sync_event_pending'->>'price_changed')::boolean, true)
-         FROM ops.run WHERE params ? 'sync_event_pending' ORDER BY run_id",
+// @project-doc docs/architecture/sync_pipeline.md#postprocess
+// 同步完成事件分两个阶段持久化在 `ops.run.params.sync_event_pending`：
+// - `postprocess`：运行到了终态（和终态在同一条 UPDATE 里写入），复权等后处理还没做完；
+// - `ready`：后处理做完了，带上准确的 `price_changed`，应用层可以消费；
+// 应用层处理完后按运行编号逐个确认（删除标记）。`claimed_at` 是后处理的租约：结束运行的执行者先占着，
+// 它中途退出或出错时，维护在租约过期后接手重做（后处理是幂等的全量重算）。
+// 没有 `stage` 的旧标记（升级前写入的）按 `ready` 处理。
+
+/// 后处理的租约：超过这么久还停在 `postprocess` 的事件由维护接手
+const POSTPROCESS_LEASE: &str = "5 minutes";
+
+/// 抢占停在 `postprocess`、租约已过期的事件，返回这些运行；同一事件只有一个调用者能抢到
+pub async fn claim_stale_postprocess(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
+    Ok(sqlx::query_scalar(
+        "UPDATE ops.run SET params = jsonb_set(params, '{sync_event_pending,claimed_at}', to_jsonb(now()), true)
+         WHERE params->'sync_event_pending'->>'stage' = 'postprocess'
+           AND coalesce((params->'sync_event_pending'->>'claimed_at')::timestamptz, finished_at, '-infinity')
+               < now() - $1::interval
+         RETURNING run_id",
     )
+    .bind(POSTPROCESS_LEASE)
     .fetch_all(pool)
     .await?)
 }
 
-pub async fn mark_sync_event_pending(
+/// 后处理做完：事件进入 `ready`，带上行情或公司行动是否有变化
+pub async fn mark_sync_event_ready(
     pool: &PgPool,
     run_id: i64,
     price_changed: bool,
 ) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE ops.run SET params = jsonb_set(
-             params, '{sync_event_pending}', jsonb_build_object('price_changed', $2::boolean, 'completion', 'pending'), true
-         ) WHERE run_id = $1",
+             params, '{sync_event_pending}', jsonb_build_object('stage', 'ready', 'price_changed', $2::boolean), true
+         ) WHERE run_id = $1 AND params->'sync_event_pending'->>'stage' = 'postprocess'",
     )
     .bind(run_id)
     .bind(price_changed)
@@ -216,21 +232,25 @@ pub async fn mark_sync_event_pending(
     Ok(())
 }
 
-pub async fn clear_sync_event_pending(pool: &PgPool, run_id: i64) -> anyhow::Result<()> {
-    sqlx::query("UPDATE ops.run SET params = params - 'sync_event_pending' WHERE run_id = $1")
-        .bind(run_id)
-        .execute(pool)
-        .await?;
-    Ok(())
+/// 可以由应用层消费的同步完成事件：(运行编号, 行情或公司行动是否有变化)
+pub async fn ready_sync_events(pool: &PgPool) -> anyhow::Result<Vec<(i64, bool)>> {
+    Ok(sqlx::query_as(
+        "SELECT run_id, coalesce((params->'sync_event_pending'->>'price_changed')::boolean, true)
+         FROM ops.run WHERE params ? 'sync_event_pending'
+           AND coalesce(params->'sync_event_pending'->>'stage', 'ready') = 'ready'
+         ORDER BY run_id",
+    )
+    .fetch_all(pool)
+    .await?)
 }
 
-/// 清理已经被最新成功事件覆盖的旧事件；同一批回补波次只需要对最新数据做一次建议刷新。
-pub async fn clear_sync_event_pending_through(pool: &PgPool, run_id: i64) -> anyhow::Result<()> {
+/// 确认已经处理的事件：只删这些运行的、仍是 `ready` 的标记，不按编号范围整段清除
+pub async fn ack_sync_events(pool: &PgPool, run_ids: &[i64]) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE ops.run SET params = params - 'sync_event_pending'
-         WHERE run_id <= $1 AND params ? 'sync_event_pending'",
+         WHERE run_id = ANY($1) AND coalesce(params->'sync_event_pending'->>'stage', 'ready') = 'ready'",
     )
-    .bind(run_id)
+    .bind(run_ids)
     .execute(pool)
     .await?;
     Ok(())

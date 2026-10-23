@@ -32,15 +32,15 @@ use std::time::Duration;
 use sqlx::{PgConnection, PgPool};
 
 use crate::config::Settings;
-use crate::vendor::{HithinkClient, MarketDataClient, RateLimiter};
+use crate::vendor::{HithinkClient, RateLimiter};
 use spec::Registry;
 
-/// 同步引擎：`niulai serve` 中的 API、执行循环、调度器，以及运维子命令共用
+/// 同步引擎：`niulai serve` 中的 API、执行循环、调度器，以及运维子命令共用。
+/// 只持有同步需要的东西：注册表、供应商客户端和事件总线。页面读取缓存等应用级资源由 `api::AppState` 和 `server` 持有
 pub struct Engine {
     pub settings: Settings,
     pub pool: PgPool,
-    pub cache: Arc<crate::cache::Cache>,
-    pub client: Arc<dyn MarketDataClient>,
+    pub client: Arc<HithinkClient>,
     pub registry: Arc<Registry>,
     pub events: events::EventBus,
 }
@@ -49,13 +49,6 @@ impl Engine {
     pub async fn new(settings: Settings, pool: PgPool) -> anyhow::Result<Arc<Self>> {
         let registry = Registry::load(&settings.datasets_file()?)?;
         registry::sync_to_db(&pool, &registry).await?;
-        let _ = crate::readiness::CORE_DATASETS.set(
-            registry
-                .writing_to(&spec::PRICE_TABLES)
-                .iter()
-                .map(|d| d.id.clone())
-                .collect(),
-        );
         let limiter = RateLimiter::new(settings.rate_limit_rps);
         // 环境变量优先，其次是网页上保存的；都没有时等用户在首次登录引导中配置
         let api_key = match &settings.hithink_finance_api_key {
@@ -80,11 +73,9 @@ impl Engine {
             Duration::from_secs(settings.http_timeout_s),
             limiter,
         )?;
-        let cache = Arc::new(crate::cache::Cache::new(settings.redis_url.as_deref())?);
         Ok(Arc::new(Engine {
             settings,
             pool,
-            cache,
             client: Arc::new(client),
             registry: Arc::new(registry),
             events: events::EventBus::new(),

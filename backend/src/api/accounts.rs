@@ -17,15 +17,17 @@ use super::auth::CurrentUser;
 use crate::account::corp::PendingRights;
 use crate::account::equity::EquityCurve;
 use crate::account::paste::{self, Known, ParsedRow};
+use crate::account::valuation::{self, Valuation};
 use crate::account::{
     self, Account, AccountError, AccountUpdate, NewAccount, Position, PositionInput, Trade,
-    TradeInput, TradeKind, TradeSource,
+    TradeInput, TradeSource,
 };
 use crate::advice::generate::Action;
+use crate::advice::handling::{self, Fill, HandleError};
 use crate::advice::review::{self, Review};
 use crate::advice::{self, AdviceDay, StoredAdvice};
-use crate::analysis::prices;
 use crate::error::{ApiError, ApiResult};
+use crate::instrument::AssetType;
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -47,6 +49,17 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(execute_item))
         .routes(routes!(skip_item, clear_item))
         .routes(routes!(account_review))
+}
+
+impl From<HandleError> for ApiError {
+    fn from(e: HandleError) -> Self {
+        match e {
+            HandleError::NotFound(m) => ApiError::NotFound(m),
+            HandleError::Invalid(m) => ApiError::BadRequest(m),
+            HandleError::Account(e) => e.into(),
+            HandleError::Internal(e) => ApiError::Internal(e),
+        }
+    }
 }
 
 impl From<AccountError> for ApiError {
@@ -80,7 +93,7 @@ pub struct AccountSummary {
     pub positions: usize,
     pub market_value: f64,
     pub total_assets: f64,
-    /// 按最近一个交易日的涨跌估算的当日盈亏
+    /// 当日盈亏：最新交易日有日线的持仓按当天的涨跌算，停牌的记 0（口径与每日净值相同）
     pub day_pnl: f64,
     /// 已实现盈亏（元）：已经卖出的部分，按卖出时的平均成本算，含买卖费用；有卖出没填成本价时为空
     pub realized_pnl: Option<f64>,
@@ -94,8 +107,7 @@ pub struct PositionView {
     pub position: Position,
     pub name: String,
     pub board: String,
-    /// stock / etf
-    pub asset_type: String,
+    pub asset_type: AssetType,
     /// 最近一根日线的收盘价（未复权）和日期；没有日线时为空
     pub close: Option<f64>,
     pub last_date: Option<NaiveDate>,
@@ -115,24 +127,6 @@ pub struct AccountDetail {
     pub positions: Vec<PositionView>,
 }
 
-/// 最近两根日线：(日期, 收盘价, 涨跌 %)
-async fn quote(
-    s: &AppState,
-    code: &str,
-    n: i64,
-) -> ApiResult<(Vec<prices::DailyBar>, Option<(NaiveDate, f64, Option<f64>)>)> {
-    let bars = prices::recent_instrument_bars(&s.pool, code, n).await?;
-    let q = bars.last().map(|b| {
-        let ch = bars
-            .len()
-            .checked_sub(2)
-            .map(|i| (b.q_close / bars[i].q_close - 1.0) * 100.0)
-            .filter(|v| v.is_finite());
-        (b.date, b.close, ch)
-    });
-    Ok((bars, q))
-}
-
 async fn brief(s: &AppState, account_id: i64) -> ApiResult<Option<AdviceBrief>> {
     let Some(a) = advice::load(&s.pool, account_id, None).await? else {
         return Ok(None);
@@ -142,9 +136,7 @@ async fn brief(s: &AppState, account_id: i64) -> ApiResult<Option<AdviceBrief>> 
         .advice
         .items
         .iter()
-        .filter(|i| {
-            matches!(i.action, Action::Sell | Action::Buy) && !a.states.contains_key(&i.key)
-        })
+        .filter(|i| advice::actionable(i.action) && !a.states.contains_key(&i.key))
         .count();
     Ok(Some(AdviceBrief {
         trade_date: a.trade_date,
@@ -165,39 +157,26 @@ async fn check_hint(s: &AppState, acc: &Account) -> ApiResult<Option<String>> {
     if Utc::now() - last < chrono::Duration::days(14) {
         return Ok(None);
     }
-    let unexecuted: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM app.advice a WHERE a.account_id = $1 AND a.superseded_by IS NULL AND a.created_at > $2
-           AND NOT EXISTS (SELECT 1 FROM app.advice_item_state s WHERE s.advice_id = a.advice_id)
-           AND jsonb_path_exists(a.result, '$.items[*] ? (@.action == \"sell\" || @.action == \"buy\" || @.action == \"reduce\")')",
-    )
-    .bind(acc.account_id)
-    .bind(last)
-    .fetch_one(&s.pool)
-    .await?;
-    Ok((unexecuted > 0).then(|| {
+    let unhandled = advice::has_unhandled_since(&s.pool, acc.account_id, last).await?;
+    Ok(unhandled.then(|| {
         "持仓两周多没有变动，期间的建议也都没有处理。持仓可能和券商不一致，花一分钟核对一下"
             .to_string()
     }))
 }
 
-async fn summary(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
-    let positions = account::positions(&s.pool, acc.account_id).await?;
+/// 账户摘要；持仓和估值由调用方读好传进来，详情页不用再读一遍
+async fn summary(
+    s: &AppState,
+    acc: Account,
+    positions: &[Position],
+    value: &Valuation,
+) -> ApiResult<AccountSummary> {
     let realized = account::realized(&s.pool, acc.account_id).await?;
-    let (mut mv, mut day) = (0.0, 0.0);
-    for p in &positions {
-        if let (_, Some((_, close, ch))) = quote(s, &p.thscode, 2).await? {
-            let v = p.shares as f64 * close;
-            mv += v;
-            if let Some(c) = ch {
-                day += v - v / (1.0 + c / 100.0);
-            }
-        }
-    }
     Ok(AccountSummary {
         positions: positions.len(),
-        market_value: mv,
-        total_assets: acc.cash + mv,
-        day_pnl: day,
+        market_value: value.market_value,
+        total_assets: acc.cash + value.market_value,
+        day_pnl: value.day_pnl,
         realized_pnl: realized.total,
         advice: brief(s, acc.account_id).await?,
         check_hint: check_hint(s, &acc).await?,
@@ -205,49 +184,55 @@ async fn summary(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
     })
 }
 
+async fn summary_of(s: &AppState, acc: Account) -> ApiResult<AccountSummary> {
+    let positions = account::positions(&s.pool, acc.account_id).await?;
+    let value = valuation::load(&s.pool, &positions).await?;
+    summary(s, acc, &positions, &value).await
+}
+
 async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDetail> {
     let acc = account::get(&s.pool, me.user_id, id).await?;
     let positions = account::positions(&s.pool, id).await?;
-    let names: HashMap<String, (String, String, String, bool)> = sqlx::query_as::<_, (String, String, String, String, bool)>(
+    let value = valuation::load(&s.pool, &positions).await?;
+    let names: HashMap<String, (String, String, AssetType, bool)> = sqlx::query_as::<_, (String, String, String, AssetType, bool)>(
         "SELECT thscode, name, board, asset_type, delisted_on IS NOT NULL FROM ref.instrument WHERE thscode = ANY($1)",
     )
     .bind(positions.iter().map(|p| p.thscode.clone()).collect::<Vec<_>>())
     .fetch_all(&s.pool)
     .await?
     .into_iter()
-        .map(|(c, n, b, a, d)| (c, (n, b, a, d)))
+    .map(|(c, n, b, a, d)| (c, (n, b, a, d)))
     .collect();
-    let mut views = vec![];
-    for p in positions {
-        let (_bars, q) = quote(s, &p.thscode, 2).await?;
-        let close = q.map(|q| q.1);
-        let mv = close.map_or(0.0, |c| c * p.shares as f64);
-        let (name, board, asset_type, delisted) = names
-            .get(&p.thscode)
-            .cloned()
-            .unwrap_or_else(|| (p.thscode.clone(), "main".into(), "stock".into(), false));
-        views.push(PositionView {
-            name,
-            board,
-            asset_type,
-            close,
-            last_date: q.map(|q| q.0),
-            change_pct: q.and_then(|q| q.2),
-            market_value: mv,
-            weight_pct: 0.0,
-            pnl: p
-                .cost_price
-                .zip(close)
-                .map(|(c, x)| (x - c) * p.shares as f64),
-            pnl_pct: p.cost_price.zip(close).map(|(c, x)| (x / c - 1.0) * 100.0),
-            delisted,
-            position: p,
-        });
-    }
-    let summary = summary(s, acc).await?;
-    for v in &mut views {
-        v.weight_pct = v.market_value / summary.total_assets.max(1.0) * 100.0;
-    }
+    let summary = summary(s, acc, &positions, &value).await?;
+    let mut views: Vec<PositionView> = positions
+        .into_iter()
+        .map(|p| {
+            let q = value.quotes.get(&p.thscode).copied();
+            let close = q.map(|q| q.close);
+            let mv = value.market_value_of(&p);
+            let (name, board, asset_type, delisted) = names
+                .get(&p.thscode)
+                .cloned()
+                .unwrap_or_else(|| (p.thscode.clone(), "main".into(), AssetType::Stock, false));
+            PositionView {
+                name,
+                board,
+                asset_type,
+                close,
+                last_date: q.map(|q| q.date),
+                change_pct: q.and_then(|q| q.change_pct),
+                market_value: mv,
+                weight_pct: mv / summary.total_assets.max(1.0) * 100.0,
+                pnl: p
+                    .cost_price
+                    .zip(close)
+                    .map(|(c, x)| (x - c) * p.shares as f64),
+                pnl_pct: p.cost_price.zip(close).map(|(c, x)| (x / c - 1.0) * 100.0),
+                delisted,
+                position: p,
+            }
+        })
+        .collect();
     views.sort_by(|a, b| b.market_value.total_cmp(&a.market_value));
     Ok(AccountDetail {
         summary,
@@ -255,12 +240,10 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
     })
 }
 
-/// 改了持仓、现金或设置后在后台重新生成运营建议，这次修改不用等它；失败只写日志
-async fn regenerate(s: &AppState, me: &CurrentUser, id: i64) {
-    // 只为自己的账户触发：调用方已经按用户取过账户，这里再确认一次
-    if account::get(&s.pool, me.user_id, id).await.is_ok() {
-        advice::regenerate_soon(s.pool.clone(), id);
-    }
+/// 改了持仓、现金或设置之后：账户模块已经在同一个事务里记下了重算待办（`account::stale`），
+/// 这里只是唤醒后台的消费者早点开始，不唤醒也会在几秒内被处理
+fn wake_regen(s: &AppState) {
+    s.advice_wake.notify_one();
 }
 
 /// 我的账户
@@ -271,7 +254,7 @@ async fn list_accounts(
 ) -> ApiResult<Json<Vec<AccountSummary>>> {
     let mut out = vec![];
     for acc in account::list(&s.pool, me.user_id).await? {
-        out.push(summary(&s, acc).await?);
+        out.push(summary_of(&s, acc).await?);
     }
     Ok(Json(out))
 }
@@ -287,7 +270,7 @@ async fn create_account(
     Json(input): Json<NewAccount>,
 ) -> ApiResult<(StatusCode, Json<AccountDetail>)> {
     let acc = account::create(&s.pool, me.user_id, &input).await?;
-    regenerate(&s, &me, acc.account_id).await;
+    wake_regen(&s);
     Ok((
         StatusCode::CREATED,
         Json(detail(&s, &me, acc.account_id).await?),
@@ -318,7 +301,7 @@ async fn update_account(
     Json(input): Json<AccountUpdate>,
 ) -> ApiResult<Json<AccountDetail>> {
     account::update(&s.pool, me.user_id, id, &input).await?;
-    regenerate(&s, &me, id).await;
+    wake_regen(&s);
     Ok(Json(detail(&s, &me, id).await?))
 }
 
@@ -401,7 +384,7 @@ async fn calibrate(
     Json(input): Json<CalibrateInput>,
 ) -> ApiResult<Json<AccountDetail>> {
     account::calibrate(&s.pool, me.user_id, id, input.cash, &input.positions).await?;
-    regenerate(&s, &me, id).await;
+    wake_regen(&s);
     Ok(Json(detail(&s, &me, id).await?))
 }
 
@@ -443,7 +426,7 @@ async fn add_trade(
     Json(input): Json<TradeInput>,
 ) -> ApiResult<Json<AccountDetail>> {
     account::record(&s.pool, me.user_id, id, &input, TradeSource::User).await?;
-    regenerate(&s, &me, id).await;
+    wake_regen(&s);
     Ok(Json(detail(&s, &me, id).await?))
 }
 
@@ -459,7 +442,7 @@ async fn undo_trade(
     Path((id, trade_id)): Path<(i64, i64)>,
 ) -> ApiResult<Json<AccountDetail>> {
     account::undo_trade(&s.pool, me.user_id, id, trade_id).await?;
-    regenerate(&s, &me, id).await;
+    wake_regen(&s);
     Ok(Json(detail(&s, &me, id).await?))
 }
 
@@ -494,7 +477,7 @@ async fn subscribe_rights(
     Path((id, thscode, ex_date)): Path<(i64, String, NaiveDate)>,
 ) -> ApiResult<Json<AccountDetail>> {
     account::corp::subscribe_rights(&s.pool, me.user_id, id, &thscode, ex_date).await?;
-    regenerate(&s, &me, id).await;
+    wake_regen(&s);
     Ok(Json(detail(&s, &me, id).await?))
 }
 
@@ -544,6 +527,8 @@ pub struct AdviceResponse {
     pub latest_bar: Option<NaiveDate>,
     /// 改了持仓、现金或设置之后正在后台重新生成；为 true 时 `advice` 还是改之前的一份
     pub regenerating: bool,
+    /// 上一次重新生成失败的原因；后台会自动重试，成功后为空
+    pub regenerate_error: Option<String>,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -568,11 +553,13 @@ async fn advice_response(
         }
         (None, Some(_)) => Some("正在生成，稍等一分钟后刷新".into()),
     };
+    let (pending, regenerate_error) = account::stale::status(&s.pool, id).await?;
     Ok(AdviceResponse {
         waiting,
         advice,
         latest_bar,
-        regenerating: advice::regenerating(id),
+        regenerating: pending && regenerate_error.is_none(),
+        regenerate_error,
     })
 }
 
@@ -671,104 +658,43 @@ async fn execute_item(
     Path((id, advice_id, key)): Path<(i64, i64, String)>,
     Json(input): Json<ExecuteInput>,
 ) -> ApiResult<Json<AdviceResponse>> {
-    account::get(&s.pool, me.user_id, id).await?;
-    let a = advice::load_by_id(&s.pool, id, advice_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("建议不存在".into()))?;
-    let item = a
-        .items
-        .iter()
-        .find(|i| i.key == key)
-        .ok_or_else(|| ApiError::NotFound("没有这一条".into()))?;
-    let kind = match item.action {
-        Action::Buy => TradeKind::Buy,
-        Action::Sell => TradeKind::Sell,
-        _ => return Err(ApiError::BadRequest("这一条不需要操作".into())),
-    };
-    let price = input
-        .price
-        .filter(|p| *p > 0.0)
-        .ok_or_else(|| ApiError::BadRequest("请填实际成交价".into()))?;
-    let trade = TradeInput {
-        kind,
-        trade_date: Some(input.trade_date.unwrap_or(a.next_date)),
-        thscode: Some(item.thscode.clone()),
-        shares: Some(input.shares.unwrap_or(item.shares)),
-        price: Some(price),
-        amount: None,
+    let fill = Fill {
+        shares: input.shares,
+        price: input.price,
         fee: input.fee,
-        note: format!("按 {} 的建议：{}", a.trade_date, item.headline),
+        trade_date: input.trade_date,
     };
-    account::record_advice(&s.pool, me.user_id, id, advice_id, &key, &trade).await?;
-    let actual_shares = trade.shares.unwrap_or(item.shares);
-    let slippage_bps = (price / item.ref_price - 1.0) * 10_000.0;
-    sqlx::query(
-        "UPDATE app.shadow_order
-         SET actual_shares = $4, actual_price = $5, actual_slippage_bps = $6,
-             status = CASE WHEN $4 >= planned_shares THEN 'filled' ELSE 'partial' END,
-             updated_at = now()
-         WHERE account_id = $1 AND advice_id = $2 AND item_key = $3",
-    )
-    .bind(id)
-    .bind(advice_id)
-    .bind(&key)
-    .bind(actual_shares)
-    .bind(price)
-    .bind(slippage_bps)
-    .execute(&s.pool)
-    .await?;
-    Ok(Json(advice_response(&s, id, Some(a.trade_date)).await?))
+    let date = handling::execute(&s.pool, me.user_id, id, advice_id, &key, &fill).await?;
+    Ok(Json(advice_response(&s, id, Some(date)).await?))
 }
 
 /// 不做这一条（之后可以撤销）
 #[utoipa::path(post, path = "/accounts/{account_id}/advice/{advice_id}/items/{key}/skip", tag = "accounts",
     params(("account_id" = i64, Path), ("advice_id" = i64, Path), ("key" = String, Path)),
-    responses((status = 200, description = "已记下", body = AdviceResponse), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
+    responses((status = 200, description = "已记下", body = AdviceResponse),
+              (status = 400, description = "这一条已经执行过", body = crate::error::ErrorBody),
+              (status = 404, description = "账户、建议或条目不存在", body = crate::error::ErrorBody)))]
 async fn skip_item(
     State(s): State<AppState>,
     me: CurrentUser,
     Path((id, advice_id, key)): Path<(i64, i64, String)>,
 ) -> ApiResult<Json<AdviceResponse>> {
     account::get(&s.pool, me.user_id, id).await?;
-    let a = advice::load_by_id(&s.pool, id, advice_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("建议不存在".into()))?;
-    if !a.items.iter().any(|i| i.key == key) {
-        return Err(ApiError::NotFound("没有这一条".into()));
-    }
-    sqlx::query("INSERT INTO app.advice_item_state (advice_id, item_key, state) VALUES ($1, $2, 'skipped') ON CONFLICT (advice_id, item_key) DO NOTHING")
-        .bind(advice_id)
-        .bind(&key)
-        .execute(&s.pool)
-        .await?;
-    sqlx::query("UPDATE app.shadow_order SET status = 'cancelled', reason = '用户选择不做', updated_at = now() WHERE account_id = $1 AND advice_id = $2 AND item_key = $3")
-        .bind(id)
-        .bind(advice_id)
-        .bind(&key)
-        .execute(&s.pool)
-        .await?;
-    Ok(Json(advice_response(&s, id, Some(a.trade_date)).await?))
+    let date = handling::skip(&s.pool, id, advice_id, &key).await?;
+    Ok(Json(advice_response(&s, id, Some(date)).await?))
 }
 
 /// 撤销「不做」。已执行的不能撤销：记错了在持仓页校准
 #[utoipa::path(delete, path = "/accounts/{account_id}/advice/{advice_id}/items/{key}/skip", tag = "accounts",
     params(("account_id" = i64, Path), ("advice_id" = i64, Path), ("key" = String, Path)),
-    responses((status = 200, description = "已撤销", body = AdviceResponse), (status = 404, description = "不存在", body = crate::error::ErrorBody)))]
+    responses((status = 200, description = "已撤销；不是「不做」的条目不变", body = AdviceResponse), (status = 404, description = "账户、建议或条目不存在", body = crate::error::ErrorBody)))]
 async fn clear_item(
     State(s): State<AppState>,
     me: CurrentUser,
     Path((id, advice_id, key)): Path<(i64, i64, String)>,
 ) -> ApiResult<Json<AdviceResponse>> {
     account::get(&s.pool, me.user_id, id).await?;
-    let date: Option<NaiveDate> = sqlx::query_scalar(
-        "SELECT trade_date FROM app.advice WHERE account_id = $1 AND advice_id = $2",
-    )
-    .bind(id)
-    .bind(advice_id)
-    .fetch_optional(&s.pool)
-    .await?;
-    let date = date.ok_or_else(|| ApiError::NotFound("建议不存在".into()))?;
-    sqlx::query("DELETE FROM app.advice_item_state WHERE advice_id = $1 AND item_key = $2 AND state = 'skipped'").bind(advice_id).bind(&key).execute(&s.pool).await?;
+    let date = handling::unskip(&s.pool, id, advice_id, &key).await?;
     Ok(Json(advice_response(&s, id, Some(date)).await?))
 }
 

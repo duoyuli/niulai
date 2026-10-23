@@ -15,6 +15,8 @@ pub const UP: &str = "special.limit_up_pool";
 pub const DOWN: &str = "special.limit_down_pool";
 /// 炸板池：2025-10-16 起
 pub const BREAK: &str = "special.limit_break_pool";
+/// 封板率等统计：2025-10-17 起，只有今日热点用，不影响市场概况
+pub const STATS: &str = "special.limit_up_stats";
 /// 三个池的数据集 ID：同步运行结束后据此判断 `limit_pool` 版本是否要更新
 pub const DATASETS: [&str; 3] = [UP, DOWN, BREAK];
 
@@ -67,19 +69,24 @@ impl DayLimits {
     }
 }
 
-/// 进程内缓存用的数据版本：adj_factor 和 limit_pool 中任一更新，依赖它的结果就不再命中。
-/// `limit_pool` 行由迁移 20261018000013 加入；升级前的库里查不到，按 None 处理
+/// 缓存用的数据版本（`ops.derived_version`）：依赖的那几行中任一更新，结果就不再命中。
+/// - `adj_factor`：复权价（行情或公司行动有变化、重算复权之后）；
+/// - `limit_pool`：权威涨跌停池；
+/// - `factor_input`：因子排名的非价格输入（财报、行业成分、证券名称和 ST），迁移 20261023000003 加入。
+///
+/// 升级前的库里查不到的行按 None 处理。多个进程各自的缓存都按这些版本失效，不依赖进程内的清空调用
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CacheVersions {
     pub adj_factor: Option<DateTime<Utc>>,
     pub limit_pool: Option<DateTime<Utc>>,
+    pub factor_input: Option<DateTime<Utc>>,
 }
 
 impl CacheVersions {
     pub async fn load(pool: &PgPool) -> sqlx::Result<Self> {
         let rows: Vec<(String, DateTime<Utc>)> =
             sqlx::query_as("SELECT name, updated_at FROM ops.derived_version WHERE name = ANY($1)")
-                .bind(&["adj_factor", "limit_pool"][..])
+                .bind(&["adj_factor", "limit_pool", "factor_input"][..])
                 .fetch_all(pool)
                 .await?;
         let mut v = Self::default();
@@ -87,9 +94,20 @@ impl CacheVersions {
             match name.as_str() {
                 "adj_factor" => v.adj_factor = Some(at),
                 "limit_pool" => v.limit_pool = Some(at),
+                "factor_input" => v.factor_input = Some(at),
                 _ => {}
             }
         }
         Ok(v)
+    }
+
+    /// 页面结果（市场概况、今日热点、板块排名）的版本：复权价和涨跌停池
+    pub fn market_token(&self) -> String {
+        format!("adj={:?}:limit={:?}", self.adj_factor, self.limit_pool)
+    }
+
+    /// 因子排名的版本：复权价和因子的非价格输入
+    pub fn factor_token(&self) -> String {
+        format!("adj={:?}:input={:?}", self.adj_factor, self.factor_input)
     }
 }

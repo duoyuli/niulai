@@ -10,6 +10,8 @@ pub mod ledger;
 pub mod lots;
 pub mod paste;
 pub mod rules;
+pub mod stale;
+pub mod valuation;
 
 use std::collections::HashMap;
 
@@ -390,6 +392,7 @@ pub async fn create(pool: &PgPool, user_id: i64, input: &NewAccount) -> Result<A
         )
         .await?;
     }
+    stale::mark_in_tx(&mut tx, id).await?;
     tx.commit().await?;
     get(pool, user_id, id).await
 }
@@ -404,7 +407,8 @@ pub async fn update(
     validate_fees(&input.fees)?;
     input.rules.validate().map_err(AccountError::Invalid)?;
     let r = sqlx::query(
-        "UPDATE app.account SET name = $3, rules = $4, commission_rate = $5, min_commission = $6, note = $7, updated_at = now()
+        "UPDATE app.account SET name = $3, rules = $4, commission_rate = $5, min_commission = $6, note = $7, updated_at = now(),
+                advice_dirty_at = clock_timestamp(), advice_retry_at = NULL, advice_error = NULL
          WHERE user_id = $1 AND account_id = $2",
     )
     .bind(user_id)
@@ -550,7 +554,7 @@ async fn security_board(tx: &mut Transaction<'_, Postgres>, code: &str) -> Resul
 async fn security_asset_type(
     tx: &mut Transaction<'_, Postgres>,
     code: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<crate::instrument::AssetType>> {
     Ok(
         sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
             .bind(code)
@@ -570,43 +574,22 @@ pub async fn record(
     let mut tx = pool.begin().await?;
     let cash = lock(&mut tx, user_id, account_id).await?;
     let id = record_in_tx(&mut tx, account_id, cash, input, source).await?;
+    stale::mark_in_tx(&mut tx, account_id).await?;
     tx.commit().await?;
     Ok(id)
 }
 
-/// Execute one advice item atomically with its idempotency state.
-pub async fn record_advice(
-    pool: &PgPool,
+/// 在调用方的事务里记一笔买卖（例如按建议执行时，和建议的处理状态在同一个事务里提交）：
+/// 先锁住账户、再记流水，持仓和现金跟着更新。不标记建议需要重新生成，返回流水编号
+pub async fn record_in_tx_for(
+    tx: &mut Transaction<'_, Postgres>,
     user_id: i64,
     account_id: i64,
-    advice_id: i64,
-    item_key: &str,
     input: &TradeInput,
+    source: TradeSource,
 ) -> Result<i64> {
-    let mut tx = pool.begin().await?;
-    let cash = lock(&mut tx, user_id, account_id).await?;
-    let state: Option<String> = sqlx::query_scalar(
-        "SELECT state FROM app.advice_item_state WHERE advice_id = $1 AND item_key = $2 FOR UPDATE",
-    )
-    .bind(advice_id)
-    .bind(item_key)
-    .fetch_optional(&mut *tx)
-    .await?;
-    if state.as_deref() == Some("executed") {
-        return Err(AccountError::Invalid("这一条已经记过了".into()));
-    }
-    let trade_id = record_in_tx(&mut tx, account_id, cash, input, TradeSource::Advice).await?;
-    sqlx::query(
-        "INSERT INTO app.advice_item_state (advice_id, item_key, state, trade_id) VALUES ($1, $2, 'executed', $3)
-         ON CONFLICT (advice_id, item_key) DO UPDATE SET state = 'executed', trade_id = EXCLUDED.trade_id, updated_at = now()",
-    )
-    .bind(advice_id)
-    .bind(item_key)
-    .bind(trade_id)
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(trade_id)
+    let cash = lock(tx, user_id, account_id).await?;
+    record_in_tx(tx, account_id, cash, input, source).await
 }
 
 async fn record_in_tx(
@@ -733,7 +716,7 @@ async fn record_in_tx(
                 if shares > held {
                     return invalid(format!("只持有 {held} 股，不能卖 {shares} 股"));
                 }
-                let fee = supplied_fee.unwrap_or_else(|| fees.sell_fee(&asset_type, gross));
+                let fee = supplied_fee.unwrap_or_else(|| fees.sell_fee(asset_type, gross));
                 if held == shares {
                     sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2")
                         .bind(account_id)
@@ -996,6 +979,7 @@ pub async fn undo_trade(pool: &PgPool, user_id: i64, account_id: i64, trade_id: 
     .execute(&mut *tx)
     .await?;
     add_cash(&mut tx, account_id, -amount).await?;
+    stale::mark_in_tx(&mut tx, account_id).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -1126,6 +1110,7 @@ pub async fn calibrate(
         )
         .await?;
     }
+    stale::mark_in_tx(&mut tx, account_id).await?;
     tx.commit().await?;
     Ok(())
 }

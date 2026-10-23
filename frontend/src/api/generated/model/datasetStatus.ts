@@ -11,12 +11,19 @@ export interface DatasetStatus {
   /** 正在进行的历史回补中，这个数据集的任务数和已结束的任务数；没有回补时都是 0 */
   backfill_total: number;
   category: string;
+  /**
+     * 分类的排列顺序：分类在 datasets.yaml 中第一次出现的先后，从 0 开始
+     * @minimum 0
+     */
+  category_order: number;
   dataset_id: string;
   /** 失败后之后也没有成功过的任务 */
   dead_tasks: number;
   domain: string;
   enabled: boolean;
   endpoint: string;
+  /** ETF 的行情和资料：写 ETF 日线（`mkt.etf_bar_1d`）或 ETF 资料的数据集，页面、因子和建议都用到 */
+  etf_market: boolean;
   /** @nullable */
   last_done_at?: string | null;
   /** 只有当天的值，错过当天就补不回来 */

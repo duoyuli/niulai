@@ -14,6 +14,11 @@ export interface AdviceResponse {
      * @nullable
      */
   latest_bar?: string | null;
+  /**
+     * 上一次重新生成失败的原因；后台会自动重试，成功后为空
+     * @nullable
+     */
+  regenerate_error?: string | null;
   /** 改了持仓、现金或设置之后正在后台重新生成；为 true 时 `advice` 还是改之前的一份 */
   regenerating: boolean;
   /**

@@ -1,6 +1,6 @@
 # 今日热点
 
-本文说明「今日热点」页面的数据来源、口径和页面结构。它是权威涨跌停池对普通用户的出口：数据来自同花顺整理的交易所口径涨跌停池，已经同步在 `raw.record`，之前只有管理员能通过 `GET /datasets/{id}/records` 看到。接口在 `backend/src/api/market.rs` 的 `GET /market/hot`，页面在 `frontend/src/pages/TodayPage.tsx`（首页卡片）和 `frontend/src/pages/HotPage.tsx`（`/hot`）。数据目录和同步方式见 [数据目录](../interfaces/dataset_catalog.md#special)，接口清单见 [REST API](../interfaces/rest_api.md#endpoints)。
+本文说明「今日热点」页面的数据来源、口径和页面结构。它是权威涨跌停池对普通用户的出口：数据来自同花顺整理的交易所口径涨跌停池，已经同步在 `raw.record`，之前只有管理员能通过 `GET /datasets/{id}/records` 看到。计算和供应商字段的解析在 `backend/src/analysis/hotspots.rs`（数据集 ID 与市场概况共用 `analysis/limit_pool.rs`），接口是 `backend/src/api/market.rs` 的 `GET /market/hot`，首页预热在 `backend/src/precompute.rs`，页面在 `frontend/src/pages/TodayPage.tsx`（首页卡片）和 `frontend/src/pages/HotPage.tsx`（`/hot`）。数据目录和同步方式见 [数据目录](../interfaces/dataset_catalog.md#special)，接口清单见 [REST API](../interfaces/rest_api.md#endpoints)。
 
 <a id="data"></a>
 ## 数据来源
@@ -21,7 +21,7 @@
 <a id="rules"></a>
 ## 口径
 
-- **交易日**：`date` 是截止日期，和 `/market/overview` 一样取本地日线里不晚于它的最近一天，「10 月 17 日（周六）」会显示 10 月 16 日（周五）的数据。不传 `date` 时取本地日线的最新一天；日线还没同步时退回涨停池自己的最新 `obs_date`，先把已经同步的数据显示出来。
+- **交易日**：`date` 是截止日期，和 `/market/overview` 一样取本地日线（股票和 ETF，`analysis::market::resolve_date`）里不晚于它的最近一天，「10 月 17 日（周六）」会显示 10 月 16 日（周五）的数据。不传 `date` 时取本地日线的最新一天；日线还没同步时退回涨停池自己的最新 `obs_date`，先把已经同步的数据显示出来。
 - **涨停分组**：按 `continue_day_cnt` 从高到低分组，1 表示首板。`label` 是「首板」「2 板」「3 板」……，`count` 是这一档的全部家数，`stocks` 最多列 50 只。组内按封单额从大到小排（封单越大，说明想买没买到的人越多）。
 - **总数和截断**：`limit_up_total`、`limit_down_total`、`broken_total` 都是全部家数，不受列出的 50 只限制；页面显示「共 N 家，列出前 50 只」。
 - **跌停和炸板**：跌停按当天跌幅从大到小排，炸板按炸板次数从多到少排，都只列前 50 只。

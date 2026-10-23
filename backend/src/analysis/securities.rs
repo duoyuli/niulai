@@ -52,7 +52,7 @@ type InstrumentRow = (
     String,
     String,
     String,
-    Option<String>,
+    AssetType,
     Option<NaiveDate>,
     Option<NaiveDate>,
 );
@@ -73,7 +73,7 @@ pub async fn load(pool: &PgPool) -> sqlx::Result<Securities> {
                 is_st: name.contains("ST"),
                 list_date,
                 delisted_on,
-                asset_type: AssetType::from_db(asset_type.as_deref()),
+                asset_type,
             },
         );
         names.insert(code, name);

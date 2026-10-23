@@ -508,8 +508,18 @@
               }
             }
           },
+          "400": {
+            "description": "这一条已经执行过",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
           "404": {
-            "description": "不存在",
+            "description": "账户、建议或条目不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -556,7 +566,7 @@
         ],
         "responses": {
           "200": {
-            "description": "已撤销",
+            "description": "已撤销；不是「不做」的条目不变",
             "content": {
               "application/json": {
                 "schema": {
@@ -566,7 +576,7 @@
             }
           },
           "404": {
-            "description": "不存在",
+            "description": "账户、建议或条目不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1701,7 +1711,7 @@
           "market"
         ],
         "summary": "今日热点：权威涨停、跌停、炸板池和当天的封板率。",
-        "description": "涨跌停池由供应商整理，按周同步，最近几天可能还没更新；`available` 为 false 时\n`note` 用白话说明原因，页面据此显示空态。",
+        "description": "涨跌停池由供应商整理，最近几天可能还没更新；`available` 为 false 时\n`note` 用白话说明原因，页面据此显示空态。计算在 `crate::analysis::hotspots`",
         "operationId": "market_hot",
         "parameters": [
           {
@@ -3586,7 +3596,7 @@
           "day_pnl": {
             "type": "number",
             "format": "double",
-            "description": "按最近一个交易日的涨跌估算的当日盈亏"
+            "description": "当日盈亏：最新交易日有日线的持仓按当天的涨跌算，停牌的记 0（口径与每日净值相同）"
           },
           "market_value": {
             "type": "number",
@@ -4062,6 +4072,13 @@
             "format": "date",
             "description": "最新日线的日期：比建议的交易日新时，说明新的运营建议还在生成"
           },
+          "regenerate_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "上一次重新生成失败的原因；后台会自动重试，成功后为空"
+          },
           "regenerating": {
             "type": "boolean",
             "description": "改了持仓、现金或设置之后正在后台重新生成；为 true 时 `advice` 还是改之前的一份"
@@ -4124,6 +4141,14 @@
         "enum": [
           "env",
           "database"
+        ]
+      },
+      "AssetType": {
+        "type": "string",
+        "description": "stock / etf",
+        "enum": [
+          "stock",
+          "etf"
         ]
       },
       "AuthStatus": {
@@ -4640,6 +4665,8 @@
           "dataset_id",
           "title",
           "category",
+          "category_order",
+          "etf_market",
           "summary",
           "domain",
           "endpoint",
@@ -4665,6 +4692,11 @@
           "category": {
             "type": "string"
           },
+          "category_order": {
+            "type": "integer",
+            "description": "分类的排列顺序：分类在 datasets.yaml 中第一次出现的先后，从 0 开始",
+            "minimum": 0
+          },
           "dataset_id": {
             "type": "string"
           },
@@ -4681,6 +4713,10 @@
           },
           "endpoint": {
             "type": "string"
+          },
+          "etf_market": {
+            "type": "boolean",
+            "description": "ETF 的行情和资料：写 ETF 日线（`mkt.etf_bar_1d`）或 ETF 资料的数据集，页面、因子和建议都用到"
           },
           "last_done_at": {
             "type": [
@@ -4911,13 +4947,14 @@
       },
       "FactorConfig": {
         "type": "object",
-        "description": "配置的可复现描述，写入运行记录并计算哈希",
+        "description": "方法定义：决定结果的全部参数，不含日期区间。写入运行记录并计算哈希",
         "required": [
           "factors",
           "weights",
           "neutralize",
           "exclude_small_pct",
           "universe",
+          "universe_text",
           "horizon"
         ],
         "properties": {
@@ -4927,6 +4964,25 @@
               "null"
             ],
             "format": "double"
+          },
+          "capital": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "组合回测的本金（元）；因子检验为空"
+          },
+          "costs": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TradingCosts",
+                "description": "组合回测的交易成本；因子检验为空"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "exclude_small_pct": {
             "type": "number",
@@ -4946,6 +5002,14 @@
           "neutralize": {
             "type": "boolean"
           },
+          "quantiles": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "因子检验分几组；组合回测为空",
+            "minimum": 0
+          },
           "top_n": {
             "type": [
               "integer",
@@ -4955,6 +5019,9 @@
             "minimum": 0
           },
           "universe": {
+            "$ref": "#/components/schemas/Universe"
+          },
+          "universe_text": {
             "type": "array",
             "items": {
               "type": "string"
@@ -4966,7 +5033,8 @@
             "items": {
               "type": "number",
               "format": "double"
-            }
+            },
+            "description": "权重，按因子的预期方向合成；因子检验的合成全部为 1"
           }
         }
       },
@@ -5826,8 +5894,7 @@
         ],
         "properties": {
           "asset_type": {
-            "type": "string",
-            "description": "stock / etf"
+            "$ref": "#/components/schemas/AssetType"
           },
           "balance": {
             "oneOf": [
@@ -6519,8 +6586,7 @@
               ],
               "properties": {
                 "asset_type": {
-                  "type": "string",
-                  "description": "stock / etf"
+                  "$ref": "#/components/schemas/AssetType"
                 },
                 "board": {
                   "type": "string",
@@ -6767,8 +6833,7 @@
         ],
         "properties": {
           "asset_type": {
-            "type": "string",
-            "description": "stock / etf"
+            "$ref": "#/components/schemas/AssetType"
           },
           "board": {
             "type": "string"
@@ -6876,7 +6941,7 @@
           "cleared": {
             "type": "integer",
             "format": "int64",
-            "description": "日期不是交易日或已超出历史范围、改为跳过的失败任务数",
+            "description": "日期不是交易日或已超出历史范围、证券已退市，改为跳过的失败任务数",
             "minimum": 0
           },
           "retried": {
@@ -7380,8 +7445,7 @@
         ],
         "properties": {
           "asset_type": {
-            "type": "string",
-            "description": "stock / etf"
+            "$ref": "#/components/schemas/AssetType"
           },
           "board": {
             "type": "string",
@@ -7943,6 +8007,51 @@
           }
         }
       },
+      "Universe": {
+        "type": "object",
+        "required": [
+          "boards",
+          "exclude_st"
+        ],
+        "properties": {
+          "boards": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "只看这些板块：main 主板、chinext 创业板、star 科创板、bse 北交所；为空表示全部"
+          },
+          "exclude_st": {
+            "type": "boolean",
+            "description": "排除当天处于 ST 的股票"
+          },
+          "min_amount": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最低成交额（元）"
+          },
+          "min_listed_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "上市满多少个交易日（按本地日线根数）",
+            "minimum": 0
+          },
+          "min_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最低股价（元，未复权收盘价）"
+          }
+        }
+      },
       "UpgradeInput": {
         "type": "object",
         "properties": {
@@ -8239,8 +8348,7 @@
             "format": "date-time"
           },
           "asset_type": {
-            "type": "string",
-            "description": "stock / etf"
+            "$ref": "#/components/schemas/AssetType"
           },
           "board": {
             "type": "string",

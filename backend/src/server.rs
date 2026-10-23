@@ -1,7 +1,8 @@
 //! 常驻服务：在一个进程中同时运行 REST API、任务执行循环和定时调度（`niulai serve`）。
 //!
-//! 三部分共用同一个同步引擎和数据库连接池。收到 Ctrl+C / SIGTERM 后：API 停止接受新请求，
-//! 执行循环不再认领新任务、等正在执行的任务结束，调度器停止，然后进程退出。
+//! 三部分共用同一个同步引擎和数据库连接池；应用事件、建议重算和页面预热也是这里监督的常驻组件，
+//! API 处理函数启动的后台任务登记在 `AppState::background`。收到 Ctrl+C / SIGTERM 后：API 停止接受新请求，
+//! 执行循环不再认领新任务、等正在执行的任务结束，调度器停止，后台任务在期限内收尾，然后进程退出。
 //! 同一时刻只有一个进程执行同步任务（`Engine::lock_executor`）：取不到时先只提供 API，定期再试；`--no-worker` 的进程可以另外启动，只提供 API。
 
 use std::sync::Arc;
@@ -46,11 +47,30 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
         )
     });
 
-    let app_state = api::state(engine.clone());
-    if engine.cache.enabled() {
-        let (state, stop) = (app_state.clone(), stop_rx.clone());
-        set.spawn(async move { ("页面预热", api::precompute::run(state, stop).await) });
+    let app_state = api::state(engine.clone())?;
+    {
+        let (pool, wake, stop) = (
+            engine.pool.clone(),
+            app_state.advice_wake.clone(),
+            stop_rx.clone(),
+        );
+        set.spawn(async move {
+            (
+                "建议重算",
+                crate::advice::regen::run(pool, wake, stop).await,
+            )
+        });
     }
+    if app_state.cache.enabled() {
+        let warmer = crate::precompute::Warmer {
+            pool: engine.pool.clone(),
+            cache: app_state.cache.clone(),
+            overview: app_state.overview.clone(),
+        };
+        let stop = stop_rx.clone();
+        set.spawn(async move { ("页面预热", warmer.run(stop).await) });
+    }
+    let background = app_state.background.clone();
 
     if opts.worker {
         let (e, stop) = (engine.clone(), stop_rx.clone());
@@ -105,6 +125,7 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
                 tracing::error!(error = %e, "服务组件异常退出");
             }
         }
+        background.join_all().await;
     };
     if tokio::time::timeout(SHUTDOWN_DEADLINE, drain)
         .await
@@ -112,9 +133,10 @@ pub async fn serve(engine: Arc<Engine>, opts: ServeOptions) -> anyhow::Result<()
     {
         tracing::warn!(
             seconds = SHUTDOWN_DEADLINE.as_secs(),
-            "停机等待超时，取消还没结束的组件"
+            "停机等待超时，取消还没结束的组件和后台任务"
         );
         set.abort_all();
+        background.abort_all();
     }
     match failure {
         Some(why) => anyhow::bail!("服务组件意外退出：{why}"),

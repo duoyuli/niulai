@@ -22,6 +22,7 @@ import {
   useSyncRepair,
   useUpdateSchedule,
 } from "../api/generated/sync/sync";
+import { ChainProgress } from "../components/ChainProgress";
 import { DataCheck } from "../components/DataCheck";
 import {
   Badge,
@@ -39,13 +40,10 @@ import {
   Table,
 } from "../components/ui";
 import { fmtAgo, fmtDateTime, fmtDuration, fmtInt, fmtSlot } from "../lib/format";
-import { DATASET_CATEGORIES, PLANS, RUN_STATUS, runSource, WEEKDAYS } from "../lib/labels";
+import { PLANS, RUN_STATUS, runSource, WEEKDAYS } from "../lib/labels";
 import { groupChains } from "../lib/runs";
-import { ChainProgress } from "./RunDetailPage";
 
 // @project-doc docs/architecture/frontend.md#pages
-const ETF_DATASET_IDS = ["fund.etf_bar_1d", "fund.market_snapshot", "fund.profile"] as const;
-
 /** 数据同步：状态、同步计划（什么时候自动同步什么）、数据核检、同步记录和手动同步，然后按分类看股票与 ETF 等数据 */
 export function SyncPage() {
   const health = useSyncHealth({ query: { refetchInterval: 15_000, staleTime: 0 } });
@@ -442,30 +440,26 @@ function datasetState(d: DatasetStatus): {
   return { label: "正常", tone: "ok" };
 }
 
-function categoryOrder(c: string) {
-  const i = DATASET_CATEGORIES.indexOf(c);
-  return i < 0 ? DATASET_CATEGORIES.length : i;
-}
-
+/** 按分类分组，分类的先后由后端按 datasets.yaml 给出（category_order） */
 function groupByCategory(list: DatasetStatus[]): [string, DatasetStatus[]][] {
   const m = new Map<string, DatasetStatus[]>();
-  for (const d of [...list].sort((a, b) => categoryOrder(a.category) - categoryOrder(b.category))) {
+  for (const d of [...list].sort((a, b) => a.category_order - b.category_order)) {
     m.set(d.category, [...(m.get(d.category) ?? []), d]);
   }
   return [...m];
 }
 
+/** ETF 的行情和资料（后端标记 etf_market 的数据集）：页面、因子和建议都用到，应保持开启 */
 function AssetSyncSummary({ rows }: { rows: DatasetStatus[] }) {
-  const byId = new Map(rows.map((d) => [d.dataset_id, d]));
+  const etf = rows.filter((d) => d.etf_market);
+  if (etf.length === 0) return null;
   return (
     <Card title="股票与 ETF 行情同步" extra={<span className="text-xs text-zinc-400">两类行情都应保持开启</span>}>
       <div className="grid gap-3 sm:grid-cols-3">
-        {ETF_DATASET_IDS.map((id) => {
-          const d = byId.get(id);
-          if (!d) return null;
+        {etf.map((d) => {
           const st = datasetState(d);
           return (
-            <div key={id} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+            <div key={d.dataset_id} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium">{d.title}</span>
                 <Badge tone={st.tone}>{st.label}</Badge>

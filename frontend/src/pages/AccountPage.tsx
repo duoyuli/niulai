@@ -5,8 +5,6 @@ import { Link, useNavigate, useParams } from "react-router";
 import {
   getGetAccountQueryKey,
   getListAccountsQueryKey,
-  getListCorpActionsQueryKey,
-  getListTradesQueryKey,
   useAccountReview,
   useAddTrade,
   useAdviceHistory,
@@ -219,11 +217,7 @@ function RightsNotice({ d }: { d: AccountDetail }) {
   const qc = useQueryClient();
   const list = useListCorpActions(id);
   const [error, setError] = useState<string | null>(null);
-  const refresh = (r: AccountDetail) => {
-    qc.setQueryData(getGetAccountQueryKey(id), r);
-    qc.invalidateQueries({ queryKey: getListCorpActionsQueryKey(id) });
-    invalidateAccountQueries(qc, id);
-  };
+  const refresh = (r: AccountDetail) => invalidateAccountQueries(qc, id, "ledger", { account: r });
   const subscribe = useSubscribeRights({
     mutation: {
       onSuccess: (r) => {
@@ -237,8 +231,7 @@ function RightsNotice({ d }: { d: AccountDetail }) {
     mutation: {
       onSuccess: () => {
         setError(null);
-        qc.invalidateQueries({ queryKey: getListCorpActionsQueryKey(id) });
-        invalidateAccountQueries(qc, id);
+        invalidateAccountQueries(qc, id, "ledger");
       },
       onError: (e) => setError(errorText(e)),
     },
@@ -314,9 +307,7 @@ function TradeForm({ d, onDone }: { d: AccountDetail; onDone: () => void }) {
   const add = useAddTrade({
     mutation: {
       onSuccess: (r) => {
-        qc.setQueryData(getGetAccountQueryKey(id), r);
-        qc.invalidateQueries({ queryKey: getListAccountsQueryKey() });
-        invalidateAccountQueries(qc, id);
+        invalidateAccountQueries(qc, id, "ledger", { account: r });
         onDone();
       },
     },
@@ -421,10 +412,7 @@ function Records({ id }: { id: number }) {
   const undo = useUndoTrade({
     mutation: {
       onSuccess: (r) => {
-        qc.setQueryData(getGetAccountQueryKey(id), r);
-        qc.invalidateQueries({ queryKey: getListAccountsQueryKey() });
-        qc.invalidateQueries({ queryKey: getListTradesQueryKey(id) });
-        invalidateAccountQueries(qc, id);
+        invalidateAccountQueries(qc, id, "ledger", { account: r });
         setUndoError(null);
       },
       onError: (e) => setUndoError(errorText(e)),
@@ -706,8 +694,7 @@ function Settings({ d }: { d: AccountDetail }) {
   const update = useUpdateAccount({
     mutation: {
       onSuccess: (r) => {
-        qc.setQueryData(getGetAccountQueryKey(id), r);
-        invalidateAccountQueries(qc, id);
+        invalidateAccountQueries(qc, id, "settings", { account: r });
         setSaved(true);
       },
     },

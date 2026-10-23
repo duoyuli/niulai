@@ -39,7 +39,7 @@
 | `POST /system/upgrade` | 一键升级：把版本号交给 upgrader 容器，返回 202 | 请求体 `{version}`，为空时升级到最新版本；只接受正式版本号（`YYYY.MM.DD`、`YYYY.MM.DD.N`）且高于当前版本；upgrader 没有运行或正在升级时返回 409 |
 | `GET /setup` | 首次登录引导的状态：API Key 是否已配置、来源、末尾 4 位、生成 Key 的网址、是否已规划回补 | 见 [首次登录引导](#setup) |
 | `PUT /setup/api-key` | 验证并保存 API Key，立即生效 | 请求体 `{api_key}`；见 [首次登录引导](#setup) |
-| `GET /securities` | 证券列表（股票和交易所 ETF，结果带 `asset_type`） | `q`（代码或名称片段）、`board`；`limit` 默认 50、最大 500；`offset` |
+| `GET /securities` | 证券列表（股票和交易所 ETF，结果带 `asset_type`，取值是 `stock` 或 `etf`，各接口一致） | `q`（代码或名称片段）、`board`；`limit` 默认 50、最大 500；`offset` |
 | `GET /securities/{thscode}` | 证券详情：简称历史、本地日线的范围和根数 | 不存在时返回 404 |
 | `GET /securities/{thscode}/fundamentals` | 股票的最近估值历史、三张报表和财务指标；ETF 返回行情范围、供应商前复权标记和基金资料；股票报表同时返回披露日期 | `limit` 默认 90、最大 365（ETF 忽略） |
 | `GET /securities/{thscode}/bars` | 个股或 ETF 日线 | `adjust`（见 [复权参数](#adjust_param)；ETF 只支持 `none` / `qfq` / `hfq`）、`start`、`end`；`limit` 默认 500、最大 10,000，返回范围内**最近**的 N 根，按日期升序 |
@@ -64,17 +64,17 @@
 | `POST /accounts/{id}/corp-actions/rights/{thscode}/{ex_date}/ignore` | 暂不处理这次配股（不买、不扣钱），返回 204，之后不再提醒 | 已经处理过或不足 1 股返回 400 |
 | `GET /accounts/{id}/equity` | 每日净值曲线：每个交易日的现金、持仓市值、总资产、当日盈亏，以及剔除转入转出后的区间收益率 | `days` 默认 180、最多 1,825 个交易日；口径见 [每日净值](../domains/accounts.md#equity) |
 | `POST /accounts/{id}/checked` | 确认持仓和券商一致（只记时间），返回 204 | — |
-| `GET /accounts/{id}/advice` | 最新一份建议（`date` 指定交易日）和每条的处理状态；没有时 `waiting` 说明原因；改了持仓、现金或设置之后在后台重新生成时 `regenerating` 为 true | 结构和规则见 [生成建议](../domains/accounts.md#generation) |
+| `GET /accounts/{id}/advice` | 最新一份建议（`date` 指定交易日）和每条的处理状态；没有时 `waiting` 说明原因；改了持仓、现金或设置之后还在后台重新生成时 `regenerating` 为 true；上一次重新生成失败时 `regenerating` 为 false、`regenerate_error` 是原因（后台自动重试） | 结构和规则见 [生成建议](../domains/accounts.md#generation) |
 | `POST /accounts/{id}/advice/refresh` | 按现在的持仓和最新的因子排名重新生成 | — |
 | `GET /accounts/{id}/advice/history` | 每个交易日的最终一份建议的摘要 | `limit` 默认 60、最多 250 |
 | `POST /accounts/{id}/advice/{advice_id}/items/{key}/execute` | 已执行：按实际成交记一笔，持仓和现金更新，这份建议不重新生成 | 请求体 `{shares?, price?, fee?, trade_date?}`，默认按建议；同一条执行两次、这条不需要操作时返回 400 |
-| `POST` / `DELETE /accounts/{id}/advice/{advice_id}/items/{key}/skip` | 不做这一条 / 撤销「不做」 | 已执行的不能撤销 |
+| `POST` / `DELETE /accounts/{id}/advice/{advice_id}/items/{key}/skip` | 不做这一条 / 撤销「不做」；影子订单随之记为已取消或回到计划中 | 已执行的不能改成不做（400），也不能撤销；条目不存在时 404 |
 | `GET /accounts/{id}/review` | 最近 180 天的建议之后 5、10、20 个交易日的涨跌和汇总 | 口径见 [建议回看](../domains/accounts.md#review) |
 | `GET /accounts/{id}/shadow-orders` | 查看理论订单与实际成交之间的价差、部分成交和取消状态 | `limit` 默认 250、最大 1,000；建议生成、执行或跳过后自动更新 |
 | `GET /indices` | 指数与板块列表，含当前成分数 | `category`、`q`；最多 2,000 条 |
 | `GET /indices/{thscode}/bars` | 指数日线（没有复权） | `start`、`end`、`limit`，同个股日线；指数没有复权，`adjust` 参数会被忽略 |
 | `GET /indices/{thscode}/members` | 指数成分 | `date` 默认今天；历史成分从开始采集那天起才有 |
-| `GET /datasets` | 数据集列表（只含配置中现有的数据集）：中文名、分类、一句话说明、更新频率和所属同步计划（`schedule`：`daily`、`weekly`、`monthly`、`report_season`、`manual`）、是否只有当天值、开关、最近完成时间、未完成任务数、没有解决的失败任务数、历史回补的进度 | — |
+| `GET /datasets` | 数据集列表（只含配置中现有的数据集）：中文名、分类、一句话说明、更新频率和所属同步计划（`schedule`：`daily`、`weekly`、`monthly`、`report_season`、`manual`）、是否只有当天值、开关、最近完成时间、未完成任务数、没有解决的失败任务数、历史回补的进度；`category_order` 是分类的先后（分类在 `datasets.yaml` 中第一次出现的顺序），`etf_market` 标记 ETF 行情和资料的数据集 | — |
 | `GET /sync/health` | 同步是否正常：最近一个交易日的数据是否就绪、最近 20 个交易日的缺口（能否补回）、没有解决的失败（白话原因）、历史回补的进度和剩余时间 | 规则见 [完整性核对与兜底补偿](../architecture/sync_pipeline.md#audit) |
 | `POST /sync/repair` | 立即兜底补偿：能补的缺口规划补偿运行，供应商暂时不可用导致的失败重新排队；返回 202 | 每天每日同步结束后也会自动执行一次 |
 | `GET /sync/check` | 数据核检：是否正在核检、最近一次核检（来源、查到哪个交易日、每个数据集查了多少、新发现、已补回、确认停牌、仍缺、重取的运行）、还缺数据的证券（缺的天数多的在前，最多 50 只，每只列最早 10 天） | 规则见 [数据核检](../architecture/sync_pipeline.md#data_check) |

@@ -16,8 +16,8 @@ pub struct LotRule {
 
 /// 申报单位：沪深主板、创业板一手 100 股；科创板至少 200 股、之后按 1 股递增；北交所至少 100 股、之后按 1 股递增；
 /// ETF 按场内基金常见的 100 份一手
-pub fn lot_rule_for(asset_type: &str, board: &str) -> LotRule {
-    let (min, step) = AssetType::from_db(Some(asset_type)).lot_rule(board);
+pub fn lot_rule_for(asset_type: AssetType, board: &str) -> LotRule {
+    let (min, step) = asset_type.lot_rule(board);
     LotRule { min, step }
 }
 
@@ -49,11 +49,8 @@ impl Fees {
     }
 
     /// 卖出的佣金加印花税（股票千分之 0.5，ETF 不收）
-    pub fn sell_fee(&self, asset_type: &str, amount: f64) -> f64 {
-        round2(
-            self.commission(amount)
-                + amount * AssetType::from_db(Some(asset_type)).stamp_tax_rate(),
-        )
+    pub fn sell_fee(&self, asset_type: AssetType, amount: f64) -> f64 {
+        round2(self.commission(amount) + amount * asset_type.stamp_tax_rate())
     }
 }
 
@@ -88,7 +85,7 @@ mod tests {
 
     #[test]
     fn rounds_to_board_lots_within_budget() {
-        let main = lot_rule_for("stock", "main");
+        let main = lot_rule_for(AssetType::Stock, "main");
         assert_eq!(
             max_buy_shares(main, 15_800.0, 79.0, &FEES),
             100,
@@ -96,7 +93,7 @@ mod tests {
         );
         assert_eq!(max_buy_shares(main, 15_810.0, 79.0, &FEES), 200);
         assert_eq!(max_buy_shares(main, 7_000.0, 79.0, &FEES), 0, "不够一手");
-        let star = lot_rule_for("stock", "star");
+        let star = lot_rule_for(AssetType::Stock, "star");
         assert_eq!(
             max_buy_shares(star, 10_000.0, 60.0, &FEES),
             0,
@@ -109,11 +106,11 @@ mod tests {
         );
         assert_eq!(max_buy_shares(star, 10_000.0, 30.0, &FEES), 333);
         assert_eq!(
-            max_buy_shares(lot_rule_for("stock", "bse"), 2_000.0, 10.0, &FEES),
+            max_buy_shares(lot_rule_for(AssetType::Stock, "bse"), 2_000.0, 10.0, &FEES),
             199
         );
         assert_eq!(
-            lot_rule_for("etf", "star"),
+            lot_rule_for(AssetType::Etf, "star"),
             LotRule {
                 min: 100,
                 step: 100
@@ -125,10 +122,14 @@ mod tests {
     fn fees_include_minimum_commission_and_stamp_tax() {
         assert_eq!(FEES.buy_fee(10_000.0), 5.0, "不足 5 元按 5 元");
         assert_eq!(
-            FEES.sell_fee("stock", 100_000.0),
+            FEES.sell_fee(AssetType::Stock, 100_000.0),
             75.0,
             "佣金 25 元加印花税 50 元"
         );
-        assert_eq!(FEES.sell_fee("etf", 100_000.0), 25.0, "ETF 不收印花税");
+        assert_eq!(
+            FEES.sell_fee(AssetType::Etf, 100_000.0),
+            25.0,
+            "ETF 不收印花税"
+        );
     }
 }

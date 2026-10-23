@@ -36,7 +36,6 @@ hmac = "0.13"
 sha2 = "0.11"
 argon2 = "0.6"
 getrandom = "0.4"
-async-trait = "0.1"
 redis = { version = "0.32.7", default-features = false, features = ["tokio-comp", "connection-manager", "json"] }
 
 [dev-dependencies]

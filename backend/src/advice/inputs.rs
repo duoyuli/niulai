@@ -1,5 +1,5 @@
 //! 从数据库组装生成建议的输入：所有账户共用的部分（交易日、市场、证券信息）读一次，
-//! 每个账户再按自己的因子排名读持仓股和候选股的日线。
+//! 每个账户再按自己的因子排名读持仓股和候选股的日线（一批证券一次查询，不逐只读）。
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -124,11 +124,12 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
     let positions = account::positions(pool, acc.account_id)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let held: Vec<String> = positions.iter().map(|p| p.thscode.clone()).collect();
+    let mut held_bars = prices::recent_bars_batch(pool, &held, Some(sh.trade_date), BARS).await?;
     let mut holdings = vec![];
     for p in &positions {
         let meta = sh.sec.meta.get(&p.thscode);
-        let bars =
-            prices::recent_instrument_bars_until(pool, &p.thscode, sh.trade_date, BARS).await?;
+        let bars = held_bars.remove(&p.thscode).unwrap_or_default();
         holdings.push(HoldingIn {
             thscode: p.thscode.clone(),
             name: sh
@@ -138,7 +139,8 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
                 .cloned()
                 .unwrap_or_else(|| p.thscode.clone()),
             board: meta.map_or_else(|| "main".into(), |m| m.board.clone()),
-            asset_type: meta.map_or(AssetType::Stock, |m| m.asset_type).key().into(),
+            // 证券表里没有的代码（例如已经被供应商删掉）按股票的交易规则估算
+            asset_type: meta.map_or(AssetType::Stock, |m| m.asset_type),
             shares: p.shares,
             cost_price: p.cost_price,
             is_st: meta.is_some_and(|m| m.is_st),
@@ -149,32 +151,39 @@ pub async fn input_for(pool: &PgPool, sh: &Shared, acc: &Account) -> anyhow::Res
         });
     }
 
-    // 候选：排名靠前、还没持有的，够填满空位再多看几只
+    // 候选：排名靠前、还没持有的，够填满空位再多看几只。按名次一批批读日线，
+    // 没有证券信息或日线的跳过、由后面的名次顺延
     let wanted = rules.top_n as usize + EXTRA_CANDIDATES;
     let mut candidates = vec![];
-    for (r, (code, score)) in ranked.iter().enumerate() {
+    let open: Vec<(usize, &(String, f64))> = ranked
+        .iter()
+        .enumerate()
+        .filter(|(_, (code, _))| !held.contains(code) && sh.sec.meta.contains_key(code))
+        .collect();
+    for chunk in open.chunks(wanted) {
         if candidates.len() >= wanted {
             break;
         }
-        if positions.iter().any(|p| p.thscode == *code) {
-            continue;
+        let codes: Vec<String> = chunk.iter().map(|(_, (code, _))| code.clone()).collect();
+        let mut bars = prices::recent_bars_batch(pool, &codes, Some(sh.trade_date), BARS).await?;
+        for (r, (code, score)) in chunk {
+            if candidates.len() >= wanted {
+                break;
+            }
+            let Some(snap) = bars.remove(code).and_then(|b| snapshot(&b)) else {
+                continue;
+            };
+            let meta = &sh.sec.meta[code];
+            candidates.push(CandidateIn {
+                thscode: code.clone(),
+                name: sh.sec.names.get(code).cloned().unwrap_or_default(),
+                board: meta.board.clone(),
+                is_st: meta.is_st,
+                rank: r + 1,
+                score: *score,
+                snap,
+            });
         }
-        let Some(meta) = sh.sec.meta.get(code) else {
-            continue;
-        };
-        let bars = prices::recent_instrument_bars_until(pool, code, sh.trade_date, BARS).await?;
-        let Some(snap) = snapshot(&bars) else {
-            continue;
-        };
-        candidates.push(CandidateIn {
-            thscode: code.clone(),
-            name: sh.sec.names.get(code).cloned().unwrap_or_default(),
-            board: meta.board.clone(),
-            is_st: meta.is_st,
-            rank: r + 1,
-            score: *score,
-            snap,
-        });
     }
     Ok(Input {
         trade_date: sh.trade_date,

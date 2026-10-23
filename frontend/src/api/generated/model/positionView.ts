@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AccountPosition } from './accountPosition';
+import type { AssetType } from './assetType';
 
 export interface PositionView {
-  /** stock / etf */
-  asset_type: string;
+  asset_type: AssetType;
   board: string;
   /**
      * 最近一个交易日的涨跌（%）

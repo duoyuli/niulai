@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
+use super::compute;
 use super::limit_pool::DayLimits;
 use super::prices::{self, DailyBar};
 use super::securities::{self, StPeriod, StockMeta, st_on};
@@ -17,11 +18,7 @@ pub async fn resolve_date(
     date: Option<NaiveDate>,
 ) -> sqlx::Result<Option<NaiveDate>> {
     sqlx::query_scalar(
-        "SELECT max(trade_date) FROM (
-             SELECT trade_date FROM mkt.stock_bar_1d
-             UNION
-             SELECT trade_date FROM mkt.etf_bar_1d
-         ) d WHERE ($1::date IS NULL OR trade_date <= $1)",
+        "SELECT max(trade_date) FROM mkt.v_bar_date WHERE ($1::date IS NULL OR trade_date <= $1)",
     )
     .bind(date)
     .fetch_one(pool)
@@ -50,7 +47,15 @@ pub struct Overview {
 }
 
 // @project-doc docs/domains/market_data_rules.md#market
+/// 整个计算占一个全市场计算的槽位（后台建议里调用时复用后台的槽位），见 [`compute::run`]
 pub async fn overview(pool: &PgPool, date: Option<NaiveDate>) -> anyhow::Result<Option<Overview>> {
+    compute::run(compute::Budget::Foreground, overview_in_slot(pool, date)).await
+}
+
+async fn overview_in_slot(
+    pool: &PgPool,
+    date: Option<NaiveDate>,
+) -> anyhow::Result<Option<Overview>> {
     let Some(date) = resolve_date(pool, date).await? else {
         return Ok(None);
     };
@@ -225,8 +230,8 @@ pub struct OverviewCache {
     entries: std::sync::Mutex<Vec<OverviewEntry>>,
 }
 
-/// (交易日, 数据版本, 结果)
-type OverviewEntry = (NaiveDate, super::limit_pool::CacheVersions, Overview);
+/// (交易日, 数据版本 [`super::limit_pool::CacheVersions::market_token`], 结果)
+type OverviewEntry = (NaiveDate, String, Overview);
 
 impl OverviewCache {
     pub async fn get(
@@ -237,7 +242,9 @@ impl OverviewCache {
         let Some(date) = resolve_date(pool, date).await? else {
             return Ok(None);
         };
-        let version = super::limit_pool::CacheVersions::load(pool).await?;
+        let version = super::limit_pool::CacheVersions::load(pool)
+            .await?
+            .market_token();
         if let Some(hit) = self
             .entries
             .lock()

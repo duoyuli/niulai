@@ -5,14 +5,14 @@
  * A 股数据工作台：行情、复权、多因子研究、账户调仓建议与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { AssetType } from './assetType';
 import type { EtfFundamentals } from './etfFundamentals';
 import type { FinancialAbility } from './financialAbility';
 import type { FinancialStatement } from './financialStatement';
 import type { ValuationPoint } from './valuationPoint';
 
 export interface Fundamentals {
-  /** stock / etf */
-  asset_type: string;
+  asset_type: AssetType;
   balance?: FinancialStatement | null;
   cashflow?: FinancialStatement | null;
   etf?: EtfFundamentals | null;

@@ -9,13 +9,12 @@
 //! 正在同步这只证券（有未完成任务）时先不查它，等它同步完。
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::{AssertSqlSafe, PgConnection, PgPool};
 use utoipa::ToSchema;
 
 use super::Engine;
@@ -24,11 +23,38 @@ use super::run::RunKind;
 use super::spec::{DatasetSpec, Partition};
 use crate::time::today_cn;
 
-/// 进程内同时只做一次核检
-static RUNNING: AtomicBool = AtomicBool::new(false);
+/// 同时只做一次核检的独占权：数据库咨询锁 `niulai.data_check`，用一个脱离连接池的独立连接持有，
+/// 所以多个进程（`serve`、`serve --no-worker`、`niulai check`）之间也只有一个在核检；进程退出时连接关闭、锁自动释放
+pub struct CheckLock(PgConnection);
 
-pub fn is_running() -> bool {
-    RUNNING.load(Ordering::SeqCst)
+/// 取核检的独占权；另一次核检正在进行时返回 None
+pub async fn try_lock(pool: &PgPool) -> anyhow::Result<Option<CheckLock>> {
+    let mut conn = pool.acquire().await?.detach();
+    let got: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('niulai.data_check'))")
+            .fetch_one(&mut conn)
+            .await?;
+    Ok(got.then_some(CheckLock(conn)))
+}
+
+/// 有没有核检正在进行（任何进程）：试着取一下独占权，取到了立即放回
+pub async fn is_running(pool: &PgPool) -> anyhow::Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT CASE WHEN pg_try_advisory_lock(hashtext('niulai.data_check'))
+                     THEN NOT pg_advisory_unlock(hashtext('niulai.data_check')) ELSE true END",
+    )
+    .fetch_one(pool)
+    .await?)
+}
+
+impl CheckLock {
+    async fn release(self) {
+        use sqlx::Connection;
+        // 关闭连接就释放了会话级的咨询锁
+        if let Err(e) = self.0.close().await {
+            tracing::warn!(error = %e, "关闭核检独占连接失败");
+        }
+    }
 }
 
 /// 一个数据集的核检结果
@@ -58,12 +84,17 @@ pub struct CheckResult {
 // @project-doc docs/architecture/sync_pipeline.md#data_check
 /// 执行一次核检。另一次核检正在进行时返回 None
 pub async fn run(engine: &Engine, trigger: &str) -> anyhow::Result<Option<i64>> {
-    if RUNNING.swap(true, Ordering::SeqCst) {
+    let Some(lock) = try_lock(&engine.pool).await? else {
         return Ok(None);
-    }
+    };
+    run_with(engine, trigger, lock).await.map(Some)
+}
+
+/// 已经取得独占权时执行一次核检（例如接口先取锁、再交给后台任务），结束后释放
+pub async fn run_with(engine: &Engine, trigger: &str, lock: CheckLock) -> anyhow::Result<i64> {
     let out = run_locked(engine, trigger).await;
-    RUNNING.store(false, Ordering::SeqCst);
-    out.map(Some)
+    lock.release().await;
+    out
 }
 
 async fn run_locked(engine: &Engine, trigger: &str) -> anyhow::Result<i64> {
@@ -303,13 +334,14 @@ pub fn merge_windows(gaps: &[(String, NaiveDate)]) -> Vec<Window> {
 
 /// 定时核检：每周同步全部结束后一次；之后重取的运行结束了，再核检一次确认结果（至少隔 10 分钟）
 pub async fn auto(engine: &Engine) -> anyhow::Result<()> {
-    if is_running() {
+    // 先取独占权再抢每周的作业：别的核检正在进行时不消耗这周的机会
+    let Some(lock) = try_lock(&engine.pool).await? else {
         return Ok(());
-    }
+    };
     if weekly_finished(&engine.pool).await?
         && super::scheduler::claim(&engine.pool, "data_check", today_cn(), "week").await?
     {
-        if let Err(e) = run(engine, "weekly").await {
+        if let Err(e) = run_with(engine, "weekly", lock).await {
             if let Err(release_error) =
                 super::scheduler::release_claim(&engine.pool, "data_check", today_cn()).await
             {
@@ -327,7 +359,9 @@ pub async fn auto(engine: &Engine) -> anyhow::Result<()> {
     .fetch_one(&engine.pool)
     .await?;
     if followup {
-        run(engine, "followup").await?;
+        run_with(engine, "followup", lock).await?;
+    } else {
+        lock.release().await;
     }
     Ok(())
 }
@@ -405,7 +439,7 @@ pub async fn status(pool: &PgPool) -> anyhow::Result<DataCheckStatus> {
     .fetch_all(pool)
     .await?;
     Ok(DataCheckStatus {
-        running: is_running(),
+        running: is_running(pool).await?,
         last,
         open,
     })

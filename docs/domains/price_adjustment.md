@@ -111,3 +111,6 @@ factor    = 从本库第一根 K 线起各次比例的累乘（第一根 K 线�
 ETF 也接受 `none`、`qfq` 和 `hfq` 参数，但三者读取同一份供应商前复权日线；接口返回的 `factor` 为空，并在证券详情中保留 ETF 的数据口径。
 
 所有复权视图都按日期区间关联 `mkt.adj_segment`，每根 K 线都有复权价；没有分段行的股票按原价返回。接口的其他约定见 [REST API](../interfaces/rest_api.md)。
+
+<a id="analysis_bars"></a>
+**分析价格**：因子、市场概况、账户估值、建议和建议回看不读上面这些视图，统一读 `mkt.v_analysis_bar`（`analysis::prices`）：一行同时有未复权价（成交、手数、涨跌停）和前复权价（`q_*`，收益和因子），股票按等比前复权，ETF 用供应商前复权价，不在 Rust 里按资产类型分表或再写一遍复权表达式。它和 `mkt.v_stock_bar_qfq` 是两份 SQL 定义，集成测试 `adjustment_and_api_end_to_end` 逐根比对两者的前复权价（误差小于 1e-6），改其中一份的表达式时测试会失败。本地有日线的日期（股票和 ETF 的并集）统一读 `mkt.v_bar_date`。

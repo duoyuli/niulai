@@ -24,7 +24,7 @@
 | 字段 | 必填 | 含义 |
 | --- | --- | --- |
 | `id` | 是 | `<领域>.<名称>`，例如 `a_share.bar_1d`。领域取第一个点之前的部分 |
-| `title`、`category`、`summary` | 是 | 中文名、分类、一句话说明（是什么数据、用在哪里），数据同步页按分类展示。分类的顺序在 `frontend/src/lib/labels.ts` 的 `DATASET_CATEGORIES` 中 |
+| `title`、`category`、`summary` | 是 | 中文名、分类、一句话说明（是什么数据、用在哪里），数据同步页按分类展示。分类的先后是它在本文件中第一次出现的顺序（`GET /datasets` 的 `category_order`），新增分类不用改前端 |
 | `endpoint` | 是 | 供应商接口路径，只支持 GET |
 | `priority` | 是 | `P0`–`P3`，决定默认开关，以及同一层任务中的先后（P0 先执行）；分层见 [任务生命周期](../architecture/sync_pipeline.md#task_lifecycle) |
 | `enabled` | 否 | 是否开启。未配置时 P0、P1 开启，P2、P3 关闭 |

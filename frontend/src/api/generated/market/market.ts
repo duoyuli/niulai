@@ -417,8 +417,8 @@ export const getMarketHotUrl = (params?: MarketHotParams,) => {
 }
 
 /**
- * 涨跌停池由供应商整理，按周同步，最近几天可能还没更新；`available` 为 false 时
- * `note` 用白话说明原因，页面据此显示空态。
+ * 涨跌停池由供应商整理，最近几天可能还没更新；`available` 为 false 时
+ * `note` 用白话说明原因，页面据此显示空态。计算在 `crate::analysis::hotspots`
  * @summary 今日热点：权威涨停、跌停、炸板池和当天的封板率。
  */
 export const marketHot = async (params?: MarketHotParams, options?: Parameters<typeof apiFetch>[1]): Promise<HotMarket> => {

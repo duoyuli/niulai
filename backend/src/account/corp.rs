@@ -238,6 +238,7 @@ pub async fn subscribe_rights(
     .execute(&mut *tx)
     .await?;
     add_cash(&mut tx, account_id, -pay).await?;
+    super::stale::mark_in_tx(&mut tx, account_id).await?;
     tx.commit().await?;
     Ok(trade_id)
 }

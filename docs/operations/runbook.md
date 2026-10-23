@@ -313,8 +313,9 @@ docker compose start niulai
 - `cargo test`：单元测试，不需要数据库。
 - `NIULAI_TEST_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/postgres cargo test`：加上集成测试。连接串要有建库权限，每个测试建一个临时库，结束时删除；不设置时跳过集成测试。
 - `cargo clippy --all-targets`：提交前应没有警告。
+- 单元测试里包含架构适应度测试（`lib.rs` 的 `architecture`）：模块依赖方向和动态 SQL 的「审计：」注释，见 [依赖方向](../project_overview.md#dependency_rules)。
 - `cargo test --lib -- --ignored real_docker_data_dir_migration`：用本机 Docker 真实走一遍数据目录迁移（约 1 分钟），改 `backend/src/upgrader/` 时运行。
 
 在 `frontend/` 下：`pnpm typecheck`、`pnpm lint`、`pnpm test`，都应通过。
 
-集成测试（`backend/tests/integration.rs`）覆盖迁移、写入幂等、复权、ETF 数据域、任务去重与超时回收、运行结束判定和波次接续、规划中断、交易日校验与过期日期、完整性核对与补偿、数据核检、同步计划、定期清理、首次登录引导、登录与多用户权限、一键升级的文件交换，以及账户与调仓建议、撤销流水、配股与净值、个股基本面、权威涨跌停池与市场概况、今日热点、因子研究和账户的因子排名这些主要 API，不调用供应商接口。
+集成测试（`backend/tests/integration.rs`）覆盖迁移、写入幂等、复权、ETF 数据域、任务去重与超时回收、运行结束判定和波次接续、同步完成事件的阶段与确认、规划中断、交易日校验与过期日期、完整性核对与补偿、数据核检、同步计划、定期清理、首次登录引导、登录与多用户权限、一键升级的文件交换，以及账户与调仓建议（含建议重算的待办、建议处理与影子订单的一致性、因子排名按数据版本失效）、撤销流水、配股与净值、个股基本面、权威涨跌停池与市场概况、今日热点、因子研究（含完整配置的运行记录）、K 线与分析价格的复权一致性和账户的因子排名这些主要 API，不调用供应商接口。

@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 use crate::account::lots::{self, Fees, round2};
 use crate::account::rules::Rules;
 use crate::analysis::factors;
+use crate::instrument::AssetType;
 
 /// 补仓时每只至少要投入目标金额的这个比例，避免用零头买一手
 const MIN_FILL: f64 = 0.5;
@@ -35,7 +36,7 @@ pub struct HoldingIn {
     pub thscode: String,
     pub name: String,
     pub board: String,
-    pub asset_type: String,
+    pub asset_type: AssetType,
     pub shares: i64,
     pub cost_price: Option<f64>,
     pub is_st: bool,
@@ -332,7 +333,7 @@ pub fn generate(inp: &Input) -> Advice {
             break;
         }
         let close = c.snap.close;
-        let lot = lots::lot_rule_for("stock", &c.board);
+        let lot = lots::lot_rule_for(AssetType::Stock, &c.board);
         let shares = lots::max_buy_shares(lot, budget, close, &inp.fees);
         if shares == 0 {
             let need = lot.min as f64 * close;
@@ -533,7 +534,7 @@ fn judge_holding(
         }
         Item {
             amount,
-            fee: inp.fees.sell_fee(&h.asset_type, amount),
+            fee: inp.fees.sell_fee(h.asset_type, amount),
             evidence: ev,
             plan: vec![
                 format!(
@@ -696,7 +697,7 @@ mod tests {
             thscode: code.into(),
             name: format!("股票{code}"),
             board: "main".into(),
-            asset_type: "stock".into(),
+            asset_type: AssetType::Stock,
             shares,
             cost_price: Some(10.0),
             is_st: false,

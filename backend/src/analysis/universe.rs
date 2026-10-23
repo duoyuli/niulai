@@ -1,13 +1,13 @@
 //! 股票池：排除 ST、低价、成交太少、上市太短和已退市的股票。因子研究和账户的因子排名共用。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::prices::DailyBar;
 use super::securities::{StPeriod, StockMeta, st_on};
 use crate::instrument::AssetType;
 
-#[derive(Serialize, ToSchema, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq)]
 pub struct Universe {
     /// 只看这些板块：main 主板、chinext 创业板、star 科创板、bse 北交所；为空表示全部
     pub boards: Vec<String>,

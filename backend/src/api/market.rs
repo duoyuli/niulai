@@ -1,4 +1,4 @@
-//! 行情接口：证券、日线（含复权）、财务摘要、指数和市场热点。
+//! 行情接口：证券、日线（含复权）、财务摘要、指数和今日热点（计算在 `crate::analysis::hotspots`）。
 //!
 //! 复权口径（见数据方案 §3.1）：
 //! - `qfq` / `hfq`：等比前复权 / 等比后复权，计算因子和收益的标准口径
@@ -7,8 +7,6 @@
 //!
 //! 均线和交叉信号一律用等比前复权计算；因为等比复权的前、后复权只差一个常数倍，信号与基准日无关。
 //! 计算本身在 `crate::analysis` 中，这里只做参数校验和响应格式。
-
-use std::collections::BTreeMap;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -23,7 +21,10 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
+use crate::analysis::hotspots::{self, HotMarket};
+use crate::analysis::limit_pool::CacheVersions;
 use crate::error::{ApiError, ApiResult};
+use crate::instrument::AssetType;
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -45,8 +46,7 @@ pub struct Security {
     pub ticker: String,
     pub name: String,
     pub exchange: String,
-    /// stock / etf
-    pub asset_type: String,
+    pub asset_type: AssetType,
     /// main / chinext / star / bse
     pub board: String,
     pub list_date: Option<NaiveDate>,
@@ -88,6 +88,7 @@ async fn list_securities(
     .bind(&q.board)
     .fetch_one(&s.pool)
     .await?;
+    // 审计：filter 是固定的 SQL 片段，用户输入全部走绑定参数
     let items = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT thscode, ticker, name, exchange, asset_type, board, list_date, delisted_on, last_seen FROM ref.instrument WHERE {filter} ORDER BY thscode LIMIT $3 OFFSET $4"
     )))
@@ -176,8 +177,7 @@ pub struct FinancialAbility {
 #[derive(Serialize, ToSchema)]
 pub struct Fundamentals {
     pub thscode: String,
-    /// stock / etf
-    pub asset_type: String,
+    pub asset_type: AssetType,
     /// 每个交易日一条，按日期倒序
     pub valuation: Vec<ValuationPoint>,
     pub income: Option<FinancialStatement>,
@@ -222,20 +222,13 @@ async fn get_security(
         .bind(&code)
         .fetch_all(&s.pool)
         .await?;
-    let (first_bar, last_bar, bars): (Option<NaiveDate>, Option<NaiveDate>, i64) = if security
-        .asset_type
-        == "etf"
-    {
-        sqlx::query_as("SELECT min(trade_date), max(trade_date), count(*) FROM mkt.etf_bar_1d WHERE thscode = $1")
-                .bind(&code)
-                .fetch_one(&s.pool)
-                .await?
-    } else {
-        sqlx::query_as("SELECT min(trade_date), max(trade_date), count(*) FROM mkt.stock_bar_1d WHERE thscode = $1")
-                .bind(&code)
-                .fetch_one(&s.pool)
-                .await?
-    };
+    // 审计：表名来自 AssetType::bar_table 的固定值
+    let sql = AssertSqlSafe(format!(
+        "SELECT min(trade_date), max(trade_date), count(*) FROM {} WHERE thscode = $1",
+        security.asset_type.bar_table()
+    ));
+    let (first_bar, last_bar, bars): (Option<NaiveDate>, Option<NaiveDate>, i64) =
+        sqlx::query_as(sql).bind(&code).fetch_one(&s.pool).await?;
     Ok(Json(SecurityDetail {
         security,
         name_history,
@@ -253,21 +246,13 @@ async fn security_fundamentals(
     Path(code): Path<String>,
     Query(q): Query<FundamentalsQuery>,
 ) -> ApiResult<Json<Fundamentals>> {
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ref.instrument WHERE thscode = $1)")
-            .bind(&code)
-            .fetch_one(&s.pool)
-            .await?;
-    if !exists {
-        return Err(ApiError::NotFound(format!("证券不存在：{code}")));
-    }
-
-    let asset_type: String =
+    let asset_type: AssetType =
         sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
             .bind(&code)
-            .fetch_one(&s.pool)
-            .await?;
-    if asset_type == "etf" {
+            .fetch_optional(&s.pool)
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("证券不存在：{code}")))?;
+    if asset_type == AssetType::Etf {
         return Ok(Json(Fundamentals {
             thscode: code.clone(),
             asset_type,
@@ -348,9 +333,10 @@ async fn etf_fundamentals(pool: &sqlx::PgPool, code: &str) -> sqlx::Result<EtfFu
     .fetch_optional(pool)
     .await?;
     let profile: Option<Value> = sqlx::query_scalar(
-        "SELECT payload FROM raw.record WHERE dataset_id = 'fund.profile' AND thscode = $1 ORDER BY last_seen_at DESC LIMIT 1",
+        "SELECT payload FROM raw.record WHERE dataset_id = $2 AND thscode = $1 ORDER BY last_seen_at DESC LIMIT 1",
     )
     .bind(code)
+    .bind(crate::instrument::ETF_PROFILE_DATASET)
     .fetch_optional(pool)
     .await?;
     let number_text = |key: &str| {
@@ -535,8 +521,8 @@ pub struct BarSeries {
 }
 
 // @project-doc docs/domains/price_adjustment.md#adjust_views
-fn bar_view(asset_type: &str, adjust: &str) -> ApiResult<(&'static str, &'static str)> {
-    if asset_type == "etf" {
+fn bar_view(asset_type: AssetType, adjust: &str) -> ApiResult<(&'static str, &'static str)> {
+    if asset_type == AssetType::Etf {
         return match adjust {
             "none" | "qfq" | "hfq" => Ok(("mkt.etf_bar_1d", "NULL::float8")),
             other => Err(ApiError::BadRequest(format!(
@@ -567,13 +553,13 @@ async fn security_bars(
     Query(q): Query<BarQuery>,
 ) -> ApiResult<Json<BarSeries>> {
     let adjust = q.adjust.unwrap_or_else(|| "qfq".into());
-    let asset_type: Option<String> =
+    let asset_type: Option<AssetType> =
         sqlx::query_scalar("SELECT asset_type FROM ref.instrument WHERE thscode = $1")
             .bind(&code)
             .fetch_optional(&s.pool)
             .await?;
     let asset_type = asset_type.ok_or_else(|| ApiError::NotFound(format!("证券不存在：{code}")))?;
-    let (view, factor) = bar_view(&asset_type, &adjust)?;
+    let (view, factor) = bar_view(asset_type, &adjust)?;
     let limit = q.limit.unwrap_or(500).clamp(1, 10_000);
     let sql = format!(
         "SELECT * FROM (
@@ -739,425 +725,34 @@ async fn index_members(
 
 // ───────────────────────── 今日热点 ─────────────────────────
 
-/// 涨跌停池的数据集：交易所口径（同花顺整理），这些数据集是每周同步的
-const HOT_LIMIT_UP: &str = "special.limit_up_pool";
-const HOT_LIMIT_DOWN: &str = "special.limit_down_pool";
-const HOT_LIMIT_BREAK: &str = "special.limit_break_pool";
-const HOT_LIMIT_STATS: &str = "special.limit_up_stats";
-
-/// 每个列表最多列多少只股票；全部家数在 total 字段里另给
-const HOT_STOCK_LIMIT: usize = 50;
-
 #[derive(Deserialize, IntoParams)]
 pub struct HotQuery {
     /// 交易日，默认最新；取不晚于它的、本地有日线的最近一天
     pub date: Option<NaiveDate>,
 }
 
-#[derive(Deserialize, Serialize, ToSchema)]
-pub struct HotMarket {
-    /// 数据对应的交易日；本地还没有任何行情数据时为空
-    pub trade_date: Option<NaiveDate>,
-    /// 这一天的权威涨跌停数据（涨停、跌停、炸板池）是否已经同步
-    pub available: bool,
-    /// 没有数据时的一句白话说明，例如「今天的涨停数据还没同步，稍后再看」
-    pub note: Option<String>,
-    /// 涨停家数（不只是下面列出的那些）
-    pub limit_up_total: i64,
-    /// 按连板高度分组，从高到低；1 表示首板
-    pub limit_up_groups: Vec<HotLimitUpGroup>,
-    /// 最高连板数，没有涨停时为 0
-    pub max_board: i32,
-    /// 跌停家数
-    pub limit_down_total: i64,
-    /// 跌停股，最多列 50 只
-    pub limit_down_stocks: Vec<HotStock>,
-    /// 炸板家数（盘中涨停、收盘没封住）
-    pub broken_total: i64,
-    /// 炸板股，最多列 50 只
-    pub broken_stocks: Vec<HotStock>,
-    /// 当天的封板率等统计，没同步时为空
-    pub stats: Option<HotStats>,
-}
-
-#[derive(Deserialize, Serialize, ToSchema)]
-pub struct HotLimitUpGroup {
-    /// 连板高度，1 表示首板
-    pub board_num: i32,
-    /// 「首板」「2 板」「3 板」……
-    pub label: String,
-    /// 这一档一共多少只（不只是下面列出的那些）
-    pub count: i64,
-    pub stocks: Vec<HotLimitUpStock>,
-}
-
-#[derive(Deserialize, Serialize, ToSchema)]
-pub struct HotLimitUpStock {
-    pub thscode: String,
-    pub name: String,
-    /// 供应商的连板说明，例如「首板」「2 连板」
-    pub continue_day_text: Option<String>,
-    /// 涨停原因，例如「低空经济+无人机物流+海上油气」
-    pub limit_up_reason: Option<String>,
-    /// 最新价（字符串，保留供应商给的精度）
-    pub last_price: Option<String>,
-    /// 收盘时的封单额（元，字符串）
-    pub seal_money: Option<String>,
-    /// 首次涨停时间，例如「10:55」
-    pub limit_up_time: Option<String>,
-    /// 是否 ST 股
-    pub is_st: bool,
-}
-
-#[derive(Deserialize, Serialize, ToSchema)]
-pub struct HotStock {
-    pub thscode: String,
-    pub name: String,
-    /// 最新价（字符串，保留供应商给的精度）
-    pub last_price: Option<String>,
-    /// 当天涨跌幅（%）
-    pub price_change_pct: Option<f64>,
-    /// 成交额（元，字符串）
-    pub turnover: Option<String>,
-    /// 换手率（%）
-    pub turnover_ratio_pct: Option<f64>,
-    /// 炸板次数，只有炸板股有
-    pub open_times: Option<i64>,
-    /// 首次跌停时间，只有跌停股有
-    pub first_limit_time: Option<String>,
-    /// 最后一次跌停时间，只有跌停股有
-    pub last_limit_time: Option<String>,
-}
-
-#[derive(Deserialize, Serialize, ToSchema)]
-pub struct HotStats {
-    /// 封板率：收盘还封在涨停的占当天触及涨停的比例（0.55 表示 55%）
-    pub seal_rate: Option<f64>,
-    /// 收盘涨停家数
-    pub limit_up_count: Option<i64>,
-    /// 盘中触及过涨停的家数
-    pub touched_limit_up_count: Option<i64>,
-    /// 盘中涨停后打开、收盘没封住的家数
-    pub open_count: Option<i64>,
-}
-
 /// 今日热点：权威涨停、跌停、炸板池和当天的封板率。
 ///
-/// 涨跌停池由供应商整理，按周同步，最近几天可能还没更新；`available` 为 false 时
-/// `note` 用白话说明原因，页面据此显示空态。
-// @project-doc docs/domains/hotspots.md#rules
+/// 涨跌停池由供应商整理，最近几天可能还没更新；`available` 为 false 时
+/// `note` 用白话说明原因，页面据此显示空态。计算在 `crate::analysis::hotspots`
 #[utoipa::path(get, path = "/market/hot", tag = "market", params(HotQuery),
     responses((status = 200, description = "成功；这一天的涨跌停数据还没同步时 available 为 false，note 说明原因", body = HotMarket)))]
 async fn market_hot(
     State(s): State<AppState>,
     Query(q): Query<HotQuery>,
 ) -> ApiResult<Json<HotMarket>> {
-    let Some(trade_date) = hot_trade_date(&s.pool, q.date).await? else {
-        return Ok(empty_hot(
-            None,
-            "本地还没有行情数据，等第一次同步完成后再看".to_string(),
-        ));
+    let Some(trade_date) = hotspots::trade_date(&s.pool, q.date).await? else {
+        return Ok(Json(hotspots::no_market_data()));
     };
-    let version = crate::analysis::limit_pool::CacheVersions::load(&s.pool).await?;
-    let key = super::derived_cache_key("market:hot", &version, &trade_date.to_string());
-    match s.cache.get_json(&key).await {
-        Ok(Some(hit)) => {
-            tracing::debug!(cache = "redis", endpoint = "market_hot", "命中共享缓存");
-            return Ok(Json(hit));
-        }
-        Ok(None) => {}
-        Err(e) => {
-            tracing::debug!(error = %e, endpoint = "market_hot", "读取共享缓存失败，继续计算")
-        }
-    }
-    let value = compute_hot(&s.pool, trade_date).await?;
-    if let Err(e) = s.cache.set_json(&key, &value).await {
-        tracing::debug!(error = %e, endpoint = "market_hot", "写入共享缓存失败，继续返回计算结果");
-    }
+    let version = CacheVersions::load(&s.pool).await?;
+    let key = crate::cache::derived_key(
+        "market:hot",
+        &version.market_token(),
+        &trade_date.to_string(),
+    );
+    let value = s
+        .cache
+        .cached_json(&key, || hotspots::compute(&s.pool, trade_date))
+        .await?;
     Ok(Json(value))
-}
-
-pub(crate) async fn hot_trade_date(
-    pool: &sqlx::PgPool,
-    requested: Option<NaiveDate>,
-) -> sqlx::Result<Option<NaiveDate>> {
-    // 交易日和 /market/overview 一样取本地日线里不晚于请求日期的最近一天；
-    // 日线还没同步时退回涨跌停池自己的最新日期，先把已经同步的涨停池显示出来
-    let bar_date: Option<NaiveDate> = sqlx::query_scalar(
-        "SELECT max(trade_date) FROM mkt.stock_bar_1d WHERE ($1::date IS NULL OR trade_date <= $1)",
-    )
-    .bind(requested)
-    .fetch_one(pool)
-    .await?;
-    Ok(match (bar_date, requested) {
-        (Some(d), _) => Some(d),
-        (None, Some(d)) => Some(d),
-        (None, None) => {
-            sqlx::query_scalar("SELECT max(obs_date) FROM raw.record WHERE dataset_id = $1")
-                .bind(HOT_LIMIT_UP)
-                .fetch_one(pool)
-                .await?
-        }
-    })
-}
-
-pub(crate) async fn compute_hot(
-    pool: &sqlx::PgPool,
-    trade_date: NaiveDate,
-) -> ApiResult<HotMarket> {
-    let ids: Vec<String> = [
-        HOT_LIMIT_UP,
-        HOT_LIMIT_DOWN,
-        HOT_LIMIT_BREAK,
-        HOT_LIMIT_STATS,
-    ]
-    .iter()
-    .map(|s| (*s).to_string())
-    .collect();
-    // 只取这 4 个数据集当天的记录；供应商偶尔有一行的 thscode 为空，用 ticker 到证券表里补
-    let rows: Vec<(String, Value, Option<String>)> = sqlx::query_as(
-        "SELECT r.dataset_id, r.payload,
-                coalesce(nullif(r.payload->>'thscode', ''),
-                         (SELECT sec.thscode FROM ref.security sec WHERE sec.ticker = r.payload->>'ticker' LIMIT 1))
-         FROM raw.record r
-         WHERE r.dataset_id = ANY($1) AND r.obs_date = $2",
-    )
-    .bind(&ids)
-    .bind(trade_date)
-    .fetch_all(pool)
-    .await?;
-
-    let (mut up_rows, mut down_rows, mut break_rows, mut stats) =
-        (Vec::new(), Vec::new(), Vec::new(), None);
-    for (dataset, payload, thscode) in rows {
-        match dataset.as_str() {
-            HOT_LIMIT_UP => up_rows.push((payload, thscode)),
-            HOT_LIMIT_DOWN => down_rows.push((payload, thscode)),
-            HOT_LIMIT_BREAK => break_rows.push((payload, thscode)),
-            HOT_LIMIT_STATS => stats = Some(hot_stats(&payload)),
-            _ => {}
-        }
-    }
-    let available =
-        !up_rows.is_empty() || !down_rows.is_empty() || !break_rows.is_empty() || stats.is_some();
-    if !available {
-        // 涨停池从 2020-07-22 才有；比这更早的日期不是没同步，而是那时还没数据
-        let earliest = NaiveDate::from_ymd_opt(2020, 7, 22).expect("固定日期");
-        let note = if trade_date < earliest {
-            format!(
-                "{} 太早了：涨停数据从 2020 年 7 月 22 日才开始有",
-                trade_date.format("%Y-%m-%d")
-            )
-        } else if trade_date == crate::time::today_cn() {
-            "今天的涨停数据还没同步，稍后再看".to_string()
-        } else {
-            format!(
-                "{} 的涨停、跌停、炸板数据还没同步，稍后再看",
-                trade_date.format("%Y-%m-%d")
-            )
-        };
-        return Ok(empty_hot(Some(trade_date), note).0);
-    }
-
-    // 涨停按连板高度分组，组内封单额大的排在前面（封单越大，说明想买的人越多）
-    let mut by_board: BTreeMap<i32, Vec<(f64, HotLimitUpStock)>> = BTreeMap::new();
-    for (payload, thscode) in up_rows {
-        let seal = json_num(&payload, "seal_money").unwrap_or(0.0);
-        by_board
-            .entry(board_num_of(&payload))
-            .or_default()
-            .push((seal, limit_up_stock(&payload, thscode)));
-    }
-    let limit_up_total = by_board.values().map(|v| v.len()).sum::<usize>() as i64;
-    let max_board = by_board.keys().next_back().copied().unwrap_or(0);
-    let limit_up_groups = by_board
-        .into_iter()
-        .rev()
-        .map(|(board_num, mut stocks)| {
-            stocks.sort_by(|a, b| {
-                b.0.total_cmp(&a.0)
-                    .then_with(|| a.1.thscode.cmp(&b.1.thscode))
-            });
-            let count = stocks.len() as i64;
-            let stocks = stocks
-                .into_iter()
-                .take(HOT_STOCK_LIMIT)
-                .map(|(_, s)| s)
-                .collect();
-            HotLimitUpGroup {
-                board_num,
-                label: board_label(board_num),
-                count,
-                stocks,
-            }
-        })
-        .collect();
-
-    // 跌停按跌幅从大到小；炸板按炸板次数从多到少。都只列前 50 只，总数另给
-    let limit_down_total = down_rows.len() as i64;
-    let mut limit_down_stocks: Vec<HotStock> = down_rows
-        .into_iter()
-        .map(|(payload, thscode)| hot_stock(&payload, thscode))
-        .collect();
-    limit_down_stocks.sort_by(|a, b| {
-        a.price_change_pct
-            .unwrap_or(0.0)
-            .total_cmp(&b.price_change_pct.unwrap_or(0.0))
-            .then_with(|| a.thscode.cmp(&b.thscode))
-    });
-    limit_down_stocks.truncate(HOT_STOCK_LIMIT);
-
-    let broken_total = break_rows.len() as i64;
-    let mut broken_stocks: Vec<HotStock> = break_rows
-        .into_iter()
-        .map(|(payload, thscode)| hot_stock(&payload, thscode))
-        .collect();
-    broken_stocks.sort_by(|a, b| {
-        b.open_times
-            .unwrap_or(0)
-            .cmp(&a.open_times.unwrap_or(0))
-            .then_with(|| a.thscode.cmp(&b.thscode))
-    });
-    broken_stocks.truncate(HOT_STOCK_LIMIT);
-
-    Ok(HotMarket {
-        trade_date: Some(trade_date),
-        available: true,
-        note: None,
-        limit_up_total,
-        limit_up_groups,
-        max_board,
-        limit_down_total,
-        limit_down_stocks,
-        broken_total,
-        broken_stocks,
-        stats,
-    })
-}
-
-// @project-doc docs/domains/hotspots.md#empty
-fn empty_hot(trade_date: Option<NaiveDate>, note: String) -> Json<HotMarket> {
-    Json(HotMarket {
-        trade_date,
-        available: false,
-        note: Some(note),
-        limit_up_total: 0,
-        limit_up_groups: Vec::new(),
-        max_board: 0,
-        limit_down_total: 0,
-        limit_down_stocks: Vec::new(),
-        broken_total: 0,
-        broken_stocks: Vec::new(),
-        stats: None,
-    })
-}
-
-/// 连板高度：`continue_day_cnt` 为 1 表示首板；缺字段时按首板算
-fn board_num_of(payload: &Value) -> i32 {
-    payload
-        .get("continue_day_cnt")
-        .and_then(Value::as_i64)
-        .or_else(|| payload.get("board_num").and_then(Value::as_i64))
-        .map(|n| n.clamp(1, 100) as i32)
-        .unwrap_or(1)
-}
-
-fn board_label(board_num: i32) -> String {
-    if board_num <= 1 {
-        "首板".to_string()
-    } else {
-        format!("{board_num} 板")
-    }
-}
-
-fn limit_up_stock(payload: &Value, thscode: Option<String>) -> HotLimitUpStock {
-    HotLimitUpStock {
-        thscode: stock_code(payload, thscode),
-        name: json_str(payload, "name").unwrap_or_default(),
-        continue_day_text: json_str(payload, "continue_day_text"),
-        limit_up_reason: json_str(payload, "limit_up_reason"),
-        last_price: json_str(payload, "last_price"),
-        seal_money: json_str(payload, "seal_money"),
-        limit_up_time: json_str(payload, "limit_up_time"),
-        is_st: payload
-            .get("is_st")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    }
-}
-
-fn hot_stock(payload: &Value, thscode: Option<String>) -> HotStock {
-    HotStock {
-        thscode: stock_code(payload, thscode),
-        name: json_str(payload, "name").unwrap_or_default(),
-        last_price: json_str(payload, "last_price"),
-        price_change_pct: json_num(payload, "price_change_ratio_pct"),
-        turnover: json_str(payload, "turnover"),
-        turnover_ratio_pct: json_num(payload, "turnover_ratio_pct"),
-        open_times: payload.get("open_times").and_then(Value::as_i64),
-        first_limit_time: json_str(payload, "first_limit_time"),
-        last_limit_time: json_str(payload, "last_limit_time"),
-    }
-}
-
-fn hot_stats(payload: &Value) -> HotStats {
-    HotStats {
-        seal_rate: json_num(payload, "seal_rate"),
-        limit_up_count: payload.get("limit_up_stock_count").and_then(Value::as_i64),
-        touched_limit_up_count: payload
-            .get("touched_limit_up_stock_count")
-            .and_then(Value::as_i64),
-        open_count: payload.get("open_stock_count").and_then(Value::as_i64),
-    }
-}
-
-/// 记录的证券代码：优先用 payload 的 thscode（数据库里已经用 ticker 在证券表里补过一次），
-/// 都没有时按 6 位代码段补交易所后缀，保证页面上的链接可用
-fn stock_code(payload: &Value, resolved: Option<String>) -> String {
-    resolved
-        .or_else(|| {
-            payload
-                .get("thscode")
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-        })
-        .or_else(|| {
-            payload
-                .get("ticker")
-                .and_then(Value::as_str)
-                .and_then(ticker_with_exchange)
-        })
-        .unwrap_or_default()
-}
-
-fn ticker_with_exchange(ticker: &str) -> Option<String> {
-    let exchange = match ticker.chars().next()? {
-        '6' => "SH",
-        '0' | '3' => "SZ",
-        '4' | '8' | '9' => "BJ",
-        _ => return None,
-    };
-    Some(format!("{ticker}.{exchange}"))
-}
-
-fn json_num(payload: &Value, key: &str) -> Option<f64> {
-    payload.get(key).and_then(Value::as_f64)
-}
-
-/// 取字符串字段；供应商的数值字段（价格、金额）也转成十进制字符串返回
-fn json_str(payload: &Value, key: &str) -> Option<String> {
-    match payload.get(key)? {
-        Value::String(s) => (!s.is_empty()).then(|| s.clone()),
-        Value::Number(n) => Some(decimal_text(n)),
-        _ => None,
-    }
-}
-
-/// JSON 数字转文本：整数不带小数点，小数保留原样（例如 172300270 → "172300270"、61.44 → "61.44"）
-fn decimal_text(n: &serde_json::Number) -> String {
-    match n.as_f64() {
-        Some(v) if v.fract() == 0.0 && v.abs() < 9_007_199_254_740_992.0 => format!("{}", v as i64),
-        _ => n.to_string(),
-    }
 }

@@ -6,13 +6,21 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { FactorId } from './factorId';
+import type { TradingCosts } from './tradingCosts';
+import type { Universe } from './universe';
 
 /**
- * 配置的可复现描述，写入运行记录并计算哈希
+ * 方法定义：决定结果的全部参数，不含日期区间。写入运行记录并计算哈希
  */
 export interface FactorConfig {
   /** @nullable */
   buffer?: number | null;
+  /**
+     * 组合回测的本金（元）；因子检验为空
+     * @nullable
+     */
+  capital?: number | null;
+  costs?: TradingCosts | null;
   exclude_small_pct: number;
   factors: FactorId[];
   /**
@@ -22,12 +30,20 @@ export interface FactorConfig {
   horizon: number;
   neutralize: boolean;
   /**
+     * 因子检验分几组；组合回测为空
+     * @minimum 0
+     * @nullable
+     */
+  quantiles?: number | null;
+  /**
      * 组合持有只数；因子检验为空
      * @minimum 0
      * @nullable
      */
   top_n?: number | null;
+  universe: Universe;
   /** 股票池的白话描述 */
-  universe: string[];
+  universe_text: string[];
+  /** 权重，按因子的预期方向合成；因子检验的合成全部为 1 */
   weights: number[];
 }

@@ -60,24 +60,6 @@ export const RUN_KINDS: Record<string, string> = {
   repair: "补齐缺口",
 };
 
-/** 数据同步页的分类顺序，与 datasets.yaml 的 category 一致 */
-export const DATASET_CATEGORIES = [
-  "基础信息",
-  "行情",
-  "公司行动",
-  "估值与市值",
-  "财务",
-  "指数与板块",
-  "涨跌停",
-  "龙虎榜",
-  "热点与异动",
-  "新股",
-  "基金",
-  "期货",
-  "期权",
-  "港股新股",
-];
-
 /** 更新频率 */
 /** 同步计划，与后端 scheduler::Plan 一致 */
 export const PLANS: Record<string, string> = {

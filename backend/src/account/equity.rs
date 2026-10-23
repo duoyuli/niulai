@@ -71,16 +71,7 @@ pub async fn refresh(
         return Err(AccountError::NotFound);
     };
     let created = (created + Duration::hours(8)).date_naive();
-    let end: Option<NaiveDate> = sqlx::query_scalar(
-        "SELECT max(trade_date) FROM (
-             SELECT trade_date FROM mkt.stock_bar_1d
-             UNION
-             SELECT trade_date FROM mkt.etf_bar_1d
-         ) d WHERE ($1::date IS NULL OR trade_date <= $1)",
-    )
-    .bind(through)
-    .fetch_one(pool)
-    .await?;
+    let end = crate::analysis::market::resolve_date(pool, through).await?;
     let Some(end) = end else {
         return Ok(empty_curve(Some(created)));
     };
@@ -139,10 +130,7 @@ pub async fn refresh(
         vec![]
     } else {
         sqlx::query_as(
-            "SELECT thscode, trade_date, close::float8 FROM mkt.stock_bar_1d
-             WHERE thscode = ANY($1) AND trade_date <= $2
-             UNION ALL
-             SELECT thscode, trade_date, close::float8 FROM mkt.etf_bar_1d
+            "SELECT thscode, trade_date, close FROM mkt.v_analysis_bar
              WHERE thscode = ANY($1) AND trade_date <= $2
              ORDER BY thscode, trade_date",
         )
@@ -166,11 +154,7 @@ pub async fn refresh(
     .await?;
     if days.is_empty() {
         days = sqlx::query_scalar(
-            "SELECT trade_date FROM (
-             SELECT DISTINCT trade_date FROM mkt.stock_bar_1d WHERE trade_date BETWEEN $1 AND $2
-             UNION
-             SELECT DISTINCT trade_date FROM mkt.etf_bar_1d WHERE trade_date BETWEEN $1 AND $2
-         ) d ORDER BY trade_date",
+            "SELECT DISTINCT trade_date FROM mkt.v_bar_date WHERE trade_date BETWEEN $1 AND $2 ORDER BY trade_date",
         )
         .bind(start)
         .bind(end)

@@ -16,7 +16,7 @@ export interface AccountSummary {
      * @nullable
      */
   check_hint?: string | null;
-  /** 按最近一个交易日的涨跌估算的当日盈亏 */
+  /** 当日盈亏：最新交易日有日线的持仓按当天的涨跌算，停牌的记 0（口径与每日净值相同） */
   day_pnl: number;
   market_value: number;
   /** @minimum 0 */

@@ -1,10 +1,10 @@
 //! 交易成本和一字板成交约束：因子组合回测按这里扣费、判断能不能成交。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// 佣金、印花税、过户费和滑点
-#[derive(Serialize, ToSchema, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug)]
 #[schema(as = TradingCosts)]
 pub struct Costs {
     /// 佣金费率，买卖都收

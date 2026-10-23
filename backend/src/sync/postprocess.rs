@@ -77,11 +77,8 @@ pub async fn recompute_adjustments(pool: &PgPool, run_id: i64) -> anyhow::Result
     // 供应商日历只有最近一年，更早的交易日从行情中推导
     let derived = sqlx::query(
         "INSERT INTO ref.trading_day (cal_date, source)
-         SELECT DISTINCT trade_date, 'derived' FROM (
-             SELECT trade_date FROM mkt.stock_bar_1d
-             UNION
-             SELECT trade_date FROM mkt.etf_bar_1d
-         ) bars ON CONFLICT (cal_date) DO NOTHING",
+         SELECT DISTINCT trade_date, 'derived' FROM mkt.v_bar_date
+         ON CONFLICT (cal_date) DO NOTHING",
     )
     .execute(&mut *tx)
     .await?

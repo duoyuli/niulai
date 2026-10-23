@@ -5,10 +5,10 @@
  * A 股数据工作台：行情、复权、多因子研究、账户调仓建议与数据同步
  * OpenAPI spec version: 0.1.0
  */
+import type { AssetType } from './assetType';
 
 export type PageSecurityItemsItem = {
-  /** stock / etf */
-  asset_type: string;
+  asset_type: AssetType;
   /** main / chinext / star / bse */
   board: string;
   /** @nullable */

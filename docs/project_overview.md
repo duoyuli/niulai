@@ -36,7 +36,10 @@ niulai 是面向 A 股股票和交易所 ETF 的研究和调仓工作台。数�
 | `.agents/skills/project-doc/` | 维护本文档库的 skill（`.claude/skills/project-doc` 是指向它的符号链接） |
 | `AGENTS.md` | 仓库说明与工作约定（`CLAUDE.md` 是指向它的符号链接） |
 
-后端模块：`sync`（同步框架和领域事件）、`bootstrap`（应用初始化与事件编排）、`vendor`（供应商客户端与限速）、`analysis`（证券信息、价格读取、市场环境、因子与因子研究、交易成本和股票池）、`account`（账户、持仓、流水和规则）、`advice`（因子排名、调仓建议和建议回看）、`api`（REST API 和页面）、`auth`（用户、密码和登录会话）、`instrument`（股票与 ETF 的数据表和交易规则）、`operation_log`（操作日志）、`upgrader`（一键升级助手）、`setup`（首次登录引导）、`server`（常驻服务的组件编排）、`cache`（Redis 共享读取缓存），以及 `config`、`db`、`telemetry`、`time`、`version` 等基础模块。
+后端模块：`sync`（同步框架和领域事件）、`bootstrap`（应用初始化与事件编排）、`vendor`（供应商客户端与限速）、`analysis`（证券信息、分析价格、全市场计算的资源预算、市场环境、今日热点、因子与因子研究、研究运行记录、交易成本和股票池）、`account`（账户、持仓、流水、估值、规则和建议重算的待办）、`advice`（因子排名、调仓建议、建议的处理、建议重算和建议回看）、`api`（REST API 和页面）、`auth`（用户、密码和登录会话）、`instrument`（股票与 ETF 的数据表和交易规则）、`operation_log`（操作日志）、`upgrader`（一键升级助手）、`setup`（首次登录引导）、`server`（常驻服务的组件编排）、`cache`（Redis 共享读取缓存）、`precompute`（首页结果预热）、`readiness`（核心数据是否就绪），以及 `config`、`db`、`telemetry`、`time`、`version` 等基础模块。
+
+<a id="dependency_rules"></a>
+依赖方向：`server` / CLI → `api` → `advice` → `account` → `analysis` → `instrument` 等基础模块；`bootstrap` 编排同步事件和建议；`sync` 只发布事实（领域事件），不依赖 `analysis`、`account`、`advice`、`api` 和 `cache`。`backend/src/lib.rs` 的架构适应度测试检查这些方向（`sync`、`analysis`、`account`、`advice` 不能引用上层模块），并检查每个 `AssertSqlSafe` 上一行都有「审计：」注释，违反时 `cargo test` 失败。
 
 <a id="processes"></a>
 ## 进程

@@ -7,7 +7,9 @@ use chrono::{Datelike, NaiveDate};
 use sqlx::PgPool;
 
 use crate::account::rules::Rules;
+use crate::analysis::compute;
 use crate::analysis::factor_lab::{self, Prep, Spec};
+use crate::analysis::limit_pool::CacheVersions;
 use crate::analysis::universe::Universe;
 
 /// 交易日是当月最后一个交易日（下一个交易日在下个月）
@@ -18,23 +20,23 @@ pub fn month_end(trade_date: NaiveDate, next_date: NaiveDate) -> bool {
 /// 代码和合成得分，从高到低
 pub type Ranking = Arc<Vec<(String, f64)>>;
 
-/// 同一天、同一组因子的排名只算一次；同步完成后 [`clear`] 清掉，用新数据重算
+/// 同一天、同一组因子、同一份数据的排名只算一次。键里带数据版本（复权价和因子的非价格输入，
+/// 见 [`CacheVersions::factor_token`]）：同步、`niulai recompute` 或别的进程改了数据，版本变了旧结果自然不再命中，
+/// 不依赖哪个进程收到事件后去清空
 fn cache() -> &'static Mutex<Vec<(String, Ranking)>> {
     static CACHE: OnceLock<Mutex<Vec<(String, Ranking)>>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
 }
 
-/// 数据变了（同步完成）之后清空排名缓存
-pub fn clear() {
-    if let Ok(mut c) = cache().lock() {
-        c.clear();
-    }
-}
-
 // @project-doc docs/domains/accounts.md#ranking
-/// 交易日收盘的全市场排名。股票池、去极值、行业和规模中性化与因子研究的默认值相同；当天日线太少时为空
+/// 交易日收盘的全市场排名。股票池、去极值、行业和规模中性化与因子研究的默认值相同；当天日线太少时为空。
+/// 读入和计算整个占一个全市场计算的槽位（后台建议里调用时复用后台的槽位）
 pub async fn ranking(pool: &PgPool, date: NaiveDate, rules: &Rules) -> anyhow::Result<Ranking> {
-    let key = format!("{date}|{}", serde_json::to_string(&rules.factors)?);
+    let version = CacheVersions::load(pool).await?.factor_token();
+    let key = format!(
+        "{date}|{version}|{}",
+        serde_json::to_string(&rules.factors)?
+    );
     if let Some((_, r)) = cache()
         .lock()
         .map_err(|_| anyhow::anyhow!("因子排名缓存不可用"))?
@@ -55,19 +57,23 @@ pub async fn ranking(pool: &PgPool, date: NaiveDate, rules: &Rules) -> anyhow::R
         neutralize: true,
         exclude_small_pct: 0.0,
     };
-    let ranked = match factor_lab::load(pool, &spec).await? {
-        Some(panel) if panel.calendar.last() == Some(&date) => {
-            crate::analysis::prices::run_cpu(|| factor_lab::ranking(&panel, prep, &weights))
-        }
-        _ => vec![],
-    };
+    let ranked = compute::run(compute::Budget::Foreground, async {
+        anyhow::Ok(match factor_lab::load(pool, &spec).await? {
+            Some(panel) if panel.calendar.last() == Some(&date) => {
+                compute::run_cpu(|| factor_lab::ranking(&panel, prep, &weights))
+            }
+            _ => vec![],
+        })
+    })
+    .await?;
     let ranked = Arc::new(ranked);
     // 没算出来的不缓存：多半是数据还没同步完，下次再算
     if !ranked.is_empty() {
         let mut c = cache()
             .lock()
             .map_err(|_| anyhow::anyhow!("因子排名缓存不可用"))?;
-        c.retain(|(k, _)| *k != key);
+        // 旧版本的结果不会再命中，先清掉，免得占着最多 4 份的名额
+        c.retain(|(k, _)| *k != key && k.contains(&version));
         c.push((key, ranked.clone()));
         if c.len() > 4 {
             c.remove(0);

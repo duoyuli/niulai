@@ -3,6 +3,8 @@
 use sqlx::PgPool;
 use tokio::sync::{mpsc, watch};
 
+use crate::analysis::compute::{self, Budget};
+use crate::analysis::{factor_lab, limit_pool};
 use crate::config::Settings;
 use crate::sync::events::DomainEvent;
 
@@ -12,13 +14,15 @@ pub async fn bootstrap(pool: &PgPool, settings: &Settings) -> anyhow::Result<()>
     Ok(())
 }
 
-/// 消费同步领域事件，并编排调仓建议。
+// @project-doc docs/architecture/sync_pipeline.md#postprocess
+/// 消费同步领域事件，并编排调仓建议。事件本身只是「去看看」的提示：要处理什么以数据库里
+/// `ready` 阶段的事件为准，所以进程重启、事件丢失或处理失败后，下一次提示或维护会补上。
 pub async fn run_events(
     mut events: mpsc::UnboundedReceiver<DomainEvent>,
     pool: PgPool,
     mut stop: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    replay_pending_events(&pool).await;
+    replay_ready_events(&pool).await;
     loop {
         tokio::select! {
             changed = stop.changed() => {
@@ -27,10 +31,10 @@ pub async fn run_events(
                 }
             }
             event = events.recv() => match event {
-                Some(DomainEvent::SyncRunCompleted { .. }) => replay_pending_events(&pool).await,
+                Some(DomainEvent::SyncRunCompleted { .. }) => replay_ready_events(&pool).await,
                 Some(DomainEvent::MaintenanceTick) => {
-                    replay_pending_events(&pool).await;
-                    if let Err(e) = crate::analysis::prices::in_background(crate::advice::maintain(&pool)).await {
+                    replay_ready_events(&pool).await;
+                    if let Err(e) = compute::run(Budget::Background, crate::advice::maintain(&pool)).await {
                         tracing::error!(error = %format!("{e:#}"), "调仓建议的维护失败");
                     }
                 }
@@ -40,57 +44,81 @@ pub async fn run_events(
     }
 }
 
-async fn handle_sync_run_completed(
-    pool: &PgPool,
-    run_id: i64,
-    price_changed: bool,
-) -> anyhow::Result<()> {
-    let pool_changed = mark_limit_pool_changed(pool, run_id).await?;
-    if !(price_changed || pool_changed) {
-        crate::sync::run::clear_sync_event_pending(pool, run_id).await?;
-        return Ok(());
-    }
-    let analysis_pool = pool.clone();
-    crate::analysis::prices::in_background(async move {
-        crate::advice::refresh_all(&analysis_pool, true).await
-    })
-    .await?;
-    crate::sync::run::clear_sync_event_pending(pool, run_id).await?;
-    Ok(())
-}
-
-async fn replay_pending_events(pool: &PgPool) {
-    let pending = match crate::sync::run::pending_sync_events(pool).await {
+/// 处理全部 `ready` 的同步完成事件。积压了多个时合在一起：汇总所有运行的影响（行情、涨跌停池、因子输入），
+/// 需要时只刷新一次建议，然后只确认这一批里的运行，不按编号范围整段清除
+pub async fn replay_ready_events(pool: &PgPool) {
+    let ready = match crate::sync::run::ready_sync_events(pool).await {
         Ok(events) => events,
         Err(e) => {
             tracing::error!(error = %format!("{e:#}"), "读取待处理同步事件失败");
             return;
         }
     };
-    let Some((run_id, _)) = pending.last().copied() else {
+    if ready.is_empty() {
         return;
-    };
-    let price_changed = pending.iter().any(|(_, changed)| *changed);
-    if let Err(e) = handle_sync_run_completed(pool, run_id, price_changed).await {
-        tracing::error!(run_id, error = %format!("{e:#}"), "同步完成事件处理失败，将在后续维护中重试");
-    } else if let Err(e) = crate::sync::run::clear_sync_event_pending_through(pool, run_id).await {
-        tracing::error!(run_id, error = %format!("{e:#}"), "清理已覆盖的同步完成事件失败");
+    }
+    let run_ids: Vec<i64> = ready.iter().map(|(id, _)| *id).collect();
+    let price_changed = ready.iter().any(|(_, changed)| *changed);
+    match handle_runs(pool, &run_ids, price_changed).await {
+        Ok(()) => {
+            if let Err(e) = crate::sync::run::ack_sync_events(pool, &run_ids).await {
+                tracing::error!(error = %format!("{e:#}"), "确认已处理的同步完成事件失败");
+            }
+        }
+        Err(e) => {
+            tracing::error!(?run_ids, error = %format!("{e:#}"), "同步完成事件处理失败，将在后续维护中重试")
+        }
     }
 }
 
-async fn mark_limit_pool_changed(pool: &PgPool, run_id: i64) -> anyhow::Result<bool> {
-    let changed: i64 = sqlx::query_scalar(
-        "SELECT coalesce(sum(changed), 0) FROM ops.task WHERE run_id = $1 AND dataset_id = ANY($2) AND status = 'done'",
+async fn handle_runs(pool: &PgPool, run_ids: &[i64], price_changed: bool) -> anyhow::Result<()> {
+    let pool_changed =
+        bump_if_changed(pool, "limit_pool", run_ids, &limit_pool::DATASETS, &[]).await?;
+    if pool_changed {
+        tracing::info!(?run_ids, "权威涨跌停池有变化，市场概况的缓存已失效");
+    }
+    let inputs_changed = bump_if_changed(
+        pool,
+        "factor_input",
+        run_ids,
+        &factor_lab::INPUT_DATASETS,
+        &factor_lab::INPUT_TABLES,
     )
-    .bind(run_id)
-    .bind(crate::analysis::limit_pool::DATASETS.as_slice())
+    .await?;
+    if inputs_changed {
+        tracing::info!(?run_ids, "财报、行业或证券信息有变化，因子排名的缓存已失效");
+    }
+    if price_changed || pool_changed || inputs_changed {
+        compute::run(Budget::Background, crate::advice::refresh_all(pool, true)).await?;
+    }
+    Ok(())
+}
+
+/// 这些运行里，列出的数据集或写入列出的表的数据集有没有写入变化；有就更新 `ops.derived_version` 的 `name` 行
+async fn bump_if_changed(
+    pool: &PgPool,
+    name: &str,
+    run_ids: &[i64],
+    datasets: &[&str],
+    tables: &[&str],
+) -> anyhow::Result<bool> {
+    let changed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM ops.task t
+           WHERE t.run_id = ANY($1) AND t.status = 'done' AND t.changed > 0
+             AND (t.dataset_id = ANY($2)
+                  OR t.dataset_id IN (SELECT dataset_id FROM ops.dataset WHERE spec->'sink' ?| $3)))",
+    )
+    .bind(run_ids)
+    .bind(datasets)
+    .bind(tables)
     .fetch_one(pool)
     .await?;
-    if changed > 0 {
-        sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = 'limit_pool'")
+    if changed {
+        sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = $1")
+            .bind(name)
             .execute(pool)
             .await?;
-        tracing::info!(run_id, changed, "权威涨跌停池有变化，市场概况的缓存已失效");
     }
-    Ok(changed > 0)
+    Ok(changed)
 }

@@ -255,7 +255,6 @@ async fn adjustment_and_api_end_to_end() {
     let engine = Arc::new(Engine {
         settings,
         pool: db.pool.clone(),
-        cache: Arc::new(niulai::cache::Cache::new(None).unwrap()),
         client: Arc::new(client),
         registry: Arc::new(reg),
         events: niulai::sync::events::EventBus::new(),
@@ -296,6 +295,29 @@ async fn adjustment_and_api_end_to_end() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["bars"].as_array().unwrap().len(), 4);
     assert_eq!(body["bars"][2]["close"], "1168.630000");
+    // K 线接口（mkt.v_stock_bar_qfq）和因子、建议读的分析价格（mkt.v_analysis_bar）是两份 SQL 定义：
+    // 逐根比对，改其中一份复权表达式时这里会失败
+    let analysis = niulai::analysis::prices::instrument_bars(&db.pool, "600519.SH", None)
+        .await
+        .unwrap();
+    let api_bars = body["bars"].as_array().unwrap();
+    assert_eq!(analysis.len(), api_bars.len());
+    for (a, b) in analysis.iter().zip(api_bars) {
+        assert_eq!(a.date.to_string(), b["trade_date"].as_str().unwrap());
+        for (mine, theirs) in [
+            (a.q_open, &b["open"]),
+            (a.q_high, &b["high"]),
+            (a.q_low, &b["low"]),
+            (a.q_close, &b["close"]),
+        ] {
+            let theirs: f64 = theirs.as_str().unwrap().parse().unwrap();
+            assert!(
+                (mine - theirs).abs() < 1e-6,
+                "{} {mine} != {theirs}",
+                a.date
+            );
+        }
+    }
     let (st, body) = get("/api/v1/securities/600519.SH").await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["name"], "贵州茅台");
@@ -1803,6 +1825,128 @@ async fn old_tasks_and_call_logs_are_pruned() {
         niulai::sync::retention::Pruned::default(),
         "再清理一次没有可删的"
     );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn sync_events_wait_for_postprocess_and_ack_only_what_they_handled() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let pool = db.pool.clone();
+    niulai::sync::registry::sync_to_db(&pool, &registry())
+        .await
+        .unwrap();
+    // 两个运行：一个只写了财报，一个只写了涨停池；都是最后一个任务刚结束
+    let mut runs = vec![];
+    for dataset in ["a_share.income_q", "special.limit_up_pool"] {
+        let run: i64 = sqlx::query_scalar(
+            "INSERT INTO ops.run (kind) VALUES ('incremental') RETURNING run_id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO ops.task (run_id, dataset_id, part_key, params, status, changed, finished_at) VALUES ($1, $2, 'x', '{}', 'done', 3, now())")
+            .bind(run)
+            .bind(dataset)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            niulai::sync::run::try_complete(&pool, run)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        runs.push(run);
+    }
+    let versions = || {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, chrono::DateTime<chrono::Utc>)>(
+                "SELECT name, updated_at FROM ops.derived_version ORDER BY name",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = versions().await;
+
+    // 运行到了终态，但复权等后处理还没做完：应用层不消费
+    assert!(
+        niulai::sync::run::ready_sync_events(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    niulai::bootstrap::replay_ready_events(&pool).await;
+    assert_eq!(versions().await, before);
+    // 后处理的租约还在，维护不接手；结束运行的执行者中途退出、租约过期后才接手
+    assert!(
+        niulai::sync::run::claim_stale_postprocess(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query("UPDATE ops.run SET params = jsonb_set(params, '{sync_event_pending,claimed_at}', to_jsonb(now() - interval '1 hour')) WHERE run_id = ANY($1)")
+        .bind(&runs)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut claimed = niulai::sync::run::claim_stale_postprocess(&pool)
+        .await
+        .unwrap();
+    claimed.sort();
+    assert_eq!(claimed, runs);
+    assert!(
+        niulai::sync::run::claim_stale_postprocess(&pool)
+            .await
+            .unwrap()
+            .is_empty(),
+        "同一事件只有一个调用者能接手"
+    );
+    for run in &runs {
+        niulai::sync::run::mark_sync_event_ready(&pool, *run, false)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        niulai::sync::run::ready_sync_events(&pool)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // 两个事件合在一起处理：两个运行的影响都算上，然后只确认这两个
+    let late: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind, status, params) VALUES ('incremental', 'succeeded', '{\"sync_event_pending\": {\"stage\": \"postprocess\"}}') RETURNING run_id")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    niulai::bootstrap::replay_ready_events(&pool).await;
+    let after = versions().await;
+    let changed: Vec<&str> = before
+        .iter()
+        .zip(&after)
+        .filter(|(b, a)| b.1 != a.1)
+        .map(|(b, _)| b.0.as_str())
+        .collect();
+    assert_eq!(changed, ["factor_input", "limit_pool"], "复权价没有变化");
+    assert!(
+        niulai::sync::run::ready_sync_events(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let late_pending: bool =
+        sqlx::query_scalar("SELECT params ? 'sync_event_pending' FROM ops.run WHERE run_id = $1")
+            .bind(late)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(late_pending, "还在后处理的事件不被确认");
     db.drop().await;
 }
 
@@ -3788,6 +3932,23 @@ async fn factor_research_end_to_end() {
     assert_eq!(again["manifest"]["trial_count"], 1);
     let (_, other) = call(&app, "GET", &format!("{uri}&rebalance=10"), None).await;
     assert_eq!(other["manifest"]["trial_count"], 2);
+    // 成本和本金也属于方法定义：换了就是另一组配置
+    let (_, other) = call(&app, "GET", &format!("{uri}&slippage_bps=30"), None).await;
+    assert_eq!(other["manifest"]["trial_count"], 3);
+    // 检验的分组数同理；完整配置随运行记录保存
+    let test_uri = "/api/v1/research/factor-test?factors=reversal,liquidity,idio_vol,roe&start=2025-01-02&end=2025-08-29";
+    let (_, other) = call(&app, "GET", &format!("{test_uri}&quantiles=10"), None).await;
+    assert_eq!(other["manifest"]["trial_count"], 2, "{}", other["config"]);
+    assert_eq!(other["config"]["quantiles"], 10);
+    let configs: Vec<Value> =
+        sqlx::query_scalar("SELECT config FROM ops.backtest_run ORDER BY run_id")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(configs[0]["quantiles"], 5);
+    assert_eq!(configs[1]["capital"], 1_000_000.0);
+    assert_eq!(configs[1]["costs"]["slippage_bps"], 10.0);
+    assert_eq!(configs[1]["universe"]["min_listed_days"], 60);
     let modes: Vec<String> =
         sqlx::query_scalar("SELECT mode FROM ops.backtest_run ORDER BY run_id")
             .fetch_all(&db.pool)
@@ -3799,7 +3960,9 @@ async fn factor_research_end_to_end() {
             "factor_test",
             "factor_portfolio",
             "factor_portfolio",
-            "factor_portfolio"
+            "factor_portfolio",
+            "factor_portfolio",
+            "factor_test"
         ]
     );
 
@@ -3837,13 +4000,138 @@ async fn factor_research_end_to_end() {
     .await;
     assert_eq!(s, StatusCode::CREATED, "{acc}");
     let id = acc["summary"]["account"]["account_id"].as_i64().unwrap();
+    let advice_uri = format!("/api/v1/accounts/{id}/advice");
+    // 建账户在同一个事务里记下重算待办；后台消费者生成成功后确认
+    let (_, v) = call(&app, "GET", &advice_uri, None).await;
+    assert_eq!(v["regenerating"], true, "{v}");
+    assert!(v["advice"].is_null());
+    assert_eq!(niulai::advice::regen::drain(&db.pool).await.unwrap(), 1);
+    let (_, v) = call(&app, "GET", &advice_uri, None).await;
+    assert_eq!(v["regenerating"], false, "{v}");
+    assert_eq!(v["advice"]["advice"]["headline"], "买入 30 只", "{v}");
+    assert_eq!(
+        niulai::advice::regen::drain(&db.pool).await.unwrap(),
+        0,
+        "确认后不再生成"
+    );
     niulai::advice::refresh_all(&db.pool, true).await.unwrap();
-    let (_, v) = call(&app, "GET", &format!("/api/v1/accounts/{id}/advice"), None).await;
+    let (_, v) = call(&app, "GET", &advice_uri, None).await;
     let advice = &v["advice"]["advice"];
     assert_eq!(advice["headline"], "买入 30 只", "{v}");
     let first = &advice["items"][0];
     assert_eq!(first["thscode"].as_str(), Some(ranked[0].0.as_str()));
     // 2025-08-29 是 8 月最后一个交易日：整体调仓
     assert_eq!(first["headline"], "月度调仓：因子排名第 1，买入", "{first}");
+
+    // 处理建议：流水、处理状态和影子订单一起提交
+    let advice_id = v["advice"]["advice_id"].as_i64().unwrap();
+    let key0 = first["key"].as_str().unwrap().to_string();
+    let key1 = advice["items"][1]["key"].as_str().unwrap().to_string();
+    let item_uri = |key: &str, what: &str| format!("{advice_uri}/{advice_id}/items/{key}/{what}");
+    let shadow = |key: String| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, Option<i64>)>(
+                "SELECT status, actual_shares FROM app.shadow_order WHERE advice_id = $1 AND item_key = $2",
+            )
+            .bind(advice_id)
+            .bind(key)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let shares = first["shares"].as_i64().unwrap();
+    let price = first["ref_price"].as_f64().unwrap();
+    let (s, v) = call(
+        &app,
+        "POST",
+        &item_uri(&key0, "execute"),
+        Some(json!({"price": price})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["advice"]["states"][&key0], "executed");
+    assert_eq!(
+        shadow(key0.clone()).await,
+        ("filled".to_string(), Some(shares))
+    );
+    let (s, _) = call(
+        &app,
+        "POST",
+        &item_uri(&key0, "execute"),
+        Some(json!({"price": price})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "同一条只能记一次");
+    let (s, _) = call(&app, "POST", &item_uri(&key0, "skip"), None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "已执行的不能改成不做");
+    assert_eq!(
+        shadow(key0.clone()).await.0,
+        "filled",
+        "影子订单不被改成取消"
+    );
+    let (s, v) = call(&app, "POST", &item_uri(&key1, "skip"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(shadow(key1.clone()).await.0, "cancelled");
+    let (s, v) = call(&app, "DELETE", &item_uri(&key1, "skip"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["advice"]["states"].get(&key1).is_none());
+    assert_eq!(
+        shadow(key1.clone()).await.0,
+        "planned",
+        "撤销不做后影子订单回到计划中"
+    );
+    let (s, _) = call(&app, "POST", &item_uri("buy-NOPE.SZ", "skip"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (_, v) = call(&app, "GET", &advice_uri, None).await;
+    assert_eq!(v["regenerating"], false, "点「已执行」不重新生成");
+
+    // 重新生成失败时保留待办、把原因给页面，修好后重试成功
+    sqlx::query(
+        "UPDATE app.account SET rules = '{}', advice_dirty_at = now() WHERE account_id = $1",
+    )
+    .bind(id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(niulai::advice::regen::drain(&db.pool).await.unwrap(), 1);
+    let (failed, error): (bool, Option<String>) =
+        niulai::account::stale::status(&db.pool, id).await.unwrap();
+    assert!(failed && error.is_some(), "{error:?}");
+    assert_eq!(
+        niulai::advice::regen::drain(&db.pool).await.unwrap(),
+        0,
+        "失败后推迟重试"
+    );
+    sqlx::query("UPDATE app.account SET rules = $2, advice_retry_at = now() WHERE account_id = $1")
+        .bind(id)
+        .bind(serde_json::to_value(&rules).unwrap())
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(niulai::advice::regen::drain(&db.pool).await.unwrap(), 1);
+    assert_eq!(
+        niulai::account::stale::status(&db.pool, id).await.unwrap(),
+        (false, None)
+    );
+
+    // 因子排名按数据版本缓存：财报变了但版本没变时命中旧结果，因子输入的版本更新后重算
+    sqlx::query("DELETE FROM raw.record WHERE dataset_id = 'a_share.income_q'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let cached = niulai::advice::ranking::ranking(&db.pool, date, &rules)
+        .await
+        .unwrap();
+    assert_eq!(cached, ranked, "版本没变，命中缓存");
+    sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = 'factor_input'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let fresh = niulai::advice::ranking::ranking(&db.pool, date, &rules)
+        .await
+        .unwrap();
+    assert_ne!(fresh, ranked, "利润增速等财务因子没有数据了，排名应当变化");
     db.drop().await;
 }

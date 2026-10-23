@@ -13,6 +13,7 @@ use super::AppState;
 use super::auth::CurrentUser;
 use crate::analysis::prices;
 use crate::error::{ApiError, ApiResult};
+use crate::instrument::AssetType;
 
 /// 算 20 日涨跌需要的日线根数
 const LOOKBACK: i64 = 21;
@@ -29,8 +30,7 @@ pub struct WatchItem {
     pub name: String,
     /// main / chinext / star / bse
     pub board: String,
-    /// stock / etf
-    pub asset_type: String,
+    pub asset_type: AssetType,
     pub delisted_on: Option<NaiveDate>,
     pub added_at: DateTime<Utc>,
     /// 本地最新一根日线（未复权）的日期和收盘价；还没有日线时为空
@@ -49,26 +49,18 @@ async fn list_watchlist(
     State(s): State<AppState>,
     me: CurrentUser,
 ) -> ApiResult<Json<Vec<WatchItem>>> {
-    /// (代码, 名称, 板块, 资产类型, 退市日, 收藏时间, 最新日期, 最新收盘)
+    /// (代码, 名称, 板块, 资产类型, 退市日, 收藏时间)
     type BaseRow = (
         String,
         String,
         String,
-        String,
+        AssetType,
         Option<NaiveDate>,
         DateTime<Utc>,
-        Option<NaiveDate>,
-        Option<String>,
     );
     let base: Vec<BaseRow> = sqlx::query_as(
-        "SELECT w.thscode, s.name, s.board, s.asset_type, s.delisted_on, w.added_at, l.trade_date, l.close::text
+        "SELECT w.thscode, s.name, s.board, s.asset_type, s.delisted_on, w.added_at
          FROM app.watchlist w JOIN ref.instrument s USING (thscode)
-         LEFT JOIN LATERAL (
-             SELECT trade_date, close FROM mkt.stock_bar_1d b WHERE b.thscode = w.thscode
-             UNION ALL
-             SELECT trade_date, close FROM mkt.etf_bar_1d b WHERE b.thscode = w.thscode
-             ORDER BY trade_date DESC LIMIT 1
-         ) l ON true
          WHERE w.user_id = $1
          ORDER BY w.added_at DESC, w.thscode",
     )
@@ -76,28 +68,25 @@ async fn list_watchlist(
     .fetch_all(&s.pool)
     .await?;
     let codes: Vec<String> = base.iter().map(|r| r.0.clone()).collect();
-    let mut bars = prices::recent_instrument_bars_batch(&s.pool, &codes, LOOKBACK).await?;
+    let mut bars = prices::recent_bars_batch(&s.pool, &codes, None, LOOKBACK).await?;
     Ok(Json(
         base.into_iter()
             .map(
-                |(thscode, name, board, asset_type, delisted_on, added_at, last_date, close)| {
-                    let closes: Vec<f64> = bars
-                        .remove(&thscode)
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|b| b.q_close)
-                        .collect();
+                |(thscode, name, board, asset_type, delisted_on, added_at)| {
+                    let bars = bars.remove(&thscode).unwrap_or_default();
+                    let closes: Vec<f64> = bars.iter().map(|b| b.q_close).collect();
+                    let last = bars.last();
                     WatchItem {
                         change_1d: change(&closes, 1),
                         change_20d: change(&closes, 20),
+                        last_date: last.map(|b| b.date),
+                        close: last.map(|b| b.close.to_string()),
                         thscode,
                         name,
                         board,
                         asset_type,
                         delisted_on,
                         added_at,
-                        last_date,
-                        close,
                     }
                 },
             )

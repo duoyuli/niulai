@@ -2,10 +2,11 @@ import { useMemo } from "react";
 import { Link, useParams } from "react-router";
 import type { DatasetProgress, DatasetWithoutTasks, RunDetail, TaskFailure } from "../api/generated/model";
 import { useGetRun, useListDatasets } from "../api/generated/sync/sync";
+import { ChainProgress } from "../components/ChainProgress";
 import { Badge, Card, Empty, PageHeader, ProgressBar, QueryView, Stat, Table } from "../components/ui";
 import { fmtDateTime, fmtDuration, fmtInt } from "../lib/format";
 import { RUN_STATUS, runSource, TASK_STATUS } from "../lib/labels";
-import { type SyncChain, summarizeChain } from "../lib/runs";
+import { summarizeChain } from "../lib/runs";
 
 // @project-doc docs/architecture/frontend.md#pages
 /** 一次同步的详情：几批合在一起看，数字和同步记录里那一行一致 */
@@ -20,19 +21,6 @@ export function RunDetailPage() {
   const datasets = useListDatasets();
   const titles = useMemo(() => new Map((datasets.data ?? []).map((d) => [d.dataset_id, d.title])), [datasets.data]);
   return <QueryView query={run}>{(r) => <RunBody run={r} titles={titles} />}</QueryView>;
-}
-
-/** 进度条和「已结束 / 总数（失败）」，同步记录和详情共用 */
-export function ChainProgress({ c }: { c: SyncChain }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <ProgressBar done={c.done} failed={c.failed} total={c.total} />
-      <span className="num text-xs text-zinc-500">
-        {fmtInt(c.done + c.failed)} / {fmtInt(c.total)}
-        {c.failed > 0 && <span className="text-red-500">（失败 {fmtInt(c.failed)}）</span>}
-      </span>
-    </div>
-  );
 }
 
 function RunBody({ run, titles }: { run: RunDetail; titles: Map<string, string> }) {

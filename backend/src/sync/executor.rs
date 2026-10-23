@@ -20,7 +20,7 @@ use super::planner::Planner;
 use super::queue::{ClaimedTask, Finished, HEARTBEAT, TaskQueue, TaskStats};
 use super::spec::{DatasetSpec, Registry};
 use super::{cursor, postprocess, records, run, sinks, template};
-use crate::vendor::{CallError, MarketDataClient};
+use crate::vendor::{CallError, HithinkClient};
 
 /// 队列为空时的轮询间隔
 const IDLE_POLL: Duration = Duration::from_secs(2);
@@ -29,7 +29,7 @@ const MAINTENANCE_EVERY: Duration = Duration::from_secs(60);
 
 pub struct Executor {
     pool: PgPool,
-    client: Arc<dyn MarketDataClient>,
+    client: Arc<HithinkClient>,
     registry: Arc<Registry>,
     queue: TaskQueue,
     fetcher: Fetcher,
@@ -54,7 +54,7 @@ enum Outcome {
 impl Executor {
     pub fn new(
         pool: PgPool,
-        client: Arc<dyn MarketDataClient>,
+        client: Arc<HithinkClient>,
         registry: Arc<Registry>,
         events: EventBus,
         worker_id: String,
@@ -159,7 +159,8 @@ impl Executor {
         }
     }
 
-    /// 回收租约过期的任务，结束已经没有未完成任务、却没人结束的运行，补上没接上的波次，在回补期间定期重算复权因子，每天清理一次过期的任务和日志
+    /// 回收租约过期的任务，结束已经没有未完成任务、却没人结束的运行，重做中断的运行结束后计算，补上没接上的波次，
+    /// 在回补期间定期重算复权因子，每天清理一次过期的任务和日志
     async fn maintain(&self) -> anyhow::Result<()> {
         let n = self.queue.requeue_stale().await?;
         if n > 0 {
@@ -175,6 +176,10 @@ impl Executor {
             if run::fail_planning(&self.pool, run_id).await? {
                 tracing::error!(run_id, "后台规划已中断，运行标为失败");
             }
+        }
+        for run_id in run::claim_stale_postprocess(&self.pool).await? {
+            tracing::warn!(run_id, "运行结束后的计算没有做完，重新执行");
+            self.finish_postprocess(run_id).await?;
         }
         for run_id in run::unchained(&self.pool).await? {
             if let Some(next) = Planner::new(&self.pool, self.client.as_ref(), &self.registry)
@@ -390,11 +395,16 @@ impl Executor {
         {
             tracing::info!(run_id, next, "已规划下一个波次");
         }
-        // try_complete 已在把运行置为终态的同一条 UPDATE 中写入待消费标记；
-        // 这里仅在后处理成功后补上准确的 price_changed，进程中途退出时由应用层重放。
+        // try_complete 已在把运行置为终态的同一条 UPDATE 中写入 postprocess 阶段的事件；
+        // 后处理做完才进入 ready，应用层不会在复权重算之前消费。中途退出由维护接手（run::claim_stale_postprocess）
+        self.finish_postprocess(run_id).await
+    }
+
+    /// 运行结束后的计算，做完后把事件推进到 ready 并通知应用层
+    async fn finish_postprocess(&self, run_id: i64) -> anyhow::Result<()> {
         let price_changed =
             postprocess::after_run(&self.pool, run_id, &self.price_datasets()).await?;
-        run::mark_sync_event_pending(&self.pool, run_id, price_changed).await?;
+        run::mark_sync_event_ready(&self.pool, run_id, price_changed).await?;
         self.events.publish(DomainEvent::SyncRunCompleted {
             run_id,
             price_changed,

@@ -4,13 +4,17 @@
 //! - `generate`：纯函数，从输入算出建议和每条的理由；
 //! - `inputs`：从数据库组装输入；
 //! - `review`：过去的建议之后 5、10、20 个交易日的实际涨跌；
-//! - 本文件：保存、重新生成和每天为所有账户生成建议。
+//! - `handling`：用户对一条建议的处理（已执行、不做、撤销不做），流水、处理状态和影子订单在一个事务里；
+//! - `regen`：改了账户之后重新生成建议的常驻消费者（待办在 `account::stale`）；
+//! - 本文件：保存、为所有账户生成建议、维护和清理被取代的建议。
 //!
 //! 依赖方向：advice 读 account 和 analysis，analysis 不知道账户的存在。规则见 docs/domains/accounts.md。
 
 pub mod generate;
+pub mod handling;
 pub mod inputs;
 pub mod ranking;
+pub mod regen;
 pub mod review;
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -19,7 +23,38 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 
 use crate::account::{self, Account};
-use generate::Advice;
+use generate::{Action, Advice};
+
+/// 用户对一条建议的处理，存在 `app.advice_item_state.state`
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemState {
+    /// 已执行：对应一笔按建议记的流水
+    Executed,
+    /// 不做（可以撤销）
+    Skipped,
+}
+
+impl ItemState {
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Executed => "executed",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "executed" => Some(Self::Executed),
+            "skipped" => Some(Self::Skipped),
+            _ => None,
+        }
+    }
+}
+
+/// 需要用户处理（执行或不做）的动作
+pub fn actionable(action: Action) -> bool {
+    matches!(action, Action::Buy | Action::Sell)
+}
 
 /// 一份保存下来的建议，以及用户对每条的处理
 #[derive(Serialize, ToSchema)]
@@ -141,8 +176,8 @@ pub async fn generate_for(
         .await?;
     for item in &advice.items {
         let side = match item.action {
-            generate::Action::Buy => Some("buy"),
-            generate::Action::Sell => Some("sell"),
+            Action::Buy => Some("buy"),
+            Action::Sell => Some("sell"),
             _ => None,
         };
         let Some(side) = side else { continue };
@@ -171,63 +206,12 @@ pub async fn generate_for(
     Ok(id)
 }
 
-/// 持仓、现金或设置改了之后：立即重新生成这个账户的建议。核心数据没齐或还没有日线时不生成
+/// 按现在的账户立即重新生成建议（页面上的「重新生成」和 [`regen`] 用）。核心数据没齐或还没有日线时不生成
 pub async fn regenerate(pool: &PgPool, acc: &Account) -> anyhow::Result<Option<i64>> {
     let Some(sh) = inputs::shared(pool).await? else {
         return Ok(None);
     };
     Ok(Some(generate_for(pool, &sh, acc).await?))
-}
-
-/// 后台重新生成中的账户：值为 true 表示生成期间又有修改，结束后再生成一次
-fn pending() -> &'static std::sync::Mutex<std::collections::HashMap<i64, bool>> {
-    static PENDING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<i64, bool>>> =
-        std::sync::OnceLock::new();
-    PENDING.get_or_init(Default::default)
-}
-
-/// 这个账户的建议是否正在后台重新生成
-pub fn regenerating(account_id: i64) -> bool {
-    pending().lock().is_ok_and(|m| m.contains_key(&account_id))
-}
-
-/// 在后台重新生成这个账户的建议，保存持仓、现金或设置的请求不用等它。同一账户同时只生成一份；
-/// 生成期间又有修改时，结束后按最新的账户再生成一次，所以最后一份总是最新的。失败只写日志
-pub fn regenerate_soon(pool: PgPool, account_id: i64) {
-    {
-        let Ok(mut m) = pending().lock() else {
-            return;
-        };
-        if let Some(again) = m.get_mut(&account_id) {
-            *again = true;
-            return;
-        }
-        m.insert(account_id, false);
-    }
-    tokio::spawn(async move {
-        loop {
-            let r = async {
-                match account::get_by_id(&pool, account_id).await? {
-                    Some(acc) => regenerate(&pool, &acc).await.map(|_| ()),
-                    None => Ok(()),
-                }
-            }
-            .await;
-            if let Err(e) = r {
-                tracing::error!(account_id, error = %format!("{e:#}"), "重新生成建议失败");
-            }
-            let Ok(mut m) = pending().lock() else {
-                return;
-            };
-            match m.get_mut(&account_id) {
-                Some(again) if *again => *again = false,
-                _ => {
-                    m.remove(&account_id);
-                    return;
-                }
-            }
-        }
-    });
 }
 
 async fn current_id(
@@ -245,12 +229,12 @@ async fn current_id(
     .await
 }
 
-/// 为所有账户生成最新交易日的建议。`replace` 为 true 时（同步刚完成，日线有变化）清掉因子排名缓存、
-/// 连已有的一起重新生成，但用户已经处理过某一条（执行或不做）的保留，免得建议在手上变了
+/// 为所有账户生成最新交易日的建议。`replace` 为 true 时（同步刚完成，行情、涨跌停池或因子输入有变化）
+/// 连已有的一起重新生成，但用户已经处理过某一条（执行或不做）的保留，免得建议在手上变了。
+/// 因子排名缓存按数据版本失效（见 [`ranking`]），这里不用清。某个账户生成失败时转成它的重算待办
+/// （[`account::stale::defer`]），由 [`regen`] 重试，不影响其他账户，也不让调用方把同步事件一直挂着
 pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> {
-    if replace {
-        ranking::clear();
-    } else {
+    if !replace {
         let Some(trade_date) = crate::analysis::market::resolve_date(pool, None).await? else {
             return Ok(0);
         };
@@ -291,7 +275,9 @@ pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> 
         match generate_for(pool, &sh, &acc).await {
             Ok(_) => n += 1,
             Err(e) => {
-                tracing::error!(account_id = acc.account_id, error = %format!("{e:#}"), "生成建议失败")
+                let msg = format!("{e:#}");
+                tracing::error!(account_id = acc.account_id, error = %msg, "生成建议失败，转为重算待办");
+                account::stale::defer(pool, acc.account_id, &msg).await?;
             }
         }
     }
@@ -301,7 +287,7 @@ pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> 
     Ok(n)
 }
 
-/// 执行循环每分钟调一次：还没有最新交易日建议的账户补上（例如刚建账户、刚部署）。
+/// 执行循环每分钟调一次：还没有最新交易日建议的账户补上（例如刚建账户、刚部署），每天清理一次被取代的建议。
 /// 同步还在运行时日线可能只有一部分，等它结束后由同步完成事件统一生成
 pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
     let syncing: bool = sqlx::query_scalar(
@@ -312,7 +298,76 @@ pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
     if !syncing {
         refresh_all(pool, false).await?;
     }
-    Ok(())
+    prune_if_due(pool).await
+}
+
+/// 被重新生成取代超过多少天、没有处理记录的建议删掉（改一次持仓或设置就会取代一份，会越积越多）
+pub const SUPERSEDED_KEEP_DAYS: i32 = 30;
+
+/// 每天一次（抢占 `ops.scheduler` 的 `advice_prune` 作业，多个进程并存时也只做一次）
+async fn prune_if_due(pool: &PgPool) -> anyhow::Result<()> {
+    let today = crate::time::today_cn();
+    if !crate::scheduling::claim(pool, "advice_prune", today, "day").await? {
+        return Ok(());
+    }
+    match prune(pool).await {
+        Ok(n) => {
+            if n > 0 {
+                tracing::info!(advice = n, "已清理被取代的调仓建议");
+            }
+            Ok(())
+        }
+        Err(e) => {
+            crate::scheduling::release_claim(pool, "advice_prune", today).await?;
+            Err(e)
+        }
+    }
+}
+
+// @project-doc docs/domains/accounts.md#generation
+/// 删掉被取代超过 [`SUPERSEDED_KEEP_DAYS`] 天、没有处理记录的建议，分批删，不长时间锁表
+pub async fn prune(pool: &PgPool) -> anyhow::Result<u64> {
+    let mut total = 0;
+    loop {
+        let n = sqlx::query(
+            "DELETE FROM app.advice WHERE advice_id IN (
+               SELECT a.advice_id FROM app.advice a
+               WHERE a.superseded_by IS NOT NULL AND a.created_at < now() - make_interval(days => $1)
+                 AND NOT EXISTS (SELECT 1 FROM app.advice_item_state s WHERE s.advice_id = a.advice_id)
+               LIMIT 20000)",
+        )
+        .bind(SUPERSEDED_KEEP_DAYS)
+        .execute(pool)
+        .await?
+        .rows_affected();
+        total += n;
+        if n < 20_000 {
+            return Ok(total);
+        }
+    }
+}
+
+/// 账户在 `since` 之后生成的建议里，有没有一份有要操作的条目、却一条都没处理（核对提醒用）
+pub async fn has_unhandled_since(
+    pool: &PgPool,
+    account_id: i64,
+    since: DateTime<Utc>,
+) -> anyhow::Result<bool> {
+    let rows: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT a.result FROM app.advice a WHERE a.account_id = $1 AND a.superseded_by IS NULL AND a.created_at > $2
+           AND NOT EXISTS (SELECT 1 FROM app.advice_item_state s WHERE s.advice_id = a.advice_id)",
+    )
+    .bind(account_id)
+    .bind(since)
+    .fetch_all(pool)
+    .await?;
+    for v in rows {
+        let a: Advice = serde_json::from_value(v)?;
+        if a.items.iter().any(|i| actionable(i.action)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// 一个账户某个交易日的建议；date 为空时取最新一份
@@ -346,22 +401,6 @@ pub async fn load(
     }))
 }
 
-/// 一份建议，不论是否被取代（执行时用）
-pub async fn load_by_id(
-    pool: &PgPool,
-    account_id: i64,
-    advice_id: i64,
-) -> anyhow::Result<Option<Advice>> {
-    let v: Option<serde_json::Value> = sqlx::query_scalar(
-        "SELECT result FROM app.advice WHERE account_id = $1 AND advice_id = $2",
-    )
-    .bind(account_id)
-    .bind(advice_id)
-    .fetch_optional(pool)
-    .await?;
-    Ok(v.map(serde_json::from_value).transpose()?)
-}
-
 #[derive(Serialize, ToSchema)]
 pub struct AdviceDay {
     pub advice_id: i64,
@@ -378,12 +417,14 @@ pub struct AdviceDay {
 pub async fn history(pool: &PgPool, account_id: i64, limit: i64) -> anyhow::Result<Vec<AdviceDay>> {
     let rows: Vec<(i64, NaiveDate, serde_json::Value, i64, i64)> = sqlx::query_as(
         "SELECT a.advice_id, a.trade_date, a.result,
-                (SELECT count(*) FROM app.advice_item_state s WHERE s.advice_id = a.advice_id AND s.state = 'executed'),
-                (SELECT count(*) FROM app.advice_item_state s WHERE s.advice_id = a.advice_id AND s.state = 'skipped')
+                (SELECT count(*) FROM app.advice_item_state s WHERE s.advice_id = a.advice_id AND s.state = $3),
+                (SELECT count(*) FROM app.advice_item_state s WHERE s.advice_id = a.advice_id AND s.state = $4)
          FROM app.advice a WHERE a.account_id = $1 AND a.superseded_by IS NULL ORDER BY a.trade_date DESC LIMIT $2",
     )
     .bind(account_id)
     .bind(limit)
+    .bind(ItemState::Executed.key())
+    .bind(ItemState::Skipped.key())
     .fetch_all(pool)
     .await?;
     rows.into_iter()
@@ -394,8 +435,8 @@ pub async fn history(pool: &PgPool, account_id: i64, limit: i64) -> anyhow::Resu
                 advice_id,
                 trade_date,
                 headline: a.headline.clone(),
-                sells: count(generate::Action::Sell),
-                buys: count(generate::Action::Buy),
+                sells: count(Action::Sell),
+                buys: count(Action::Buy),
                 executed,
                 skipped,
             })

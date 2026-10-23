@@ -6,7 +6,6 @@ pub mod insight;
 pub mod market;
 pub mod metrics;
 pub mod operation_log;
-pub mod precompute;
 pub mod research;
 pub mod setup;
 pub mod sync;
@@ -33,12 +32,18 @@ use utoipa_axum::routes;
 use crate::error::ApiResult;
 use crate::sync::Engine;
 
-/// 请求处理共享的状态：同步引擎（数据集、规划）、连接池和分析结果缓存
+/// 请求处理共享的状态：同步引擎（数据集、规划）、连接池、读取缓存和后台任务
 #[derive(Clone)]
 pub struct AppState {
     pub engine: Arc<Engine>,
     pub pool: sqlx::PgPool,
+    /// Redis 共享读取缓存；没有配置时直接计算
     pub cache: Arc<crate::cache::Cache>,
+    /// 改了账户之后唤醒建议重算的消费者（`advice::regen`）。只是让它早点开始：
+    /// 待办在数据库里，不唤醒也会在几秒内被处理
+    pub advice_wake: Arc<tokio::sync::Notify>,
+    /// 处理函数启动的后台任务（后台规划、数据核检），停机时由 `server` 等它们收尾
+    pub background: BackgroundTasks,
     /// 登录状态的签名密钥，第一次用到时从数据库读取
     pub session_secret: Arc<tokio::sync::OnceCell<Vec<u8>>>,
     /// 登录失败计数
@@ -49,18 +54,6 @@ pub struct AppState {
     pub overview: Arc<crate::analysis::market::OverviewCache>,
     /// 请求计数和耗时，`GET /api/v1/metrics` 用
     pub metrics: Arc<metrics::Metrics>,
-}
-
-/// 依赖复权和权威涨跌停数据的页面结果共用一个可重建版本键。
-pub(crate) fn derived_cache_key(
-    name: &str,
-    version: &crate::analysis::limit_pool::CacheVersions,
-    suffix: &str,
-) -> String {
-    format!(
-        "niulai:v1:{name}:adj={:?}:limit={:?}:{suffix}",
-        version.adj_factor, version.limit_pool
-    )
 }
 
 #[derive(OpenApi)]
@@ -81,22 +74,59 @@ pub(crate) fn derived_cache_key(
 )]
 pub struct ApiDoc;
 
+/// API 处理函数启动、不等它结束就返回的后台任务。登记在这里而不是直接 `tokio::spawn`：
+/// 失败统一写日志，停机时 `server` 在期限内等它们结束，超时再取消
+#[derive(Clone, Default)]
+pub struct BackgroundTasks(Arc<std::sync::Mutex<tokio::task::JoinSet<()>>>);
+
+impl BackgroundTasks {
+    pub fn spawn<F>(&self, name: &'static str, task: F)
+    where
+        F: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
+        let mut set = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        // 顺手回收已经结束的，集合不会越积越多
+        while set.try_join_next().is_some() {}
+        set.spawn(async move {
+            if let Err(e) = task.await {
+                tracing::error!(task = name, error = %format!("{e:#}"), "后台任务失败");
+            }
+        });
+    }
+
+    /// 等全部后台任务结束（停机时用，由调用方控制期限）
+    pub async fn join_all(&self) {
+        let mut set = std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()));
+        while set.join_next().await.is_some() {}
+    }
+
+    /// 取消还在运行的后台任务
+    pub fn abort_all(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).abort_all();
+    }
+}
+
 // @project-doc docs/interfaces/rest_api.md#conventions
-pub fn state(engine: Arc<Engine>) -> AppState {
-    AppState {
+/// 请求处理的共享状态。读取缓存在这里创建（同步引擎不持有应用级资源），`REDIS_URL` 无效时报错
+pub fn state(engine: Arc<Engine>) -> anyhow::Result<AppState> {
+    let cache = crate::cache::Cache::new(engine.settings.redis_url.as_deref())?;
+    Ok(AppState {
         pool: engine.pool.clone(),
-        cache: engine.cache.clone(),
+        cache: Arc::new(cache),
         engine,
+        advice_wake: Arc::default(),
+        background: BackgroundTasks::default(),
         session_secret: Arc::default(),
         login_guard: Arc::default(),
         latest: Arc::default(),
         overview: Arc::default(),
         metrics: Arc::default(),
-    }
+    })
 }
 
+/// 测试和工具用：按引擎的配置建一个路由；`REDIS_URL` 无效时 panic
 pub fn router(engine: Arc<Engine>) -> Router {
-    router_with_state(state(engine))
+    router_with_state(state(engine).expect("REDIS_URL 无效"))
 }
 
 pub fn router_with_state(state: AppState) -> Router {

@@ -78,14 +78,14 @@ async fn data_check_status(
 #[utoipa::path(post, path = "/sync/check", tag = "sync",
     responses((status = 202, description = "已开始"), (status = 409, description = "正在核检", body = crate::error::ErrorBody)))]
 async fn start_data_check(State(s): State<AppState>) -> ApiResult<StatusCode> {
-    if crate::sync::check::is_running() {
+    let Some(lock) = crate::sync::check::try_lock(&s.pool).await? else {
         return Err(ApiError::Conflict("正在核检，稍后再看结果".into()));
-    }
+    };
     let engine = s.engine.clone();
-    tokio::spawn(async move {
-        if let Err(e) = crate::sync::check::run(&engine, "manual").await {
-            tracing::error!(error = %format!("{e:#}"), "数据核检失败");
-        }
+    s.background.spawn("数据核检", async move {
+        crate::sync::check::run_with(&engine, "manual", lock)
+            .await
+            .map(|_| ())
     });
     Ok(StatusCode::ACCEPTED)
 }
@@ -96,6 +96,10 @@ pub struct DatasetStatus {
     /// 中文名、分类、一句话说明
     pub title: String,
     pub category: String,
+    /// 分类的排列顺序：分类在 datasets.yaml 中第一次出现的先后，从 0 开始
+    pub category_order: usize,
+    /// ETF 的行情和资料：写 ETF 日线（`mkt.etf_bar_1d`）或 ETF 资料的数据集，页面、因子和建议都用到
+    pub etf_market: bool,
     pub summary: String,
     pub domain: String,
     pub endpoint: String,
@@ -154,6 +158,12 @@ async fn list_datasets(State(s): State<AppState>) -> ApiResult<Json<Vec<DatasetS
     .fetch_all(&s.pool)
     .await?;
     let reg = &s.engine.registry;
+    let mut categories: Vec<&str> = vec![];
+    for d in &reg.datasets {
+        if !categories.contains(&d.category.as_str()) {
+            categories.push(&d.category);
+        }
+    }
     let out = rows
         .into_iter()
         .map(
@@ -170,9 +180,18 @@ async fn list_datasets(State(s): State<AppState>) -> ApiResult<Json<Vec<DatasetS
                 backfill_done,
             )| {
                 let spec = reg.get(&dataset_id);
+                let category = spec.map_or_else(|| "其他".into(), |s| s.category.clone());
                 DatasetStatus {
+                    category_order: categories
+                        .iter()
+                        .position(|c| *c == category)
+                        .unwrap_or(categories.len()),
+                    etf_market: spec.is_some_and(|s| {
+                        s.id == crate::instrument::ETF_PROFILE_DATASET
+                            || s.sink.iter().any(|t| t == crate::sync::spec::ETF_BARS)
+                    }),
                     title: spec.map_or_else(|| dataset_id.clone(), |s| s.title.clone()),
-                    category: spec.map_or_else(|| "其他".into(), |s| s.category.clone()),
+                    category,
                     summary: spec.map(|s| s.summary.clone()).unwrap_or_default(),
                     schedule: spec.map_or("daily", |s| s.schedule.key()).into(),
                     only_current: spec
@@ -271,6 +290,7 @@ async fn list_runs(
     State(s): State<AppState>,
     Query(q): Query<RunListQuery>,
 ) -> ApiResult<Json<Vec<RunSummary>>> {
+    // 审计：RUN_COLUMNS 是本文件中的常量列名
     let rows = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT {RUN_COLUMNS} FROM ops.run ORDER BY run_id DESC LIMIT $1"
     )))
@@ -341,10 +361,13 @@ async fn create_run(
         .await?;
     let run_id = job.run_id;
     let engine = s.engine.clone();
-    tokio::spawn(async move {
-        if let Err(e) = engine.planner().run_planning_job(job).await {
-            tracing::error!(run_id, error = %format!("{e:#}"), "后台规划同步运行失败");
-        }
+    // 中途停机被取消时，运行停在 planning，维护按心跳把它结束为失败（run::stale_planning）
+    s.background.spawn("后台规划", async move {
+        engine
+            .planner()
+            .run_planning_job(job)
+            .await
+            .map_err(|e| e.context(format!("后台规划同步运行 {run_id} 失败")))
     });
     Ok((
         StatusCode::ACCEPTED,
@@ -417,6 +440,7 @@ async fn get_run(State(s): State<AppState>, Path(run_id): Path<i64>) -> ApiResul
     .fetch_optional(&s.pool)
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("运行不存在：{run_id}")))?;
+    // 审计：RUN_COLUMNS 是本文件中的常量列名
     let waves: Vec<RunSummary> = sqlx::query_as(AssertSqlSafe(format!(
         "SELECT {RUN_COLUMNS} FROM ops.run WHERE run_id = $1 OR (params->>'root_run')::bigint = $1 ORDER BY run_id"
     )))

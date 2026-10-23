@@ -3,11 +3,7 @@ import { clsx } from "clsx";
 import { Fragment, useState } from "react";
 import { Link } from "react-router";
 import {
-  getAdviceHistoryQueryKey,
   getCurrentAdviceQueryKey,
-  getGetAccountQueryKey,
-  getListAccountsQueryKey,
-  getListTradesQueryKey,
   useClearItem,
   useCurrentAdvice,
   useExecuteItem,
@@ -17,14 +13,20 @@ import {
 import type { AdviceItem, AdviceResponse, StoredAdvice } from "../api/generated/model";
 import { ACTIONS, NOTE_KINDS, yuan } from "../lib/accounts";
 import { dayLabel, fmtDateTime, fmtPrice } from "../lib/format";
+import { invalidateAccountQueries } from "../lib/queryInvalidation";
 import { buttonClass, Card, Empty, errorText, Field, inputClass, QueryView, Table } from "./ui";
 
 /** 一个账户某一天的调仓建议。date 为空时是最新一份 */
 export function AdviceView({ accountId, date }: { accountId: number; date?: string }) {
   const query = useCurrentAdvice(accountId, date ? { date } : undefined, {
-    // 保存持仓、现金或设置后，建议在后台重新生成：生成中每 1.5 秒看一次，完成后换成新的一份
+    // 保存持仓、现金或设置后，建议在后台重新生成：生成中每 1.5 秒看一次，完成后换成新的一份；
+    // 生成失败时后台会自动重试，30 秒看一次
     query: {
-      refetchInterval: (q) => (q.state.data?.regenerating ? 1_500 : q.state.data?.waiting ? 30_000 : false),
+      refetchInterval: (q) => {
+        const d = q.state.data;
+        if (d?.regenerating) return 1_500;
+        return d?.waiting || d?.regenerate_error ? 30_000 : false;
+      },
     },
   });
   const qc = useQueryClient();
@@ -33,22 +35,31 @@ export function AdviceView({ accountId, date }: { accountId: number; date?: stri
   });
   return (
     <QueryView query={query}>
-      {(r) =>
-        !r.advice ? (
-          <Card>
-            <Empty>{r.regenerating ? "正在生成建议，稍等几秒…" : (r.waiting ?? "还没有建议")}</Empty>
-          </Card>
-        ) : (
-          <Body
-            accountId={accountId}
-            s={r.advice}
-            latestBar={r.latest_bar}
-            readonly={!!date}
-            refreshing={refresh.isPending || r.regenerating}
-            onRefresh={() => refresh.mutate({ accountId })}
-          />
-        )
-      }
+      {(r) => (
+        <>
+          {r.regenerate_error && (
+            <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+              按改过的账户重新生成建议没有成功{r.advice ? "，下面还是改之前的一份" : ""}
+              。系统会自动重试，也可以点「重新生成」。原因：
+              {r.regenerate_error}
+            </p>
+          )}
+          {!r.advice ? (
+            <Card>
+              <Empty>{r.regenerating ? "正在生成建议，稍等几秒…" : (r.waiting ?? "还没有建议")}</Empty>
+            </Card>
+          ) : (
+            <Body
+              accountId={accountId}
+              s={r.advice}
+              latestBar={r.latest_bar}
+              readonly={!!date}
+              refreshing={refresh.isPending || r.regenerating}
+              onRefresh={() => refresh.mutate({ accountId })}
+            />
+          )}
+        </>
+      )}
     </QueryView>
   );
 }
@@ -389,16 +400,10 @@ function ItemCard({ item }: { item: AdviceItem }) {
   );
 }
 
-/** 处理完一条后：建议、账户、流水都要刷新 */
+/** 处理完一条后：「已执行」会记流水，建议、账户、流水、净值、回看和影子订单都要刷新 */
 function useAfterChange(accountId: number) {
   const qc = useQueryClient();
-  return (r: AdviceResponse) => {
-    qc.setQueryData(getCurrentAdviceQueryKey(accountId), r);
-    qc.invalidateQueries({ queryKey: getGetAccountQueryKey(accountId) });
-    qc.invalidateQueries({ queryKey: getListAccountsQueryKey() });
-    qc.invalidateQueries({ queryKey: getListTradesQueryKey(accountId) });
-    qc.invalidateQueries({ queryKey: getAdviceHistoryQueryKey(accountId) });
-  };
+  return (r: AdviceResponse) => invalidateAccountQueries(qc, accountId, "advice", { advice: r });
 }
 
 function ExecuteForm({
