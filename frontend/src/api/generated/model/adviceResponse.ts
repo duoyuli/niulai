@@ -14,6 +14,8 @@ export interface AdviceResponse {
      * @nullable
      */
   latest_bar?: string | null;
+  /** 改了持仓、现金或设置之后正在后台重新生成；为 true 时 `advice` 还是改之前的一份 */
+  regenerating: boolean;
   /**
      * 没有建议时的原因，例如还没有巡检结果
      * @nullable

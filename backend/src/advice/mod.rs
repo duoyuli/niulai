@@ -177,10 +177,63 @@ pub async fn generate_for(
 
 /// 持仓、现金或设置改了之后：立即重新生成这个账户的建议。还没有巡检结果时不生成
 pub async fn regenerate(pool: &PgPool, acc: &Account) -> anyhow::Result<Option<i64>> {
-    let Some(sh) = inputs::shared(pool).await? else {
+    let Some(sh) = inputs::shared(pool, Some(&acc.rules)).await? else {
         return Ok(None);
     };
     Ok(Some(generate_for(pool, &sh, acc).await?))
+}
+
+/// 后台重新生成中的账户：值为 true 表示生成期间又有修改，结束后再生成一次
+fn pending() -> &'static std::sync::Mutex<std::collections::HashMap<i64, bool>> {
+    static PENDING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<i64, bool>>> =
+        std::sync::OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+/// 这个账户的建议是否正在后台重新生成
+pub fn regenerating(account_id: i64) -> bool {
+    pending()
+        .lock()
+        .is_ok_and(|m| m.contains_key(&account_id))
+}
+
+/// 在后台重新生成这个账户的建议，保存持仓、现金或设置的请求不用等它。同一账户同时只生成一份；
+/// 生成期间又有修改时，结束后按最新的账户再生成一次，所以最后一份总是最新的。失败只写日志
+pub fn regenerate_soon(pool: PgPool, account_id: i64) {
+    {
+        let Ok(mut m) = pending().lock() else {
+            return;
+        };
+        if let Some(again) = m.get_mut(&account_id) {
+            *again = true;
+            return;
+        }
+        m.insert(account_id, false);
+    }
+    tokio::spawn(async move {
+        loop {
+            let r = async {
+                match account::get_by_id(&pool, account_id).await? {
+                    Some(acc) => regenerate(&pool, &acc).await.map(|_| ()),
+                    None => Ok(()),
+                }
+            }
+            .await;
+            if let Err(e) = r {
+                tracing::error!(account_id, error = %format!("{e:#}"), "重新生成建议失败");
+            }
+            let Ok(mut m) = pending().lock() else {
+                return;
+            };
+            match m.get_mut(&account_id) {
+                Some(again) if *again => *again = false,
+                _ => {
+                    m.remove(&account_id);
+                    return;
+                }
+            }
+        }
+    });
 }
 
 async fn current_id(
@@ -222,7 +275,7 @@ pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> 
             return Ok(0);
         }
     }
-    let Some(sh) = inputs::shared(pool).await? else {
+    let Some(sh) = inputs::shared(pool, None).await? else {
         return Ok(0);
     };
     account::corp::apply(pool, sh.trade_date).await?;

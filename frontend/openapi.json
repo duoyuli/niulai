@@ -5886,6 +5886,9 @@
       },
       "AdviceResponse": {
         "type": "object",
+        "required": [
+          "regenerating"
+        ],
         "properties": {
           "advice": {
             "oneOf": [
@@ -5904,6 +5907,10 @@
             ],
             "format": "date",
             "description": "最新日线的日期：比建议的交易日新时，说明新的运营建议还在等巡检"
+          },
+          "regenerating": {
+            "type": "boolean",
+            "description": "改了持仓、现金或设置之后正在后台重新生成；为 true 时 `advice` 还是改之前的一份"
           },
           "waiting": {
             "type": [

@@ -329,17 +329,11 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
     })
 }
 
-/// 改了持仓、现金或设置后重新生成运营建议；失败只写日志，不影响这次修改
+/// 改了持仓、现金或设置后在后台重新生成运营建议，这次修改不用等它；失败只写日志
 async fn regenerate(s: &AppState, me: &CurrentUser, id: i64) {
-    let r = async {
-        let acc = account::get(&s.pool, me.user_id, id)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        advice::regenerate(&s.pool, &acc).await
-    }
-    .await;
-    if let Err(e) = r {
-        tracing::error!(account_id = id, error = %format!("{e:#}"), "重新生成建议失败");
+    // 只为自己的账户触发：调用方已经按用户取过账户，这里再确认一次
+    if account::get(&s.pool, me.user_id, id).await.is_ok() {
+        advice::regenerate_soon(s.pool.clone(), id);
     }
 }
 
@@ -622,6 +616,8 @@ pub struct AdviceResponse {
     pub advice: Option<StoredAdvice>,
     /// 最新日线的日期：比建议的交易日新时，说明新的运营建议还在等巡检
     pub latest_bar: Option<NaiveDate>,
+    /// 改了持仓、现金或设置之后正在后台重新生成；为 true 时 `advice` 还是改之前的一份
+    pub regenerating: bool,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -651,6 +647,7 @@ async fn advice_response(
         waiting,
         advice,
         latest_bar,
+        regenerating: advice::regenerating(id),
     })
 }
 

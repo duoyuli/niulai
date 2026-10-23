@@ -84,8 +84,9 @@ pub async fn next_trading_day(pool: &PgPool, d: NaiveDate) -> sqlx::Result<Naive
     }))
 }
 
-/// 还没有内置策略的巡检结果时为空
-pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
+/// 还没有内置策略的巡检结果时为空。`only` 不为空时只为这一组规则准备买入前回看（单个账户重新生成时用），
+/// 为空时为所有账户准备
+pub async fn shared(pool: &PgPool, only: Option<&Rules>) -> anyhow::Result<Option<Shared>> {
     // 核心数据的首次回补还没完成：日线不全，算出来的建议不可信，先不生成
     if crate::readiness::core_backfill_left(pool).await? > 0 {
         return Ok(None);
@@ -142,10 +143,14 @@ pub async fn shared(pool: &PgPool) -> anyhow::Result<Option<Shared>> {
         .map(|(id, code, r, amount)| (id, code, r.0, amount.unwrap_or(0.0)))
         .collect();
     // 只有启用回看的账户所选策略的候选需要长历史；同一股票只读取一次。
-    let account_rules: Vec<sqlx::types::Json<Rules>> =
-        sqlx::query_scalar("SELECT rules FROM app.account")
-            .fetch_all(pool)
-            .await?;
+    let account_rules: Vec<sqlx::types::Json<Rules>> = match only {
+        Some(r) => vec![sqlx::types::Json(r.clone())],
+        None => {
+            sqlx::query_scalar("SELECT rules FROM app.account")
+                .fetch_all(pool)
+                .await?
+        }
+    };
     let defs = screener::screening_strategies(pool).await?;
     let checked: Vec<_> = defs
         .iter()

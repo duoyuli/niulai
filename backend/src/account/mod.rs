@@ -323,6 +323,18 @@ pub async fn get(pool: &PgPool, user_id: i64, account_id: i64) -> Result<Account
     row.map(account).transpose()?.ok_or(AccountError::NotFound)
 }
 
+/// 按编号取一个账户，不按用户过滤（后台重新生成建议用）；不存在时为空
+pub async fn get_by_id(pool: &PgPool, account_id: i64) -> anyhow::Result<Option<Account>> {
+    // 审计：ACCOUNT_COLS 是本文件中的常量列名
+    let row: Option<AccountRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {ACCOUNT_COLS} FROM app.account WHERE account_id = $1"
+    )))
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(account).transpose()
+}
+
 /// 全部账户（后台每天生成建议用，不按用户过滤）
 pub async fn all(pool: &PgPool) -> Result<Vec<Account>> {
     // 审计：ACCOUNT_COLS 是本文件中的常量列名

@@ -22,7 +22,10 @@ import { buttonClass, Card, Empty, errorText, Field, inputClass, QueryView, Tabl
 /** 一个账户某一天的调仓建议。date 为空时是最新一份 */
 export function AdviceView({ accountId, date }: { accountId: number; date?: string }) {
   const query = useCurrentAdvice(accountId, date ? { date } : undefined, {
-    query: { refetchInterval: (q) => (q.state.data?.waiting ? 30_000 : false) },
+    // 保存持仓、现金或设置后，建议在后台重新生成：生成中每 1.5 秒看一次，完成后换成新的一份
+    query: {
+      refetchInterval: (q) => (q.state.data?.regenerating ? 1_500 : q.state.data?.waiting ? 30_000 : false),
+    },
   });
   const qc = useQueryClient();
   const refresh = useRefreshAdvice({
@@ -33,7 +36,7 @@ export function AdviceView({ accountId, date }: { accountId: number; date?: stri
       {(r) =>
         !r.advice ? (
           <Card>
-            <Empty>{r.waiting ?? "还没有建议"}</Empty>
+            <Empty>{r.regenerating ? "正在生成建议，稍等几秒…" : (r.waiting ?? "还没有建议")}</Empty>
           </Card>
         ) : (
           <Body
@@ -41,7 +44,7 @@ export function AdviceView({ accountId, date }: { accountId: number; date?: stri
             s={r.advice}
             latestBar={r.latest_bar}
             readonly={!!date}
-            refreshing={refresh.isPending}
+            refreshing={refresh.isPending || r.regenerating}
             onRefresh={() => refresh.mutate({ accountId })}
           />
         )
@@ -103,6 +106,11 @@ function Body({
             </button>
           )}
         </div>
+        {refreshing && !readonly && (
+          <p className="mt-3 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:bg-sky-500/10 dark:text-sky-300">
+            正在按最新的持仓和设置更新建议，下面还是更新前的一份，几秒后自动换成新的。
+          </p>
+        )}
         {a.settings_hint && (
           <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
             {a.settings_hint}。
