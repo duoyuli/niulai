@@ -1710,6 +1710,17 @@ async fn interrupted_planning_run_is_failed_by_maintenance_rule() {
     db.drop().await;
 }
 
+/// 执行一次数据核检。核检在进程内同时只做一次，并行的其他测试正在核检时稍等再试
+async fn check_now(engine: &Engine, trigger: &str) -> i64 {
+    for _ in 0..600 {
+        if let Some(id) = niulai::sync::check::run(engine, trigger).await.unwrap() {
+            return id;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("等了 60 秒，其他测试的核检还没结束");
+}
+
 #[tokio::test]
 async fn data_check_finds_gaps_refetches_and_confirms_suspensions() {
     let Some(db) = TestDb::create().await else {
@@ -1778,10 +1789,7 @@ async fn data_check_finds_gaps_refetches_and_confirms_suspensions() {
     .await;
 
     // 第一次：发现 2 个缺口，合并成一个窗口重取，排在补偿那一层
-    niulai::sync::check::run(&engine, "manual")
-        .await
-        .unwrap()
-        .unwrap();
+    check_now(&engine, "manual").await;
     let (st, v) = call(&app, "GET", "/api/v1/sync/check", None).await;
     assert_eq!(st, StatusCode::OK, "{v}");
     let r = result(&v);
@@ -1809,10 +1817,7 @@ async fn data_check_finds_gaps_refetches_and_confirms_suspensions() {
     assert_eq!(v["open"][0]["days"], 2);
 
     // 重取期间这只股票有未完成任务：先不查，也不重复安排
-    niulai::sync::check::run(&engine, "manual")
-        .await
-        .unwrap()
-        .unwrap();
+    check_now(&engine, "manual").await;
     let (_, v) = call(&app, "GET", "/api/v1/sync/check", None).await;
     let r = result(&v);
     assert_eq!(
@@ -1842,10 +1847,7 @@ async fn data_check_finds_gaps_refetches_and_confirms_suspensions() {
         .execute(&pool)
         .await
         .unwrap();
-    niulai::sync::check::run(&engine, "followup")
-        .await
-        .unwrap()
-        .unwrap();
+    check_now(&engine, "followup").await;
     let (_, v) = call(&app, "GET", "/api/v1/sync/check", None).await;
     let r = result(&v);
     assert_eq!(
@@ -1862,10 +1864,7 @@ async fn data_check_finds_gaps_refetches_and_confirms_suspensions() {
     assert_eq!(v["open"].as_array().unwrap().len(), 0);
 
     // 再查一次：停牌日不再报，也不再重取
-    niulai::sync::check::run(&engine, "weekly")
-        .await
-        .unwrap()
-        .unwrap();
+    check_now(&engine, "weekly").await;
     let (_, v) = call(&app, "GET", "/api/v1/sync/check", None).await;
     let r = result(&v);
     assert_eq!(
@@ -1929,10 +1928,7 @@ async fn data_check_stops_at_delisting_date() {
     .execute(&pool)
     .await
     .unwrap();
-    niulai::sync::check::run(&engine, "manual")
-        .await
-        .unwrap()
-        .unwrap();
+    check_now(&engine, "manual").await;
     let gaps: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.bar_gap")
         .fetch_one(&pool)
         .await
