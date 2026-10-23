@@ -3,30 +3,29 @@ import { useEffect, useRef, useState } from "react";
 import { useDarkMode } from "../hooks/useDarkMode";
 import { fmtBig, fmtPercent } from "../lib/format";
 
-const STRATEGY = "#3b6ef5";
+const PORTFOLIO = "#3b6ef5";
 const BENCHMARK = "#a1a1aa";
 
-/** 曲线上的一个点。单只股票回测带 holding，全市场回测带 positions；基准缺数据时为空 */
+/** 曲线上的一个点：组合总值、基准（缺数据时为空）和持有只数 */
 export interface ChartPoint {
   date: string;
   equity: number;
   benchmark?: number | null;
-  holding?: boolean;
   positions?: number;
 }
 
-/** 回测的账户总值曲线：策略与基准（买入持有或指数）对比。log 为真时用对数坐标，长周期里早期的涨跌也看得清 */
+/** 组合回测的总值曲线：组合与基准对比。log 为真时用对数坐标，长周期里早期的涨跌也看得清 */
 export function EquityChart({
   points,
   capital,
   log,
-  benchmarkLabel = "买入持有",
+  benchmarkLabel,
   height = 360,
 }: {
   points: ChartPoint[];
   capital: number;
   log: boolean;
-  benchmarkLabel?: string;
+  benchmarkLabel: string;
   height?: number;
 }) {
   const el = useRef<HTMLDivElement>(null);
@@ -59,7 +58,7 @@ export function EquityChart({
           }),
         );
     line(BENCHMARK, 1, (p) => p.benchmark);
-    line(STRATEGY, 2, (p) => p.equity);
+    line(PORTFOLIO, 2, (p) => p.equity);
     const byDate = new Map(points.map((p) => [p.date, p]));
     chart.subscribeCrosshairMove((p) => setHover(p.time ? (byDate.get(String(p.time)) ?? null) : null));
     chart.timeScale().fitContent();
@@ -72,15 +71,14 @@ export function EquityChart({
       {shown && (
         <div className="num flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
           <span className="font-medium text-zinc-800 dark:text-zinc-200">{shown.date}</span>
-          <span style={{ color: STRATEGY }}>
-            策略 {fmtBig(shown.equity)}（{fmtPercent(shown.equity / capital - 1)}）
+          <span style={{ color: PORTFOLIO }}>
+            组合 {fmtBig(shown.equity)}（{fmtPercent(shown.equity / capital - 1)}）
           </span>
           {shown.benchmark !== null && shown.benchmark !== undefined && (
             <span>
               {benchmarkLabel} {fmtBig(shown.benchmark)}（{fmtPercent(shown.benchmark / capital - 1)}）
             </span>
           )}
-          {shown.holding !== undefined && <span>{shown.holding ? "持仓中" : "空仓"}</span>}
           {shown.positions !== undefined && <span>{shown.positions > 0 ? `持有 ${shown.positions} 只` : "空仓"}</span>}
         </div>
       )}

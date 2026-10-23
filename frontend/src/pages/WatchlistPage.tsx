@@ -2,29 +2,24 @@ import { Link } from "react-router";
 import type { WatchItem } from "../api/generated/model";
 import { useListWatchlist } from "../api/generated/watchlist/watchlist";
 import { SecuritySearch } from "../components/SecuritySearch";
-import { SignalChip } from "../components/SignalChip";
 import { Badge, Card, Empty, PageHeader, QueryView, Table } from "../components/ui";
 import { WatchButton } from "../components/WatchButton";
 import { fmtPercent, fmtPrice, upDownClass } from "../lib/format";
 
-/** 自选：收藏的股票一览，加减收藏。每只股票的详细诊断在个股页 */
+/** 自选：收藏的股票一览，加减收藏。点股票看 K 线和财务 */
 export function WatchlistPage() {
   const query = useListWatchlist();
   return (
     <>
       <PageHeader
         title="自选"
-        desc="收藏的股票。红色信号偏多、绿色偏空；点股票看完整诊断。"
+        desc="收藏的股票。点股票看 K 线和财务。"
         extra={<SecuritySearch action={(code) => <WatchButton thscode={code} />} width="w-64" />}
       />
       <Card>
         <QueryView query={query}>
           {(data) =>
-            data.items.length === 0 ? (
-              <Empty>还没有收藏的股票。在右上角搜索，点 ☆ 收藏。</Empty>
-            ) : (
-              <WatchTable items={data.items} />
-            )
+            data.length === 0 ? <Empty>还没有收藏的股票。在右上角搜索，点 ☆ 收藏。</Empty> : <WatchTable items={data} />
           }
         </QueryView>
       </Card>
@@ -49,58 +44,32 @@ function WatchTable({ items }: { items: WatchItem[] }) {
           <th className="text-right!" title="最近 20 个交易日（约一个月）的涨跌幅">
             近 20 日
           </th>
-          <th title="15 日均线在 30 日均线上方，说明短期走势强于长期">趋势</th>
-          <th title="最近 5 个交易日出现过的信号">最近信号</th>
         </tr>
       </thead>
       <tbody>
-        {items.map((x) => {
-          const d = x.diagnosis;
-          const trend = d?.ma?.trend;
-          return (
-            <tr key={x.thscode} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
-              <td className="pr-0!">
-                <WatchButton thscode={x.thscode} />
-              </td>
-              <td>
-                <Link to={`/securities/${x.thscode}`} className="flex items-baseline gap-1.5 hover:underline">
-                  {x.name}
-                  <span className="num font-mono text-xs text-zinc-500">{x.thscode}</span>
-                  {x.delisted_on && <Badge tone="bad">已退市</Badge>}
-                </Link>
-              </td>
-              <td className="num text-right">
-                {x.close ? fmtPrice(x.close) : <span className="text-xs text-zinc-400">暂无日线</span>}
-              </td>
-              <td className="num text-right">
-                <Change v={d?.change_1d} />
-              </td>
-              <td className="num text-right">
-                <Change v={d?.change_20d} />
-              </td>
-              <td>
-                {trend === "above" ? (
-                  <span className="text-up">走强</span>
-                ) : trend === "below" ? (
-                  <span className="text-down">走弱</span>
-                ) : (
-                  <span className="text-zinc-400">—</span>
-                )}
-              </td>
-              <td className="whitespace-normal">
-                {x.recent_signals.length > 0 ? (
-                  <span className="flex flex-wrap gap-1">
-                    {x.recent_signals.slice(0, 4).map((e) => (
-                      <SignalChip key={`${e.trade_date}-${e.signal}`} event={e} withDate />
-                    ))}
-                  </span>
-                ) : (
-                  <span className="text-zinc-400">—</span>
-                )}
-              </td>
-            </tr>
-          );
-        })}
+        {items.map((x) => (
+          <tr key={x.thscode} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+            <td className="pr-0!">
+              <WatchButton thscode={x.thscode} />
+            </td>
+            <td>
+              <Link to={`/securities/${x.thscode}`} className="flex items-baseline gap-1.5 hover:underline">
+                {x.name}
+                <span className="num font-mono text-xs text-zinc-500">{x.thscode}</span>
+                {x.delisted_on && <Badge tone="bad">已退市</Badge>}
+              </Link>
+            </td>
+            <td className="num text-right">
+              {x.close ? fmtPrice(x.close) : <span className="text-xs text-zinc-400">暂无日线</span>}
+            </td>
+            <td className="num text-right">
+              <Change v={x.change_1d} />
+            </td>
+            <td className="num text-right">
+              <Change v={x.change_20d} />
+            </td>
+          </tr>
+        ))}
       </tbody>
     </Table>
   );

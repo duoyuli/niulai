@@ -32,7 +32,7 @@ backend/config/datasets.yaml ─加载─► ops.dataset
                   运行结束 ─► 复权重算 ─► 规划下一个波次
 ```
 
-`niulai serve` 和需要数据库的运维子命令启动时先由 `bootstrap::bootstrap` 执行一次应用初始化：设置第一个管理员密码并同步内置策略模板。随后创建同步引擎（`sync::Engine`）：读取并校验 `datasets.yaml`，把配置同步到 `ops.dataset`（配置中删掉的数据集标记为关闭，留作历史，数据集列表不再展示），创建供应商客户端和限速器。`Engine::new` 不执行鉴权或分析初始化。配置在进程启动时读取一次，修改配置后需要重启进程。
+`niulai serve` 和需要数据库的运维子命令启动时先由 `bootstrap::bootstrap` 执行一次应用初始化：设置第一个管理员密码。随后创建同步引擎（`sync::Engine`）：读取并校验 `datasets.yaml`，把配置同步到 `ops.dataset`（配置中删掉的数据集标记为关闭，留作历史，数据集列表不再展示），创建供应商客户端和限速器。`Engine::new` 不执行鉴权或分析初始化。配置在进程启动时读取一次，修改配置后需要重启进程。
 
 还没有配置 API Key 时，执行循环不认领任务、定时调度不发起增量，直到在网页上配置，见 [首次登录引导](../interfaces/rest_api.md#setup)。
 
@@ -141,11 +141,11 @@ raw 记录、类型化 sink 和游标在同一个任务事务中写入；事务�
 运行结束时，如果影响复权价的数据集有变化（`sink` 中有 `mkt.stock_bar_1d` 或 `mkt.corp_action` 的数据集，见 `spec.rs` 的 `PRICE_TABLES`）（成功任务的 `changed` 合计大于 0），依次执行：
 1. 把个股日线和 ETF 日线中出现过的日期补进 `ref.trading_day`（来源记为 `derived`）。供应商日历只有最近一年。
 2. `CALL mkt.rebuild_adj_segment(run_id)`：全量重算复权分段，包括等比复权因子和同花顺减法复权的系数。本机全市场实测约 2 秒（1,500 万根日线、6 万段分段；第一次执行或磁盘忙时会更久），在数据库事务中完成，查询在提交前看到旧结果，不被阻塞。
-3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的进程内缓存（市场概况、信号的过去表现）失效；配置 Redis 时，共享读取缓存也因版本键变化而切换到新结果。
+3. 更新 `ops.derived_version` 的 `adj_factor` 行，使依赖复权价的进程内缓存（市场概况）失效；配置 Redis 时，共享读取缓存也因版本键变化而切换到新结果。
 
-另外，应用事件编排器收到 `SyncRunCompleted` 后，按本次运行中三个权威涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`）任务的变化条数，决定是否更新 `ops.derived_version` 的 `limit_pool` 行。这三个池只写 `raw.record`、没有类型化表，不在 `PRICE_TABLES` 里，所以单独判断；**即使行情没有变化，只要池补上了滞后的数据也会更新**，市场概况和信号过去表现的缓存随之失效，并且和行情有变化时一样，在最新交易日上重做一次每日巡检、刷新还没处理过的调仓建议（当天的名单比行情晚到时，之前的巡检用的是自算的涨停）。更早日期的巡检结果不重算。配置 Redis 时，市场概况、今日热点和板块排名的共享读取缓存使用同一版本键，自然切换到新结果。
+另外，应用事件编排器收到 `SyncRunCompleted` 后，按本次运行中三个权威涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`）任务的变化条数，决定是否更新 `ops.derived_version` 的 `limit_pool` 行。这三个池只写 `raw.record`、没有类型化表，不在 `PRICE_TABLES` 里，所以单独判断；**即使行情没有变化，只要池补上了滞后的数据也会更新**，市场概况的缓存随之失效，并且和行情有变化时一样，刷新还没处理过的调仓建议。配置 Redis 时，市场概况、今日热点和板块排名的共享读取缓存使用同一版本键，自然切换到新结果。
 
-`try_complete` 在把运行置为终态的同一条条件 UPDATE 中写入 `ops.run.params.sync_event_pending`，因此最后一个任务完成后即使进程在接续波次、复权重算或事件发布前退出，也能由应用层重放。`executor` 在复权重算成功后补上准确的 `price_changed` 并发布 `SyncRunCompleted`，应用事件编排器再用开启了巡检的选股策略在最新交易日上执行一次 [每日巡检](../domains/strategies.md#screening)，并为每个账户生成 [调仓建议](../domains/accounts.md#generation)。事件处理成功后清除标记，进程重启或事件处理失败时由维护循环重放，避免只依赖进程内事件。分析或建议失败不会让后面的波次停掉，但会保留待处理标记。执行循环每分钟发布 `MaintenanceTick`，编排器消费后补齐缺的建议和巡检。维护事件只补齐建议和巡检，不运行任何回测。下一个波次在事件发布之前就已规划。复权的计算规则见 [复权](../domains/price_adjustment.md)。
+`try_complete` 在把运行置为终态的同一条条件 UPDATE 中写入 `ops.run.params.sync_event_pending`，因此最后一个任务完成后即使进程在接续波次、复权重算或事件发布前退出，也能由应用层重放。`executor` 在复权重算成功后补上准确的 `price_changed` 并发布 `SyncRunCompleted`，应用事件编排器清空账户的因子排名缓存，为每个账户重新生成 [调仓建议](../domains/accounts.md#generation)。事件处理成功后清除标记，进程重启或事件处理失败时由维护循环重放，避免只依赖进程内事件。建议失败不会让后面的波次停掉，但会保留待处理标记。执行循环每分钟发布 `MaintenanceTick`，编排器消费后在没有增量同步运行时补齐缺的建议，不运行任何回测。下一个波次在事件发布之前就已规划。复权的计算规则见 [复权](../domains/price_adjustment.md)。
 
 新的一天的日线不用重算就有复权价（落在最后一个分段里）。但一个回补运行可能要执行一两天，期间补回来的历史日线和公司行动会改变分段，只在运行结束时重算的话，这段时间的复权价是旧的。所以维护组件（每分钟一次）还会检查：自上次重算以来有价格类任务写入了变化，并且距上次重算超过 5 分钟，就重算一次。上次重算的时刻记在 `ops.scheduler` 的 `adj_rebuild` 作业上，用条件 UPDATE 抢占；运行结束时的重算也会刷新这个时刻。重算不阻塞查询，见 [等比复权因子](../domains/price_adjustment.md#equal_ratio_factor)。
 
@@ -236,13 +236,13 @@ raw 记录、类型化 sink 和游标在同一个任务事务中写入；事务�
 
 供应商 API Key 有全局请求频率上限，多开进程不会更快，所以同一时刻只允许一个进程执行同步任务：`niulai serve` 的执行循环或 `niulai work` 启动前，用一个独立的数据库连接取得咨询锁 `pg_try_advisory_lock(hashtext('niulai.executor'))`，取不到时 `niulai work` 报错退出，`niulai serve` 先只提供 API、每 30 秒再试（宿主机崩溃后，数据库可能要过一阵才发现旧连接断了），不让整个进程反复重启。进程退出、连接关闭时锁自动释放。持锁期间每 30 秒在这个连接上执行一次 `SELECT 1`：连接断了（数据库重启、网络中断）锁已经被释放，别的进程可能接手，于是停止认领、等在途任务结束后按故障退出，由 Docker 重启后重新取锁。`niulai serve --no-worker` 不取锁，可以另外启动。
 
-全市场计算（巡检、市场概况、信号统计、回测）同时最多 2 个，多出来的排队；后台的巡检和调仓建议另有一个槽位（`prices::in_background`），页面上同时开几个回测也不会让它们排不上。
+全市场计算（市场概况、因子研究、账户的因子排名）同时最多 2 个，多出来的排队；后台的调仓建议另有一个槽位（`prices::in_background`），页面上同时开几个因子研究也不会让它排不上。
 
 限速在进程内：每次请求前检查最近 1 秒内的请求数，达到 `NIULAI_RATE_LIMIT_RPS`（默认 2）时等到最早那次请求满 1 秒。`niulai plan`、`niulai daily` 规划时偶尔请求几次接口，不取锁，会与执行循环短暂叠加。全市场计算按 128 只证券一批读取，数据库事务在 CPU 计算前提交，避免长时间占用连接和快照。为什么不用 Redis 跨进程限速，见 [ADR：限速在进程内](../decisions/in_process_rate_limit.md)。
 
 单个进程同时执行的任务数由 `NIULAI_WORKER_CONCURRENCY`（默认 3）控制。实测每秒 2 次、并发 3 的强度下没有触发供应商限流，实际吞吐约每秒 1.7 次。
 
-**全市场计算：** 每日巡检、信号的过去表现、市场概况等要逐只股票读出全部日线再计算，一次要几秒的 CPU。同一进程最多同时做 2 个（`analysis/prices.rs` 的 `MARKET_SCANS`），其余排队，避免几个页面同时打开时把 CPU 和连接池占满；逐只股票的计算用 `block_in_place` 执行，不占住处理 API 请求的异步线程。
+**全市场计算：** 市场概况、因子研究和账户的因子排名要逐只股票读出日线再计算，一次要几秒到十几秒的 CPU。同一进程最多同时做 2 个（`analysis/prices.rs` 的 `MARKET_SCANS`），其余排队，避免几个页面同时打开时把 CPU 和连接池占满；逐只股票的计算用 `block_in_place` 执行，不占住处理 API 请求的异步线程。
 
 **组件监督：** `niulai serve` 中的 API、执行循环、调度器是同一进程里的几个组件。任何一个提前退出（出错或 panic），进程通知其余组件停止，然后以非零状态退出，由 Docker 的 `restart: unless-stopped` 或 systemd 重新启动；不会出现 API 还在、同步已经停了的半死状态。
 

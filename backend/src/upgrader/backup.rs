@@ -14,7 +14,7 @@ use serde_json::json;
 
 use super::docker::Docker;
 
-/// 每天几点（上海时间）之后做当天的备份：收盘同步、巡检和建议都做完了，夜里也没人用
+/// 每天几点（上海时间）之后做当天的备份：收盘同步和建议都做完了，夜里也没人用
 const BACKUP_AT: (u32, u32) = (3, 30);
 pub const DAILY_PREFIX: &str = "niulai-daily-";
 pub const UPGRADE_PREFIX: &str = "niulai-before-";

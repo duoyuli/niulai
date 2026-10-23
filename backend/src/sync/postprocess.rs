@@ -11,7 +11,7 @@ pub const REFRESH_INTERVAL: &str = "5 minutes";
 /// ops.scheduler 中记录上次重算时刻的作业名
 const JOB: &str = "adj_rebuild";
 
-/// 返回行情或公司行动是否有变化（有变化时才重算，调用方据此决定是否巡检）
+/// 返回行情或公司行动是否有变化（有变化时才重算，调用方据此决定是否重新生成调仓建议）
 /// price_datasets：写入影响复权价的表的数据集（[`crate::sync::spec::Registry::writing_to`] 加 [`crate::sync::spec::PRICE_TABLES`]）
 pub async fn after_run(
     pool: &PgPool,

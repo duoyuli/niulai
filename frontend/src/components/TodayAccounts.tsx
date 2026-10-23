@@ -10,8 +10,8 @@ const HOME_ACCOUNT_LIMIT = 3;
 
 function adviceLine(a: AccountSummary) {
   const b = a.advice;
-  if (!b) return <span className="text-zinc-400">等待第一份建议（数据同步、巡检完成后自动生成）</span>;
-  const act = b.sells + b.reduces + b.buys > 0;
+  if (!b) return <span className="text-zinc-400">等待第一份建议（数据同步完成后自动生成）</span>;
+  const act = b.sells + b.buys > 0;
   return (
     <span className={act ? "font-medium text-zinc-900 dark:text-zinc-100" : "text-zinc-500"}>
       {dayLabel(b.next_date)}运营建议：{b.headline}

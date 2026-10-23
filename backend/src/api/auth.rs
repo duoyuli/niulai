@@ -32,7 +32,7 @@ const PUBLIC_PATHS: &[&str] = &[
     "/openapi.json",
     "/metrics",
 ];
-/// 只有管理员能访问（包括查看）的接口前缀：数据同步、数据源设置、用户管理、操作日志、升级、手动巡检
+/// 只有管理员能访问（包括查看）的接口前缀：数据同步、数据源设置、用户管理、操作日志、升级
 const ADMIN_PREFIXES: &[&str] = &[
     "/sync",
     "/datasets",
@@ -40,10 +40,9 @@ const ADMIN_PREFIXES: &[&str] = &[
     "/users",
     "/operation-logs",
     "/system/upgrade",
-    "/screening",
 ];
 /// 普通用户可以调用的写操作：只动自己的数据（自选股、账户都按当前用户过滤），或者只计算、不保存。`*` 匹配一段路径。
-/// 其余写操作（策略、信号的增改删等）只有管理员能做：新增接口默认不对普通用户开放
+/// 其余写操作只有管理员能做：新增接口默认不对普通用户开放
 const MEMBER_WRITES: &[(Method, &str)] = &[
     (Method::PUT, "/auth/password"),
     (Method::PUT, "/watchlist/*"),
@@ -65,11 +64,6 @@ const MEMBER_WRITES: &[(Method, &str)] = &[
     (Method::POST, "/accounts/*/advice/*/items/*/execute"),
     (Method::POST, "/accounts/*/advice/*/items/*/skip"),
     (Method::DELETE, "/accounts/*/advice/*/items/*/skip"),
-    (Method::POST, "/accounts/*/backtest"),
-    (Method::POST, "/signals/stats"),
-    (Method::POST, "/signals/today"),
-    (Method::POST, "/strategies/preview"),
-    (Method::POST, "/securities/*/signal-days"),
 ];
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -361,18 +355,14 @@ mod tests {
     #[test]
     fn members_read_and_manage_only_their_own_data() {
         let m = Role::Member;
-        assert!(allowed(Role::Admin, &Method::DELETE, "/strategies/3"));
+        assert!(allowed(Role::Admin, &Method::POST, "/sync/runs"));
         assert!(
-            allowed(m, &Method::GET, "/strategies/3")
+            allowed(m, &Method::GET, "/research/factor-portfolio")
                 && allowed(m, &Method::GET, "/system/version")
         );
         assert!(
             allowed(m, &Method::PUT, "/watchlist/600519.SH")
                 && allowed(m, &Method::PUT, "/auth/password")
-        );
-        assert!(
-            allowed(m, &Method::POST, "/securities/600519.SH/signal-days")
-                && allowed(m, &Method::POST, "/signals/stats")
         );
         assert!(
             allowed(m, &Method::POST, "/accounts")
@@ -383,10 +373,7 @@ mod tests {
                 )
         );
         for (method, path) in [
-            (Method::POST, "/strategies"),
-            (Method::PUT, "/strategies/3"),
-            (Method::DELETE, "/signals/my/2"),
-            (Method::POST, "/screening/run"),
+            (Method::POST, "/sync/runs"),
             (Method::POST, "/system/upgrade"),
             (Method::GET, "/sync/runs"),
             (Method::GET, "/datasets"),

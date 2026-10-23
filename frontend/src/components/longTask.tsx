@@ -1,9 +1,4 @@
-/**
- * 长任务的提示：预计耗时、已经等了多久、取消按钮。界面文字面向没有金融背景的用户，不用「请求」「中断」这类词。
- * 预计耗时的数字只引用文档里的实测：组合回测 3 年约 6 秒（docs/domains/backtest.md#portfolio），
- * 信号过去表现 3 年第一次约 19 秒、之后约 20 毫秒（docs/domains/strategies.md#signal_stats），
- * 单只股票十年回测约 30 毫秒（docs/domains/backtest.md#limits）。没有单独实测的区间只给范围，不用编出来的数字。
- */
+/** 长任务的提示：已经等了多久、取消按钮。界面文字面向没有金融背景的用户，不用「请求」「中断」这类词 */
 import { useEffect, useState } from "react";
 import { buttonClass } from "./ui";
 
@@ -48,30 +43,3 @@ export function TaskRunning({ text, seconds, onCancel }: { text: string; seconds
     </div>
   );
 }
-
-/** 组合回测的预计耗时。区间最长 5 年，只有 3 年是文档里的实测值 */
-export function portfolioEstimate(range: string): string {
-  if (range === "1") return "全市场 1 年，通常几秒";
-  if (range === "3") return "全市场 3 年，约 6 秒";
-  if (range === "5") return "全市场 5 年，通常十几秒";
-  return "全市场，通常几秒到十几秒";
-}
-
-export const PORTFOLIO_ESTIMATE_BASIS =
-  "依据：文档实测全市场组合回测 3 年约 6 秒（235 MB 内存）。1 年和 5 年没有单独实测，按日线根数推算，所以只写范围。";
-
-/** 信号过去表现的预计耗时。统计最近 1 到 5 年，只有 3 年是文档里的实测值 */
-export function signalStatsEstimate(years: string): string {
-  if (years === "3") return "第一次约 20 秒，算过一次后很快";
-  if (years === "1") return "第一次十几秒，算过一次后很快";
-  if (years === "5") return "第一次可能几十秒，算过一次后很快";
-  return "第一次十几秒到几十秒，算过一次后很快";
-}
-
-export const SIGNAL_STATS_ESTIMATE_BASIS =
-  "依据：文档实测信号过去表现 3 年第一次约 19 秒，之后命中缓存约 20 毫秒。1 年和 5 年没有单独实测，按数据多少给范围。";
-
-/** 单只股票回测只要几十毫秒，保留改参数自动计算，不需要取消 */
-export const SINGLE_STOCK_ESTIMATE = "只算这一只股票，通常几十毫秒（十年约 30 毫秒），改参数会自动重算。";
-
-export const SINGLE_STOCK_ESTIMATE_BASIS = "依据：文档实测单只股票十年回测约 30 毫秒。";

@@ -294,7 +294,7 @@ pub async fn failures(pool: &PgPool, registry: &Registry) -> anyhow::Result<Vec<
         .collect())
 }
 
-/// 核心数据：写入个股日线和公司行动的数据集（启动时由注册表算出）。首页的大盘统计、巡检和运营建议都靠它们
+/// 核心数据：写入个股日线和公司行动的数据集（启动时由注册表算出）。首页的大盘统计、因子排名和运营建议都靠它们
 /// 核心数据的首次回补还剩多少个任务；0 表示核心数据已经齐了。回补期间日线只有一部分股票、一部分年份，
 /// 这时生成的运营建议和大盘统计不可信，所以运营建议等它完成再生成（见 `advice::inputs::shared`）
 pub async fn core_backfill_left(pool: &PgPool) -> anyhow::Result<i64> {

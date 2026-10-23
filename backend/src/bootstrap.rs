@@ -6,14 +6,13 @@ use tokio::sync::{mpsc, watch};
 use crate::config::Settings;
 use crate::sync::events::DomainEvent;
 
-/// 执行只属于应用启动的初始化，不让同步引擎承担鉴权和业务模板的副作用。
+/// 执行只属于应用启动的初始化，不让同步引擎承担鉴权的副作用。
 pub async fn bootstrap(pool: &PgPool, settings: &Settings) -> anyhow::Result<()> {
     crate::auth::init_first_admin(pool, settings).await?;
-    crate::analysis::screener::sync_builtin_strategies(pool).await?;
     Ok(())
 }
 
-/// 消费同步领域事件，并编排分析与调仓建议。
+/// 消费同步领域事件，并编排调仓建议。
 pub async fn run_events(
     mut events: mpsc::UnboundedReceiver<DomainEvent>,
     pool: PgPool,
@@ -53,7 +52,6 @@ async fn handle_sync_run_completed(
     }
     let analysis_pool = pool.clone();
     crate::analysis::prices::in_background(async move {
-        crate::analysis::screener::run_and_store(&analysis_pool, None, None).await?;
         crate::advice::refresh_all(&analysis_pool, true).await
     })
     .await?;
@@ -92,11 +90,7 @@ async fn mark_limit_pool_changed(pool: &PgPool, run_id: i64) -> anyhow::Result<b
         sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = 'limit_pool'")
             .execute(pool)
             .await?;
-        tracing::info!(
-            run_id,
-            changed,
-            "权威涨跌停池有变化，市场概况和信号统计的缓存已失效"
-        );
+        tracing::info!(run_id, changed, "权威涨跌停池有变化，市场概况的缓存已失效");
     }
     Ok(changed > 0)
 }

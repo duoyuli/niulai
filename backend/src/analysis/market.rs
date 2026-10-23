@@ -1,72 +1,15 @@
 //! 市场环境：某个交易日全市场的涨跌家数、涨跌停数、站上 20 日均线的比例，以及行业、概念的强弱排名。
-//! 口径见 docs/domains/strategies.md#market。
-
-use std::collections::{HashMap, HashSet};
+//! 口径见 docs/domains/market_data_rules.md#market。
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
-use super::indicators::{AssetType, Frame, IndicatorId, IndicatorRef, StPeriod, StockMeta};
-use super::prices;
-
-/// 股票的静态信息和简称
-pub struct Securities {
-    pub meta: HashMap<String, StockMeta>,
-    pub names: HashMap<String, String>,
-    pub st_history: HashMap<String, Vec<StPeriod>>,
-}
-
-type InstrumentRow = (
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<NaiveDate>,
-    Option<NaiveDate>,
-);
-
-pub async fn securities(pool: &PgPool) -> sqlx::Result<Securities> {
-    let rows: Vec<InstrumentRow> = sqlx::query_as(
-        "SELECT thscode, name, board, asset_type, list_date, delisted_on FROM ref.instrument",
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut meta = HashMap::new();
-    let mut names = HashMap::new();
-    for (code, name, board, asset_type, list_date, delisted_on) in rows {
-        meta.insert(
-            code.clone(),
-            StockMeta {
-                board,
-                is_st: name.contains("ST"),
-                list_date,
-                delisted_on,
-                asset_type: AssetType::from_db(asset_type.as_deref()),
-            },
-        );
-        names.insert(code, name);
-    }
-    let rows: Vec<(String, NaiveDate, Option<NaiveDate>, bool)> = sqlx::query_as(
-        "SELECT thscode, valid_from, valid_to, is_st FROM ref.security_name_hist ORDER BY thscode, valid_from",
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut st_history: HashMap<String, Vec<StPeriod>> = HashMap::new();
-    for (code, valid_from, valid_to, is_st) in rows {
-        st_history.entry(code).or_default().push(StPeriod {
-            valid_from,
-            valid_to,
-            is_st,
-        });
-    }
-    Ok(Securities {
-        meta,
-        names,
-        st_history,
-    })
-}
+use super::limit_pool::DayLimits;
+use super::prices::{self, DailyBar};
+use super::securities::{self, StPeriod, StockMeta, st_on};
+use crate::instrument::AssetType;
 
 /// 本地日线中不晚于 date 的最新交易日；date 为空时取最新
 pub async fn resolve_date(
@@ -106,28 +49,28 @@ pub struct Overview {
     pub median_change_pct: f64,
 }
 
-// @project-doc docs/domains/strategies.md#market
+// @project-doc docs/domains/market_data_rules.md#market
 pub async fn overview(pool: &PgPool, date: Option<NaiveDate>) -> anyhow::Result<Option<Overview>> {
     let Some(date) = resolve_date(pool, date).await? else {
         return Ok(None);
     };
-    let sec = securities(pool).await?;
+    let sec = securities::load(pool).await?;
     let lo = date - chrono::Duration::days(calendar_days_for(25));
-    // 涨停、跌停数以供应商的名单为准；名单没有覆盖的日期回退自算
-    let limits = super::limit_pool::LimitPool::load(pool, lo, date).await?;
+    // 涨停、跌停数以供应商的名单为准；名单没有覆盖的日期和北交所回退自算
+    let limits = DayLimits::load(pool, date).await?;
     let (mut up, mut down, mut flat, mut lu, mut ld, mut above, mut with_ma) =
         (0, 0, 0, 0, 0, 0usize, 0usize);
     let mut changes = vec![];
     prices::for_each_stock(pool, lo, date, |code, bars| {
-        let Some(last) = bars.last() else { return };
-        if last.date != date || bars.len() < 2 {
+        let Some(meta) = sec.meta.get(code) else {
+            return;
+        };
+        let n = bars.len();
+        if n < 2 || bars[n - 1].date != date {
             return;
         }
-        let history = sec.st_history.get(code).map(Vec::as_slice).unwrap_or(&[]);
-        let f =
-            Frame::with_authority_and_st_history(bars, sec.meta.get(code), &limits, code, history);
-        let i = bars.len() - 1;
-        let ch = f.at(IndicatorRef::new(IndicatorId::ChangePct, None), i);
+        let (prev, last) = (&bars[n - 2], &bars[n - 1]);
+        let ch = (last.q_close / prev.q_close - 1.0) * 100.0;
         changes.push(ch);
         if ch > 0.0 {
             up += 1;
@@ -136,11 +79,11 @@ pub async fn overview(pool: &PgPool, date: Option<NaiveDate>) -> anyhow::Result<
         } else {
             flat += 1;
         }
-        let l = f.limits();
-        lu += l.limit_up[i] as usize;
-        ld += l.limit_down[i] as usize;
-        let ma20 = f.at(IndicatorRef::new(IndicatorId::Ma, Some(20)), i);
-        if !ma20.is_nan() {
+        let (is_up, is_down) = limit_flags(bars, meta, sec.st_history(code), &limits, code);
+        lu += is_up as usize;
+        ld += is_down as usize;
+        if n >= 20 {
+            let ma20 = bars[n - 20..].iter().map(|b| b.q_close).sum::<f64>() / 20.0;
             with_ma += 1;
             above += (last.q_close > ma20) as usize;
         }
@@ -163,6 +106,61 @@ pub async fn overview(pool: &PgPool, date: Option<NaiveDate>) -> anyhow::Result<
         },
         median_change_pct: median,
     }))
+}
+
+// @project-doc docs/domains/market_data_rules.md#limits
+/// 最后一根日线是否涨停、跌停。池覆盖的日期以供应商的名单为准（北交所不在池里）；其余按交易所规则自算：
+/// 涨跌幅限制按板块和 ST 确定，基准是前一交易日按除权调整后的收盘价，四舍五入到分；新股上市前 5 个交易日不判断
+fn limit_flags(
+    bars: &[DailyBar],
+    meta: &StockMeta,
+    st: &[StPeriod],
+    pool: &DayLimits,
+    code: &str,
+) -> (bool, bool) {
+    let n = bars.len();
+    let (prev, last) = (&bars[n - 2], &bars[n - 1]);
+    if meta.asset_type != AssetType::Stock {
+        return (false, false);
+    }
+    // 本地第一根日线就是上市首日时，前 5 根没有涨跌幅限制
+    if meta
+        .list_date
+        .is_some_and(|d| bars[0].date <= d + chrono::Duration::days(3) && n <= 5)
+    {
+        return (false, false);
+    }
+    let own = self_limits(prev, last, meta, st);
+    if meta.board == "bse" {
+        return own;
+    }
+    (
+        pool.up.as_ref().map_or(own.0, |up| up.contains(code)),
+        pool.down.as_ref().map_or(own.1, |down| down.contains(code)),
+    )
+}
+
+fn self_limits(
+    prev: &DailyBar,
+    last: &DailyBar,
+    meta: &StockMeta,
+    st: &[StPeriod],
+) -> (bool, bool) {
+    let chinext_reform = NaiveDate::from_ymd_opt(2020, 8, 24).unwrap();
+    let pct = match meta.board.as_str() {
+        "bse" => 0.30,
+        "star" => 0.20,
+        "chinext" if last.date >= chinext_reform => 0.20,
+        _ if st_on(meta, st, last.date) => 0.05,
+        _ => 0.10,
+    };
+    // 前复权价之比消去了除权：今天的原价 × 昨天和今天的前复权价之比 = 昨天的收盘价按除权调整后的值
+    let base = last.close * prev.q_close / last.q_close;
+    let round2 = |v: f64| (v * 100.0).round() / 100.0;
+    (
+        last.close >= round2(base * (1.0 + pct)) - 0.005,
+        last.close <= round2(base * (1.0 - pct)) + 0.005,
+    )
 }
 
 #[derive(Deserialize, Serialize, ToSchema, Clone)]
@@ -218,29 +216,6 @@ pub async fn sector_strength(
         s.rank = i + 1;
     }
     Ok(out)
-}
-
-/// 属于排名前 top_pct% 的板块的股票（按 date 当日有效成分）
-pub async fn stocks_in_top_sectors(
-    pool: &PgPool,
-    category: &str,
-    days: u32,
-    top_pct: f64,
-    date: NaiveDate,
-) -> sqlx::Result<HashSet<String>> {
-    let ranks = sector_strength(pool, category, days, date).await?;
-    let keep = ((ranks.len() as f64 * top_pct / 100.0).ceil() as usize).max(1);
-    let codes: Vec<&str> = ranks
-        .iter()
-        .take(keep)
-        .map(|s| s.thscode.as_str())
-        .collect();
-    let members: Vec<String> = sqlx::query_scalar("SELECT DISTINCT thscode FROM ref.index_member WHERE index_code = ANY($1) AND valid_from <= $2 AND (valid_to IS NULL OR valid_to > $2)")
-        .bind(&codes)
-        .bind(date)
-        .fetch_all(pool)
-        .await?;
-    Ok(members.into_iter().collect())
 }
 
 /// 市场概况的缓存：要把全市场的日线算一遍（约 1 秒），结果只在有新日线或新的涨跌停名单后才变。

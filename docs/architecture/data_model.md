@@ -7,14 +7,14 @@
 
 | Schema | 职责 | 主要对象 |
 | --- | --- | --- |
-| `ops` | 同步框架和研究运行状态 | `dataset`（注册表）、`run`（运行）、`task`（任务队列）、`cursor`（进度游标）、`api_call`（调用日志）、`scheduler`（调度状态）、`derived_version`（派生数据版本）、`backtest_run`（回测运行清单和结果）、`bar_gap`、`data_check`（数据核检的缺口和结果），视图 `v_progress`、`v_universe`，函数 `ms_to_cn_date`、`requeue_stale` |
+| `ops` | 同步框架和研究运行状态 | `dataset`（注册表）、`run`（运行）、`task`（任务队列）、`cursor`（进度游标）、`api_call`（调用日志）、`scheduler`（调度状态）、`derived_version`（派生数据版本）、`backtest_run`（因子研究的运行清单和结果）、`bar_gap`、`data_check`（数据核检的缺口和结果），视图 `v_progress`、`v_universe`，函数 `ms_to_cn_date`、`requeue_stale` |
 | `raw` | 供应商原始数据 | `record`（通用记录库）、`record_version`（修订历史），函数 `upsert_records` |
 | `ref` | 参考数据 | `security`、`etf_security`、`instrument`、`instrument_history`、`security_name_hist`、`trading_day`、`index_info`、`index_member` |
 | `mkt` | 行情与公司行动 | `stock_bar_1d`、`etf_bar_1d`、`index_bar_1d`、`corp_action`、`adj_segment`（复权分段），视图 `adj_event_effective`（同一除权日取舍后的有效事件）和四个复权视图，重算存储过程 `rebuild_adj_segment` |
 | `fin` | 估值等基本面 | `valuation_1d` |
-| `app` | 用户在网页上维护的数据和由它产生的结果，不由同步写入 | `user`（网页用户：用户名不区分大小写，Argon2id 密码哈希为空表示还没有设置，角色 `admin` / `member`，`disabled` 停用，`must_change_password` 提醒本人改密码，见 [登录与权限](../interfaces/rest_api.md#auth)）、`operation_log`（成功登录日志：动作固定为 `login`，保存用户快照、来源 IP、设备 User-Agent 和时间，管理员可通过接口查询）、`watchlist`（自选股，按用户保存，主键 `(user_id, thscode)`；删除证券时一并删除）、`setting`（网页上的设置：API Key、登录 Cookie 的签名密钥 `session_secret`、同步时间 `sync_schedule`）、`strategy`（选股策略，`definition` 是 JSON 定义，`screening` 是否巡检，`show_on_today` 是否在首页展示，`sort_order` 策略页的持久化显示顺序（管理员可拖动调整），`builtin_key` 非空时是由模板同步的内置策略）、`screen_run`（每个策略每个交易日一次巡检，`scanned` 是当天有日线的股票数）、`screen_hit`（巡检结果，`kind` 是 `buy` 最新买点、`sell` 最新卖点或 `holding` 持有中）、`signal`（自定义信号，`definition` 是条件的 JSON，策略用 `my_signal` 条件按编号引用）；删除策略时一并删除它的巡检记录。规则见 [选股策略与诊断](../domains/strategies.md#screening)。账户：`account`（属于一个用户，`rules` 是选股和风控规则的 JSON，现金、费率）、`position`（持仓，`since` 是股数最近变动的日期）、`account_trade`（流水，持仓和现金每一次变动一行）、`account_corp_action`（配股的处理状态：已认购或暂不处理，见 [配股提醒](../domains/accounts.md#corp_actions)）、`account_equity`（每个交易日的净值快照，见 [每日净值](../domains/accounts.md#equity)）、`advice`（每个账户每个交易日一份建议，`input` 是生成时的输入快照，`result` 是建议，`superseded_by` 指向重新生成的一份）、`advice_item_state`（每条建议已执行或不做）、`strategy_stat`、`preset_stat`（早期版本的策略统计和参考值回测留下的历史结果；计算它们的代码已于 2026-10-23 删除，表和数据保留，不再有代码读写）、`shadow_order`（理论订单与实际成交）；删除账户时一并删除。规则见 [账户与调仓建议](../domains/accounts.md) |
+| `app` | 用户在网页上维护的数据和由它产生的结果，不由同步写入 | `user`（网页用户：用户名不区分大小写，Argon2id 密码哈希为空表示还没有设置，角色 `admin` / `member`，`disabled` 停用，`must_change_password` 提醒本人改密码，见 [登录与权限](../interfaces/rest_api.md#auth)）、`operation_log`（成功登录日志：动作固定为 `login`，保存用户快照、来源 IP、设备 User-Agent 和时间，管理员可通过接口查询）、`watchlist`（自选股，按用户保存，主键 `(user_id, thscode)`；删除证券时一并删除）、`setting`（网页上的设置：API Key、登录 Cookie 的签名密钥 `session_secret`、同步时间 `sync_schedule`）。账户：`account`（属于一个用户，`rules` 是调仓规则的 JSON，现金、费率）、`position`（持仓，`since` 是股数最近变动的日期）、`account_trade`（流水，持仓和现金每一次变动一行）、`account_corp_action`（配股的处理状态：已认购或暂不处理，见 [配股提醒](../domains/accounts.md#corp_actions)）、`account_equity`（每个交易日的净值快照，见 [每日净值](../domains/accounts.md#equity)）、`advice`（每个账户每个交易日一份建议，`input` 是生成时的输入快照，`result` 是建议，`superseded_by` 指向重新生成的一份）、`advice_item_state`（每条建议已执行或不做）、`shadow_order`（理论订单与实际成交）；删除账户时一并删除。规则见 [账户与调仓建议](../domains/accounts.md) |
 
-`app.shadow_order` 保存建议生成时的理论订单和用户执行后的实际成交，见 [建议回看](../domains/accounts.md#review)；`ops.backtest_run` 保存策略哈希、数据范围、派生版本、执行模型和汇总结果，供样本外比较和回放；`mode` 是 `single`、`portfolio`、`account`、`factor_test` 或 `factor_portfolio`，因子研究按 `(mode, definition_hash)` 统计试过的配置数。
+`app.shadow_order` 保存建议生成时的理论订单和用户执行后的实际成交，见 [建议回看](../domains/accounts.md#review)；`ops.backtest_run` 保存因子研究每次运行的配置哈希、数据范围、运行清单和汇总结果；`mode` 是 `factor_test` 或 `factor_portfolio`，按 `(mode, definition_hash)` 统计试过的配置数。2026-10-23 的迁移删除了选股策略、巡检、自定义信号和策略统计的表，见 [ADR：只保留多因子选股](../decisions/factor_only.md)。
 
 日期约定：业务日期（交易日、报告期、除权日）一律存为 `DATE`，按 Asia/Shanghai 解释；采集和系统事件时间存为 `TIMESTAMPTZ`。供应商毫秒时间戳的换算规则见 [时间戳](../domains/market_data_rules.md#timestamps)。
 
@@ -57,7 +57,7 @@
 | --- | --- | --- |
 | `ref.security` | `meta.tickers`（只取 `asset_type = 'a-share'`） | 证券主表。`board` 按代码段推导：BJ 为 `bse`，300、301 开头为 `chinext`，688、689 开头为 `star`，其余为 `main`。退市推断见 [证券生命周期](../domains/market_data_rules.md#security_lifecycle) |
 | `ref.etf_security` | `meta.tickers`（只取 `asset_type = 'fund-etf'`） | ETF 独立主表。保存 ETF 的代码、名称、交易所、上市和退市状态，不套用股票板块和 ST 历史。 |
-| `ref.instrument` | `ref.security`、`ref.etf_security` | 跨资产路由目录。`asset_type` 为 `stock` 或 `etf`，供自选、账户、策略和 API 找到对应扩展；行情事实仍保存在各自数据域。 |
+| `ref.instrument` | `ref.security`、`ref.etf_security` | 跨资产路由目录。`asset_type` 为 `stock` 或 `etf`，供自选、账户和 API 找到对应的数据表和交易规则；行情事实仍保存在各自数据域。 |
 | `ref.security_name_hist` | 同上 | 简称变化区间；`is_st` 由简称是否包含 `ST` 生成 |
 | `ref.trading_day` | `a_share.calendar`；运行结束后的计算 | `source` 为 `api`（供应商日历）或 `derived`（从行情推导） |
 | `ref.index_info` | `index.ths_catalog`（带分类）、`meta.tickers`（`a-share-index`，只补缺少的条目） | `category`：industry、cn_concept、region、tszs 来自目录；`ths`、`exchange` 是按代码后缀推断的；`unknown` 表示只在成分查询中出现过 |
@@ -79,8 +79,8 @@
 - `ops.cursor`：每个数据集、每个分区的进度，`state` 是 JSON，例如 `{"synced_to": "2026-10-15"}`。`part_key = '_plan'` 的行是 `from_dataset` 增量规划的时间水位。
 - `ops.api_call`：每次 HTTP 尝试一行，含状态码、供应商 `code`、`request_id`、延迟。表声明为按 `called_at` 的范围分区，但只有默认分区；超过 30 天的行定期清理，见 [定期清理](sync_pipeline.md#retention)。
 - `ops.bar_gap`、`ops.data_check`：数据核检发现的日线缺口（`open` 还缺、`suspended` 确认停牌，补上了就删掉）和每次核检的结果，见 [数据核检](sync_pipeline.md#data_check)。
-- `ops.scheduler`：定时作业最近一次触发的日期和时刻：`daily`（每日同步，也用于判断要不要补发）、`weekly`（按触发时刻 `fired_at` 判断每周时刻有没有触发过）、`monthly`、`repair`（每个交易日一次的兜底补偿）、`data_check`（每周一次的数据核检）、`adj_rebuild`（回补期间定期重算复权）、`prune`（每天一次的 [定期清理](sync_pipeline.md#retention)）、`builtin_screen`（最新交易日还没巡检时每天最多补一次，见 [生成建议](../domains/accounts.md#generation)），见 [定时调度](sync_pipeline.md#scheduling)。旧版本留下的 `strategy_stats*` 行已经没有代码使用。
-- `ops.derived_version`：派生数据最近一次重算完成的时刻。包含 `adj_factor`（复权因子重算完成后更新）和 `limit_pool`（权威涨跌停池任务写入后更新）两行，使依赖复权价和涨跌停名单的进程内缓存失效，见 [ADR：指标在 Rust 中计算](../decisions/indicator_compute.md) 和 [ADR：涨跌停以供应商的权威名单为准](../decisions/authoritative_limits.md)。
+- `ops.scheduler`：定时作业最近一次触发的日期和时刻：`daily`（每日同步，也用于判断要不要补发）、`weekly`（按触发时刻 `fired_at` 判断每周时刻有没有触发过）、`monthly`、`repair`（每个交易日一次的兜底补偿）、`data_check`（每周一次的数据核检）、`adj_rebuild`（回补期间定期重算复权）、`prune`（每天一次的 [定期清理](sync_pipeline.md#retention)），见 [定时调度](sync_pipeline.md#scheduling)。
+- `ops.derived_version`：派生数据最近一次重算完成的时刻。包含 `adj_factor`（复权因子重算完成后更新）和 `limit_pool`（权威涨跌停池任务写入后更新）两行，使依赖复权价和涨跌停名单的进程内缓存失效，见 [ADR：计算在 Rust 中做](../decisions/indicator_compute.md) 和 [ADR：涨跌停以供应商的权威名单为准](../decisions/authoritative_limits.md)。
 - `ops.v_progress`：按运行和数据集汇总任务状态，API 的运行详情使用它。
 
 <a id="migrations"></a>

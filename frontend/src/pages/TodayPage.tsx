@@ -1,20 +1,16 @@
-import { useQueries } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { Link } from "react-router";
 import { useMarketHot, useMarketOverview, useSectors } from "../api/generated/market/market";
-import type { HotMarket, Overview, ScreenResults, StrategyItem, WatchItem } from "../api/generated/model";
-import { getResultsQueryOptions, useListStrategies } from "../api/generated/strategy/strategy";
+import type { HotMarket, Overview, WatchItem } from "../api/generated/model";
 import { useDataStatus } from "../api/generated/system/system";
 import { useListWatchlist } from "../api/generated/watchlist/watchlist";
-import { SignalChip } from "../components/SignalChip";
 import { TodayAccounts } from "../components/TodayAccounts";
 import { Card, Empty, ErrorState, HelpTip, QueryView, Spinner } from "../components/ui";
-import { useIsAdmin } from "../hooks/useIsAdmin";
 import { dayLabel, fmtInt, fmtPctValue, fmtPercent, upDownClass } from "../lib/format";
 
 const HOME_WATCHLIST_LIMIT = 6;
 
-/** 每天收盘后打开看的一页：先看账户和自选，再看最近一天收盘大盘、策略和热点。 */
+/** 每天收盘后打开看的一页：先看账户和自选，再看最近一天收盘的大盘和热点。 */
 export function TodayPage() {
   const overview = useMarketOverview();
   return (
@@ -26,9 +22,7 @@ export function TodayPage() {
         <h1 className="text-xl font-semibold">
           {overview.data ? `${dayLabel(overview.data.trade_date)}收盘` : "最近收盘"}
         </h1>
-        <p className="mt-0.5 text-xs text-zinc-500">
-          数据都截至这天收盘；下面的策略买点按规则在下一个交易日开盘执行，账户的具体操作建议以「我的账户」为准。
-        </p>
+        <p className="mt-0.5 text-xs text-zinc-500">数据都截至这天收盘；账户的具体操作建议以「我的账户」为准。</p>
       </div>
       <div className="grid gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-2">
@@ -43,7 +37,6 @@ export function TodayPage() {
         <Sectors />
       </div>
       <Hotspots />
-      <Picks />
     </>
   );
 }
@@ -226,87 +219,7 @@ function Sectors() {
   );
 }
 
-/** 每个开启巡检的策略最近一次巡检的买点，新出现的买点排在前面 */
-function Picks() {
-  const admin = useIsAdmin();
-  const list = useListStrategies();
-  // 只为测试建的策略可以关掉「在首页展示」
-  const active = (list.data ?? []).filter((s) => s.screening && s.show_on_today && s.latest);
-  const results = useQueries({ queries: active.map((s) => getResultsQueryOptions(s.strategy_id)) });
-  return (
-    <Card
-      title="策略筛选出的买点"
-      extra={
-        <Link to="/strategies" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
-          管理策略 →
-        </Link>
-      }
-    >
-      {list.isPending ? (
-        <Spinner />
-      ) : active.length === 0 ? (
-        <Empty>
-          没有要在这里展示的策略（需要开启每日巡检和「在首页展示」）。
-          {admin && (
-            <Link to="/strategies/new" className="text-accent hover:underline">
-              新建一个
-            </Link>
-          )}
-        </Empty>
-      ) : (
-        <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800">
-          {active.map((s, i) => (
-            <PickRow key={s.strategy_id} s={s} r={results[i]?.data} />
-          ))}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
-function PickRow({ s, r }: { s: StrategyItem; r?: ScreenResults }) {
-  const latest = s.latest;
-  const hits = r ? [...r.hits].sort((a, b) => Number(b.is_new) - Number(a.is_new) || a.rank - b.rank).slice(0, 6) : [];
-  const chip =
-    "inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-0.5 text-sm hover:border-accent/60 dark:border-zinc-700";
-  return (
-    <li className="flex flex-col gap-1.5 py-3 sm:flex-row sm:items-start sm:gap-4">
-      <Link
-        to={`/strategies/${s.strategy_id}`}
-        className="flex shrink-0 flex-col hover:underline sm:w-48"
-        title={s.description}
-      >
-        <span className="font-medium">{s.name}</span>
-        <span className="text-xs text-zinc-500">{latest ? <>买点 {fmtInt(latest.matched)}</> : "还没有巡检"}</span>
-      </Link>
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="text-xs text-up">买</span>
-          {hits.length === 0 && latest && <span className="text-sm text-zinc-400">没有新的买点</span>}
-          {hits.map((h) => (
-            <Link
-              key={h.thscode}
-              to={`/securities/${h.thscode}?overlay=strategy:${s.strategy_id}`}
-              title={h.reasons.join("；")}
-              className={chip}
-            >
-              {h.name}
-              <span className={`num text-xs ${upDownClass(h.change_pct)}`}>{fmtPctValue(h.change_pct, 1)}</span>
-              {h.is_new && <span className="text-xs text-up">新</span>}
-            </Link>
-          ))}
-          {latest && latest.matched > hits.length && hits.length > 0 && (
-            <Link to={`/strategies/${s.strategy_id}`} className="text-xs text-zinc-500 hover:underline">
-              全部 {fmtInt(latest.matched)} 只 →
-            </Link>
-          )}
-        </div>
-      </div>
-    </li>
-  );
-}
-
-/** 自选股里值得看一眼的：有新信号的排在前面 */
+/** 自选股：按收藏时间倒序，最多几只 */
 function Watch() {
   const q = useListWatchlist();
   return (
@@ -320,15 +233,15 @@ function Watch() {
     >
       <QueryView query={q}>
         {(d) =>
-          d.items.length === 0 ? (
+          d.length === 0 ? (
             <Empty>还没有收藏的股票。在页头搜索股票，打开后点 ☆ 收藏。</Empty>
           ) : (
             <>
-              <WatchRows items={d.items} />
-              {d.items.length > HOME_WATCHLIST_LIMIT && (
+              <WatchRows items={d} />
+              {d.length > HOME_WATCHLIST_LIMIT && (
                 <div className="mt-2 border-t border-zinc-100 pt-2 text-center dark:border-zinc-800">
                   <Link to="/watchlist" className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
-                    查看更多自选（还有 {d.items.length - HOME_WATCHLIST_LIMIT} 只）→
+                    查看更多自选（还有 {d.length - HOME_WATCHLIST_LIMIT} 只）→
                   </Link>
                 </div>
               )}
@@ -341,12 +254,9 @@ function Watch() {
 }
 
 function WatchRows({ items }: { items: WatchItem[] }) {
-  const sorted = [...items]
-    .sort((a, b) => b.recent_signals.length - a.recent_signals.length)
-    .slice(0, HOME_WATCHLIST_LIMIT);
   return (
     <ul className="grid gap-x-6 sm:grid-cols-2">
-      {sorted.map((x) => (
+      {items.slice(0, HOME_WATCHLIST_LIMIT).map((x) => (
         <li
           key={x.thscode}
           className="border-t border-zinc-100 first:border-t-0 sm:[&:nth-child(2)]:border-t-0 dark:border-zinc-800"
@@ -356,18 +266,10 @@ function WatchRows({ items }: { items: WatchItem[] }) {
             className="flex items-center gap-3 rounded px-1 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
           >
             <span className="w-24 shrink-0 truncate font-medium">{x.name}</span>
-            <span className={`num w-16 shrink-0 text-right text-sm ${upDownClass(x.diagnosis?.change_1d)}`}>
-              {fmtPercent(x.diagnosis?.change_1d)}
+            <span className={`num w-16 shrink-0 text-right text-sm ${upDownClass(x.change_1d)}`}>
+              {fmtPercent(x.change_1d)}
             </span>
-            <span className="flex min-w-0 flex-wrap gap-1">
-              {x.recent_signals.length === 0 ? (
-                <span className="text-xs text-zinc-400">最近 5 天没有新信号</span>
-              ) : (
-                x.recent_signals
-                  .slice(0, 3)
-                  .map((e) => <SignalChip key={`${e.trade_date}-${e.signal}`} event={e} withDate link={false} />)
-              )}
-            </span>
+            <span className={`num text-xs ${upDownClass(x.change_20d)}`}>近 20 日 {fmtPercent(x.change_20d)}</span>
           </Link>
         </li>
       ))}

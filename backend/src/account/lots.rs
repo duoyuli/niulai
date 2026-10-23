@@ -3,10 +3,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::instrument::{AssetType, extension};
-
-/// 印花税：只在卖出时收，千分之 0.5（2023-08-28 起）
-pub const STAMP_TAX_RATE: f64 = 0.0005;
+use crate::instrument::AssetType;
 
 /// 一个板块的申报数量规则
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,21 +14,10 @@ pub struct LotRule {
     pub step: i64,
 }
 
-/// 沪深主板、创业板一手 100 股；科创板至少 200 股、之后按 1 股递增；北交所至少 100 股、之后按 1 股递增
-pub fn lot_rule(board: &str) -> LotRule {
-    match board {
-        "star" => LotRule { min: 200, step: 1 },
-        "bse" => LotRule { min: 100, step: 1 },
-        _ => LotRule {
-            min: 100,
-            step: 100,
-        },
-    }
-}
-
-/// 资产类别的申报单位。ETF 默认按场内基金常见的 100 份一手处理，股票继续按板块规则。
+/// 申报单位：沪深主板、创业板一手 100 股；科创板至少 200 股、之后按 1 股递增；北交所至少 100 股、之后按 1 股递增；
+/// ETF 按场内基金常见的 100 份一手
 pub fn lot_rule_for(asset_type: &str, board: &str) -> LotRule {
-    let (min, step) = extension(AssetType::from_db(Some(asset_type))).lot_rule(board);
+    let (min, step) = AssetType::from_db(Some(asset_type)).lot_rule(board);
     LotRule { min, step }
 }
 
@@ -62,16 +48,12 @@ impl Fees {
         self.commission(amount)
     }
 
-    pub fn sell_fee(&self, amount: f64) -> f64 {
-        round2(self.commission(amount) + amount * STAMP_TAX_RATE)
-    }
-
-    pub fn sell_fee_for(&self, asset_type: &str, amount: f64) -> f64 {
-        if extension(AssetType::from_db(Some(asset_type))).stamp_tax_rate() == 0.0 {
+    /// 卖出的佣金加印花税（股票千分之 0.5，ETF 不收）
+    pub fn sell_fee(&self, asset_type: &str, amount: f64) -> f64 {
+        round2(
             self.commission(amount)
-        } else {
-            self.sell_fee(amount)
-        }
+                + amount * AssetType::from_db(Some(asset_type)).stamp_tax_rate(),
+        )
     }
 }
 
@@ -91,16 +73,6 @@ pub fn max_buy_shares(rule: LotRule, budget: f64, price: f64, fees: &Fees) -> i6
     if n < rule.min { 0 } else { n }
 }
 
-/// 减仓时卖多少股：至少 want，按递增单位向上取整（减完后不超过目标），不超过持有的；
-/// 主板只能整百卖，剩下的零股要等全部卖出时一起卖
-pub fn reduce_shares(rule: LotRule, held: i64, want: i64) -> i64 {
-    if want <= 0 {
-        return 0;
-    }
-    let n = (want + rule.step - 1) / rule.step * rule.step;
-    if n >= held { held } else { n }
-}
-
 pub fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
@@ -116,7 +88,7 @@ mod tests {
 
     #[test]
     fn rounds_to_board_lots_within_budget() {
-        let main = lot_rule("main");
+        let main = lot_rule_for("stock", "main");
         assert_eq!(
             max_buy_shares(main, 15_800.0, 79.0, &FEES),
             100,
@@ -124,7 +96,7 @@ mod tests {
         );
         assert_eq!(max_buy_shares(main, 15_810.0, 79.0, &FEES), 200);
         assert_eq!(max_buy_shares(main, 7_000.0, 79.0, &FEES), 0, "不够一手");
-        let star = lot_rule("star");
+        let star = lot_rule_for("stock", "star");
         assert_eq!(
             max_buy_shares(star, 10_000.0, 60.0, &FEES),
             0,
@@ -136,21 +108,27 @@ mod tests {
             "超过 200 股后按 1 股递增"
         );
         assert_eq!(max_buy_shares(star, 10_000.0, 30.0, &FEES), 333);
-        assert_eq!(max_buy_shares(lot_rule("bse"), 2_000.0, 10.0, &FEES), 199);
+        assert_eq!(
+            max_buy_shares(lot_rule_for("stock", "bse"), 2_000.0, 10.0, &FEES),
+            199
+        );
+        assert_eq!(
+            lot_rule_for("etf", "star"),
+            LotRule {
+                min: 100,
+                step: 100
+            }
+        );
     }
 
     #[test]
-    fn fees_and_reductions() {
+    fn fees_include_minimum_commission_and_stamp_tax() {
         assert_eq!(FEES.buy_fee(10_000.0), 5.0, "不足 5 元按 5 元");
-        assert_eq!(FEES.sell_fee(100_000.0), 75.0, "佣金 25 元加印花税 50 元");
-        let main = lot_rule("main");
-        assert_eq!(reduce_shares(main, 1_030, 450), 500, "向上取整到整百");
-        assert_eq!(reduce_shares(main, 1_030, 0), 0);
         assert_eq!(
-            reduce_shares(main, 1_030, 2_000),
-            1_030,
-            "全部卖出时零股一起卖"
+            FEES.sell_fee("stock", 100_000.0),
+            75.0,
+            "佣金 25 元加印花税 50 元"
         );
-        assert_eq!(reduce_shares(lot_rule("star"), 500, 123), 123);
+        assert_eq!(FEES.sell_fee("etf", 100_000.0), 25.0, "ETF 不收印花税");
     }
 }

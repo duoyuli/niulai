@@ -1,52 +1,26 @@
-//! 自选股：当前用户收藏的股票（每个用户各自一份），以及对它们的快速诊断（最新价、涨跌、均线状态、最近一次交叉）。
-//!
-//! 均线是等比前复权收盘价的简单移动平均，交叉规则与 `analysis::ma` 相同。
+//! 自选股：当前用户收藏的股票（每个用户各自一份），以及最新价和最近 1 日、20 日的涨跌。
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, NaiveDate, Utc};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use utoipa::{IntoParams, ToSchema};
+use serde::Serialize;
+use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
 use super::auth::CurrentUser;
-use super::market::windows;
-use crate::analysis::diagnosis::{SignalEvent, recent_signals};
-use crate::analysis::indicators::Frame;
-use crate::analysis::limit_pool::LimitPool;
-use crate::analysis::ma::{CrossSignal, ma_cross, state_of};
-use crate::analysis::{market, prices};
+use crate::analysis::prices;
 use crate::error::{ApiError, ApiResult};
 
-/// 每只股票取最近多少根前复权日线做诊断：约两年，足够算出 250 日均线并找到最近一次交叉
-const LOOKBACK: i64 = 500;
-/// 计算最近 5 天信号需要的日线根数：覆盖每个信号的预热（最多的是 MACD 背离，约 190 根）
-const RECENT_BARS: i64 = 200;
+/// 算 20 日涨跌需要的日线根数
+const LOOKBACK: i64 = 21;
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_watchlist))
         .routes(routes!(add_watch, remove_watch))
-}
-
-#[derive(Deserialize, IntoParams)]
-pub struct WatchQuery {
-    /// 快线周期，默认 15
-    pub fast: Option<i32>,
-    /// 慢线周期，默认 30
-    pub slow: Option<i32>,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct Watchlist {
-    pub fast: i32,
-    pub slow: i32,
-    /// 按收藏时间倒序
-    pub items: Vec<WatchItem>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -62,60 +36,20 @@ pub struct WatchItem {
     /// 本地最新一根日线（未复权）的日期和收盘价；还没有日线时为空
     pub last_date: Option<NaiveDate>,
     pub close: Option<String>,
-    /// 按前复权价计算的诊断；还没有日线时为空
-    pub diagnosis: Option<WatchDiagnosis>,
-    /// 最近 5 个交易日出现过的信号，新的在前
-    pub recent_signals: Vec<SignalEvent>,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct WatchDiagnosis {
-    /// 最近 1 个交易日的涨跌幅（0.01 表示 1%）
+    /// 最近 1 个交易日的涨跌幅（按前复权价，0.01 表示 1%）
     pub change_1d: Option<f64>,
     /// 最近 20 个交易日的涨跌幅
     pub change_20d: Option<f64>,
-    /// 日线不足 slow 根时为空
-    pub ma: Option<MaState>,
 }
 
-#[derive(Serialize, ToSchema)]
-pub struct MaState {
-    pub ma_fast: f64,
-    pub ma_slow: f64,
-    pub trend: MaTrend,
-    /// 最近 LOOKBACK 根日线内的最后一次交叉
-    pub last_cross: Option<LastCross>,
-}
-
-#[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum MaTrend {
-    /// 快线在慢线上方
-    Above,
-    /// 快线在慢线下方
-    Below,
-    /// 两线相等（在容差内）
-    Equal,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct LastCross {
-    pub signal: CrossSignal,
-    pub trade_date: NaiveDate,
-    /// 距今几个交易日，0 表示就在诊断日当天
-    pub bars_ago: i64,
-}
-
-/// 自选股列表及诊断
-#[utoipa::path(get, path = "/watchlist", tag = "watchlist", params(WatchQuery),
-    responses((status = 200, description = "成功", body = Watchlist), (status = 400, description = "参数不合法", body = crate::error::ErrorBody)))]
+/// 自选股列表，按收藏时间倒序
+#[utoipa::path(get, path = "/watchlist", tag = "watchlist",
+    responses((status = 200, description = "成功", body = [WatchItem])))]
 async fn list_watchlist(
     State(s): State<AppState>,
     me: CurrentUser,
-    Query(q): Query<WatchQuery>,
-) -> ApiResult<Json<Watchlist>> {
-    let (fast, slow) = windows(q.fast, q.slow)?;
-    /// (代码, 名称, 板块, 退市日, 收藏时间, 最新日期, 最新收盘)
+) -> ApiResult<Json<Vec<WatchItem>>> {
+    /// (代码, 名称, 板块, 资产类型, 退市日, 收藏时间, 最新日期, 最新收盘)
     type BaseRow = (
         String,
         String,
@@ -141,108 +75,41 @@ async fn list_watchlist(
     .bind(me.user_id)
     .fetch_all(&s.pool)
     .await?;
-
     let codes: Vec<String> = base.iter().map(|r| r.0.clone()).collect();
-    let bars_by_code = prices::recent_instrument_bars_batch(&s.pool, &codes, LOOKBACK).await?;
-    let series: HashMap<String, Vec<(NaiveDate, f64)>> = bars_by_code
-        .into_iter()
-        .map(|(code, bars)| {
-            (
-                code,
-                bars.into_iter().map(|b| (b.date, b.q_close)).collect(),
+    let mut bars = prices::recent_instrument_bars_batch(&s.pool, &codes, LOOKBACK).await?;
+    Ok(Json(
+        base.into_iter()
+            .map(
+                |(thscode, name, board, asset_type, delisted_on, added_at, last_date, close)| {
+                    let closes: Vec<f64> = bars
+                        .remove(&thscode)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|b| b.q_close)
+                        .collect();
+                    WatchItem {
+                        change_1d: change(&closes, 1),
+                        change_20d: change(&closes, 20),
+                        thscode,
+                        name,
+                        board,
+                        asset_type,
+                        delisted_on,
+                        added_at,
+                        last_date,
+                        close,
+                    }
+                },
             )
-        })
-        .collect();
-
-    let sec = market::securities(&s.pool).await?;
-    // 权威涨跌停池：最近信号里的涨跌停、炸板、连板以供应商的名单为准；自选股数量不多，按股票只读需要的行
-    let limits = match market::resolve_date(&s.pool, None).await? {
-        Some(last) => {
-            LimitPool::load_for(
-                &s.pool,
-                &codes,
-                last - chrono::Duration::days(market::calendar_days_for((RECENT_BARS + 10) as u32)),
-                last,
-            )
-            .await?
-        }
-        None => LimitPool::empty(),
-    };
-    let mut recent_by_code =
-        prices::recent_instrument_bars_batch(&s.pool, &codes, RECENT_BARS).await?;
-    let mut items = vec![];
-    for (thscode, name, board, asset_type, delisted_on, added_at, last_date, close) in base {
-        let diagnosis = series
-            .get(&thscode)
-            .and_then(|pts| diagnose(pts, fast, slow));
-        let bars = recent_by_code.remove(&thscode).unwrap_or_default();
-        let recent_signals = {
-            let history = sec
-                .st_history
-                .get(&thscode)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let f = Frame::with_authority_and_st_history(
-                &bars,
-                sec.meta.get(&thscode),
-                &limits,
-                &thscode,
-                history,
-            );
-            recent_signals(&f, 5)
-        };
-        items.push(WatchItem {
-            thscode,
-            name,
-            board,
-            asset_type,
-            delisted_on,
-            added_at,
-            last_date,
-            close,
-            diagnosis,
-            recent_signals,
-        });
-    }
-    Ok(Json(Watchlist {
-        fast: fast as i32,
-        slow: slow as i32,
-        items,
-    }))
+            .collect(),
+    ))
 }
 
-// @project-doc docs/domains/ma_signals.md#watchlist
-/// pts 是按日期升序的前复权收盘价
-fn diagnose(pts: &[(NaiveDate, f64)], fast: usize, slow: usize) -> Option<WatchDiagnosis> {
-    let &(_, close) = pts.last()?;
-    let change = |k: usize| pts.len().checked_sub(k + 1).map(|i| close / pts[i].1 - 1.0);
-    let closes: Vec<f64> = pts.iter().map(|p| p.1).collect();
-    let rows = ma_cross(&closes, fast, slow);
-    let ma = rows.last().copied().flatten().map(|last| {
-        let last_cross = rows.iter().enumerate().rev().find_map(|(i, r)| {
-            r.and_then(|r| r.signal).map(|signal| LastCross {
-                signal,
-                trade_date: pts[i].0,
-                bars_ago: (pts.len() - 1 - i) as i64,
-            })
-        });
-        let trend = match state_of(last.ma_fast, last.ma_slow) {
-            1 => MaTrend::Above,
-            -1 => MaTrend::Below,
-            _ => MaTrend::Equal,
-        };
-        MaState {
-            ma_fast: last.ma_fast,
-            ma_slow: last.ma_slow,
-            trend,
-            last_cross,
-        }
-    });
-    Some(WatchDiagnosis {
-        change_1d: change(1),
-        change_20d: change(20),
-        ma,
-    })
+/// 最后一根相对 k 根之前的涨跌；日线不够时为空
+fn change(closes: &[f64], k: usize) -> Option<f64> {
+    let last = *closes.last()?;
+    let before = closes.get(closes.len().checked_sub(k + 1)?)?;
+    Some(last / before - 1.0).filter(|v| v.is_finite())
 }
 
 /// 收藏一只股票（重复收藏不报错）
@@ -292,44 +159,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn enough_history_for_recent_signals() {
-        use crate::analysis::signals;
-        let most = signals::CATALOG
-            .iter()
-            .map(|s| signals::warmup(s.id, &signals::Params::new()))
-            .max()
-            .unwrap();
-        assert!(most as i64 + 5 <= RECENT_BARS);
-    }
-
-    fn pts(closes: &[f64]) -> Vec<(NaiveDate, f64)> {
-        let d0 = NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
-        closes
-            .iter()
-            .enumerate()
-            .map(|(i, &c)| (d0 + chrono::Duration::days(i as i64), c))
-            .collect()
-    }
-
-    #[test]
-    fn diagnosis_finds_last_cross_and_changes() {
-        // 快线 3.5 2.5 2.5 4 6.5，慢线 4 3 2.67 3.33 5.33：下标 5 金叉
-        let p = pts(&[5.0, 4.0, 3.0, 2.0, 3.0, 5.0, 8.0]);
-        let d = diagnose(&p, 2, 3).unwrap();
-        assert!((d.change_1d.unwrap() - 0.6).abs() < 1e-12);
-        assert!(d.change_20d.is_none(), "不足 21 根时不算 20 日涨跌");
-        let ma = d.ma.unwrap();
-        assert_eq!(ma.trend, MaTrend::Above);
-        let c = ma.last_cross.unwrap();
-        assert_eq!(
-            (c.signal, c.trade_date, c.bars_ago),
-            (CrossSignal::Golden, p[5].0, 1)
-        );
-    }
-
-    #[test]
-    fn diagnosis_without_full_window_has_no_ma() {
-        let d = diagnose(&pts(&[10.0]), 15, 30).unwrap();
-        assert!(d.change_1d.is_none() && d.ma.is_none());
+    fn changes_need_enough_history() {
+        let closes = [10.0, 11.0, 12.1];
+        assert!((change(&closes, 1).unwrap() - 0.1).abs() < 1e-12);
+        assert!((change(&closes, 2).unwrap() - 0.21).abs() < 1e-12);
+        assert!(change(&closes, 3).is_none());
+        assert!(change(&[], 1).is_none());
     }
 }

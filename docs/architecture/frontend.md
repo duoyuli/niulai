@@ -19,22 +19,18 @@
 | `src/pages/` | 每个页面一个文件 |
 | `src/components/ui.tsx` | 通用组件：卡片、表格、标签、分段按钮、加载与错误状态 |
 | `src/components/Layout.tsx`、`VersionBadge.tsx` | 页头、登录与配置检查；版本号、一键升级和升级进度 |
-| `src/components/PriceChart.tsx`、`EquityChart.tsx` | K 线、成交量、叠加的指标线和标记；回测的账户总值曲线 |
+| `src/components/PriceChart.tsx`、`EquityChart.tsx` | K 线和成交量；因子组合回测的总值曲线（组合与基准） |
 | `src/components/RangePicker.tsx` | K 线的起止日期框和快捷区间 |
-| `src/components/overlays.tsx`、`SampleChart.tsx` | K 线叠加：指标线、信号出现的日子、策略的买卖点，选择写在 URL 的 `overlay` 参数；信号页和指标页的「画在 K 线上」 |
-| `src/components/conditions.tsx` | 条件编辑器：策略和自定义信号共用，每条条件下实时显示白话 |
-| `src/components/DiagnosisCard.tsx`、`SignalChip.tsx` | 个股诊断卡片；信号标签 |
-| `src/components/SignalStats.tsx`、`StrategyNav.tsx` | 信号的过去表现和今天出现的股票；「策略」栏目下策略、信号、指标、因子研究四页的切换 |
-| `src/components/FactorCharts.tsx`、`src/lib/factors.ts` | 因子研究的多曲线图（各组净值）；选中因子和权重在 URL 里的写法、结论的颜色 |
-| `src/components/backtest.tsx`、`BacktestTrades.tsx`、`longTask.tsx` | 回测的共用部分：交易成本、结果展示、规则说明；账户规则回测的交易记录；长任务的等待和取消 |
-| `src/components/AdviceView.tsx`、`RulesEditor.tsx`、`PositionsEditor.tsx`、`AccountEquityChart.tsx`、`TodayAccounts.tsx` | 账户：调仓建议和理由、选股和风控规则编辑（多因子账户显示因子、持有只数和缓冲区，并链接到组合回测）、持仓录入与粘贴识别、净值曲线、首页的账户卡片 |
+| `src/components/FactorCharts.tsx`、`researchFields.tsx`、`src/lib/factors.ts` | 因子研究的多曲线图（各组净值）；交易成本、数字输入、规则说明和坐标切换；选中因子和权重在 URL 里的写法、结论的颜色、账户规则到组合回测的链接 |
+| `src/components/longTask.tsx` | 长任务的等待秒数和取消 |
+| `src/components/AdviceView.tsx`、`RulesForm.tsx`、`PositionsEditor.tsx`、`AccountEquityChart.tsx`、`TodayAccounts.tsx` | 账户：调仓建议和理由（后台重新生成时轮询）、调仓规则（因子带方向，持有只数、缓冲区、留现金、追高上限、ST）、持仓录入与粘贴识别、净值曲线、首页的账户卡片 |
 | `src/components/UserMenu.tsx`、`AdminOnly.tsx`、`RouteError.tsx` | 用户名的悬浮菜单；管理员页面的拦截说明；页面出错时的兜底 |
 | `src/components/DataCheck.tsx` | 同步页的数据核检卡片 |
 | `src/components/SecuritySearch.tsx`、`WatchButton.tsx` | 股票搜索框；收藏星标 |
-| `src/lib/strategy.ts`、`tone.ts`、`runs.ts` | 名称模板和条件的白话（与后端写法一致）；信号偏多、偏空、中性的样式；一次同步各批的合计 |
-| `src/lib/accounts.ts`、`csv.ts`、`queryInvalidation.ts` | 账户的金额格式，建议动作和流水类型的中文名与颜色；导出 CSV；记账、校准等操作之后要刷新的查询 |
+| `src/lib/runs.ts` | 一次同步各批的合计 |
+| `src/lib/accounts.ts`、`queryInvalidation.ts` | 账户的金额格式，建议动作、理由种类和流水类型的中文名与颜色；记账、校准等操作之后要刷新的查询 |
 | `src/lib/format.ts`、`labels.ts` | 数字和日期格式化、涨跌颜色；后端枚举值的中文名 |
-| `src/hooks/` | URL 状态（`useSearchState`）、防抖、深色模式、是否管理员（`useIsAdmin`）、自选股列表 |
+| `src/hooks/` | URL 状态（`useSearchState`）、防抖、深色模式、自选股列表 |
 | `src/api/fetcher.ts` | 所有请求经过的函数，把错误响应转为 `ApiError` |
 | `src/api/generated/` | orval 生成的类型和 hooks，不手工修改 |
 | `openapi.json` | 后端导出的接口规范，生成客户端的输入，提交到版本库 |
@@ -42,25 +38,19 @@
 <a id="pages"></a>
 ## 页面与接口
 
-界面按用户要做的事组织：主导航是「首页」「账户」「策略」「自选」，个股从页头搜索进入，回测是策略页和个股页的标签页，信号和指标在「策略」下面，数据同步、指数板块和「说明」在页头右侧。理由见 [ADR：界面按任务组织](../decisions/ui_by_task.md)。每页先给一句白话结论，再给少量关键数字，明细和规则说明折叠。
+界面按用户要做的事组织：主导航是「首页」「账户」「研究」「自选」，个股从页头搜索进入，数据同步、指数板块和「说明」在页头右侧。理由见 [ADR：界面按任务组织](../decisions/ui_by_task.md)。每页先给一句白话结论，再给少量关键数字，明细和规则说明折叠。
 
 | 路径 | 页面 | 接口 |
 | --- | --- | --- |
-| `/` | 首页：核心数据还在首次下载时顶部提示「正在准备核心数据」和大约还要多久；顶部依次显示我的账户（最多 3 个，每个账户一行：总资产、当日盈亏、「10-19（周一）运营建议：……」）和我的自选（最多 6 只，按最近信号排序）；超出时点击「查看更多」进入对应独立页；其后标题写明数据截至哪天收盘（「10-16（周五）收盘」）、大盘概况、今日热点（涨停、跌停、炸板家数，最高连板和每个连板高度前几只股票，点进个股 K 线）、近 5 日最强行业、「在首页展示」的策略最近一次巡检的买点（新入选在前） | `GET /accounts`、`/market/overview`、`/market/hot`、`/market/sectors`、`/strategies`、`/strategies/{id}/results`、`/watchlist` |
+| `/` | 首页：核心数据还在首次下载时顶部提示「正在准备核心数据」和大约还要多久；顶部依次显示我的账户（最多 3 个，每个账户一行：总资产、当日盈亏、「10-19（周一）运营建议：……」）和我的自选（最多 6 只，按收藏时间倒序，显示当日和近 20 日涨跌）；超出时点击「查看更多」进入对应独立页；其后标题写明数据截至哪天收盘（「10-16（周五）收盘」）、大盘概况、今日热点（涨停、跌停、炸板家数，最高连板和每个连板高度前几只股票，点进个股 K 线）、近 5 日最强行业 | `GET /accounts`、`/market/overview`、`/market/hot`、`/market/sectors`、`/watchlist` |
 | `/accounts` | 我的账户：每个账户一张卡片（总资产、当日盈亏、现金、持仓只数、下个交易日的运营建议、核对提醒） | `GET /accounts` |
-| `/accounts/new` | 新建账户，两步：名字和选股方式（按策略的买卖点用均衡型、多因子月度调仓用 `factor` 参考值）；现金和持仓（`PositionsEditor`，可粘贴，可跳过）。其余规则以后在设置里调 | `POST /accounts`、`POST /accounts/{id}/positions/parse`、`PUT /accounts/{id}/positions` |
-| `/accounts/:id` | 一个账户，四个标签：运营（下个交易日的买卖建议、执行、不做、理由和提醒）；持仓；记录；设置（账户名称、勾选策略、至少同时看好的策略数、风控参数、费率和用户主动发起的规则回测） | `GET /accounts/{id}` 及其下的 `advice`、`trades`、`review` 等 |
-| `/strategies` | 策略：每个策略最近一次的买点、卖点、持有中数量，内置策略标「内置」；管理员点击「排序」打开弹窗，在弹窗内拖动策略并点击「保存」后调整显示顺序；立即巡检、新建（管理员） | `GET /strategies`、`PUT /strategies/order`、`POST /screening/run` |
-| `/strategies/:id` | 策略详情：规则的白话；「最新买卖点」按交易日看买点、卖点（原因）、持有中；「过去表现如何」点「开始回测」做全市场组合回测 | `GET` / `PUT` / `DELETE /strategies/{id}`、`/results`、`POST /screening/run`、`GET /backtest/portfolio` |
-| `/strategies/new`、`/:id/edit` | 策略编辑器：从模板或空白开始，股票池、买入条件、排序、卖出规则，可预览；`?signal=<key>` 先放好一个信号 | `GET /strategies/catalog`、`/signals`、`POST /strategies/preview`、`POST` / `PUT /strategies` |
-| `/signals`、`/signals/:key` | 信号列表（我的信号和按分组的内置信号）；详情：怎么判断、怎么看、画在 K 线上、过去表现、今天出现的股票、被哪些策略用 | `GET /signals`、`/signals/{key}`、`POST /signals/today`、`/signals/stats`、`/securities/{thscode}/signal-days`、`GET /securities/{thscode}/indicator` |
-| `/signals/new`、`/:key/edit` | 信号编辑器：名称、偏多偏空、全部或任一满足、条件；「试一试」不保存就看结果。`?from=<key>` 复制，`?cond=<条件 JSON>` 从常用写法开始 | `GET /strategies/catalog`、`POST /signals`、`PUT /signals/my/{id}`、`POST /signals/today`、`/signals/stats` |
-| `/indicators`、`/indicators/:id` | 指标：是什么、怎么算、画在 K 线上、常用写法（点一下新建信号）、被哪些信号和策略用 | `GET /indicators`、`/securities/{thscode}/indicator` |
+| `/accounts/new` | 新建账户，两步：名字（页面说明一句选股方法）；现金和持仓（`PositionsEditor`，可粘贴，可跳过）。规则用默认值，以后在设置里调 | `POST /accounts`、`POST /accounts/{id}/positions/parse`、`PUT /accounts/{id}/positions` |
+| `/accounts/:id` | 一个账户，四个标签：运营（下个交易日的买卖建议、执行、不做、理由和提醒）；持仓；记录；设置（账户名称和备注、调仓规则、费率；规则里有到因子研究组合回测的链接）。保存后建议在后台重新生成，运营标签显示「正在更新」并自动刷新 | `GET /accounts/{id}` 及其下的 `advice`、`trades`、`review` 等 |
 | `/research` | 因子研究：选因子（组合模式下可填权重），「因子检验」看 RankIC、分组净值、IC 衰减、挑选偏差和因子相关性，「多因子组合」看净值、超额、信息比率、Deflated Sharpe 和最新得分前列；参数写在 URL，点「开始计算」才算，可以取消 | `GET /research/factors`、`/research/factor-test`、`/research/factor-portfolio` |
-| `/watchlist` | 自选：涨跌、趋势和最近信号，可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
-| `/securities/:thscode` | 证券（股票或 ETF）：页头是最新价、收藏、上市日期和本地日线范围。「走势与诊断」先是诊断，再是 K 线和基本面摘要；股票的基本面显示估值历史、最近一期三张报表和财务指标，并标出披露日期；ETF 显示「ETF 基本资料」（最新收盘、单位净值、基金规模、管理费、管理人、历史日线根数、最新日期和价格口径），K 线只提供不复权、前复权、后复权，价格按供应商前复权口径保存。「回测」默认使用内置的均线交叉策略，也可以选择任一策略回测这只证券 | `GET /securities/{thscode}`、`/fundamentals`、`/bars`、`/diagnosis`、`/indicator`、`/signal-days`、`/strategy-points`、`GET /backtest/strategy` |
+| `/watchlist` | 自选：最新收盘、当日和近 20 日涨跌，可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
+| `/securities/:thscode` | 证券（股票或 ETF）：页头是最新价、收藏、上市日期和本地日线范围。先是 K 线，再是基本面；股票的基本面显示估值历史、最近一期三张报表和财务指标，并标出披露日期；ETF 显示「ETF 基本资料」（最新收盘、单位净值、基金规模、管理费、管理人、历史日线根数、最新日期和价格口径），K 线只提供不复权、前复权、后复权，价格按供应商前复权口径保存 | `GET /securities/{thscode}`、`/fundamentals`、`/bars` |
 | `/hot` | 今日热点：顶部是涨停、跌停、炸板家数、最高连板和封板率；下面按连板高度分组列出涨停股（涨停原因、封单额、首次涨停时间）、跌停和炸板；日期框可往回看，没有同步时显示白话空态。不加主导航项，从首页卡片进入 | `GET /market/hot` |
-| `/guide` | 说明：指标、条件、信号、策略四个概念和买卖点规则 | — |
+| `/guide` | 说明：因子、排名、组合、账户调仓四步，以及建议怎么执行 | — |
 | `/indices`、`/indices/:thscode` | 指数与板块列表；指数 K 线和当前成分股 | `GET /indices`、`/indices/{thscode}/bars`、`/members` |
 | `/sync`（管理员） | 数据同步，从上到下：「立即同步全部」「手动同步」（按计划全选或勾选到单个数据集，选增量或全部重取）；一句话状态；「股票与 ETF 行情同步」卡片（ETF 日线、基金行情快照、基金资料三个数据集的状态和最近完成时间）；同步计划（时间可改，可「现在同步一次」）；数据核检；同步记录（标明来源，几批合成一行）；需要注意（缺口和失败，一键补齐）；按分类的数据集 | `GET /sync/health`、`/sync/schedule`、`/sync/runs`、`/sync/check`、`/datasets`，`PUT /sync/schedule`，`POST /sync/runs`、`/sync/repair`、`/sync/check` |
 | `/sync/runs/:runId` | 一次同步的详情（任意一批的编号都行）：各批状态、还没开始的批次、各数据集进度、没有新建任务的数据及原因、失败的任务；合计与同步记录用同一个函数（`lib/runs.ts`） | `GET /sync/runs/{run_id}`、`/datasets` |
@@ -72,7 +62,7 @@
 
 全局行为（`Layout`、`VersionBadge`）：
 - 请求收到 401 时整页跳到 `/login?next=<当前地址>`；管理员登录后还没配置 API Key（`GET /setup` 的 `api_key_configured` 为 false）时，管理员页面跳到 `/setup`，普通用户不执行这项前端检查；`GET /auth/me` 的 `must_change_password` 为 true 时页面顶部提醒去「我的」改密码。
-- 按角色显示（`useIsAdmin`）：页头右侧的「说明」对所有用户显示，「数据」只对管理员显示；个人功能「密码设置」和管理员功能「用户管理」「操作日志」「数据源设置」分成两个区域收在用户名的悬浮菜单里（`UserMenu`，鼠标移上去或点击展开）；所有用户都能看到个人区域，只有管理员看到管理员区域；普通用户看不到版本号和升级、用户管理、操作日志和数据源设置，策略和信号页上没有新建、修改、删除、巡检按钮；直接打开管理员页面时 `AdminOnly` 给一句说明，不发请求。后端同样拦截，前端只是不显示用不了的按钮。
+- 按角色显示：页头右侧的「说明」对所有用户显示，「数据」只对管理员显示；个人功能「密码设置」和管理员功能「用户管理」「操作日志」「数据源设置」分成两个区域收在用户名的悬浮菜单里（`UserMenu`，鼠标移上去或点击展开）；所有用户都能看到个人区域，只有管理员看到管理员区域；普通用户看不到版本号和升级、用户管理、操作日志和数据源设置；直接打开管理员页面时 `AdminOnly` 给一句说明，不发请求。后端同样拦截，前端只是不显示用不了的按钮。
 - 版本号每 30 分钟请求一次 `GET /system/version`，有新版本时亮红点，点开可以一键升级。升级进行中每 2 秒刷新（服务重启时请求失败也继续），进度条和每一步的状态只显示在版本号弹窗里（`UpgradeProgress`，步骤来自升级助手写的状态），点别处收起，进度保留，版本号上的圆点一直闪，再点开接着看；所有步骤结束、运行的版本变成目标版本后整页刷新。
 - 刷新间隔：同步页的运行列表 10 秒、同步状态 15 秒、数据集和同步计划 30 秒；运行详情在进行中时 5 秒。
 
@@ -86,17 +76,15 @@
 <a id="conventions"></a>
 ## 展示约定
 
-- **红涨绿跌：** 上涨、偏多的信号用红色，下跌、偏空的用绿色，不说明方向的中性信号（十字星、缩量等）用橙色圆点（`src/lib/tone.ts`）。颜色令牌是 `src/index.css` 中的 `up`、`down`，数值的涨跌颜色统一用 `upDownClass`。
+- **红涨绿跌：** 上涨、买入用红色，下跌、卖出用绿色。颜色令牌是 `src/index.css` 中的 `up`、`down`，数值的涨跌颜色统一用 `upDownClass`。
 - **价格是字符串：** 后端的价格和成交额是十进制字符串，只在展示和画图时转成数字。
-- **复权口径：** K 线默认等比前复权（`qfq`），按钮上写明「等比」和「同花顺」。指标和信号都按等比前复权计算，所以只有选择前复权时才把价格类指标线画在 K 线上。
-- **K 线区间：** `RangePicker` 是一个起止日期框（两头都包含）加快捷区间 1 月到全部。点快捷区间把日期填进框里（结束日期是今天，「全部」从最早的日线开始），改日期就是自定义区间（`range=custom&from=&to=`）。起点早于最早日线的快捷区间置灰：个股按本地最早的日线，指数和板块从 2022-01-04 开始。回测的区间只按年（`RANGES`）。
+- **复权口径：** K 线默认等比前复权（`qfq`），按钮上写明「等比」和「同花顺」。因子和收益都按等比前复权计算。
+- **K 线区间：** `RangePicker` 是一个起止日期框（两头都包含）加快捷区间 1 月到全部。点快捷区间把日期填进框里（结束日期是今天，「全部」从最早的日线开始），改日期就是自定义区间（`range=custom&from=&to=`）。起点早于最早日线的快捷区间置灰：个股按本地最早的日线，指数和板块从 2022-01-04 开始。
 - **在图上框选：** 在 K 线上按住鼠标左右拖动，松开后放大到这段（只在已加载的 K 线里放大），图下有「还原」；平移用滚轮缩放后拖动底部时间轴，触屏仍可拖动平移。
-- **URL 参数：** 搜索词、复权口径、区间、叠加项等写在查询参数里，刷新或分享后保持；等于默认值的参数不写入 URL。
-- **K 线指标：** 「指标」菜单中的均线提供 15、20、30、60 日四个常用周期，其余带周期的指标先列目录默认周期；需要时可以在指标详情中查看定义。
+- **URL 参数：** 搜索词、复权口径、区间、因子研究的参数等写在查询参数里，刷新或分享后保持；等于默认值的参数不写入 URL。
 - **大数和时间：** 成交额、成交量用「万」「亿」，成交量单位是股；时间按上海时间显示，见 [时区](../interfaces/configuration.md#time_zone)。
-- **长任务要点按钮才算：** 组合回测、账户规则回测、信号的过去表现、因子检验和多因子组合这类要算全市场几年日线的操作，改参数不会自动重算，点按钮才开始；计算中显示已等待秒数和「取消」，取消会中断请求，改参数时保留上一次的结果并提示参数已改。单只股票回测只要几十毫秒，仍然改参数就自动重算。实现见 `src/components/longTask.tsx`。
-- **回测结果可以导出：** 单只股票回测、组合回测、账户规则回测的交易记录都有「下载 CSV」，导出的文件带 UTF-8 BOM，Excel 直接打开中文不乱码。实现见 `src/lib/csv.ts`。
-- **面向非专业用户：** 术语（复权、均线交叉、成分股等）都附一句说明。
+- **长任务要点按钮才算：** 因子检验和多因子组合这类要算全市场几年日线的操作，改参数不会自动重算，点按钮才开始；计算中显示已等待秒数和「取消」，取消会中断请求，改参数时保留上一次的结果并提示参数已改。实现见 `src/components/longTask.tsx`。
+- **面向非专业用户：** 术语（复权、因子、成分股等）都附一句说明。
 
 <a id="serving"></a>
 ## 由 niulai serve 提供

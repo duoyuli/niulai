@@ -1,7 +1,7 @@
-# ADR：指标和信号在 Rust 中计算
+# ADR：指标和信号在 Rust 中计算（现适用于因子）
 
-- 状态：已采纳（accepted），2026-10-16。
-- 当前实现：[选股策略与诊断](../domains/strategies.md)、[回测](../domains/backtest.md) 和 [运行结束后的计算](../architecture/sync_pipeline.md#postprocess)。
+- 状态：已采纳（accepted），2026-10-16。指标和信号已由 [ADR：只保留多因子选股](factor_only.md) 删除，「在 Rust 中计算、不用 SQL 窗口函数」现在适用于横截面因子、市场概况和账户的因子排名。
+- 当前实现：[因子研究](../domains/factor_research.md#data)、[市场环境](../domains/market_data_rules.md#market) 和 [运行结束后的计算](../architecture/sync_pipeline.md#postprocess)。
 - 历史取舍：早期的 SQL 全市场均线扫描、因子表日期索引和扫描专用缓存已经删除；复权因子存储见 [ADR：等比复权因子按区间存储](adj_factor_segments.md)。
 
 ## 决策

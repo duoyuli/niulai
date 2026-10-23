@@ -1,7 +1,7 @@
 # ADR：采用等比复权作为指标口径
 
-- 状态：已采纳（accepted），2026-10-15。决策第 1 条中「保存每日累计复权因子」的存储方式，以及后果第 2 条「新 K 线要重算因子才出现在复权视图中」，已被 [ADR：等比复权因子按区间存储](adj_factor_segments.md) 取代，计算口径不变。决策第 3 条对全市场组合回测不适用，已被 [ADR：选股策略是 JSON 定义](strategy_design.md) 部分取代：组合回测用前复权价计算成交和市值，单只股票回测仍按本条。
-- 相关文档：[复权](../domains/price_adjustment.md)、[均线与交叉信号](../domains/ma_signals.md)。
+- 状态：已采纳（accepted），2026-10-15。决策第 1 条中「保存每日累计复权因子」的存储方式，以及后果第 2 条「新 K 线要重算因子才出现在复权视图中」，已被 [ADR：等比复权因子按区间存储](adj_factor_segments.md) 取代，计算口径不变。决策第 3 条中的单只股票回测已由 [ADR：只保留多因子选股](factor_only.md) 删除，因子组合回测用前复权价计算成交和市值。
+- 相关文档：[复权](../domains/price_adjustment.md)、[因子研究](../domains/factor_research.md)。
 
 ## 背景
 

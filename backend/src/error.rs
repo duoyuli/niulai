@@ -15,7 +15,7 @@ pub enum ApiError {
     /// 没有登录、登录已过期，或账号密码不对
     #[error("{0}")]
     Unauthorized(String),
-    /// 已登录，但角色不允许，例如普通用户修改策略
+    /// 已登录，但角色不允许，例如普通用户同步数据
     #[error("{0}")]
     Forbidden(String),
     /// 请求太频繁，例如连续输错密码

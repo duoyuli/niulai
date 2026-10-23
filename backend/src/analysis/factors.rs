@@ -460,7 +460,7 @@ pub fn fundamental_value(s: &FundamentalSnapshot, id: FactorId) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::indicators::tests::bars_from;
+    use crate::analysis::prices::bars_from;
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()

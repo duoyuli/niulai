@@ -6,7 +6,6 @@
 
 pub mod corp;
 pub mod equity;
-pub mod history;
 pub mod ledger;
 pub mod lots;
 pub mod paste;
@@ -52,8 +51,6 @@ pub struct Position {
     pub cost_price: Option<f64>,
     /// 买入日；没填时为空
     pub opened_on: Option<NaiveDate>,
-    /// 按哪个策略的买入建议买的；手动录入的为空
-    pub strategy_id: Option<i64>,
     /// 股数最近一次变动的日期：之后的除权除息才自动记账
     pub since: NaiveDate,
 }
@@ -174,9 +171,6 @@ pub struct NewAccount {
     pub cash: f64,
     #[serde(default)]
     pub note: String,
-    /// 用哪组参考值建规则；为空时用均衡型。`factor` 建一个多因子月度调仓账户
-    #[serde(default)]
-    pub preset: Option<rules::Preset>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -365,15 +359,7 @@ pub async fn create(pool: &PgPool, user_id: i64, input: &NewAccount) -> Result<A
     if n >= MAX_ACCOUNTS {
         return invalid(format!("每人最多 {MAX_ACCOUNTS} 个账户"));
     }
-    let strategy_ids: Vec<i64> = sqlx::query_scalar(
-        "SELECT strategy_id FROM app.strategy WHERE screening ORDER BY sort_order, strategy_id",
-    )
-    .fetch_all(&mut *tx)
-    .await?;
-    let rules = Rules {
-        strategies: Some(strategy_ids),
-        ..input.preset.unwrap_or(rules::Preset::Balanced).rules()
-    };
+    let rules = Rules::default();
     let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO app.account (user_id, name, rules, cash, note) VALUES ($1, $2, $3, round($4::float8::numeric, 2), $5)
          ON CONFLICT (user_id, lower(name)) DO NOTHING RETURNING account_id",
@@ -468,36 +454,26 @@ pub async fn mark_checked(pool: &PgPool, user_id: i64, account_id: i64) -> Resul
     }
 }
 
-type PositionRow = (
-    String,
-    i64,
-    Option<f64>,
-    Option<NaiveDate>,
-    Option<i64>,
-    NaiveDate,
-);
-/// 已有持仓的 (股数, 成本价, 买入日, 买入依据的策略)
-type HeldRow = (i64, Option<f64>, Option<NaiveDate>, Option<i64>);
+type PositionRow = (String, i64, Option<f64>, Option<NaiveDate>, NaiveDate);
+/// 已有持仓的 (股数, 成本价, 买入日)
+type HeldRow = (i64, Option<f64>, Option<NaiveDate>);
 
 pub async fn positions(pool: &PgPool, account_id: i64) -> Result<Vec<Position>> {
     let rows: Vec<PositionRow> = sqlx::query_as(
-        "SELECT thscode, shares, cost_price::float8, opened_on, strategy_id, since FROM app.position WHERE account_id = $1 ORDER BY thscode",
+        "SELECT thscode, shares, cost_price::float8, opened_on, since FROM app.position WHERE account_id = $1 ORDER BY thscode",
     )
     .bind(account_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(
-            |(thscode, shares, cost_price, opened_on, strategy_id, since)| Position {
-                thscode,
-                shares,
-                cost_price,
-                opened_on,
-                strategy_id,
-                since,
-            },
-        )
+        .map(|(thscode, shares, cost_price, opened_on, since)| Position {
+            thscode,
+            shares,
+            cost_price,
+            opened_on,
+            since,
+        })
         .collect())
 }
 
@@ -583,18 +559,17 @@ async fn security_asset_type(
     )
 }
 
-/// 买入或卖出成交后更新持仓、现金并记流水；返回流水编号。`strategy_id` 是按哪个策略的建议买的
+/// 买入或卖出成交后更新持仓、现金并记流水；返回流水编号
 pub async fn record(
     pool: &PgPool,
     user_id: i64,
     account_id: i64,
     input: &TradeInput,
     source: TradeSource,
-    strategy_id: Option<i64>,
 ) -> Result<i64> {
     let mut tx = pool.begin().await?;
     let cash = lock(&mut tx, user_id, account_id).await?;
-    let id = record_in_tx(&mut tx, account_id, cash, input, source, strategy_id).await?;
+    let id = record_in_tx(&mut tx, account_id, cash, input, source).await?;
     tx.commit().await?;
     Ok(id)
 }
@@ -607,7 +582,6 @@ pub async fn record_advice(
     advice_id: i64,
     item_key: &str,
     input: &TradeInput,
-    strategy_id: Option<i64>,
 ) -> Result<i64> {
     let mut tx = pool.begin().await?;
     let cash = lock(&mut tx, user_id, account_id).await?;
@@ -621,15 +595,7 @@ pub async fn record_advice(
     if state.as_deref() == Some("executed") {
         return Err(AccountError::Invalid("这一条已经记过了".into()));
     }
-    let trade_id = record_in_tx(
-        &mut tx,
-        account_id,
-        cash,
-        input,
-        TradeSource::Advice,
-        strategy_id,
-    )
-    .await?;
+    let trade_id = record_in_tx(&mut tx, account_id, cash, input, TradeSource::Advice).await?;
     sqlx::query(
         "INSERT INTO app.advice_item_state (advice_id, item_key, state, trade_id) VALUES ($1, $2, 'executed', $3)
          ON CONFLICT (advice_id, item_key) DO UPDATE SET state = 'executed', trade_id = EXCLUDED.trade_id, updated_at = now()",
@@ -649,24 +615,10 @@ async fn record_in_tx(
     cash: f64,
     input: &TradeInput,
     source: TradeSource,
-    strategy_id: Option<i64>,
 ) -> Result<i64> {
     let date = input.trade_date.unwrap_or_else(crate::time::today_cn);
     let fees = account_fees(tx, account_id).await?;
     let supplied_fee = input.fee.map(validate_fee).transpose()?;
-    let strategy_id = match strategy_id {
-        Some(id)
-            if sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS (SELECT 1 FROM app.strategy WHERE strategy_id = $1)",
-            )
-            .bind(id)
-            .fetch_one(&mut **tx)
-            .await? =>
-        {
-            Some(id)
-        }
-        _ => None,
-    };
     let id = match input.kind {
         TradeKind::CashIn | TradeKind::CashOut => {
             let amount = input
@@ -718,7 +670,7 @@ async fn record_in_tx(
                 .ok_or_else(|| AccountError::Invalid("成交价要大于 0".into()))?;
             let gross = round2(shares as f64 * price);
             let current: Option<HeldRow> = sqlx::query_as(
-                "SELECT shares, cost_price::float8, opened_on, strategy_id FROM app.position WHERE account_id = $1 AND thscode = $2 FOR UPDATE",
+                "SELECT shares, cost_price::float8, opened_on FROM app.position WHERE account_id = $1 AND thscode = $2 FOR UPDATE",
             )
             .bind(account_id)
             .bind(code)
@@ -732,8 +684,7 @@ async fn record_in_tx(
                         "现金不够：这笔要 ¥{pay:.2}，现金只有 ¥{cash:.2}。先转入现金，或在持仓页校准现金"
                     ));
                 }
-                let (old, old_cost, opened, old_strategy) =
-                    current.unwrap_or((0, None, None, None));
+                let (old, old_cost, opened) = current.unwrap_or((0, None, None));
                 // 加权平均成本（含费用）；原来没填成本的，加仓后仍不知道整体成本
                 let cost = match (old, old_cost) {
                     (0, _) => Some((pay) / shares as f64),
@@ -749,17 +700,16 @@ async fn record_in_tx(
                     return invalid(format!("每个账户最多 {MAX_POSITIONS} 只持仓"));
                 }
                 sqlx::query(
-                    "INSERT INTO app.position (account_id, thscode, shares, cost_price, opened_on, strategy_id, since)
-                     VALUES ($1, $2, $3, round($4::float8::numeric, 4), $5, $6, $7)
+                    "INSERT INTO app.position (account_id, thscode, shares, cost_price, opened_on, since)
+                     VALUES ($1, $2, $3, round($4::float8::numeric, 4), $5, $6)
                      ON CONFLICT (account_id, thscode) DO UPDATE SET shares = EXCLUDED.shares, cost_price = EXCLUDED.cost_price,
-                       opened_on = EXCLUDED.opened_on, strategy_id = EXCLUDED.strategy_id, since = EXCLUDED.since",
+                       opened_on = EXCLUDED.opened_on, since = EXCLUDED.since",
                 )
                 .bind(account_id)
                 .bind(code)
                 .bind(old + shares)
                 .bind(cost)
                 .bind(opened.or(Some(date)))
-                .bind(old_strategy.or(strategy_id))
                 .bind(date)
                 .execute(&mut **tx)
                 .await?;
@@ -783,7 +733,7 @@ async fn record_in_tx(
                 if shares > held {
                     return invalid(format!("只持有 {held} 股，不能卖 {shares} 股"));
                 }
-                let fee = supplied_fee.unwrap_or_else(|| fees.sell_fee_for(&asset_type, gross));
+                let fee = supplied_fee.unwrap_or_else(|| fees.sell_fee(&asset_type, gross));
                 if held == shares {
                     sqlx::query("DELETE FROM app.position WHERE account_id = $1 AND thscode = $2")
                         .bind(account_id)
@@ -1023,10 +973,10 @@ pub async fn undo_trade(pool: &PgPool, user_id: i64, account_id: i64, trade_id: 
             .execute(&mut *tx)
             .await?;
         } else {
-            // 撤销把持仓清空的卖出后要把持仓恢复：买入日按剩下的买入流水恢复，买入依据的策略恢复不了
+            // 撤销把持仓清空的卖出后要把持仓恢复：买入日按剩下的买入流水恢复
             sqlx::query(
-                "INSERT INTO app.position (account_id, thscode, shares, cost_price, opened_on, strategy_id, since)
-                 VALUES ($1, $2, $3, round($4::float8::numeric, 4), $5, NULL, $6)",
+                "INSERT INTO app.position (account_id, thscode, shares, cost_price, opened_on, since)
+                 VALUES ($1, $2, $3, round($4::float8::numeric, 4), $5, $6)",
             )
             .bind(account_id)
             .bind(code)
@@ -1101,8 +1051,8 @@ pub async fn calibrate(
             _ => today,
         };
         sqlx::query(
-            "INSERT INTO app.position (account_id, thscode, shares, cost_price, opened_on, strategy_id, since)
-             VALUES ($1, $2, $3, $4::float8::numeric, $5, NULL, $6)
+            "INSERT INTO app.position (account_id, thscode, shares, cost_price, opened_on, since)
+             VALUES ($1, $2, $3, $4::float8::numeric, $5, $6)
              ON CONFLICT (account_id, thscode) DO UPDATE SET shares = EXCLUDED.shares, cost_price = EXCLUDED.cost_price,
                opened_on = EXCLUDED.opened_on, since = EXCLUDED.since",
         )
@@ -1185,23 +1135,20 @@ async fn positions_tx(
     account_id: i64,
 ) -> Result<Vec<Position>> {
     let rows: Vec<PositionRow> = sqlx::query_as(
-        "SELECT thscode, shares, cost_price::float8, opened_on, strategy_id, since FROM app.position WHERE account_id = $1 FOR UPDATE",
+        "SELECT thscode, shares, cost_price::float8, opened_on, since FROM app.position WHERE account_id = $1 FOR UPDATE",
     )
     .bind(account_id)
     .fetch_all(&mut **tx)
     .await?;
     Ok(rows
         .into_iter()
-        .map(
-            |(thscode, shares, cost_price, opened_on, strategy_id, since)| Position {
-                thscode,
-                shares,
-                cost_price,
-                opened_on,
-                strategy_id,
-                since,
-            },
-        )
+        .map(|(thscode, shares, cost_price, opened_on, since)| Position {
+            thscode,
+            shares,
+            cost_price,
+            opened_on,
+            since,
+        })
         .collect())
 }
 

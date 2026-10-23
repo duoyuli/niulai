@@ -1,7 +1,7 @@
 # ADR：信号是起了名字的条件，策略给出买卖点
 
-- 状态：已采纳（accepted），2026-10-16。部分取代 [ADR：选股策略是 JSON 定义](strategy_design.md) 决策第 1 条（三个概念）和第 3 条（信号用固定目录），以及 [ADR：界面按任务组织](ui_by_task.md) 决策第 6 条中说明页的位置。2026-10-17 按调研笔记补充到 56 个内置信号（新增趋势强度、背离、更多 K 线形态，以及「中性」这种方向），决策本身不变，现状见 [信号](../domains/strategies.md#signals)。
-- 相关文档：[选股策略与诊断](../domains/strategies.md)、[REST API](../interfaces/rest_api.md#endpoints)、[前端](../architecture/frontend.md)。
+- 状态：已被取代（superseded），2026-10-23，由 [ADR：只保留多因子选股](factor_only.md) 取代：指标、信号和策略都已删除。下文只解释当时的取舍，不能作为开发依据。
+- 原实现已删除，需要时看 git 历史。
 
 ## 背景
 

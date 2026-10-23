@@ -1,7 +1,7 @@
-//! 个股诊断与市场环境接口。计算在 `crate::analysis`（diagnosis、market），规则见 docs/domains/strategies.md。
+//! 市场环境接口：市场概况和板块强弱。计算在 `crate::analysis::market`，口径见 docs/domains/market_data_rules.md#market。
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Query, State};
 use chrono::NaiveDate;
 use serde::Deserialize;
 use utoipa::IntoParams;
@@ -9,57 +9,14 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
-use crate::analysis::diagnosis::{self, Diagnosis};
-use crate::analysis::limit_pool::{CacheVersions, LimitPool};
+use crate::analysis::limit_pool::CacheVersions;
 use crate::analysis::market::{self, Overview, SectorStrength};
-use crate::analysis::prices;
-use crate::analysis::strategy::Definition;
 use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(security_diagnosis))
         .routes(routes!(market_overview))
         .routes(routes!(sectors))
-}
-
-/// 个股诊断：趋势、动量、量能、位置各一句结论，最近 20 个交易日的信号，关键价位，当天满足的策略
-#[utoipa::path(get, path = "/securities/{thscode}/diagnosis", tag = "market", params(("thscode" = String, Path, description = "例：600519.SH")),
-    responses((status = 200, description = "成功", body = Diagnosis), (status = 404, description = "证券不存在或没有日线", body = crate::error::ErrorBody)))]
-async fn security_diagnosis(
-    State(s): State<AppState>,
-    Path(code): Path<String>,
-) -> ApiResult<Json<Diagnosis>> {
-    let sec = market::securities(&s.pool).await?;
-    let meta = sec
-        .meta
-        .get(&code)
-        .ok_or_else(|| ApiError::NotFound(format!("证券不存在：{code}")))?;
-    let bars = prices::recent_instrument_bars(&s.pool, &code, diagnosis::BARS_NEEDED).await?;
-    let rows: Vec<(i64, String, serde_json::Value)> = sqlx::query_as(
-        "SELECT strategy_id, name, definition FROM app.strategy ORDER BY strategy_id",
-    )
-    .fetch_all(&s.pool)
-    .await?;
-    let lib = crate::analysis::signal_lib::load(&s.pool).await?;
-    let strategies: Vec<(i64, String, Definition)> = rows
-        .into_iter()
-        .filter_map(|(id, name, v)| {
-            serde_json::from_value::<Definition>(v)
-                .ok()
-                .map(|d| (id, name, d.with_lib(lib.clone())))
-        })
-        .collect();
-    // 权威涨跌停池：只读这只股票在诊断窗口内的记录
-    let codes = [code.clone()];
-    let limits = if let (Some(first), Some(last)) = (bars.first(), bars.last()) {
-        LimitPool::load_for(&s.pool, &codes, first.date, last.date).await?
-    } else {
-        LimitPool::empty()
-    };
-    diagnosis::diagnose(&bars, meta, &strategies, Some((&limits, &code)))
-        .map(Json)
-        .ok_or_else(|| ApiError::NotFound(format!("本地还没有 {code} 的日线")))
 }
 
 #[derive(Deserialize, IntoParams)]

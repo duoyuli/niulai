@@ -1,9 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
-  accountBacktest,
   getGetAccountQueryKey,
   getListAccountsQueryKey,
   getListCorpActionsQueryKey,
@@ -25,11 +24,8 @@ import {
 import type { AccountDetail, AccountTrade, TradeKind } from "../api/generated/model";
 import { AccountEquityChart } from "../components/AccountEquityChart";
 import { AdviceView } from "../components/AdviceView";
-import { BacktestTrades } from "../components/BacktestTrades";
-import { TaskRunning, useElapsedSeconds } from "../components/longTask";
 import { PositionsEditor } from "../components/PositionsEditor";
-import { type ChartRange, RangePicker, rangeQuery } from "../components/RangePicker";
-import { BacktestLine, type FullRules, RulesEditor } from "../components/RulesEditor";
+import { RulesForm } from "../components/RulesForm";
 import { SecuritySearch } from "../components/SecuritySearch";
 import {
   buttonClass,
@@ -45,8 +41,7 @@ import {
 } from "../components/ui";
 import { useSearchState } from "../hooks/useSearchState";
 import { ACTIONS, TRADE_KINDS, TRADE_SOURCES, yuan } from "../lib/accounts";
-import { planResearchLink } from "../lib/factors";
-import { BACKTEST_RANGES, fmtDateTime, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
+import { fmtDateTime, fmtPctValue, fmtPrice, upDownClass } from "../lib/format";
 import { ASSET_TYPES } from "../lib/labels";
 import { invalidateAccountQueries } from "../lib/queryInvalidation";
 
@@ -175,7 +170,6 @@ function Positions({ d }: { d: AccountDetail }) {
                 <th>现价</th>
                 <th>市值 / 占比</th>
                 <th>盈亏</th>
-                <th>买入依据</th>
               </tr>
             </thead>
             <tbody>
@@ -206,7 +200,6 @@ function Positions({ d }: { d: AccountDetail }) {
                       `${yuan(v.pnl)}（${fmtPctValue(v.pnl_pct, 1)}）`
                     )}
                   </td>
-                  <td className="text-xs text-zinc-500">{v.strategy_name ?? "手动录入"}</td>
                 </tr>
               ))}
             </tbody>
@@ -695,7 +688,7 @@ function Settings({ d }: { d: AccountDetail }) {
   const nav = useNavigate();
   const qc = useQueryClient();
   const [name, setName] = useState(acc.name);
-  const [rules, setRules] = useState<FullRules>(acc.rules as FullRules);
+  const [rules, setRules] = useState(acc.rules);
   const [rate, setRate] = useState(String(acc.fees.commission_rate * 10000));
   const [minFee, setMinFee] = useState(String(acc.fees.min_commission));
   const [note, setNote] = useState(acc.note);
@@ -703,7 +696,7 @@ function Settings({ d }: { d: AccountDetail }) {
   const [saved, setSaved] = useState(false);
   useEffect(() => {
     setName(acc.name);
-    setRules(acc.rules as FullRules);
+    setRules(acc.rules);
     setRate(String(acc.fees.commission_rate * 10000));
     setMinFee(String(acc.fees.min_commission));
     setNote(acc.note);
@@ -727,35 +720,6 @@ function Settings({ d }: { d: AccountDetail }) {
       },
     },
   });
-  const [range, setRange] = useState<ChartRange>({ range: "ytd", from: "", to: "" });
-  // 规则回测要算全市场几年，只有点按钮才开始；改区间不会自动重算，算的时候可以取消
-  const backtestParams = rangeQuery(range);
-  const backtestParamsKey = JSON.stringify(backtestParams);
-  const [backtestRun, setBacktestRun] = useState<{ params: { start?: string; end?: string }; key: string } | null>(
-    null,
-  );
-  const backtest = useQuery({
-    queryKey: ["account-backtest", id, backtestRun?.key ?? ""],
-    queryFn: ({ signal }) => accountBacktest(id, backtestRun?.params, { signal }),
-    enabled: backtestRun !== null,
-    staleTime: 5 * 60_000,
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const backtestChanged = backtestRun !== null && backtestRun.key !== backtestParamsKey;
-  const backtestRunning = backtestRun !== null && backtest.isFetching;
-  const backtestSeconds = useElapsedSeconds(backtestRunning);
-  const startBacktest = () => {
-    if (backtestRun && !backtestChanged) {
-      void backtest.refetch();
-      return;
-    }
-    setBacktestRun({ params: backtestParams, key: backtestParamsKey });
-  };
-  const cancelBacktest = () => {
-    if (backtestRun) void qc.cancelQueries({ queryKey: ["account-backtest", id, backtestRun.key] });
-    setBacktestRun(null);
-  };
   return (
     <div className="flex flex-col gap-4">
       <Card title="名字和备注">
@@ -773,8 +737,8 @@ function Settings({ d }: { d: AccountDetail }) {
           </Field>
         </div>
       </Card>
-      <Card title="选股和风控规则（高级设置）">
-        <RulesEditor value={rules} onChange={setRules} />
+      <Card title="调仓规则">
+        <RulesForm value={rules} onChange={setRules} />
       </Card>
       <Card title="费率">
         <div className="flex flex-wrap items-end gap-3">
@@ -801,7 +765,7 @@ function Settings({ d }: { d: AccountDetail }) {
         <button
           type="button"
           className={buttonClass()}
-          disabled={update.isPending || !name.trim() || rules.strategies?.length === 0}
+          disabled={update.isPending || !name.trim()}
           onClick={() => {
             setSaved(false);
             update.mutate({
@@ -820,61 +784,6 @@ function Settings({ d }: { d: AccountDetail }) {
         {saved && <span className="text-sm text-emerald-600">已保存</span>}
         {!!update.error && <span className="text-sm text-red-600">{errorText(update.error)}</span>}
       </div>
-      {acc.rules.factor ? (
-        <Card title="回测这组因子">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            多因子账户按因子排名调仓，不走按策略买点的规则回测。可以在因子研究的「组合回测」里用同样的因子、持有只数和缓冲区回测（每
-            20 个交易日调仓，和每月调仓接近）。
-          </p>
-          <Link
-            className="mt-2 inline-block text-sm text-accent hover:underline"
-            to={planResearchLink(acc.rules.factor)}
-          >
-            打开组合回测
-          </Link>
-        </Card>
-      ) : (
-        <Card title="用这个账户的规则回测">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            按保存后的规则，假设这段时间每天都照着建议做，账户会怎样。点快捷区间会把起止日期填进框里，也可以直接改日期（最长
-            5
-            年，结束日期最晚到最新交易日）。勾选的策略都会参与，按同时命中的策略数和成交额排序。全市场计算，通常要几十秒到一两分钟，算的时候可以取消；改日期不会自动重算。
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <RangePicker value={range} options={BACKTEST_RANGES} onChange={(p) => setRange((r) => ({ ...r, ...p }))} />
-            {backtestRunning ? (
-              <TaskRunning
-                text="正在按账户规则逐只计算全市场的日线"
-                seconds={backtestSeconds}
-                onCancel={cancelBacktest}
-              />
-            ) : (
-              <>
-                <button type="button" className={buttonClass("ghost")} onClick={startBacktest}>
-                  {backtestRun && backtestChanged ? "按新日期重新计算" : backtestRun ? "重新回测" : "开始回测"}
-                </button>
-                <span className="text-xs text-zinc-500" title="依据：文档实测账户规则回测本地约几十秒到一两分钟">
-                  全市场计算，通常几十秒到一两分钟
-                </span>
-              </>
-            )}
-          </div>
-          {backtestChanged && !backtestRunning && (
-            <p className="mt-2 text-xs text-amber-600">
-              日期已改，下面显示的还是上一次按旧日期算的结果；点「按新日期重新计算」。
-            </p>
-          )}
-          {backtest.data && (
-            <div className="mt-2">
-              <BacktestLine b={backtest.data} />
-              <BacktestTrades trades={backtest.data.trades ?? []} />
-            </div>
-          )}
-          {!!backtest.error && !backtestRunning && (
-            <p className="mt-2 text-sm text-red-600">{errorText(backtest.error)}</p>
-          )}
-        </Card>
-      )}
       <Card title="删除账户">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           持仓、流水和所有历史建议都会删除，不能恢复。输入账户名「{acc.name}」确认：

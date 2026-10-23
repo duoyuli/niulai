@@ -1,7 +1,7 @@
-//! 行情接口：证券、日线（含复权）、均线与交叉信号、指数。
+//! 行情接口：证券、日线（含复权）、财务摘要、指数和市场热点。
 //!
 //! 复权口径（见数据方案 §3.1）：
-//! - `qfq` / `hfq`：等比前复权 / 等比后复权，计算指标的标准口径
+//! - `qfq` / `hfq`：等比前复权 / 等比后复权，计算因子和收益的标准口径
 //! - `qfq_ths` / `hfq_ths`：同花顺减法复权，只用于和同花顺软件对数
 //! - `none`：未复权原价
 //!
@@ -23,7 +23,6 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
-use crate::analysis::ma;
 use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -626,11 +625,6 @@ async fn security_bars(
         adjust,
         bars,
     }))
-}
-
-/// 校验快慢线周期，返回 (fast, slow)
-pub(super) fn windows(fast: Option<i32>, slow: Option<i32>) -> ApiResult<(usize, usize)> {
-    ma::validate_windows(fast.unwrap_or(15), slow.unwrap_or(30)).map_err(ApiError::BadRequest)
 }
 
 // ───────────────────────── 指数 ─────────────────────────

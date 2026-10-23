@@ -9,8 +9,8 @@ import { dayLabel, upDownClass } from "../lib/format";
 /** 建议的一句话，带颜色：要操作的突出显示 */
 export function AdviceLine({ a }: { a: AccountSummary }) {
   const b = a.advice;
-  if (!b) return <span className="text-zinc-400">等待第一份建议（数据同步、巡检完成后自动生成）</span>;
-  const act = b.sells + b.reduces + b.buys > 0;
+  if (!b) return <span className="text-zinc-400">等待第一份建议（数据同步完成后自动生成）</span>;
+  const act = b.sells + b.buys > 0;
   return (
     <span className={act ? "font-medium text-zinc-900 dark:text-zinc-100" : "text-zinc-500"}>
       {dayLabel(b.next_date)}运营建议：{b.headline}
@@ -54,7 +54,7 @@ export function AccountsPage() {
     <>
       <PageHeader
         title="我的账户"
-        desc="每个证券账户建一个。每天收盘、数据同步完之后，系统从全部策略选出的股票里，按过去表现好的策略优先，结合每个账户的持仓和风控规则，生成一份「明天怎么操作」，每条都写清楚为什么。照着做完点「已执行」，持仓自动更新。账户只有你自己看得到。"
+        desc="每个证券账户建一个。每天收盘、数据同步完之后，系统按因子给全市场排名，结合每个账户的持仓生成一份「明天怎么操作」，每条都写清楚为什么；每月最后一个交易日整体调仓。照着做完点「已执行」，持仓自动更新。账户只有你自己看得到。"
         extra={
           <Link to="/accounts/new" className={buttonClass()}>
             新建账户

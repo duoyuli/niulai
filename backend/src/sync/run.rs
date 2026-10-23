@@ -224,7 +224,7 @@ pub async fn clear_sync_event_pending(pool: &PgPool, run_id: i64) -> anyhow::Res
     Ok(())
 }
 
-/// 清理已经被最新成功事件覆盖的旧事件；同一批回补波次只需要对最新数据做一次巡检和建议刷新。
+/// 清理已经被最新成功事件覆盖的旧事件；同一批回补波次只需要对最新数据做一次建议刷新。
 pub async fn clear_sync_event_pending_through(pool: &PgPool, run_id: i64) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE ops.run SET params = params - 'sync_event_pending'

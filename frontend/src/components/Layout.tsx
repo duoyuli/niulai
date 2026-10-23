@@ -10,17 +10,17 @@ import { UserMenu } from "./UserMenu";
 import { Spinner } from "./ui";
 import { BackupAlert, VersionBadge } from "./VersionBadge";
 
-/** 主导航：今天看什么、我的账户（每天的调仓建议）、选股方法、我关注的股票。个股从页头搜索进入 */
+/** 主导航：今天看什么、我的账户（每天的调仓建议）、选股方法的研究、我关注的股票。个股从页头搜索进入 */
 const NAV = [
   { to: "/", label: "首页", end: true },
   { to: "/accounts", label: "账户" },
-  { to: "/strategies", label: "策略" },
+  { to: "/research", label: "研究" },
   { to: "/watchlist", label: "自选" },
 ];
 
 /** 不是每天用的，放在右侧：说明和数据。个人与管理员功能收在用户名的菜单里 */
 const AUX = [
-  { to: "/guide", label: "说明", title: "指标、信号、策略是什么，怎么用", who: "all" },
+  { to: "/guide", label: "说明", title: "多因子选股是什么，怎么用", who: "all" },
   { to: "/sync", label: "数据", title: "数据同步与指数板块", who: "admin" },
 ] as const;
 
@@ -51,9 +51,7 @@ export function Layout() {
                 className={({ isActive }) =>
                   clsx(
                     "rounded-md px-2.5 py-1 text-sm whitespace-nowrap transition",
-                    isActive ||
-                      (n.to === "/strategies" &&
-                        (pathname.startsWith("/signals") || pathname.startsWith("/indicators")))
+                    isActive
                       ? "bg-zinc-100 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
                       : "text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100",
                   )

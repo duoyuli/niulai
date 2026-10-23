@@ -1,4 +1,4 @@
-//! 过去的建议准不准：每条买入、卖出、减仓建议之后 5、10、20 个交易日，这只股票实际涨跌多少（前复权，含分红送转）。
+//! 过去的建议准不准：每条买入、卖出建议之后 5、10、20 个交易日，这只股票实际涨跌多少（前复权，含分红送转）。
 //! 按做得到的算：从操作日（建议的下一个交易日）开盘起，到之后第 n 个交易日收盘。
 //! 买入建议之后涨了是好的；卖出建议之后跌了说明卖对了。汇总时同一只股票、同一个动作连续几天的建议只算第一天，
 //! 并单独汇总用户执行了的，让用户看到「照着做」的结果。规则见 docs/domains/accounts.md#review。
@@ -46,11 +46,11 @@ pub struct Review {
     pub items: Vec<ReviewItem>,
     /// 全部买入建议（连续几天重复的只算第一天）
     pub buys: ReviewGroup,
-    /// 全部卖出、减仓建议（之后跌了说明卖对了）
+    /// 全部卖出建议（之后跌了说明卖对了）
     pub sells: ReviewGroup,
     /// 其中用户点了「已执行」的买入
     pub buys_executed: ReviewGroup,
-    /// 其中用户点了「已执行」的卖出、减仓
+    /// 其中用户点了「已执行」的卖出
     pub sells_executed: ReviewGroup,
 }
 
@@ -92,14 +92,10 @@ pub async fn review(pool: &PgPool, account_id: i64) -> anyhow::Result<Review> {
         for it in a
             .items
             .into_iter()
-            .filter(|i| matches!(i.action, Action::Buy | Action::Sell | Action::Reduce))
+            .filter(|i| matches!(i.action, Action::Buy | Action::Sell))
         {
             let state = states.get(&(advice_id, it.key.clone())).cloned();
-            let action = if it.action == Action::Reduce {
-                Action::Sell
-            } else {
-                it.action
-            };
+            let action = it.action;
             let repeat = prev.contains(&(it.thscode.clone(), action));
             now.insert((it.thscode.clone(), action));
             picked.push((trade_date, it, state, repeat));

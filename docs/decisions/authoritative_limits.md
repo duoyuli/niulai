@@ -1,7 +1,7 @@
 # ADR：涨跌停以供应商的权威名单为准，池没有覆盖的日期回退自算
 
-- 状态：已采纳（accepted），2026-10-18。
-- 相关文档：[选股策略与诊断](../domains/strategies.md#limits)、[回测](../domains/backtest.md#limits)、[行情数据规则](../domains/market_data_rules.md#security_lifecycle)、[数据目录](../interfaces/dataset_catalog.md#special)、[运行结束后的计算](../architecture/sync_pipeline.md#postprocess)。
+- 状态：已采纳（accepted），2026-10-18。涨停、炸板、连板信号和每日巡检已由 [ADR：只保留多因子选股](factor_only.md) 删除，权威名单现在用于市场概况的涨停跌停家数和热点页面。
+- 相关文档：[涨跌停](../domains/market_data_rules.md#limits)、[行情数据规则](../domains/market_data_rules.md#security_lifecycle)、[数据目录](../interfaces/dataset_catalog.md#special)、[运行结束后的计算](../architecture/sync_pipeline.md#postprocess)。
 
 ## 背景
 
@@ -41,7 +41,7 @@
 
 ## 后果
 
-- 涨跌停相关的数字以供应商名单为准；池滞后（最近几天还没有数据）的日期会先按自算显示，同步补上后自动修正；补上的是最新交易日时重做当天的巡检、刷新还没处理过的调仓建议，更早日期已经保存的巡检结果不重算，见 [每日巡检](../domains/strategies.md#screening)。
+- 涨跌停相关的数字以供应商名单为准；池滞后（最近几天还没有数据）的日期会先按自算显示，同步补上后自动修正；补上的是最新交易日时刷新还没处理过的调仓建议，见 [生成建议](../domains/accounts.md#generation)。
 - 历史 ST 状态在 `ref.security_name_hist` 开始记录之后可用，更早的池覆盖外日期（2020-07-22 之前、北交所）仍回退当前简称，涨跌停可能判错，见 [行情数据规则](../domains/market_data_rules.md#coverage_limits)。
 - 新增或调整池的同步计划、字段解析时，要同时更新 `limit_pool` 版本号，否则市场概况和信号统计的缓存不会失效。
 - `raw.record` 不删除供应商已经不再返回的记录。如果某一天在盘中同步过涨跌停池（此时名单是「正在涨停」的股票），收盘后再同步只会更新最终名单里的行，盘中多出来的行会一直留在这一天的记录里，让权威涨停数偏多。正常的每日同步在收盘后执行，不会出现这种情况；手动触发同步时避开交易时段。本地开发库的 2026-10-16 就有 25 行这样的旧数据。以后可以考虑给三个池加「整份替换」语义。

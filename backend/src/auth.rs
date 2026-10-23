@@ -32,7 +32,7 @@ const LOCK_FOR: Duration = Duration::from_secs(5 * 60);
 #[derive(Serialize, Deserialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
-    /// 管理员：添加用户、数据同步、数据源设置、升级、修改策略和信号
+    /// 管理员：添加用户、数据同步、数据源设置、升级
     Admin,
     /// 普通用户：自己的自选股（以后还有账户），其余只能查看
     Member,

@@ -1,12 +1,12 @@
 # 复权
 
-本文说明除权除息、复权的概念，本项目保存哪些数据、如何计算复权价，以及公司行动数据的处理规则。复权口径的选择理由见 [ADR：采用等比复权](../decisions/equal_ratio_adjustment.md)，均线和交叉信号见 [均线与交叉信号](ma_signals.md)，相关表的位置见 [数据库分层](../architecture/data_model.md#typed_tables)。
+本文说明除权除息、复权的概念，本项目保存哪些数据、如何计算复权价，以及公司行动数据的处理规则。复权口径的选择理由见 [ADR：采用等比复权](../decisions/equal_ratio_adjustment.md)，因子的口径见 [因子研究](factor_research.md)，相关表的位置见 [数据库分层](../architecture/data_model.md#typed_tables)。
 
 ## 章节导航
 
 - [概念](#concepts)：第一次接触除权除息、前复权、后复权时阅读。
 - [保存什么](#raw_storage)：修改日线或公司行动的写入时阅读。
-- [等比复权因子](#equal_ratio_factor)：修改因子计算、复权视图或指标口径时阅读。
+- [等比复权因子](#equal_ratio_factor)：修改复权因子计算、复权视图或价格口径时阅读。
 - [同花顺口径](#ths_subtractive)：需要和同花顺软件对数时阅读。
 - [公司行动规则](#corp_action_rules)：修改公司行动的来源、去重或覆盖逻辑时阅读。
 - [复权视图与 API 参数](#adjust_views)：查询复权价时阅读。
@@ -29,7 +29,7 @@
 | 怎么调 | 等比复权 | 按比例缩放。涨跌幅与真实情况一致，不会出现负价 |
 | | 减法复权 | 按金额加减（同花顺称为「精确复权」）。早年价格可能被减成负数，涨跌幅会失真 |
 
-本项目计算指标的标准口径是**等比复权**；同花顺的减法复权只用于对数。
+本项目计算因子和收益的标准口径是**等比复权**；同花顺的减法复权只用于对数。
 
 <a id="raw_storage"></a>
 ## 保存什么
@@ -102,9 +102,9 @@ factor    = 从本库第一根 K 线起各次比例的累乘（第一根 K 线�
 
 | API 参数 `adjust` | 视图 / 表 | 用途 |
 | --- | --- | --- |
-| `none` | `mkt.stock_bar_1d` | 未复权原价；回测中的成交价、分红和送股核算 |
-| `qfq`（默认） | `mkt.v_stock_bar_qfq` | 等比前复权；指标、信号、收益率 |
-| `hfq` | `mkt.v_stock_bar_hfq` | 等比后复权；与 `qfq` 的信号结果相同 |
+| `none` | `mkt.stock_bar_1d` | 未复权原价；账户的参考价、市值和涨跌停判断 |
+| `qfq`（默认） | `mkt.v_stock_bar_qfq` | 等比前复权；因子、收益率、组合回测的成交 |
+| `hfq` | `mkt.v_stock_bar_hfq` | 等比后复权；与 `qfq` 的收益率相同 |
 | `qfq_ths` | `mkt.v_stock_bar_qfq_ths` | 同花顺减法前复权；与同花顺软件对数、K 线图显示 |
 | `hfq_ths` | `mkt.v_stock_bar_hfq_ths` | 同花顺减法后复权；与同花顺接口对数 |
 

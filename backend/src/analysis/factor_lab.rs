@@ -9,14 +9,17 @@ use serde::Serialize;
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
-use super::backtest::{Costs, order_blocked};
+use super::costs::{Costs, order_blocked};
 use super::factors::{self, FactorCategory, FactorId, FundamentalSnapshot, PriceFactors, Report};
-use super::indicators::{AssetType, Frame};
-use super::market::{self, calendar_days_for};
+use super::market::calendar_days_for;
 use super::prices;
 use super::research::{self, RiskMetrics};
-use super::strategy::{Definition, Universe};
+use super::securities;
+use super::universe::Universe;
+use crate::instrument::AssetType;
 
+/// 组合回测的基准：全市场等权（含分红）
+pub const EQUAL_WEIGHT_NAME: &str = "全市场等权（含分红）";
 /// 因子检验的区间最长几年：全市场日线压缩后约每年 15 MB
 pub const MAX_TEST_YEARS: i64 = 8;
 /// 组合回测的区间最长几年
@@ -123,7 +126,7 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
     if eval_days.last() != Some(&(calendar.len() - 1)) {
         eval_days.push(calendar.len() - 1);
     }
-    let sec = market::securities(pool).await?;
+    let sec = securities::load(pool).await?;
     let industries = load_industries(pool).await?;
     let fundamentals = if spec
         .factors
@@ -133,14 +136,6 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
         load_fundamentals(pool, spec.start.year() - 3).await?
     } else {
         HashMap::new()
-    };
-    let def = Definition {
-        universe: Universe {
-            asset_types: vec!["stock".into()],
-            sector: None,
-            ..spec.universe.clone()
-        },
-        ..Definition::any_stock()
     };
     let nf = spec.factors.len();
     let mut evals = vec![
@@ -152,7 +147,6 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
     ];
     let mut stocks: Vec<Series> = vec![];
     let mut counts = vec![0u32; calendar.len()];
-    let empty_hist = vec![];
     prices::for_each_stock(pool, lo, spec.end, |code, bars| {
         let Some(meta) = sec.meta.get(code) else {
             return;
@@ -160,8 +154,7 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
         if meta.asset_type != AssetType::Stock {
             return;
         }
-        let history = sec.st_history.get(code).unwrap_or(&empty_hist);
-        let f = Frame::with_st_history(bars, Some(meta), history);
+        let history = sec.st_history(code);
         let pf = PriceFactors::new(bars);
         let snaps = fundamentals.get(code);
         let mut compact = Vec::with_capacity(bars.len());
@@ -173,7 +166,7 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
             let prev = if i > 0 { bars[i - 1].q_close } else { b.q_open };
             let one_price = b.high == b.low;
             let mut flags = 0;
-            if def.in_universe(&f, meta, i) {
+            if spec.universe.contains(bars, i, meta, history) {
                 flags |= IN_UNIVERSE;
             }
             if order_blocked(true, one_price, b.q_open, prev) {
@@ -197,7 +190,7 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
             let Ok(i) = bars.binary_search_by_key(&calendar[day], |b| b.date) else {
                 continue;
             };
-            if !def.in_universe(&f, meta, i) {
+            if !spec.universe.contains(bars, i, meta, history) {
                 continue;
             }
             let e = &mut evals[k];
@@ -1455,7 +1448,7 @@ pub fn simulate(
             annual_return,
             max_drawdown: max_dd,
             risk,
-            benchmark_name: super::portfolio::EQUAL_WEIGHT_NAME.to_string(),
+            benchmark_name: EQUAL_WEIGHT_NAME.to_string(),
             benchmark_return,
             benchmark_annual,
             excess_annual,

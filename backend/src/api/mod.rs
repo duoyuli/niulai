@@ -2,7 +2,6 @@
 
 pub mod accounts;
 pub mod auth;
-pub mod backtest;
 pub mod insight;
 pub mod market;
 pub mod metrics;
@@ -10,8 +9,6 @@ pub mod operation_log;
 pub mod precompute;
 pub mod research;
 pub mod setup;
-pub mod signal;
-pub mod strategy;
 pub mod sync;
 pub mod system;
 pub mod users;
@@ -50,8 +47,6 @@ pub struct AppState {
     pub latest: Arc<system::LatestCache>,
     /// 市场概况，有新日线后失效
     pub overview: Arc<crate::analysis::market::OverviewCache>,
-    /// 信号的过去表现，有新日线或改了定义后失效
-    pub stats: Arc<signal::StatsCache>,
     /// 请求计数和耗时，`GET /api/v1/metrics` 用
     pub metrics: Arc<metrics::Metrics>,
 }
@@ -70,19 +65,16 @@ pub(crate) fn derived_cache_key(
 
 #[derive(OpenApi)]
 #[openapi(
-    info(title = "niulai API", version = "0.1.0", description = "A 股数据工作台：行情、复权、均线信号与数据同步"),
+    info(title = "niulai API", version = "0.1.0", description = "A 股数据工作台：行情、复权、多因子研究、账户调仓建议与数据同步"),
     tags(
         (name = "system", description = "健康检查、版本与一键升级"),
         (name = "auth", description = "登录与改密码"),
         (name = "operation-log", description = "操作日志（管理员）"),
         (name = "users", description = "用户管理（管理员）"),
         (name = "setup", description = "首次登录引导：配置 API Key"),
-        (name = "market", description = "证券、日线、指数与均线信号"),
-        (name = "watchlist", description = "自选股与快速诊断"),
+        (name = "market", description = "证券、日线、指数与市场环境"),
+        (name = "watchlist", description = "自选股"),
         (name = "accounts", description = "我的账户、持仓与每日调仓建议"),
-        (name = "strategy", description = "选股策略与每日巡检"),
-        (name = "signal", description = "指标、信号与买卖点"),
-        (name = "backtest", description = "回测"),
         (name = "research", description = "因子研究：因子检验与多因子组合回测"),
         (name = "sync", description = "数据集与同步运行"),
     )
@@ -99,7 +91,6 @@ pub fn state(engine: Arc<Engine>) -> AppState {
         login_guard: Arc::default(),
         latest: Arc::default(),
         overview: Arc::default(),
-        stats: Arc::default(),
         metrics: Arc::default(),
     }
 }
@@ -165,11 +156,8 @@ fn routes() -> OpenApiRouter<AppState> {
         .merge(setup::routes())
         .merge(market::routes())
         .merge(insight::routes())
-        .merge(strategy::routes())
-        .merge(signal::routes())
         .merge(watchlist::routes())
         .merge(accounts::routes())
-        .merge(backtest::routes())
         .merge(research::routes())
         .merge(sync::routes())
 }

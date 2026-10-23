@@ -23,7 +23,7 @@ export function UsersPage() {
     <>
       <PageHeader
         title="用户"
-        desc="每个人用自己的账号登录，自选股和以后的账户只有本人看得到，管理员也看不到。普通用户可以查看策略、信号和行情，不能修改；数据同步、数据源设置和用户管理只有管理员能用。"
+        desc="每个人用自己的账号登录，自选股和以后的账户只有本人看得到，管理员也看不到。普通用户可以查看行情和因子研究；数据同步、数据源设置和用户管理只有管理员能用。"
       />
       {shown && (
         <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">
@@ -96,7 +96,7 @@ function AddUser({ onAdded }: { onAdded: (username: string, password?: string | 
             onChange={(e) => setPassword(e.target.value)}
           />
         </Field>
-        <Field label="角色" hint="管理员可以管理用户、数据同步、数据源设置和策略；没有必要时选普通用户">
+        <Field label="角色" hint="管理员可以管理用户、数据同步和数据源设置；没有必要时选普通用户">
           <select className={inputClass} value={role} onChange={(e) => setRole(e.target.value as Role)}>
             <option value={Roles.member}>{ROLE_NAMES.member}</option>
             <option value={Roles.admin}>{ROLE_NAMES.admin}</option>

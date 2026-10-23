@@ -27,7 +27,7 @@ pub struct Settings {
     pub datasets_path: Option<PathBuf>,
     #[serde(default = "default_api_bind")]
     pub api_bind: String,
-    /// 普通 API 请求的上限；覆盖组合回测和信号统计等可取消长任务的最长预期时间
+    /// 普通 API 请求的上限；覆盖因子检验和组合回测等可取消长任务的最长预期时间
     #[serde(default = "default_api_timeout_s")]
     pub api_timeout_s: u64,
     #[serde(default = "default_db_max_connections")]

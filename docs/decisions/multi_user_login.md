@@ -1,6 +1,6 @@
 # ADR：多用户登录与角色
 
-- 状态：已采纳（accepted），2026-10-17。取代 [ADR：网页登录](web_login.md) 的决策第 1、4 条和取舍中「密码哈希存储」一条；第 2、3 条（后端统一拦截、签名 Cookie）保留，签名内容改为用户编号和密码哈希。
+- 状态：已采纳（accepted），2026-10-17。取代 [ADR：网页登录](web_login.md) 的决策第 1、4 条和取舍中「密码哈希存储」一条；第 2、3 条（后端统一拦截、签名 Cookie）保留，签名内容改为用户编号和密码哈希。策略、信号和巡检已由 [ADR：只保留多因子选股](factor_only.md) 删除，决策第 3 条里管理员「修改策略和信号、手动巡检」和取舍里「每个用户自己的策略」不再适用，其余角色划分不变。
 - 相关文档：[登录与权限](../interfaces/rest_api.md#auth)、[环境变量](../interfaces/configuration.md#settings)、[数据库分层](../architecture/data_model.md#schemas)、[忘记密码](../operations/runbook.md#users)。
 
 ## 背景

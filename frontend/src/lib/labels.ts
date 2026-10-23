@@ -23,7 +23,7 @@ export const INDEX_CATEGORIES: Record<string, string> = {
 };
 
 export const ADJUSTS = [
-  { value: "qfq", label: "等比前复权", hint: "等比前复权：最新价不变，历史价按除权除息调整，均线和信号都用这个口径" },
+  { value: "qfq", label: "等比前复权", hint: "等比前复权：最新价不变，历史价按除权除息调整，因子和收益都用这个口径" },
   { value: "none", label: "不复权", hint: "交易所实际成交价，除权日会出现跳空缺口" },
   { value: "hfq", label: "等比后复权", hint: "等比后复权：上市首日价不变，适合看长期真实涨幅" },
   {

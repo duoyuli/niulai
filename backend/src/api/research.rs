@@ -12,17 +12,14 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
-use super::backtest::{
-    BacktestCosts, CostOptions, capital, check_range, costs, costs_echo, coverage, manifest,
-};
-use crate::analysis::execution::DealPrice;
+use crate::analysis::costs::Costs;
 use crate::analysis::factor_lab::{
     self, FactorPortfolioOutcome, FactorTestOutcome, PortfolioParams, Prep, Spec, TestParams,
 };
 use crate::analysis::factors::{self, FactorId, FactorInfo};
-use crate::analysis::market;
-use crate::analysis::research::{self, BacktestManifest};
-use crate::analysis::strategy::{Definition, Universe};
+use crate::analysis::research::{self, RunManifest};
+use crate::analysis::universe::Universe;
+use crate::analysis::{market, securities};
 use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -94,13 +91,11 @@ impl PoolQuery {
             }
         }
         Ok(Universe {
-            asset_types: vec!["stock".into()],
             boards,
             exclude_st: self.exclude_st.unwrap_or(true),
             min_price: self.min_price.or(d.min_price),
             min_amount: self.min_amount.or(d.min_amount),
             min_listed_days: self.min_listed_days.or(d.min_listed_days),
-            sector: None,
         })
     }
 
@@ -163,7 +158,9 @@ async fn range(
         .await?
         .ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;
     let start = start.unwrap_or(end - chrono::Duration::days(365 * default_years));
-    check_range(Some(start), Some(end))?;
+    if start > end {
+        return Err(ApiError::BadRequest("start 不能晚于 end".into()));
+    }
     if (end - start).num_days() > 366 * max_years {
         return Err(ApiError::BadRequest(format!("区间最长 {max_years} 年")));
     }
@@ -194,7 +191,7 @@ async fn record(
     mode: &str,
     start: NaiveDate,
     end: NaiveDate,
-    manifest: &BacktestManifest,
+    manifest: &RunManifest,
     summary: &impl Serialize,
 ) -> ApiResult<()> {
     sqlx::query(
@@ -204,7 +201,7 @@ async fn record(
     .bind(mode)
     .bind(start)
     .bind(end)
-    .bind(&manifest.strategy_definition_hash)
+    .bind(&manifest.definition_hash)
     .bind(serde_json::to_value(manifest).map_err(|e| ApiError::Internal(e.into()))?)
     .bind(serde_json::to_value(summary).map_err(|e| ApiError::Internal(e.into()))?)
     .execute(pool)
@@ -212,24 +209,72 @@ async fn record(
     Ok(())
 }
 
-/// 运行清单：价格口径、试验次数、覆盖范围、幸存者偏差说明
-async fn research_manifest(
+/// 运行清单：配置哈希、试验次数、派生数据版本、覆盖范围和已知偏差
+async fn run_manifest(
     s: &AppState,
     config: &FactorConfig,
     start: NaiveDate,
     end: NaiveDate,
-    costs: &crate::analysis::backtest::Costs,
     kind: &str,
     trials: u64,
-) -> ApiResult<BacktestManifest> {
-    let mut m = manifest(&s.pool, config, start, end, costs).await?;
-    m.price_basis = "forward_adjusted".into();
-    m.validation_kind = kind.into();
-    m.trial_count = trials;
-    m.coverage = coverage(&s.pool, start, end, true, false).await?;
-    m.delisted_policy =
-        "survivorship_biased:no_history_before_collection;current_industry;fundamentals_at_statutory_deadline".into();
-    Ok(m)
+) -> ApiResult<RunManifest> {
+    let versions: Vec<(String, String)> =
+        sqlx::query_as("SELECT name, updated_at::text FROM ops.derived_version ORDER BY name")
+            .fetch_all(&s.pool)
+            .await?;
+    let (instruments, observed_bars): (i64, i64) = sqlx::query_as(
+        "SELECT count(DISTINCT thscode), count(*) FROM mkt.stock_bar_1d WHERE trade_date BETWEEN $1 AND $2",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_one(&s.pool)
+    .await?;
+    Ok(RunManifest {
+        definition_hash: research::definition_hash(config),
+        data_start: start,
+        data_end: end,
+        kind: kind.into(),
+        trial_count: trials,
+        derived_versions: versions.into_iter().collect(),
+        instruments: instruments.max(0) as u64,
+        observed_bars: observed_bars.max(0) as u64,
+        bias: "survivorship_biased:no_history_before_collection;current_industry;fundamentals_at_statutory_deadline".into(),
+    })
+}
+
+/// 成本参数：费率在 0 到 0.01 之间，最低佣金 0 到 100 元，滑点 0 到 500 基点
+fn costs(q: &FactorPortfolioQuery) -> ApiResult<Costs> {
+    let d = Costs::default();
+    let rate = |v: Option<f64>, default: f64, name: &str| {
+        let v = v.unwrap_or(default);
+        if v.is_finite() && (0.0..=0.01).contains(&v) {
+            Ok(v)
+        } else {
+            Err(ApiError::BadRequest(format!("{name} 应在 0 到 0.01 之间")))
+        }
+    };
+    let c = Costs {
+        commission_rate: rate(q.commission_rate, d.commission_rate, "commission_rate")?,
+        min_commission: q.min_commission.unwrap_or(d.min_commission),
+        stamp_tax_rate: rate(q.stamp_tax_rate, d.stamp_tax_rate, "stamp_tax_rate")?,
+        transfer_fee_rate: rate(
+            q.transfer_fee_rate,
+            d.transfer_fee_rate,
+            "transfer_fee_rate",
+        )?,
+        slippage_bps: q.slippage_bps.unwrap_or(10.0),
+    };
+    if !(0.0..=100.0).contains(&c.min_commission) {
+        return Err(ApiError::BadRequest(
+            "min_commission 应在 0 到 100 之间".into(),
+        ));
+    }
+    if !c.slippage_bps.is_finite() || !(0.0..=500.0).contains(&c.slippage_bps) {
+        return Err(ApiError::BadRequest(
+            "slippage_bps 应在 0 到 500 之间".into(),
+        ));
+    }
+    Ok(c)
 }
 
 /// 同一模式下此前试过多少组不同配置（按配置哈希去重，含这一次），以及各组最近一次的每期 Sharpe
@@ -287,7 +332,7 @@ pub struct FactorTestQuery {
 #[derive(Serialize, ToSchema)]
 pub struct FactorTestResult {
     pub config: FactorConfig,
-    pub manifest: BacktestManifest,
+    pub manifest: RunManifest,
     #[serde(flatten)]
     pub outcome: FactorTestOutcome,
 }
@@ -341,24 +386,18 @@ async fn factor_test(
         factors: ids,
         neutralize: prep.neutralize,
         exclude_small_pct: prep.exclude_small_pct,
-        universe: Definition {
-            universe,
-            ..Definition::any_stock()
-        }
-        .describe_universe(),
+        universe: universe.describe(),
         horizon,
         top_n: None,
         buffer: None,
     };
-    let costs = crate::analysis::backtest::Costs::default();
     let hash = research::definition_hash(&config);
     let (n, _) = trials(&s, "factor_test", &hash, None).await?;
-    let m = research_manifest(
+    let m = run_manifest(
         &s,
         &config,
         outcome.start,
         outcome.end,
-        &costs,
         "cross_sectional_factor_test",
         n,
     )
@@ -430,8 +469,8 @@ pub struct FactorPortfolioQuery {
 #[derive(Serialize, ToSchema)]
 pub struct FactorPortfolioResult {
     pub config: FactorConfig,
-    pub costs: BacktestCosts,
-    pub manifest: BacktestManifest,
+    pub costs: Costs,
+    pub manifest: RunManifest,
     /// 考虑这类回测此前试过的配置数之后，真实 Sharpe 大于 0 的概率；通常要求高于 0.95
     pub deflated_sharpe: Option<f64>,
     #[serde(flatten)]
@@ -460,18 +499,13 @@ async fn factor_portfolio(
     if !buffer.is_finite() || !(0.0..=2.0).contains(&buffer) {
         return Err(ApiError::BadRequest("buffer 应在 0 到 2 之间".into()));
     }
-    let cost = costs(CostOptions {
-        commission_rate: q.commission_rate,
-        min_commission: q.min_commission,
-        stamp_tax_rate: q.stamp_tax_rate,
-        transfer_fee_rate: q.transfer_fee_rate,
-        dividend_tax_rate: None,
-        cash_interest_rate: None,
-        deal_price: Some(DealPrice::Open),
-        slippage_bps: Some(q.slippage_bps.unwrap_or(10.0)),
-        participation_rate: None,
-    })?;
-    let capital = capital(q.capital)?;
+    let cost = costs(&q)?;
+    let capital = q.capital.unwrap_or(1_000_000.0);
+    if !(1_000.0..=1e10).contains(&capital) {
+        return Err(ApiError::BadRequest(
+            "capital 应在 1000 到 100 亿之间".into(),
+        ));
+    }
     let pool = pool_query!(q);
     let universe = pool.universe()?;
     let prep = pool.prep()?;
@@ -483,7 +517,7 @@ async fn factor_portfolio(
         universe: universe.clone(),
         step: rebalance,
     };
-    let names: HashMap<String, String> = market::securities(&s.pool).await?.names;
+    let names: HashMap<String, String> = securities::load(&s.pool).await?.names;
     let panel = factor_lab::load(&s.pool, &spec)
         .await?
         .ok_or_else(|| ApiError::BadRequest("所选区间内没有日线".into()))?;
@@ -504,11 +538,7 @@ async fn factor_portfolio(
         weights,
         neutralize: prep.neutralize,
         exclude_small_pct: prep.exclude_small_pct,
-        universe: Definition {
-            universe,
-            ..Definition::any_stock()
-        }
-        .describe_universe(),
+        universe: universe.describe(),
         horizon: rebalance,
         top_n: Some(top_n),
         buffer: Some(buffer),
@@ -531,13 +561,12 @@ async fn factor_portfolio(
         all.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (all.len() - 1) as f64
     });
     let dsr = research::deflated_sharpe(&returns, n, var);
-    let m = research_manifest(
+    let m = run_manifest(
         &s,
         &config,
         outcome.summary.start,
         outcome.summary.end,
-        &cost,
-        "factor_portfolio_deflated_sharpe",
+        "factor_portfolio",
         n,
     )
     .await?;
@@ -552,7 +581,7 @@ async fn factor_portfolio(
     .await?;
     Ok(Json(FactorPortfolioResult {
         config,
-        costs: costs_echo(&cost),
+        costs: cost,
         manifest: m,
         deflated_sharpe: dsr,
         outcome,

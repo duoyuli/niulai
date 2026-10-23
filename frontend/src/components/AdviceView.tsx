@@ -69,7 +69,7 @@ function Body({
   onRefresh: () => void;
 }) {
   const a = s.advice;
-  const sells = a.items.filter((i) => i.action === "sell" || i.action === "reduce");
+  const sells = a.items.filter((i) => i.action === "sell");
   const buys = a.items.filter((i) => i.action === "buy");
   const rest = a.items.filter((i) => i.action === "hold" || i.action === "wait");
   const pending = [...sells, ...buys].filter((i) => !s.states[i.key]).length;
@@ -100,7 +100,7 @@ function Body({
               className={buttonClass("ghost")}
               disabled={refreshing}
               onClick={onRefresh}
-              title="按现在的持仓和最新的巡检结果重新生成"
+              title="按现在的持仓和最新的因子排名重新生成"
             >
               {refreshing ? "生成中…" : "重新生成"}
             </button>
@@ -111,19 +111,9 @@ function Body({
             正在按最新的持仓和设置更新建议，下面还是更新前的一份，几秒后自动换成新的。
           </p>
         )}
-        {a.settings_hint && (
-          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-            {a.settings_hint}。
-            {!readonly && (
-              <Link to="?tab=settings" className="ml-1 underline">
-                去设置
-              </Link>
-            )}
-          </p>
-        )}
         {latestBar && latestBar > a.trade_date && (
           <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-            已经有 {latestBar} 的日线，新的运营建议等巡检完成后自动生成。
+            已经有 {latestBar} 的日线，新的运营建议等数据同步完成后自动生成。
           </p>
         )}
         {a.notes.map((n) => (
@@ -147,7 +137,7 @@ function Body({
         <Card title={`买入（${dayLabel(a.next_date)}开盘后，开盘价不超过上限才买）`}>
           <OrderTable accountId={accountId} s={s} items={buys} readonly={readonly} kind="buy" />
           <p className="mt-2 text-xs text-zinc-500">
-            开盘价高于「最高买入价」就是追高，这只放弃；开盘一字涨停买不进，这条作废。也可以直接按最高买入价挂限价单。买入后的卖出由策略决定。
+            开盘价高于「最高买入价」就是追高，这只放弃；开盘一字涨停买不进，这条作废。也可以直接按最高买入价挂限价单。
           </p>
         </Card>
       )}
@@ -186,10 +176,8 @@ function Body({
             按 {a.trade_date} 收盘价估算，总资产 {yuan(a.total_assets)}。
           </p>
         </Card>
-        <Card title={`${a.trade_date} 收盘出现买点、但没选上的`}>
-          {a.skipped.length === 0 ? (
-            <p className="text-sm text-zinc-400">没有</p>
-          ) : (
+        {a.skipped.length > 0 && (
+          <Card title="排名靠前、但没买的">
             <ul className="space-y-1 text-sm">
               {a.skipped.map((k) => (
                 <li key={k.thscode}>
@@ -200,8 +188,8 @@ function Body({
                 </li>
               ))}
             </ul>
-          )}
-        </Card>
+          </Card>
+        )}
       </div>
       <p className="text-xs text-zinc-400">
         建议只根据规则和已经发生的数据，不预测涨跌，也不保证收益。参考价是 {a.trade_date} 的收盘价，实际成交以券商为准。
@@ -331,10 +319,7 @@ function OrderTable({
 
 /** 一条建议的理由：规则、支持的数字、需要注意、怎么做，以及 K 线链接 */
 function ItemDetail({ item }: { item: AdviceItem }) {
-  const trade = item.action === "sell" || item.action === "reduce" || item.action === "buy";
-  const chart = item.strategy_id
-    ? `/securities/${item.thscode}?overlay=strategy:${item.strategy_id},ind:ma:20,ind:ma:60`
-    : `/securities/${item.thscode}`;
+  const trade = item.action === "sell" || item.action === "buy";
   return (
     <div className="flex flex-col gap-3 py-1 text-sm">
       <section>
@@ -369,8 +354,8 @@ function ItemDetail({ item }: { item: AdviceItem }) {
           </ul>
         </section>
       )}
-      <Link to={chart} className="self-start text-accent hover:underline">
-        看 K 线{item.strategy_id ? "和策略买卖点" : ""} →
+      <Link to={`/securities/${item.thscode}`} className="self-start text-accent hover:underline">
+        看 K 线 →
       </Link>
     </div>
   );

@@ -1,4 +1,4 @@
-//! 资产扩展：统一分析、策略和账户主流程，按资产类型加载独立数据与交易规则。
+//! 资产类型：股票和交易所 ETF 的日线表和交易规则（每手股数、印花税）。
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AssetType {
@@ -22,67 +22,29 @@ impl AssetType {
             Self::Etf => "etf",
         }
     }
-}
 
-/// 资产扩展提供数据表和交易规则；上层编排只依赖这个能力边界。
-pub trait AssetExtension: Sync {
-    fn asset_type(&self) -> AssetType;
-    fn bar_table(&self) -> &'static str;
-    fn uses_stock_limit_pool(&self) -> bool;
-    fn stamp_tax_rate(&self) -> f64;
-    fn lot_rule(&self, board: &str) -> (i64, i64);
-}
-
-struct StockExtension;
-struct EtfExtension;
-
-impl AssetExtension for StockExtension {
-    fn asset_type(&self) -> AssetType {
-        AssetType::Stock
-    }
-    fn bar_table(&self) -> &'static str {
-        "mkt.stock_bar_1d"
-    }
-    fn uses_stock_limit_pool(&self) -> bool {
-        true
-    }
-    fn stamp_tax_rate(&self) -> f64 {
-        0.0005
-    }
-    fn lot_rule(&self, board: &str) -> (i64, i64) {
-        match board {
-            "star" => (200, 1),
-            "bse" => (100, 1),
-            _ => (100, 100),
+    pub const fn bar_table(self) -> &'static str {
+        match self {
+            Self::Stock => "mkt.stock_bar_1d",
+            Self::Etf => "mkt.etf_bar_1d",
         }
     }
-}
 
-impl AssetExtension for EtfExtension {
-    fn asset_type(&self) -> AssetType {
-        AssetType::Etf
+    /// 卖出印花税率；ETF 不收
+    pub const fn stamp_tax_rate(self) -> f64 {
+        match self {
+            Self::Stock => 0.0005,
+            Self::Etf => 0.0,
+        }
     }
-    fn bar_table(&self) -> &'static str {
-        "mkt.etf_bar_1d"
-    }
-    fn uses_stock_limit_pool(&self) -> bool {
-        false
-    }
-    fn stamp_tax_rate(&self) -> f64 {
-        0.0
-    }
-    fn lot_rule(&self, _board: &str) -> (i64, i64) {
-        (100, 100)
-    }
-}
 
-static STOCK: StockExtension = StockExtension;
-static ETF: EtfExtension = EtfExtension;
-
-pub fn extension(kind: AssetType) -> &'static dyn AssetExtension {
-    match kind {
-        AssetType::Stock => &STOCK,
-        AssetType::Etf => &ETF,
+    /// (买入最少, 递增)：科创板 200 股起、1 股递增，北交所 100 股起、1 股递增，其余 100 股
+    pub fn lot_rule(self, board: &str) -> (i64, i64) {
+        match (self, board) {
+            (Self::Stock, "star") => (200, 1),
+            (Self::Stock, "bse") => (100, 1),
+            _ => (100, 100),
+        }
     }
 }
 
@@ -91,15 +53,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extensions_keep_data_and_trade_rules_separate() {
-        let stock = extension(AssetType::Stock);
-        let etf = extension(AssetType::Etf);
-        assert_eq!(stock.bar_table(), "mkt.stock_bar_1d");
-        assert_eq!(etf.bar_table(), "mkt.etf_bar_1d");
-        assert!(stock.uses_stock_limit_pool());
-        assert!(!etf.uses_stock_limit_pool());
-        assert_eq!(stock.lot_rule("star"), (200, 1));
-        assert_eq!(etf.lot_rule(""), (100, 100));
-        assert_eq!(etf.stamp_tax_rate(), 0.0);
+    fn data_and_trade_rules_follow_asset_type() {
+        assert_eq!(AssetType::Stock.bar_table(), "mkt.stock_bar_1d");
+        assert_eq!(AssetType::Etf.bar_table(), "mkt.etf_bar_1d");
+        assert_eq!(AssetType::Stock.lot_rule("star"), (200, 1));
+        assert_eq!(AssetType::Etf.lot_rule("star"), (100, 100));
+        assert_eq!(AssetType::Etf.stamp_tax_rate(), 0.0);
     }
 }

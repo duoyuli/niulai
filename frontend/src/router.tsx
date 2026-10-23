@@ -18,8 +18,6 @@ const AccountsPage = page(() => import("./pages/AccountsPage"), "AccountsPage");
 const GuidePage = page(() => import("./pages/GuidePage"), "GuidePage");
 const HotPage = page(() => import("./pages/HotPage"), "HotPage");
 const IndexDetailPage = page(() => import("./pages/IndexDetailPage"), "IndexDetailPage");
-const IndicatorDetailPage = page(() => import("./pages/IndicatorsPage"), "IndicatorDetailPage");
-const IndicatorsPage = page(() => import("./pages/IndicatorsPage"), "IndicatorsPage");
 const IndicesPage = page(() => import("./pages/IndicesPage"), "IndicesPage");
 const MePage = page(() => import("./pages/MePage"), "MePage");
 const OperationLogsPage = page(() => import("./pages/OperationLogsPage"), "OperationLogsPage");
@@ -27,12 +25,6 @@ const ResearchPage = page(() => import("./pages/ResearchPage"), "ResearchPage");
 const RunDetailPage = page(() => import("./pages/RunDetailPage"), "RunDetailPage");
 const SecurityDetailPage = page(() => import("./pages/SecurityDetailPage"), "SecurityDetailPage");
 const SetupPage = page(() => import("./pages/SetupPage"), "SetupPage");
-const SignalEditorPage = page(() => import("./pages/SignalEditorPage"), "SignalEditorPage");
-const SignalDetailPage = page(() => import("./pages/SignalsPage"), "SignalDetailPage");
-const SignalsPage = page(() => import("./pages/SignalsPage"), "SignalsPage");
-const StrategiesPage = page(() => import("./pages/StrategiesPage"), "StrategiesPage");
-const StrategyEditorPage = page(() => import("./pages/StrategyEditorPage"), "StrategyEditorPage");
-const StrategyPage = page(() => import("./pages/StrategyPage"), "StrategyPage");
 const SyncPage = page(() => import("./pages/SyncPage"), "SyncPage");
 const UsersPage = page(() => import("./pages/UsersPage"), "UsersPage");
 const WatchlistPage = page(() => import("./pages/WatchlistPage"), "WatchlistPage");
@@ -50,45 +42,7 @@ export const router = createBrowserRouter([
           { path: "/accounts", element: <AccountsPage /> },
           { path: "/accounts/new", element: <AccountNewPage /> },
           { path: "/accounts/:id", element: <AccountPage /> },
-          { path: "/strategies", element: <StrategiesPage /> },
-          {
-            path: "/strategies/new",
-            element: (
-              <AdminOnly>
-                <StrategyEditorPage />
-              </AdminOnly>
-            ),
-          },
-          { path: "/strategies/:id", element: <StrategyPage /> },
-          {
-            path: "/strategies/:id/edit",
-            element: (
-              <AdminOnly>
-                <StrategyEditorPage />
-              </AdminOnly>
-            ),
-          },
-          { path: "/signals", element: <SignalsPage /> },
-          {
-            path: "/signals/new",
-            element: (
-              <AdminOnly>
-                <SignalEditorPage />
-              </AdminOnly>
-            ),
-          },
-          { path: "/signals/:key", element: <SignalDetailPage /> },
-          {
-            path: "/signals/:key/edit",
-            element: (
-              <AdminOnly>
-                <SignalEditorPage />
-              </AdminOnly>
-            ),
-          },
-          { path: "/indicators", element: <IndicatorsPage /> },
           { path: "/research", element: <ResearchPage /> },
-          { path: "/indicators/:id", element: <IndicatorDetailPage /> },
           { path: "/watchlist", element: <WatchlistPage /> },
           { path: "/securities/:thscode", element: <SecurityDetailPage /> },
           { path: "/hot", element: <HotPage /> },

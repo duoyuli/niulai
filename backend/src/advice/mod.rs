@@ -1,18 +1,16 @@
-//! 每日调仓建议：每次同步加巡检完成后，为每个账户生成一份「明天怎么操作」。
+//! 每日调仓建议：每次同步完成后，为每个账户生成一份「明天怎么操作」。
 //!
+//! - `ranking`：按账户的因子给全市场排名，判断调仓日；
 //! - `generate`：纯函数，从输入算出建议和每条的理由；
-//! - `factor`：多因子账户的排名和调仓建议；
 //! - `inputs`：从数据库组装输入；
-//! - `backtest`：账户规则回测，供用户主动研究；不参与账户建议，也不由后台定期重算；
 //! - `review`：过去的建议之后 5、10、20 个交易日的实际涨跌；
 //! - 本文件：保存、重新生成和每天为所有账户生成建议。
 //!
 //! 依赖方向：advice 读 account 和 analysis，analysis 不知道账户的存在。规则见 docs/domains/accounts.md。
 
-pub mod backtest;
-pub mod factor;
 pub mod generate;
 pub mod inputs;
+pub mod ranking;
 pub mod review;
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -21,7 +19,7 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 
 use crate::account::{self, Account};
-use generate::{Advice, RULES_VERSION};
+use generate::Advice;
 
 /// 一份保存下来的建议，以及用户对每条的处理
 #[derive(Serialize, ToSchema)]
@@ -29,7 +27,6 @@ pub struct StoredAdvice {
     pub advice_id: i64,
     pub trade_date: NaiveDate,
     pub created_at: DateTime<Utc>,
-    pub rules_version: i32,
     pub advice: Advice,
     /// item key → executed / skipped
     pub states: std::collections::BTreeMap<String, String>,
@@ -134,11 +131,10 @@ pub async fn generate_for(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("INSERT INTO app.advice (advice_id, account_id, trade_date, rules_version, input, result) VALUES ($1, $2, $3, $4, $5, $6)")
+    sqlx::query("INSERT INTO app.advice (advice_id, account_id, trade_date, input, result) VALUES ($1, $2, $3, $4, $5)")
         .bind(id)
         .bind(acc.account_id)
         .bind(sh.trade_date)
-        .bind(RULES_VERSION)
         .bind(serde_json::to_value(&input)?)
         .bind(serde_json::to_value(&advice)?)
         .execute(&mut *tx)
@@ -146,7 +142,7 @@ pub async fn generate_for(
     for item in &advice.items {
         let side = match item.action {
             generate::Action::Buy => Some("buy"),
-            generate::Action::Sell | generate::Action::Reduce => Some("sell"),
+            generate::Action::Sell => Some("sell"),
             _ => None,
         };
         let Some(side) = side else { continue };
@@ -175,9 +171,9 @@ pub async fn generate_for(
     Ok(id)
 }
 
-/// 持仓、现金或设置改了之后：立即重新生成这个账户的建议。还没有巡检结果时不生成
+/// 持仓、现金或设置改了之后：立即重新生成这个账户的建议。核心数据没齐或还没有日线时不生成
 pub async fn regenerate(pool: &PgPool, acc: &Account) -> anyhow::Result<Option<i64>> {
-    let Some(sh) = inputs::shared(pool, Some(&acc.rules)).await? else {
+    let Some(sh) = inputs::shared(pool).await? else {
         return Ok(None);
     };
     Ok(Some(generate_for(pool, &sh, acc).await?))
@@ -192,9 +188,7 @@ fn pending() -> &'static std::sync::Mutex<std::collections::HashMap<i64, bool>> 
 
 /// 这个账户的建议是否正在后台重新生成
 pub fn regenerating(account_id: i64) -> bool {
-    pending()
-        .lock()
-        .is_ok_and(|m| m.contains_key(&account_id))
+    pending().lock().is_ok_and(|m| m.contains_key(&account_id))
 }
 
 /// 在后台重新生成这个账户的建议，保存持仓、现金或设置的请求不用等它。同一账户同时只生成一份；
@@ -251,11 +245,13 @@ async fn current_id(
     .await
 }
 
-/// 为所有账户生成最新交易日的建议。`replace` 为 true 时（巡检刚重跑过、策略表现刚统计完）连已有的一起重新生成，
-/// 但用户已经处理过某一条（执行或不做）的保留，免得建议在手上变了
+/// 为所有账户生成最新交易日的建议。`replace` 为 true 时（同步刚完成，日线有变化）清掉因子排名缓存、
+/// 连已有的一起重新生成，但用户已经处理过某一条（执行或不做）的保留，免得建议在手上变了
 pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> {
-    if !replace {
-        let Some(trade_date) = inputs::latest_screen_date(pool).await? else {
+    if replace {
+        ranking::clear();
+    } else {
+        let Some(trade_date) = crate::analysis::market::resolve_date(pool, None).await? else {
             return Ok(0);
         };
         let needed: bool = sqlx::query_scalar(
@@ -275,7 +271,7 @@ pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> 
             return Ok(0);
         }
     }
-    let Some(sh) = inputs::shared(pool, None).await? else {
+    let Some(sh) = inputs::shared(pool).await? else {
         return Ok(0);
     };
     account::corp::apply(pool, sh.trade_date).await?;
@@ -305,35 +301,17 @@ pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> 
     Ok(n)
 }
 
-/// 执行循环每分钟调一次：
-/// - 参加巡检的策略在最新交易日还没有巡检（例如刚部署、刚加了内置策略）时补一次巡检，每天最多一次；
-/// - 还没有当天建议的账户补上；
-/// - 账户建议只使用用户勾选的策略和当前规则，不用历史回测数字做决策
+/// 执行循环每分钟调一次：还没有最新交易日建议的账户补上（例如刚建账户、刚部署）。
+/// 同步还在运行时日线可能只有一部分，等它结束后由同步完成事件统一生成
 pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
-    let latest_bar = crate::analysis::market::resolve_date(pool, None).await?;
-    let screened = inputs::latest_screen_date(pool).await?;
-    let needs_screen = match latest_bar {
-        Some(latest) => match screened {
-            Some(d) if d == latest => !inputs::screening_complete(pool, latest).await?,
-            _ => true,
-        },
-        None => false,
-    };
-    if needs_screen
-        && crate::scheduling::claim(pool, "builtin_screen", crate::time::today_cn(), "day").await?
-    {
-        tracing::info!("参加巡检的策略在最新交易日还没有巡检，补一次");
-        if let Err(e) = crate::analysis::screener::run_and_store(pool, None, None).await {
-            if let Err(release_error) =
-                crate::scheduling::release_claim(pool, "builtin_screen", crate::time::today_cn())
-                    .await
-            {
-                tracing::error!(error = %format!("{release_error:#}"), "撤销巡检调度标记失败");
-            }
-            return Err(e);
-        }
+    let syncing: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM ops.run WHERE kind = 'incremental' AND status = 'running')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !syncing {
+        refresh_all(pool, false).await?;
     }
-    refresh_all(pool, false).await?;
     Ok(())
 }
 
@@ -343,15 +321,15 @@ pub async fn load(
     account_id: i64,
     date: Option<NaiveDate>,
 ) -> anyhow::Result<Option<StoredAdvice>> {
-    let row: Option<(i64, NaiveDate, DateTime<Utc>, i32, serde_json::Value)> = sqlx::query_as(
-        "SELECT advice_id, trade_date, created_at, rules_version, result FROM app.advice
+    let row: Option<(i64, NaiveDate, DateTime<Utc>, serde_json::Value)> = sqlx::query_as(
+        "SELECT advice_id, trade_date, created_at, result FROM app.advice
          WHERE account_id = $1 AND superseded_by IS NULL AND ($2::date IS NULL OR trade_date = $2) ORDER BY trade_date DESC LIMIT 1",
     )
     .bind(account_id)
     .bind(date)
     .fetch_optional(pool)
     .await?;
-    let Some((advice_id, trade_date, created_at, rules_version, result)) = row else {
+    let Some((advice_id, trade_date, created_at, result)) = row else {
         return Ok(None);
     };
     let states: Vec<(String, String)> =
@@ -363,7 +341,6 @@ pub async fn load(
         advice_id,
         trade_date,
         created_at,
-        rules_version,
         advice: serde_json::from_value(result)?,
         states: states.into_iter().collect(),
     }))
@@ -391,7 +368,6 @@ pub struct AdviceDay {
     pub trade_date: NaiveDate,
     pub headline: String,
     pub sells: usize,
-    pub reduces: usize,
     pub buys: usize,
     /// 用户点了「已执行」的条数
     pub executed: i64,
@@ -419,7 +395,6 @@ pub async fn history(pool: &PgPool, account_id: i64, limit: i64) -> anyhow::Resu
                 trade_date,
                 headline: a.headline.clone(),
                 sells: count(generate::Action::Sell),
-                reduces: count(generate::Action::Reduce),
                 buys: count(generate::Action::Buy),
                 executed,
                 skipped,

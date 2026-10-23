@@ -18,7 +18,7 @@
 <a id="schedules"></a>
 **执行频率**：
 
-- 每个交易日收盘后：日线（`a_share.snapshot`、`index.snapshot`、ETF 的 `fund.market_snapshot`）、公司行动（`a_share.corp_action_dump`，每天 1 个任务：取一次签名链接、再下载一次文件，影响复权）、只有当天值的 `a_share.valuation`、`a_share.auction_final`、`special.anomaly_reason`，以及涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`，三个池各 1 次请求）。涨跌停池改成每天同步，是因为内部计算的涨停、连板、炸板信号以它为准；每周同步会让最近几天的名单滞后。
+- 每个交易日收盘后：日线（`a_share.snapshot`、`index.snapshot`、ETF 的 `fund.market_snapshot`）、公司行动（`a_share.corp_action_dump`，每天 1 个任务：取一次签名链接、再下载一次文件，影响复权）、只有当天值的 `a_share.valuation`、`a_share.auction_final`、`special.anomaly_reason`，以及涨跌停池（`special.limit_up_pool`、`limit_down_pool`、`limit_break_pool`，三个池各 1 次请求）。涨跌停池每天同步，是因为市场概况的涨停跌停家数和热点页面以它为准；每周同步会让最近几天的名单滞后。
 - 每周一次（默认周六 08:00）：其余已开启的数据集。按交易日或时间窗口同步的数据集每周从游标往后补，不会漏掉中间的日子。
 - 时间可以在同步页上修改，各计划的规则见 [定时调度](../architecture/sync_pipeline.md#scheduling)。
 - 指数成分改为每周快照，成分变化的记录精度是周。
@@ -54,7 +54,7 @@
 
 | 数据集 | 内容 | 历史 |
 | --- | --- | --- |
-| `special.limit_up_pool` | 涨停股（涨停原因、首次涨停时间、连板天数、封单额、是否 ST）。每天同步，内部计算的涨跌停、连板信号以它为准 | 2020-07-22 起，1,511 个交易日、约 9.7 万行，平均每天约 64 只；没有北交所（`.BJ` 0 行），每天有 1 行 `thscode` 为空（`ticker` 有值，按「不在池内」处理） |
+| `special.limit_up_pool` | 涨停股（涨停原因、首次涨停时间、连板天数、封单额、是否 ST）。每天同步，市场概况的涨停家数和热点页面以它为准 | 2020-07-22 起，1,511 个交易日、约 9.7 万行，平均每天约 64 只；没有北交所（`.BJ` 0 行），每天有 1 行 `thscode` 为空（`ticker` 有值，按「不在池内」处理） |
 | `special.limit_down_pool`、`special.limit_break_pool` | 跌停股、炸板股。每天同步，有名单的日期以名单为准 | 最近一年（2025-10-16 起）；没有北交所 |
 | `special.limit_up_ladder` | 最近 30 个交易日的连板梯队 | 每周重取，按日期积累 |
 | `special.limit_up_stats` | 封板率、涨停家数、各连板高度的家数 | 最近一年 |
@@ -68,7 +68,7 @@
 <a id="other_assets"></a>
 ## 其他资产
 
-- **基金**：交易所 ETF 的资料（`fund.profile`）、历史日线（`fund.etf_bar_1d`，供应商前复权，约 5 年）和当天快照（`fund.market_snapshot`）是 P1、默认开启，接入统一的证券、指标、策略、回测和账户流程。其余基金数据集都是 P2、P3、默认关闭：净值（约 5 年）、分红、持仓、资产配置、行业配置、持有人、财务、基金经理、基金公司、新发基金、QDII 额度；LOF、REITs 和场外基金不进入分析流程。
+- **基金**：交易所 ETF 的资料（`fund.profile`）、历史日线（`fund.etf_bar_1d`，供应商前复权，约 5 年）和当天快照（`fund.market_snapshot`）是 P1、默认开启，接入统一的证券、K 线和账户流程（因子研究和排名只看股票）。其余基金数据集都是 P2、P3、默认关闭：净值（约 5 年）、分红、持仓、资产配置、行业配置、持有人、财务、基金经理、基金公司、新发基金、QDII 额度；LOF、REITs 和场外基金不进入分析流程。
 
 以下期货、期权、港股新股数据集都是 P2、P3，默认关闭。
 - **期货**：品种（91 个）、板块、合约、主力合约和次主力合约（每日快照积累主力切换历史）、主连、商品指数、日 K、基差（约 5 年）、持仓、仓单。`futures.positions_company_variety`、`futures.positions_contract` 使用尚未实现的 `cross` 分区，开启后规划会失败。

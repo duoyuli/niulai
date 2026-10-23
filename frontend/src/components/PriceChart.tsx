@@ -3,11 +3,8 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
-  createSeriesMarkers,
   HistogramSeries,
   type IChartApi,
-  LineSeries,
-  type SeriesMarker,
   type Time,
 } from "lightweight-charts";
 import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -18,30 +15,8 @@ import { fmtBig, fmtPercent, fmtPrice, toNumber, upDownClass } from "../lib/form
 const UP = "#d93a3a";
 const DOWN = "#16a05d";
 
-/** 叠加的一条指标线。pane 为 price 时画在 K 线上（价格类指标），否则同名的画在 K 线下方同一个副图里 */
-export interface ChartLine {
-  key: string;
-  label: string;
-  color: string;
-  pane: "price" | string;
-  points: { date: string; value: number }[];
-  /** 悬停时数值的格式 */
-  format?: (v: number) => string;
-}
-
-/** K 线上的一个标记：信号出现、买点、卖点 */
-export interface ChartMarker {
-  date: string;
-  position: "above" | "below";
-  color: string;
-  shape: "arrowUp" | "arrowDown" | "circle";
-  text?: string;
-}
-
 interface Props {
   bars: Bar[];
-  lines?: ChartLine[];
-  markers?: ChartMarker[];
   height?: number;
   /** 价格小数位：个股 2 位，指数 2 位 */
   digits?: number;
@@ -68,9 +43,9 @@ interface Brush {
 }
 
 // @project-doc docs/architecture/frontend.md#conventions
-/** K 线 + 成交量 + 叠加的指标和信号。A 股配色：红涨绿跌。
+/** K 线 + 成交量。A 股配色：红涨绿跌。
  * 在图上按住鼠标左右拖动框选一段时间，松开后放大到这段；滚轮缩放，拖动底部时间轴平移，「还原」回到全部 */
-export function PriceChart({ bars, lines, markers, height = 460, digits = 2 }: Props) {
+export function PriceChart({ bars, height = 460, digits = 2 }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const dark = useDarkMode();
@@ -144,38 +119,6 @@ export function PriceChart({ bars, lines, markers, height = 460, digits = 2 }: P
     );
     chart.panes()[1]?.setStretchFactor(0.25);
 
-    // 副图：每组一个，放在成交量下面
-    const panes = [...new Set((lines ?? []).filter((l) => l.pane !== "price").map((l) => l.pane))];
-    for (const l of lines ?? []) {
-      const pane = l.pane === "price" ? 0 : 2 + panes.indexOf(l.pane);
-      const series = chart.addSeries(
-        LineSeries,
-        {
-          color: l.color,
-          lineWidth: 2,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        },
-        pane,
-      );
-      series.setData(l.points.map((p) => ({ time: p.date as Time, value: p.value })));
-    }
-    for (let i = 0; i < panes.length; i++) chart.panes()[2 + i]?.setStretchFactor(0.4);
-
-    const extra: SeriesMarker<Time>[] = (markers ?? []).map((m) => ({
-      time: m.date as Time,
-      position: m.position === "above" ? "aboveBar" : "belowBar",
-      shape: m.shape,
-      color: m.color,
-      text: m.text ?? "",
-    }));
-    // 标记太多时文字会叠在一起，只画箭头，含义看图下方的说明
-    const all = (extra.length > 40 ? extra.map((m) => ({ ...m, text: "" })) : extra).sort((a, b) =>
-      String(a.time).localeCompare(String(b.time)),
-    );
-    if (all.length > 0) createSeriesMarkers(candles, all);
-
     const byDate = new Map(rows.map((r) => [r.date, r]));
     chart.subscribeCrosshairMove((p) => {
       setHover(p.time ? (byDate.get(String(p.time)) ?? null) : null);
@@ -188,11 +131,9 @@ export function PriceChart({ bars, lines, markers, height = 460, digits = 2 }: P
       chart.remove();
       chartRef.current = null;
     };
-  }, [rows, lines, markers, dark, digits]);
+  }, [rows, dark, digits]);
 
   const shown = hover ?? rows.at(-1) ?? null;
-  // 每个副图加高一些，K 线不会被压扁
-  const subPanes = new Set((lines ?? []).filter((l) => l.pane !== "price").map((l) => l.pane)).size;
 
   /** 鼠标位置对应的 K 线下标；在价格轴上或图外时为空 */
   const indexAt = (e: PointerEvent<HTMLDivElement>): { x: number; i: number } | null => {
@@ -242,7 +183,7 @@ export function PriceChart({ bars, lines, markers, height = 460, digits = 2 }: P
 
   return (
     <div className="flex flex-col gap-2">
-      <Legend row={shown} digits={digits} lines={lines} />
+      <Legend row={shown} digits={digits} />
       <div
         className="relative w-full cursor-crosshair select-none"
         onPointerDown={onDown}
@@ -250,7 +191,7 @@ export function PriceChart({ bars, lines, markers, height = 460, digits = 2 }: P
         onPointerUp={onUp}
         onPointerCancel={() => setBrush(null)}
       >
-        <div ref={el} style={{ height: height + 140 * subPanes }} className="w-full" />
+        <div ref={el} style={{ height }} className="w-full" />
         {sel && (
           <div
             className="pointer-events-none absolute top-0 bottom-0 border-x border-accent/60 bg-accent/10"
@@ -280,8 +221,7 @@ export function PriceChart({ bars, lines, markers, height = 460, digits = 2 }: P
   );
 }
 
-function Legend({ row, digits, lines }: { row: Hover | null; digits: number; lines?: ChartLine[] }) {
-  const byLine = useMemo(() => (lines ?? []).map((l) => new Map(l.points.map((p) => [p.date, p.value]))), [lines]);
+function Legend({ row, digits }: { row: Hover | null; digits: number }) {
   if (!row) return null;
   const tone = upDownClass(row.change);
   return (
@@ -304,14 +244,6 @@ function Legend({ row, digits, lines }: { row: Hover | null; digits: number; lin
       </span>
       <span>量 {fmtBig(row.volume)}</span>
       <span>额 {fmtBig(row.amount)}</span>
-      {lines?.map((l, i) => {
-        const v = byLine[i]?.get(row.date);
-        return (
-          <span key={l.key} style={{ color: l.color }}>
-            {l.label} {v === undefined ? "—" : l.format ? l.format(v) : v.toFixed(2)}
-          </span>
-        );
-      })}
     </div>
   );
 }

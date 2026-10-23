@@ -1,7 +1,7 @@
 # ADR：账户的每日调仓建议
 
-- 状态：已采纳（accepted），2026-10-17。决策第 8 条中「策略过去表现保留为用户主动研究工具」已不再成立：它和三组参考值的回测在 2026-10-18 之后一直没有入口，代码已于 2026-10-23 删除；研究策略效果改用 [信号的过去表现](../domains/strategies.md#signal_stats) 和 [因子研究](../domains/factor_research.md)。
-- 相关文档：[账户与调仓建议](../domains/accounts.md)、[选股策略与诊断](../domains/strategies.md)、[ADR：多用户登录与角色](multi_user_login.md)。
+- 状态：已被取代（superseded），2026-10-23，由 [ADR：只保留多因子选股](factor_only.md) 取代：账户只按因子排名调仓，参考策略、`min_picks`、买入前回看和三组参考值都已删除。纯函数生成、输入快照、理由结构和「不读取回测数字」的原则保留在新的实现里。下文只解释当时的取舍。
+- 现状：[账户与调仓建议](../domains/accounts.md)、[ADR：多用户登录与角色](multi_user_login.md)。
 
 ## 背景
 

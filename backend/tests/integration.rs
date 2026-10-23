@@ -304,7 +304,7 @@ async fn adjustment_and_api_end_to_end() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
     let (st, _) = get("/api/v1/securities/NOPE.SH").await;
     assert_eq!(st, StatusCode::NOT_FOUND);
-    // 自选股：收藏、重复收藏、诊断、取消收藏
+    // 自选股：收藏、重复收藏、涨跌、取消收藏
     let send = |method: &str, uri: &str| {
         let app = app.clone();
         let req = Request::builder()
@@ -326,47 +326,20 @@ async fn adjustment_and_api_end_to_end() {
         send("PUT", "/api/v1/watchlist/NOPE.SH").await,
         StatusCode::NOT_FOUND
     );
-    let (st, body) = get("/api/v1/watchlist?fast=2&slow=3").await;
+    let (st, body) = get("/api/v1/watchlist").await;
     assert_eq!(st, StatusCode::OK);
-    let items = body["items"].as_array().unwrap();
+    let items = body.as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["name"], "贵州茅台");
     assert!(items[0]["close"].is_string(), "未复权收盘价是十进制字符串");
-    let diag = &items[0]["diagnosis"];
-    assert!(diag["change_1d"].is_number());
-    assert!(diag["ma"]["ma_slow"].is_number(), "4 根日线够算 3 日均线");
+    assert!(items[0]["change_1d"].is_number());
+    assert!(items[0]["change_20d"].is_null(), "4 根日线算不出 20 日涨跌");
     assert_eq!(
         send("DELETE", "/api/v1/watchlist/600519.SH").await,
         StatusCode::NO_CONTENT
     );
     let (_, body) = get("/api/v1/watchlist").await;
-    assert_eq!(body["items"].as_array().unwrap().len(), 0);
-
-    // 回测：均线交叉作为内置策略；每个交易日一个账户总值
-    let (_, strategies) = get("/api/v1/strategies").await;
-    let ma_strategy = strategies
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|s| s["template"] == "ma_cross_15_30")
-        .expect("均线交叉内置策略")["strategy_id"]
-        .as_i64()
-        .unwrap();
-    let strategy_uri =
-        format!("/api/v1/backtest/strategy?thscode=600519.SH&strategy_id={ma_strategy}");
-    let (st, bt) = get(&strategy_uri).await;
-    assert_eq!(st, StatusCode::OK, "{bt}");
-    assert_eq!(bt["equity"].as_array().unwrap().len(), 4);
-    assert_eq!(bt["summary"]["capital"], 100000.0);
-    let bad_cost_uri = format!(
-        "/api/v1/backtest/strategy?thscode=600519.SH&strategy_id={ma_strategy}&commission_rate=0.5"
-    );
-    let (st, _) = get(&bad_cost_uri).await;
-    assert_eq!(st, StatusCode::BAD_REQUEST);
-    let missing_uri =
-        format!("/api/v1/backtest/strategy?thscode=NOPE.SH&strategy_id={ma_strategy}");
-    let (st, _) = get(&missing_uri).await;
-    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(body.as_array().unwrap().len(), 0);
 
     let (st, body) = get("/api/v1/openapi.json").await;
     assert_eq!(st, StatusCode::OK);
@@ -502,29 +475,11 @@ async fn etf_domain_sync_and_analysis_path() {
         1
     );
 
-    let sec = niulai::analysis::market::securities(&db.pool)
-        .await
-        .unwrap();
+    let sec = niulai::analysis::securities::load(&db.pool).await.unwrap();
     assert_eq!(
         sec.meta["510300.SH"].asset_type,
-        niulai::analysis::indicators::AssetType::Etf
+        niulai::instrument::AssetType::Etf
     );
-    let def: niulai::analysis::strategy::Definition = serde_json::from_value(json!({
-        "universe": {"asset_types": ["etf"], "exclude_st": false, "min_price": null, "min_amount": null, "min_listed_days": null},
-        "all": [{"kind":"compare", "left":{"id":"change_pct"}, "op":">", "right":{"value":1.0}}]
-    }))
-    .unwrap();
-    let out = niulai::analysis::screener::screen(
-        &db.pool,
-        &[&def],
-        Some("2026-06-26".parse().unwrap()),
-        niulai::analysis::screener::Mode::Preview,
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(out.results[0].hits[0].thscode, "510300.SH");
-    assert_eq!(out.results[0].hits[0].asset_type, "etf");
 
     let engine = Engine::new(
         bare_settings("http://127.0.0.1:1", Some("test")),
@@ -543,10 +498,6 @@ async fn etf_domain_sync_and_analysis_path() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["bars"].as_array().unwrap().len(), 4);
     assert_eq!(body["adjust"], "qfq");
-    let (status, diagnosis) =
-        call(&app, "GET", "/api/v1/securities/510300.SH/diagnosis", None).await;
-    assert_eq!(status, StatusCode::OK, "{diagnosis}");
-    assert_eq!(diagnosis["dimensions"].as_array().unwrap().len(), 4);
     let (status, fundamentals) = call(
         &app,
         "GET",
@@ -579,43 +530,6 @@ async fn etf_domain_sync_and_analysis_path() {
     let (status, detail) = call(&app, "GET", &format!("/api/v1/accounts/{account_id}"), None).await;
     assert_eq!(status, StatusCode::OK, "{detail}");
     assert_eq!(detail["positions"][0]["asset_type"], "etf");
-    let (status, strategy) = call(
-        &app,
-        "POST",
-        "/api/v1/strategies",
-        Some(json!({
-            "name": "ETF 变化率测试",
-            "description": "ETF 集成测试",
-            "screening": false,
-            "show_on_today": false,
-            "definition": {
-                "universe": {"asset_types":["etf"],"exclude_st":false,"min_price":null,"min_amount":null,"min_listed_days":null},
-                "all": [{"kind":"compare","left":{"id":"change_pct"},"op":">","right":{"value":1.0}}],
-                "any": [], "exit": {"any": []}, "sort": {"by":{"id":"amount"},"desc":true}, "limit": 50
-            }
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{strategy}");
-    let strategy_id = strategy["strategy_id"].as_i64().unwrap();
-    let (status, backtest) = call(
-        &app,
-        "GET",
-        &format!("/api/v1/backtest/strategy?thscode=510300.SH&strategy_id={strategy_id}"),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{backtest}");
-    let (status, portfolio) = call(
-        &app,
-        "GET",
-        &format!(
-            "/api/v1/backtest/portfolio?strategy_id={strategy_id}&start=2026-06-24&end=2026-06-26"
-        ),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{portfolio}");
     db.drop().await;
 }
 
@@ -925,7 +839,7 @@ async fn login_is_required_and_lasts_30_days() {
     // 健康检查不用登录，其余接口要登录
     let (st, _) = call(&app, "GET", "/api/v1/health", None).await;
     assert_eq!(st, StatusCode::OK);
-    let (st, body) = call(&app, "GET", "/api/v1/strategies", None).await;
+    let (st, body) = call(&app, "GET", "/api/v1/accounts", None).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
     assert_eq!(body["code"], "unauthorized");
     let (st, _) = call(&app, "GET", "/api/v1/auth/me", None).await;
@@ -989,7 +903,7 @@ async fn login_is_required_and_lasts_30_days() {
     assert_eq!(resp.status(), StatusCode::OK);
     let resp = app
         .clone()
-        .oneshot(with("/api/v1/strategies", &cookie))
+        .oneshot(with("/api/v1/accounts", &cookie))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -1000,7 +914,7 @@ async fn login_is_required_and_lasts_30_days() {
     let forged = format!("{}{last}", &cookie[..cookie.len() - 1]);
     let resp = app
         .clone()
-        .oneshot(with("/api/v1/strategies", &forged))
+        .oneshot(with("/api/v1/accounts", &forged))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -1148,7 +1062,7 @@ async fn users_are_added_by_admins_and_members_only_touch_their_own_data() {
     .await;
     assert_eq!(st(&r), StatusCode::BAD_REQUEST);
 
-    // 普通用户：能看，不能改策略、不能进管理功能；第一次登录提醒改密码
+    // 普通用户：能看，不能进管理功能；第一次登录提醒改密码
     let mama = login(&app, "mama", &generated).await.unwrap();
     let (_, me) = call_as(&app, Some(&mama), "GET", "/api/v1/auth/me", None).await;
     assert_eq!(
@@ -1156,8 +1070,8 @@ async fn users_are_added_by_admins_and_members_only_touch_their_own_data() {
         (Some("member"), Some(true))
     );
     for (method, uri, want) in [
-        ("GET", "/api/v1/strategies", StatusCode::OK),
-        ("POST", "/api/v1/strategies", StatusCode::FORBIDDEN),
+        ("GET", "/api/v1/research/factors", StatusCode::OK),
+        ("POST", "/api/v1/sync/runs", StatusCode::FORBIDDEN),
         ("GET", "/api/v1/sync/runs", StatusCode::FORBIDDEN),
         ("GET", "/api/v1/setup", StatusCode::FORBIDDEN),
         ("GET", "/api/v1/users", StatusCode::FORBIDDEN),
@@ -1182,8 +1096,7 @@ async fn users_are_added_by_admins_and_members_only_touch_their_own_data() {
     .await;
     assert_eq!(st(&r), StatusCode::NO_CONTENT);
     let codes = |v: &Value| {
-        v["items"]
-            .as_array()
+        v.as_array()
             .unwrap()
             .iter()
             .map(|i| i["thscode"].as_str().unwrap().to_string())
@@ -1305,131 +1218,6 @@ async fn users_are_added_by_admins_and_members_only_touch_their_own_data() {
     )
     .await;
     assert_eq!(st(&r), StatusCode::TOO_MANY_REQUESTS, "{v}");
-    db.drop().await;
-}
-
-#[tokio::test]
-async fn backtest_runs_only_show_own_account_runs_to_members() {
-    let Some(db) = TestDb::create().await else {
-        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
-        return;
-    };
-    let app = niulai::api::router(
-        Engine::new(
-            bare_settings("http://127.0.0.1:1", Some("test")),
-            db.pool.clone(),
-        )
-        .await
-        .unwrap(),
-    );
-    let admin = login(&app, "admin", "secret-pass").await.unwrap();
-    let (r, v) = call_as(
-        &app,
-        Some(&admin),
-        "POST",
-        "/api/v1/users",
-        Some(json!({"username": "mama", "password": "mama-pass-1"})),
-    )
-    .await;
-    assert_eq!(r.status(), StatusCode::CREATED, "{v}");
-    let mama = login(&app, "mama", "mama-pass-1").await.unwrap();
-
-    let account_id = |v: &Value| v["summary"]["account"]["account_id"].as_i64().unwrap();
-    let (r, v) = call_as(
-        &app,
-        Some(&admin),
-        "POST",
-        "/api/v1/accounts",
-        Some(json!({"name": "管理员的账户", "cash": 100000})),
-    )
-    .await;
-    assert_eq!(r.status(), StatusCode::CREATED, "{v}");
-    let admin_account = account_id(&v);
-    let (r, v) = call_as(
-        &app,
-        Some(&mama),
-        "POST",
-        "/api/v1/accounts",
-        Some(json!({"name": "成员的账户", "cash": 100000})),
-    )
-    .await;
-    assert_eq!(r.status(), StatusCode::CREATED, "{v}");
-    let mama_account = account_id(&v);
-
-    let manifest = json!({
-        "strategy_definition_hash": "test",
-        "data_start": "2025-01-01",
-        "data_end": "2025-01-31",
-        "price_basis": "test",
-        "execution_model": "test",
-        "point_in_time_universe": true,
-        "derived_versions": {},
-        "trial_count": 1,
-        "validation_kind": "single_run_unvalidated",
-        "coverage": {
-            "instruments": 0,
-            "observed_bars": 0,
-            "missing_instruments": 0,
-            "unknown_state_instruments": 0
-        },
-        "delisted_policy": "test"
-    });
-    for account in [None, Some(admin_account), Some(mama_account)] {
-        sqlx::query(
-            "INSERT INTO ops.backtest_run
-             (account_id, mode, start_date, end_date, definition_hash, manifest, summary)
-             VALUES ($1, $2, '2025-01-01', '2025-01-31', 'test', $3, '[]'::jsonb)",
-        )
-        .bind(account)
-        .bind(if account.is_some() {
-            "account"
-        } else {
-            "single"
-        })
-        .bind(&manifest)
-        .execute(&db.pool)
-        .await
-        .unwrap();
-    }
-
-    let (r, v) = call_as(
-        &app,
-        Some(&admin),
-        "GET",
-        "/api/v1/backtest/runs?limit=10",
-        None,
-    )
-    .await;
-    assert_eq!(r.status(), StatusCode::OK, "{v}");
-    assert_eq!(v.as_array().unwrap().len(), 3, "管理员应看到全部运行：{v}");
-
-    let (r, v) = call_as(
-        &app,
-        Some(&mama),
-        "GET",
-        "/api/v1/backtest/runs?limit=10",
-        None,
-    )
-    .await;
-    assert_eq!(r.status(), StatusCode::OK, "{v}");
-    let account_ids = v
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|run| run["account_id"].as_i64())
-        .collect::<Vec<_>>();
-    assert!(
-        account_ids.contains(&None),
-        "普通用户应看到不带账户的运行：{v}"
-    );
-    assert!(
-        account_ids.contains(&Some(mama_account)),
-        "普通用户应看到自己账户的运行：{v}"
-    );
-    assert!(
-        !account_ids.contains(&Some(admin_account)),
-        "普通用户不能看到别人账户的运行：{v}"
-    );
     db.drop().await;
 }
 
@@ -2318,420 +2106,6 @@ async fn synthetic_stock(pool: &PgPool) {
 }
 
 #[tokio::test]
-async fn strategies_screening_diagnosis_and_backtests() {
-    let Some(db) = TestDb::create().await else {
-        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
-        return;
-    };
-    synthetic_stock(&db.pool).await;
-
-    let settings = bare_settings("http://127.0.0.1:1", Some("test"));
-    let engine = Engine::new(settings, db.pool.clone()).await.unwrap();
-    let app = logged_in(niulai::api::router(engine)).await;
-
-    // 首次启动时复制了全部模板
-    let (st, list) = call(&app, "GET", "/api/v1/strategies", None).await;
-    assert_eq!(st, StatusCode::OK);
-    assert_eq!(
-        list.as_array().unwrap().len(),
-        niulai::analysis::strategy::templates().len()
-    );
-    let (_, cat) = call(&app, "GET", "/api/v1/strategies/catalog", None).await;
-    assert_eq!(
-        cat["signals"].as_array().unwrap().len(),
-        niulai::analysis::signals::CATALOG.len()
-    );
-
-    // 试运行：最后一天放量（9 倍）且站在 20 日均线上方
-    let def = json!({
-        "universe": {"exclude_st": true, "min_price": 1, "min_amount": 1000},
-        "all": [
-            {"kind": "signal", "signal": "volume_surge", "params": {"ratio": 3}},
-            {"kind": "compare", "left": {"id": "close"}, "op": ">", "right": {"id": "ma", "n": 20}}
-        ],
-        "exit": {"stop_loss_pct": 5, "max_hold_days": 10}
-    });
-    let (st, body) = call(
-        &app,
-        "POST",
-        "/api/v1/strategies/preview",
-        Some(json!({"definition": def})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{body}");
-    assert_eq!(body["matched"], 1);
-    assert_eq!(body["hits"][0]["thscode"], "600000.SH");
-    assert!(
-        body["hits"][0]["reasons"][0]
-            .as_str()
-            .unwrap()
-            .contains("放量")
-    );
-
-    // 保存、巡检、查结果
-    let (st, created) = call(
-        &app,
-        "POST",
-        "/api/v1/strategies",
-        Some(json!({"name": "放量站上均线", "definition": def})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::CREATED, "{created}");
-    let id = created["strategy_id"].as_i64().unwrap();
-    let (st, run) = call(
-        &app,
-        "POST",
-        &format!("/api/v1/screening/run?strategy_id={id}"),
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{run}");
-    assert_eq!(run["scanned"], 1);
-    let (_, res) = call(
-        &app,
-        "GET",
-        &format!("/api/v1/strategies/{id}/results"),
-        None,
-    )
-    .await;
-    assert_eq!(res["hits"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        res["hits"][0]["is_new"], false,
-        "第一次巡检没有可比较的上一次"
-    );
-    // 补一次前一天（第 119 天，不满足）的巡检，再巡检最后一天：与前一天比是新入选
-    let (st, _) = call(
-        &app,
-        "POST",
-        &format!("/api/v1/screening/run?strategy_id={id}&date=2026-06-18"),
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-    call(
-        &app,
-        "POST",
-        &format!("/api/v1/screening/run?strategy_id={id}"),
-        None,
-    )
-    .await;
-    let (_, res) = call(
-        &app,
-        "GET",
-        &format!("/api/v1/strategies/{id}/results"),
-        None,
-    )
-    .await;
-    assert_eq!(res["trade_date"], "2026-06-19");
-    assert_eq!(res["hits"][0]["is_new"], true);
-    assert_eq!(res["dates"].as_array().unwrap().len(), 2);
-    assert_eq!(created["show_on_today"], true, "默认在今日展示");
-    let (st, upd) = call(
-        &app,
-        "PUT",
-        &format!("/api/v1/strategies/{id}"),
-        Some(json!({"name": "放量站上均线", "definition": def, "show_on_today": false})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{upd}");
-    assert_eq!(upd["show_on_today"], false);
-    assert_eq!(upd["screening"], true, "不在今日展示，照常巡检");
-    let (st, _) = call(
-        &app,
-        "PUT",
-        &format!("/api/v1/strategies/{id}"),
-        Some(json!({"name": "", "definition": def})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::BAD_REQUEST, "名称不能为空");
-
-    // 诊断、市场概况、回测
-    let (st, diag) = call(&app, "GET", "/api/v1/securities/600000.SH/diagnosis", None).await;
-    assert_eq!(st, StatusCode::OK, "{diag}");
-    assert_eq!(diag["dimensions"].as_array().unwrap().len(), 4);
-    assert!(
-        diag["strategies"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|s| s["strategy_id"] == id),
-        "当天满足刚保存的策略"
-    );
-    let (st, ov) = call(&app, "GET", "/api/v1/market/overview", None).await;
-    assert_eq!(st, StatusCode::OK);
-    assert_eq!(ov["stocks"], 1);
-    let (st, bt) = call(
-        &app,
-        "GET",
-        &format!("/api/v1/backtest/strategy?strategy_id={id}&thscode=600000.SH"),
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{bt}");
-    assert_eq!(bt["equity"].as_array().unwrap().len(), 120);
-    let (st, pf) = call(
-        &app,
-        "GET",
-        &format!("/api/v1/backtest/portfolio?strategy_id={id}&start=2026-01-01&max_positions=3"),
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{pf}");
-    assert_eq!(
-        pf["summary"]["signals"], 0,
-        "信号在最后一天，第二天没有日线，不能买入"
-    );
-    let (st, _) = call(
-        &app,
-        "GET",
-        "/api/v1/backtest/portfolio?strategy_id=99999",
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::NOT_FOUND);
-
-    let (st, _) = call(&app, "DELETE", &format!("/api/v1/strategies/{id}"), None).await;
-    assert_eq!(st, StatusCode::NO_CONTENT);
-    db.drop().await;
-}
-
-#[tokio::test]
-async fn signals_indicators_and_strategy_points() {
-    let Some(db) = TestDb::create().await else {
-        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
-        return;
-    };
-    synthetic_stock(&db.pool).await;
-    let settings = bare_settings("http://127.0.0.1:1", Some("test"));
-    let engine = Engine::new(settings, db.pool.clone()).await.unwrap();
-    let app = logged_in(niulai::api::router(engine)).await;
-
-    // 内置信号：能写成条件的给出定义和白话，特殊信号给出规则
-    let (st, list) = call(&app, "GET", "/api/v1/signals", None).await;
-    assert_eq!(st, StatusCode::OK, "{list}");
-    assert_eq!(
-        list.as_array().unwrap().len(),
-        niulai::analysis::signals::CATALOG.len()
-    );
-    // 不说明方向的信号（十字星等）是 neutral；连续上涨用「连续 N 天」写成条件
-    let (_, doji) = call(&app, "GET", "/api/v1/signals/doji", None).await;
-    assert_eq!(
-        (doji["tone"].as_str(), doji["special"].as_bool()),
-        (Some("neutral"), Some(true)),
-        "{doji}"
-    );
-    let (_, streak) = call(&app, "GET", "/api/v1/signals/up_streak", None).await;
-    assert!(
-        streak["explained"][0]
-            .as_str()
-            .unwrap()
-            .contains("连续 3 个交易日"),
-        "{streak}"
-    );
-    let (_, cross) = call(&app, "GET", "/api/v1/signals/ma_cross_up", None).await;
-    assert_eq!(cross["special"], false);
-    assert!(
-        cross["explained"][0].as_str().unwrap().contains("上穿"),
-        "{cross}"
-    );
-    assert!(cross["indicators"].as_array().unwrap().len() >= 2);
-    let (_, gap) = call(&app, "GET", "/api/v1/signals/gap_up", None).await;
-    assert_eq!(gap["special"], true);
-    assert!(gap["definition"].is_null());
-    let (st, _) = call(&app, "GET", "/api/v1/signals/nope", None).await;
-    assert_eq!(st, StatusCode::NOT_FOUND);
-
-    // 自定义信号：放量并站上 20 日均线
-    let def = json!({"match_all": true, "conditions": [
-        {"kind": "signal", "signal": "volume_surge", "params": {"ratio": 3}},
-        {"kind": "compare", "left": {"id": "close"}, "op": ">", "right": {"id": "ma", "n": 20}}
-    ]});
-    let (st, _) = call(
-        &app,
-        "POST",
-        "/api/v1/signals",
-        Some(json!({"name": " ", "definition": def})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::BAD_REQUEST, "名称不能为空");
-    let nested = json!({"conditions": [{"kind": "my_signal", "signal_id": 1}]});
-    let (st, _) = call(
-        &app,
-        "POST",
-        "/api/v1/signals",
-        Some(json!({"name": "套娃", "definition": nested})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::BAD_REQUEST, "自定义信号不能引用自定义信号");
-    let (st, sig) = call(
-        &app,
-        "POST",
-        "/api/v1/signals",
-        Some(json!({"name": "放量站上", "definition": def, "based_on": "volume_surge"})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::CREATED, "{sig}");
-    let sid = sig["signal_id"].as_i64().unwrap();
-    assert_eq!(sig["key"], format!("my-{sid}"));
-    assert_eq!(sig["group"], "我的信号");
-    assert_eq!(sig["explained"].as_array().unwrap().len(), 2);
-
-    let mine = json!({"condition": {"kind": "my_signal", "signal_id": sid}});
-    let (st, today) = call(
-        &app,
-        "POST",
-        "/api/v1/signals/today",
-        Some(json!({"target": mine})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{today}");
-    assert_eq!(today["matched"], 1);
-    assert_eq!(today["hits"][0]["thscode"], "600000.SH");
-    let (st, days) = call(
-        &app,
-        "POST",
-        "/api/v1/securities/600000.SH/signal-days",
-        Some(json!({"target": mine})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{days}");
-    assert_eq!(days["dates"], json!(["2026-06-19"]));
-    // 草稿不用保存也能看
-    let (st, stats) = call(
-        &app,
-        "POST",
-        "/api/v1/signals/stats",
-        Some(json!({"target": {"draft": def}, "years": 1})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{stats}");
-    assert_eq!(stats["occurrences"], 1);
-    assert_eq!(stats["horizons"].as_array().unwrap().len(), 3);
-    assert_eq!(
-        stats["horizons"][0]["samples"], 0,
-        "最后一天出现，没有后续数据"
-    );
-    assert_eq!(stats["recent"][0]["trade_date"], "2026-06-19");
-
-    // 策略用了它就不能删
-    let sdef =
-        json!({"all": [{"kind": "my_signal", "signal_id": sid}], "exit": {"max_hold_days": 5}});
-    let (st, strat) = call(
-        &app,
-        "POST",
-        "/api/v1/strategies",
-        Some(json!({"name": "用我的信号", "definition": sdef})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::CREATED, "{strat}");
-    let id = strat["strategy_id"].as_i64().unwrap();
-    let (_, sig) = call(&app, "GET", &format!("/api/v1/signals/my-{sid}"), None).await;
-    assert_eq!(sig["used_by"][0]["strategy_id"], id);
-    let (st, _) = call(&app, "DELETE", &format!("/api/v1/signals/my/{sid}"), None).await;
-    assert_eq!(st, StatusCode::CONFLICT);
-
-    // 巡检：今日买点；股票页上的买卖点
-    let (st, run) = call(
-        &app,
-        "POST",
-        &format!("/api/v1/screening/run?strategy_id={id}"),
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{run}");
-    let (_, res) = call(
-        &app,
-        "GET",
-        &format!("/api/v1/strategies/{id}/results"),
-        None,
-    )
-    .await;
-    assert_eq!(res["hits"].as_array().unwrap().len(), 1, "{res}");
-    assert_eq!(res["sells"].as_array().unwrap().len(), 0);
-    assert_eq!(res["holdings"].as_array().unwrap().len(), 0);
-    let (st, pts) = call(
-        &app,
-        "GET",
-        &format!("/api/v1/securities/600000.SH/strategy-points?strategy_id={id}"),
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{pts}");
-    assert_eq!(pts["today"], "buy");
-    assert_eq!(
-        pts["trades"].as_array().unwrap().len(),
-        0,
-        "买点在最后一天，还没有成交"
-    );
-
-    // 改定义：收盘价低于 20 日均线，今天就不满足了
-    let strict = json!({"conditions": [{"kind": "compare", "left": {"id": "close"}, "op": "<", "right": {"id": "ma", "n": 20}}]});
-    let (st, _) = call(
-        &app,
-        "PUT",
-        &format!("/api/v1/signals/my/{sid}"),
-        Some(json!({"name": "放量站上", "definition": strict})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-    let (_, today) = call(
-        &app,
-        "POST",
-        "/api/v1/signals/today",
-        Some(json!({"target": mine})),
-    )
-    .await;
-    assert_eq!(today["matched"], 0);
-
-    // 指标：说明、公式、常用写法、画图用的数值
-    let (st, inds) = call(&app, "GET", "/api/v1/indicators", None).await;
-    assert_eq!(st, StatusCode::OK);
-    let rsi = inds
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|i| i["id"] == "rsi")
-        .unwrap();
-    assert!(!rsi["formula"].as_str().unwrap().is_empty());
-    assert!(!rsi["examples"].as_array().unwrap().is_empty());
-    let ma = inds
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|i| i["id"] == "ma")
-        .unwrap();
-    assert!(
-        ma["signals"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|s| s["key"] == "ma_cross_up")
-    );
-    let (st, series) = call(
-        &app,
-        "GET",
-        "/api/v1/securities/600000.SH/indicator?id=ma&n=20",
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{series}");
-    assert_eq!(series["points"].as_array().unwrap().len(), 101);
-    let (st, _) = call(
-        &app,
-        "GET",
-        "/api/v1/securities/600000.SH/indicator?id=ma&n=0",
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::BAD_REQUEST);
-
-    call(&app, "DELETE", &format!("/api/v1/strategies/{id}"), None).await;
-    let (st, _) = call(&app, "DELETE", &format!("/api/v1/signals/my/{sid}"), None).await;
-    assert_eq!(st, StatusCode::NO_CONTENT);
-    db.drop().await;
-}
-
-#[tokio::test]
 async fn accounts_positions_and_daily_advice() {
     let Some(db) = TestDb::create().await else {
         eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
@@ -2759,96 +2133,7 @@ async fn accounts_positions_and_daily_advice() {
     let mama = login(&app, "mama", "mama-pass-1").await.unwrap();
     let st = |r: &axum::http::Response<()>| r.status();
 
-    // 内置策略：每个模板一行，只读、不能删
-    let (_, list) = call_as(&app, Some(&admin), "GET", "/api/v1/strategies", None).await;
-    let builtin: Vec<&Value> = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|s| s["builtin"] == true)
-        .collect();
-    assert_eq!(builtin.len(), niulai::analysis::strategy::templates().len());
-    let mut order: Vec<i64> = list
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| s["strategy_id"].as_i64().unwrap())
-        .collect();
-    order.reverse();
-    let (r, _) = call_as(
-        &app,
-        Some(&admin),
-        "PUT",
-        "/api/v1/strategies/order",
-        Some(json!({"strategy_ids": order})),
-    )
-    .await;
-    assert_eq!(st(&r), StatusCode::NO_CONTENT);
-    let (_, reordered) = call_as(&app, Some(&admin), "GET", "/api/v1/strategies", None).await;
-    assert_eq!(reordered[0]["strategy_id"], order[0]);
-    let b = builtin[0];
-    let id = b["strategy_id"].as_i64().unwrap();
-    let (r, _) = call_as(
-        &app,
-        Some(&admin),
-        "DELETE",
-        &format!("/api/v1/strategies/{id}"),
-        None,
-    )
-    .await;
-    assert_eq!(st(&r), StatusCode::CONFLICT);
-    let mut changed = json!({"name": "改个名", "description": b["description"], "definition": b["definition"], "screening": true, "show_on_today": false});
-    let (r, _) = call_as(
-        &app,
-        Some(&admin),
-        "PUT",
-        &format!("/api/v1/strategies/{id}"),
-        Some(changed.clone()),
-    )
-    .await;
-    assert_eq!(st(&r), StatusCode::CONFLICT, "内置策略不能改名");
-    changed["name"] = b["name"].clone();
-    let (r, v) = call_as(
-        &app,
-        Some(&admin),
-        "PUT",
-        &format!("/api/v1/strategies/{id}"),
-        Some(changed),
-    )
-    .await;
-    assert_eq!(st(&r), StatusCode::OK, "只改是否在今日展示可以：{v}");
-
-    // 规则的辅助：只返回参考值（三组风控参考值和多因子月度调仓）和全部可勾选的巡检策略，不展示历史回测数字
-    sqlx::query(
-        "INSERT INTO app.preset_stat (preset, rules_hash, end_date, result) VALUES ('balanced', 'h', '2026-06-30', $1)",
-    )
-    .bind(json!({"summary": {"start": "2023-06-30", "end": "2026-06-30", "total_return": 0.1, "annual_return": 0.03, "max_drawdown": 0.2,
-        "benchmark_name": null, "benchmark_return": null, "trades": 10, "win_rate": 0.5, "avg_positions": 3.0, "avg_cash_ratio": 0.2,
-        "strategies": 14, "avg_effective": 5.0}, "equity": []}))
-    .execute(&db.pool)
-    .await
-    .unwrap();
-    let (r, guide) = call_as(&app, Some(&mama), "GET", "/api/v1/rules/guide", None).await;
-    assert_eq!(st(&r), StatusCode::OK, "{guide}");
-    assert_eq!(guide["presets"].as_array().unwrap().len(), 4);
-    assert!(!guide["presets"][0]["design"].as_array().unwrap().is_empty());
-    assert!(
-        guide["presets"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|p| p.get("backtest").is_none())
-    );
-    assert!(guide["strategies"].as_array().unwrap().len() >= builtin.len());
-    assert!(
-        guide["strategies"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|s| s.get("stat").is_none() && s.get("effective").is_none())
-    );
-
-    // 普通用户建账户；还没有巡检时建议在等待
+    // 普通用户建账户：规则是组合 E
     let (r, v) = call_as(
         &app,
         Some(&mama),
@@ -2859,45 +2144,21 @@ async fn accounts_positions_and_daily_advice() {
     .await;
     assert_eq!(st(&r), StatusCode::CREATED, "{v}");
     let acc = v["summary"]["account"]["account_id"].as_i64().unwrap();
-    assert_eq!(
-        v["summary"]["account"]["rules"]["strategies"]
-            .as_array()
-            .unwrap()
-            .len(),
-        guide["strategies"].as_array().unwrap().len(),
-        "新账户保存创建时的策略快照",
-    );
+    let default_rules = v["summary"]["account"]["rules"].clone();
+    assert_eq!(default_rules["top_n"], 30);
+    assert_eq!(default_rules["factors"].as_array().unwrap().len(), 5);
     let base = format!("/api/v1/accounts/{acc}");
-    let (r, created_later) = call_as(
-        &app,
-        Some(&admin),
-        "POST",
-        "/api/v1/strategies",
-        Some(json!({"name": "账户创建后新增", "definition": builtin[0]["definition"].clone()})),
-    )
-    .await;
-    assert_eq!(st(&r), StatusCode::CREATED, "{created_later}");
-    let later_id = created_later["strategy_id"].as_i64().unwrap();
-    let (_, after_later) = call_as(&app, Some(&mama), "GET", &base, None).await;
-    assert!(
-        !after_later["summary"]["account"]["rules"]["strategies"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|id| id.as_i64() == Some(later_id)),
-        "新策略不能自动加入已有账户"
-    );
-    let rules = |cash: f64| json!({"name": "华泰主账户", "fees": {"commission_rate": 0.00025, "min_commission": 5}, "rules": {"min_cash_pct": cash}});
+    let rules = |cash: f64| {
+        let mut r = default_rules.clone();
+        r["min_cash_pct"] = json!(cash);
+        json!({"name": "华泰主账户", "fees": {"commission_rate": 0.00025, "min_commission": 5}, "rules": r})
+    };
     let (r, _) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(95.0))).await;
     assert_eq!(st(&r), StatusCode::BAD_REQUEST, "保留现金比例超出范围");
-    let mut none = rules(10.0);
-    none["rules"]["strategies"] = json!([]);
-    let (r, v) = call_as(&app, Some(&mama), "PUT", &base, Some(none)).await;
-    assert_eq!(
-        st(&r),
-        StatusCode::BAD_REQUEST,
-        "一个策略都不勾不会被当成全部：{v}"
-    );
+    let mut too_many = rules(10.0);
+    too_many["rules"]["top_n"] = json!(60);
+    let (r, v) = call_as(&app, Some(&mama), "PUT", &base, Some(too_many)).await;
+    assert_eq!(st(&r), StatusCode::BAD_REQUEST, "持有只数超出范围：{v}");
     let (r, v) = call_as(&app, Some(&mama), "PUT", &base, Some(rules(10.0))).await;
     assert_eq!(st(&r), StatusCode::OK, "{v}");
     let (r, _) = call_as(
@@ -2945,10 +2206,7 @@ async fn accounts_positions_and_daily_advice() {
     .await;
     assert_eq!(st(&r), StatusCode::BAD_REQUEST, "代码不存在");
 
-    // 巡检后生成建议：手工录入的持仓没有绑定策略，不因亏损自动卖出
-    niulai::analysis::screener::run_and_store(&db.pool, None, None)
-        .await
-        .unwrap();
+    // 同步完成后生成建议：本地只有一只股票，因子排名算不出来时继续拿，不调仓
     niulai::advice::refresh_all(&db.pool, true).await.unwrap();
     let (_, v) = call_as(&app, Some(&mama), "GET", &format!("{base}/advice"), None).await;
     let advice = &v["advice"];
@@ -2963,10 +2221,7 @@ async fn accounts_positions_and_daily_advice() {
         .clone();
     assert_eq!(item["action"], "hold", "{item}");
     assert!(
-        item["headline"]
-            .as_str()
-            .unwrap()
-            .contains("还没有触发卖出规则"),
+        item["headline"].as_str().unwrap().contains("排名没算出来"),
         "{item}"
     );
     assert!(
@@ -3113,51 +2368,6 @@ async fn accounts_positions_and_daily_advice() {
     )
     .await;
     assert!(v["advice"]["states"].get(&key).is_none());
-
-    // 旧版本保存的模板复制品（省略了默认值，字面上和模板不同、含义相同）：再次同步时合并进内置策略
-    let (key, def): (String, Value) = sqlx::query_as("SELECT builtin_key, definition FROM app.strategy WHERE builtin_key IS NOT NULL ORDER BY strategy_id LIMIT 1")
-        .fetch_one(&db.pool)
-        .await
-        .unwrap();
-    let mut old = def.clone();
-    for c in old["all"].as_array_mut().unwrap() {
-        c.as_object_mut().unwrap().remove("within_days");
-        c.as_object_mut().unwrap().remove("streak_days");
-    }
-    assert_ne!(old, def);
-    let copy: i64 = sqlx::query_scalar("INSERT INTO app.strategy (name, definition, template) VALUES ('旧复制品', $1, $2) RETURNING strategy_id")
-        .bind(&old)
-        .bind(&key)
-        .fetch_one(&db.pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE app.position SET strategy_id = $2 WHERE account_id = $1")
-        .bind(acc)
-        .bind(copy)
-        .execute(&db.pool)
-        .await
-        .unwrap();
-    niulai::analysis::screener::sync_builtin_strategies(&db.pool)
-        .await
-        .unwrap();
-    let n: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM app.strategy WHERE builtin_key = $1 OR template = $1",
-    )
-    .bind(&key)
-    .fetch_one(&db.pool)
-    .await
-    .unwrap();
-    assert_eq!(n, 1, "重复的复制品被合并");
-    let pointed: Option<String> = sqlx::query_scalar("SELECT s.builtin_key FROM app.position p JOIN app.strategy s USING (strategy_id) WHERE p.account_id = $1")
-        .bind(acc)
-        .fetch_one(&db.pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        pointed.as_deref(),
-        Some(key.as_str()),
-        "持仓的买入依据改指向保留的内置策略"
-    );
 
     // 删除账户
     let (r, _) = call_as(&app, Some(&mama), "DELETE", &base, None).await;
@@ -4043,11 +3253,10 @@ async fn five_bars(pool: &PgPool, run_id: i64, code: &str, closes: &[f64], highs
     }
 }
 
-/// 权威涨跌停池是内部计算的依据：市场概况的涨停跌停数、巡检的涨停/炸板/连板、K 线上的信号日都和池一致；
-/// 池没有覆盖的日期、没进池的股票回退自算（这里覆盖了 2026-10-16 这一天）。
-/// 另外验证 limit_pool 版本更新后市场概况的缓存不再命中
+/// 权威涨跌停池是市场概况涨停跌停数的依据：池覆盖的日期以池为准，没进池的股票不算涨跌停
+/// （这里覆盖了 2026-10-16 这一天）。另外验证 limit_pool 版本更新后市场概况的缓存不再命中
 #[tokio::test]
-async fn authoritative_limit_pool_drives_overview_screening_and_signals() {
+async fn authoritative_limit_pool_drives_market_overview() {
     let Some(db) = TestDb::create().await else {
         eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
         return;
@@ -4163,76 +3372,6 @@ async fn authoritative_limit_pool_drives_overview_screening_and_signals() {
     assert_eq!(ov["limit_up"], 1, "以涨停池为准：600002 涨 7% 不是涨停");
     assert_eq!(ov["limit_down"], 0, "以跌停池为准：600004 跌 7% 不是跌停");
 
-    // 巡检：涨停只命中 600001；炸板不命中（600003 只是自算的炸板）；3 连板只命中 600001（供应商的 5 连板）
-    let make = |sig: &str, params: Value| json!({"universe": {"exclude_st": false}, "all": [{"kind": "signal", "signal": sig, "params": params}], "exit": {}});
-    let mut ids = vec![];
-    for (name, sig, params) in [
-        ("池涨停", "limit_up", json!({})),
-        ("池炸板", "broken_limit_up", json!({})),
-        ("池连板", "consecutive_limit_up", json!({"n": 3})),
-        ("池跌停", "limit_down", json!({})),
-    ] {
-        let (st, created) = call(
-            &app,
-            "POST",
-            "/api/v1/strategies",
-            Some(json!({"name": name, "definition": make(sig, params)})),
-        )
-        .await;
-        assert_eq!(st, StatusCode::CREATED, "{created}");
-        let id = created["strategy_id"].as_i64().unwrap();
-        let (st, run) = call(
-            &app,
-            "POST",
-            &format!("/api/v1/screening/run?strategy_id={id}"),
-            None,
-        )
-        .await;
-        assert_eq!(st, StatusCode::OK, "{run}");
-        let (_, res) = call(
-            &app,
-            "GET",
-            &format!("/api/v1/strategies/{id}/results"),
-            None,
-        )
-        .await;
-        let hits: Vec<&str> = res["hits"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|h| h["thscode"].as_str().unwrap())
-            .collect();
-        let want = if name == "池涨停" || name == "池连板" {
-            vec!["600001.SH"]
-        } else {
-            vec![]
-        };
-        assert_eq!(hits, want, "{name} 的巡检结果：{res}");
-        ids.push(id);
-    }
-
-    // K 线上的信号日：600002 自算的涨停不再出现；600001 的 3 连板在 2026-10-16 出现（自算从数据起点数是 0 连板）
-    let target = json!({"condition": {"kind": "signal", "signal": "limit_up"}});
-    let (st, d) = call(
-        &app,
-        "POST",
-        "/api/v1/securities/600002.SH/signal-days",
-        Some(json!({"target": target})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{d}");
-    assert_eq!(d["dates"], json!([]), "600002 不在涨停池里，涨 7% 不算涨停");
-    let target = json!({"condition": {"kind": "signal", "signal": "consecutive_limit_up", "params": {"n": 3}}});
-    let (st, d) = call(
-        &app,
-        "POST",
-        "/api/v1/securities/600001.SH/signal-days",
-        Some(json!({"target": target})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{d}");
-    assert_eq!(d["dates"], json!(["2026-10-16"]), "用供应商的 5 连板");
-
     // 缓存：第一次市场概况已缓存；补上 600002 的涨停记录并更新 limit_pool 版本后，不再命中旧结果
     assert_eq!(ov["limit_up"], 1);
     put_hot_record(
@@ -4251,9 +3390,6 @@ async fn authoritative_limit_pool_drives_overview_screening_and_signals() {
     assert_eq!(st, StatusCode::OK, "{ov2}");
     assert_eq!(ov2["limit_up"], 2, "版本更新后重新计算，600002 现在在池里");
 
-    for id in ids {
-        call(&app, "DELETE", &format!("/api/v1/strategies/{id}"), None).await;
-    }
     db.drop().await;
 }
 
@@ -4670,33 +3806,30 @@ async fn factor_research_end_to_end() {
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
-    // 多因子账户：建账户时选参考值，排名和因子研究同一套计算
-    let (s, acc) = call(
-        &app,
-        "POST",
-        "/api/v1/accounts",
-        Some(serde_json::json!({"name": "组合 E", "cash": 1000000, "preset": "factor"})),
-    )
-    .await;
-    assert_eq!(s, StatusCode::CREATED, "{acc}");
-    let rules = &acc["summary"]["account"]["rules"];
-    assert_eq!(rules["factor"]["top_n"], 30);
-    assert_eq!(rules["factor"]["factors"].as_array().unwrap().len(), 5);
-    let id = acc["summary"]["account"]["account_id"].as_i64().unwrap();
-    let (s, _) = call(
-        &app,
-        "POST",
-        &format!("/api/v1/accounts/{id}/backtest"),
-        None,
-    )
-    .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "多因子账户不走规则回测");
-    let plan = niulai::account::rules::FactorPlan::combo_e();
+    // 账户的因子排名和因子研究同一套计算；新账户第一份建议就按排名建仓
     let date = chrono::NaiveDate::from_ymd_opt(2025, 8, 29).unwrap();
-    let ranked = niulai::advice::factor::ranking(&db.pool, date, &plan)
+    let rules = niulai::account::rules::Rules::default();
+    let ranked = niulai::advice::ranking::ranking(&db.pool, date, &rules)
         .await
         .unwrap();
     assert!(ranked.len() >= 50, "{}", ranked.len());
     assert!(ranked.windows(2).all(|w| w[0].1 >= w[1].1));
+    let (s, acc) = call(
+        &app,
+        "POST",
+        "/api/v1/accounts",
+        Some(serde_json::json!({"name": "组合 E", "cash": 1000000})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{acc}");
+    let id = acc["summary"]["account"]["account_id"].as_i64().unwrap();
+    niulai::advice::refresh_all(&db.pool, true).await.unwrap();
+    let (_, v) = call(&app, "GET", &format!("/api/v1/accounts/{id}/advice"), None).await;
+    let advice = &v["advice"]["advice"];
+    assert_eq!(advice["headline"], "买入 30 只", "{v}");
+    let first = &advice["items"][0];
+    assert_eq!(first["thscode"].as_str(), Some(ranked[0].0.as_str()));
+    // 2025-08-29 是 8 月最后一个交易日：整体调仓
+    assert_eq!(first["headline"], "月度调仓：因子排名第 1，买入", "{first}");
     db.drop().await;
 }

@@ -18,11 +18,10 @@ import {
   useFactorPortfolio,
   useFactorTest,
 } from "../api/generated/research/research";
-import { CostFields, costParams, LogToggle, NumberField, RulesNote } from "../components/backtest";
 import { EquityChart } from "../components/EquityChart";
 import { type Line, MultiLineChart, quantileColors } from "../components/FactorCharts";
 import { TaskRunning, useElapsedSeconds } from "../components/longTask";
-import { StrategyNav } from "../components/StrategyNav";
+import { CostFields, costParams, LogToggle, NumberField, RulesNote } from "../components/researchFields";
 import {
   Badge,
   buttonClass,
@@ -91,7 +90,6 @@ export function ResearchPage() {
   const picks = parseFactors(s.f);
   return (
     <>
-      <StrategyNav />
       <PageHeader
         title="因子研究"
         desc="均线金叉这类单只股票的买卖信号，在 A 股扣掉成本后很难赚钱。专业做法是每天给全市场股票按某个特征（因子）打分排名，先检验排名靠前的股票之后是否真的涨得更多，再把几个有效的因子合起来，定期持有得分最高的一批。"
@@ -446,7 +444,7 @@ function TestResult({ data }: { data: FactorTestResult }) {
               </span>
             ))}
           </div>
-          <p className="mt-1 text-xs text-zinc-500">持有期越长 RankIC 仍高，说明信号衰减慢，可以少调仓、省成本。</p>
+          <p className="mt-1 text-xs text-zinc-500">持有期越长 RankIC 仍高，说明因子衰减慢，可以少调仓、省成本。</p>
         </Card>
       </div>
       {data.factors.length > 1 && <Correlation data={data} />}

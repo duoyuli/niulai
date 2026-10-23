@@ -5,7 +5,7 @@ import { useWatchlist } from "../hooks/useWatchlist";
 export function WatchButton({ thscode, withLabel = false }: { thscode: string; withLabel?: boolean }) {
   const { watched, ready, pendingCode, toggle } = useWatchlist();
   const on = watched.has(thscode);
-  const title = on ? "已收藏，点击取消" : "收藏到自选，方便以后快速诊断";
+  const title = on ? "已收藏，点击取消" : "收藏到自选，方便以后快速查看";
   return (
     <button
       type="button"

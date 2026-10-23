@@ -17,21 +17,18 @@ use super::auth::CurrentUser;
 use crate::account::corp::PendingRights;
 use crate::account::equity::EquityCurve;
 use crate::account::paste::{self, Known, ParsedRow};
-use crate::account::rules::{Preset, Rules};
 use crate::account::{
     self, Account, AccountError, AccountUpdate, NewAccount, Position, PositionInput, Trade,
     TradeInput, TradeKind, TradeSource,
 };
-use crate::advice::backtest::{self, RulesBacktest};
 use crate::advice::generate::Action;
 use crate::advice::review::{self, Review};
-use crate::advice::{self, AdviceDay, StoredAdvice, inputs};
-use crate::analysis::{prices, screener};
+use crate::advice::{self, AdviceDay, StoredAdvice};
+use crate::analysis::prices;
 use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(rules_guide))
         .routes(routes!(list_accounts, create_account))
         .routes(routes!(get_account, update_account, delete_account))
         .routes(routes!(mark_checked))
@@ -50,7 +47,6 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(execute_item))
         .routes(routes!(skip_item, clear_item))
         .routes(routes!(account_review))
-        .routes(routes!(account_backtest))
 }
 
 impl From<AccountError> for ApiError {
@@ -66,62 +62,6 @@ impl From<AccountError> for ApiError {
     }
 }
 
-/// 一个参考策略：勾选后即可参与账户建议
-#[derive(Serialize, ToSchema)]
-pub struct StrategyQuality {
-    pub strategy_id: i64,
-    pub name: String,
-    pub builtin: bool,
-}
-
-/// 一组参考值：适合什么样的账户、怎么设计
-#[derive(Serialize, ToSchema)]
-pub struct PresetInfo {
-    pub preset: Preset,
-    pub name: String,
-    pub tagline: String,
-    /// 这类账户一般怎么设计，每条说明一个参数为什么这样取
-    pub design: Vec<String>,
-    pub rules: Rules,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct RulesGuide {
-    pub presets: Vec<PresetInfo>,
-    /// 全部参加巡检的策略，内置策略在前，再按名称排序
-    pub strategies: Vec<StrategyQuality>,
-}
-
-/// 设置规则时的辅助：参考值（稳健型、均衡型、积极型和多因子月度调仓）和可勾选策略
-#[utoipa::path(get, path = "/rules/guide", tag = "accounts", responses((status = 200, description = "成功", body = RulesGuide)))]
-async fn rules_guide(State(s): State<AppState>) -> ApiResult<Json<RulesGuide>> {
-    let list: Vec<(i64, String, bool)> =
-        sqlx::query_as("SELECT strategy_id, name, builtin_key IS NOT NULL FROM app.strategy WHERE screening ORDER BY sort_order, strategy_id").fetch_all(&s.pool).await?;
-    let mut strategies: Vec<StrategyQuality> = list
-        .into_iter()
-        .map(|(strategy_id, name, builtin)| StrategyQuality {
-            strategy_id,
-            name,
-            builtin,
-        })
-        .collect();
-    strategies.sort_by(|a, b| b.builtin.cmp(&a.builtin).then_with(|| a.name.cmp(&b.name)));
-    let presets = Preset::ALL
-        .into_iter()
-        .map(|p| PresetInfo {
-            preset: p,
-            name: p.name().into(),
-            tagline: p.tagline().into(),
-            design: p.design().into_iter().map(String::from).collect(),
-            rules: p.rules(),
-        })
-        .collect();
-    Ok(Json(RulesGuide {
-        presets,
-        strategies,
-    }))
-}
-
 /// 一份建议的摘要（账户列表和首页用）
 #[derive(Serialize, ToSchema)]
 pub struct AdviceBrief {
@@ -129,9 +69,8 @@ pub struct AdviceBrief {
     pub next_date: NaiveDate,
     pub headline: String,
     pub sells: usize,
-    pub reduces: usize,
     pub buys: usize,
-    /// 卖出、减仓、买入中还没处理（执行或不做）的条数
+    /// 卖出、买入中还没处理（执行或不做）的条数
     pub pending: usize,
 }
 
@@ -167,8 +106,6 @@ pub struct PositionView {
     /// 浮动盈亏（元、%）；没填成本价时为空
     pub pnl: Option<f64>,
     pub pnl_pct: Option<f64>,
-    /// 买入依据的策略
-    pub strategy_name: Option<String>,
     pub delisted: bool,
 }
 
@@ -206,8 +143,7 @@ async fn brief(s: &AppState, account_id: i64) -> ApiResult<Option<AdviceBrief>> 
         .items
         .iter()
         .filter(|i| {
-            matches!(i.action, Action::Sell | Action::Reduce | Action::Buy)
-                && !a.states.contains_key(&i.key)
+            matches!(i.action, Action::Sell | Action::Buy) && !a.states.contains_key(&i.key)
         })
         .count();
     Ok(Some(AdviceBrief {
@@ -215,7 +151,6 @@ async fn brief(s: &AppState, account_id: i64) -> ApiResult<Option<AdviceBrief>> 
         next_date: a.advice.next_date,
         headline: a.advice.headline.clone(),
         sells: count(Action::Sell),
-        reduces: count(Action::Reduce),
         buys: count(Action::Buy),
         pending,
     }))
@@ -282,12 +217,6 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
     .into_iter()
         .map(|(c, n, b, a, d)| (c, (n, b, a, d)))
     .collect();
-    let strategy_names: HashMap<i64, String> =
-        sqlx::query_as::<_, (i64, String)>("SELECT strategy_id, name FROM app.strategy")
-            .fetch_all(&s.pool)
-            .await?
-            .into_iter()
-            .collect();
     let mut views = vec![];
     for p in positions {
         let (_bars, q) = quote(s, &p.thscode, 2).await?;
@@ -311,9 +240,6 @@ async fn detail(s: &AppState, me: &CurrentUser, id: i64) -> ApiResult<AccountDet
                 .zip(close)
                 .map(|(c, x)| (x - c) * p.shares as f64),
             pnl_pct: p.cost_price.zip(close).map(|(c, x)| (x / c - 1.0) * 100.0),
-            strategy_name: p
-                .strategy_id
-                .and_then(|id| strategy_names.get(&id).cloned()),
             delisted,
             position: p,
         });
@@ -516,7 +442,7 @@ async fn add_trade(
     Path(id): Path<i64>,
     Json(input): Json<TradeInput>,
 ) -> ApiResult<Json<AccountDetail>> {
-    account::record(&s.pool, me.user_id, id, &input, TradeSource::User, None).await?;
+    account::record(&s.pool, me.user_id, id, &input, TradeSource::User).await?;
     regenerate(&s, &me, id).await;
     Ok(Json(detail(&s, &me, id).await?))
 }
@@ -611,10 +537,10 @@ async fn get_equity(
 
 #[derive(Serialize, ToSchema)]
 pub struct AdviceResponse {
-    /// 没有建议时的原因，例如还没有巡检结果
+    /// 没有建议时的原因，例如还没有日线
     pub waiting: Option<String>,
     pub advice: Option<StoredAdvice>,
-    /// 最新日线的日期：比建议的交易日新时，说明新的运营建议还在等巡检
+    /// 最新日线的日期：比建议的交易日新时，说明新的运营建议还在生成
     pub latest_bar: Option<NaiveDate>,
     /// 改了持仓、现金或设置之后正在后台重新生成；为 true 时 `advice` 还是改之前的一份
     pub regenerating: bool,
@@ -634,13 +560,12 @@ async fn advice_response(
     let advice = advice::load(&s.pool, id, date).await?;
     let latest_bar = crate::analysis::market::resolve_date(&s.pool, None).await?;
     let core_left = crate::sync::audit::core_backfill_left(&s.pool).await?;
-    let waiting = match (&advice, inputs::latest_screen_date(&s.pool).await?) {
+    let waiting = match (&advice, latest_bar) {
         (Some(_), _) => None,
         (None, _) if core_left > 0 => Some(crate::sync::audit::data_status(&s.pool).await?.message),
-        (None, None) => Some(
-            "内置策略还没有巡检结果：数据同步、巡检完成后自动生成（新部署的系统要等首次同步）"
-                .into(),
-        ),
+        (None, None) => {
+            Some("本地还没有日线：数据同步完成后自动生成（新部署的系统要等首次同步）".into())
+        }
         (None, Some(_)) => Some("正在生成，稍等一分钟后刷新".into()),
     };
     Ok(AdviceResponse {
@@ -664,7 +589,7 @@ async fn current_advice(
     Ok(Json(advice_response(&s, id, q.date).await?))
 }
 
-/// 按现在的持仓和最新的巡检结果重新生成运营建议
+/// 按现在的持仓和最新的因子排名重新生成运营建议
 #[utoipa::path(post, path = "/accounts/{account_id}/advice/refresh", tag = "accounts", params(("account_id" = i64, Path)),
     responses((status = 200, description = "已重新生成", body = AdviceResponse), (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
 async fn refresh_advice(
@@ -757,7 +682,7 @@ async fn execute_item(
         .ok_or_else(|| ApiError::NotFound("没有这一条".into()))?;
     let kind = match item.action {
         Action::Buy => TradeKind::Buy,
-        Action::Sell | Action::Reduce => TradeKind::Sell,
+        Action::Sell => TradeKind::Sell,
         _ => return Err(ApiError::BadRequest("这一条不需要操作".into())),
     };
     let price = input
@@ -774,12 +699,7 @@ async fn execute_item(
         fee: input.fee,
         note: format!("按 {} 的建议：{}", a.trade_date, item.headline),
     };
-    let strategy = if kind == TradeKind::Buy {
-        item.strategy_id
-    } else {
-        None
-    };
-    account::record_advice(&s.pool, me.user_id, id, advice_id, &key, &trade, strategy).await?;
+    account::record_advice(&s.pool, me.user_id, id, advice_id, &key, &trade).await?;
     let actual_shares = trade.shares.unwrap_or(item.shares);
     let slippage_bps = (price / item.ref_price - 1.0) * 10_000.0;
     sqlx::query(
@@ -862,56 +782,4 @@ async fn account_review(
 ) -> ApiResult<Json<Review>> {
     account::get(&s.pool, me.user_id, id).await?;
     Ok(Json(review::review(&s.pool, id).await?))
-}
-
-#[derive(Deserialize, IntoParams)]
-pub struct BacktestQuery {
-    /// 开始日期，默认今年 1 月 1 日
-    pub start: Option<NaiveDate>,
-    /// 结束日期，默认最新交易日；晚于最新交易日时取最新交易日
-    pub end: Option<NaiveDate>,
-}
-
-/// 用这个账户的规则回测一段时间（两头都包含），默认今年以来，最长 5 年。全市场计算，要几十秒到一两分钟
-#[utoipa::path(post, path = "/accounts/{account_id}/backtest", tag = "accounts", params(("account_id" = i64, Path), BacktestQuery),
-    responses((status = 200, description = "成功", body = RulesBacktest),
-              (status = 400, description = "区间不对、本地还没有日线，或多因子账户（请用因子研究的组合回测）", body = crate::error::ErrorBody),
-              (status = 404, description = "账户不存在", body = crate::error::ErrorBody)))]
-async fn account_backtest(
-    State(s): State<AppState>,
-    me: CurrentUser,
-    Path(id): Path<i64>,
-    Query(q): Query<BacktestQuery>,
-) -> ApiResult<Json<RulesBacktest>> {
-    let acc = account::get(&s.pool, me.user_id, id).await?;
-    if acc.rules.factor.is_some() {
-        return Err(ApiError::BadRequest(
-            "多因子账户按因子排名调仓，请在「因子研究 → 组合回测」用同样的因子回测".into(),
-        ));
-    }
-    let latest = crate::analysis::market::resolve_date(&s.pool, None)
-        .await?
-        .ok_or_else(|| ApiError::BadRequest("本地还没有日线".into()))?;
-    let (start, end) =
-        backtest::resolve_range(latest, q.start, q.end).map_err(ApiError::BadRequest)?;
-    let defs = screener::screening_strategies(&s.pool).await?;
-    let result = backtest::run(&s.pool, &acc.rules, &defs, start, end, acc.fees)
-        .await?
-        .ok_or_else(|| {
-            ApiError::BadRequest("本地还没有足够的日线，或勾选的策略都没有参加巡检".into())
-        })?;
-    sqlx::query(
-        "INSERT INTO ops.backtest_run
-         (account_id, mode, start_date, end_date, definition_hash, manifest, summary)
-         VALUES ($1, 'account', $2, $3, $4, $5, $6)",
-    )
-    .bind(id)
-    .bind(result.summary.start)
-    .bind(result.summary.end)
-    .bind(&result.manifest.strategy_definition_hash)
-    .bind(serde_json::to_value(&result.manifest).map_err(|e| ApiError::Internal(e.into()))?)
-    .bind(serde_json::to_value(&result.summary).map_err(|e| ApiError::Internal(e.into()))?)
-    .execute(&s.pool)
-    .await?;
-    Ok(Json(result))
 }
