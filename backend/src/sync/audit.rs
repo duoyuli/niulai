@@ -432,12 +432,12 @@ pub struct RepairSummary {
     pub retried: u64,
     /// 补不回来的缺口数
     pub unrecoverable: usize,
-    /// 日期不是交易日或已超出历史范围、改为跳过的失败任务数
+    /// 日期不是交易日或已超出历史范围、证券已退市，改为跳过的失败任务数
     pub cleared: u64,
 }
 
-/// 失败的按交易日分区的任务，日期其实不是交易日或已经超出接口的历史范围（见 calendar::stale_partition_date）：
-/// 本来就没有数据，改为跳过，不再作为失败列出
+/// 失败的按交易日分区的任务，日期其实不是交易日或已经超出接口的历史范围（见 calendar::stale_partition_date），
+/// 以及已退市证券的失败任务：本来就没有数据，改为跳过，不再作为失败列出
 async fn clear_stale(engine: &Engine) -> anyhow::Result<u64> {
     let rows: Vec<(i64, String, String)> = sqlx::query_as(
         "SELECT task_id, dataset_id, params->'vars'->>'date' FROM ops.task
@@ -457,7 +457,7 @@ async fn clear_stale(engine: &Engine) -> anyhow::Result<u64> {
             cleared += super::queue::skip_dead(&engine.pool, id, &why).await? as u64;
         }
     }
-    Ok(cleared)
+    Ok(cleared + super::queue::skip_dead_delisted(&engine.pool).await?)
 }
 
 /// 自动兜底补偿：每个交易日最多一次，在这一天的每日同步结束之后执行

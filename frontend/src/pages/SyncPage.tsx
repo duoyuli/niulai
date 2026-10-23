@@ -355,7 +355,7 @@ function Problems({ h }: { h: SyncHealth }) {
           type="button"
           className={buttonClass()}
           disabled={repair.isPending}
-          title="能补的缺口安排补偿同步，供应商暂时不可用的失败再试一次；日期本来就没有数据的失败（节假日、超出一年）改为跳过"
+          title="能补的缺口安排补偿同步，供应商暂时不可用的失败再试一次；本来就没有数据的失败（节假日、超出一年、证券已退市）改为跳过"
           onClick={() => repair.mutate()}
         >
           {repair.isPending ? "处理中…" : "立即补齐"}
@@ -367,7 +367,7 @@ function Problems({ h }: { h: SyncHealth }) {
           <p className="text-emerald-700 dark:text-emerald-400">
             已安排 {repair.data.runs.length} 个补偿同步，重新排队 {repair.data.retried}{" "}
             个失败的任务，会排在每日数据之后执行
-            {repair.data.cleared > 0 && `；${repair.data.cleared} 个日期本来就没有数据的失败任务已改为跳过`}。
+            {repair.data.cleared > 0 && `；${repair.data.cleared} 个本来就没有数据的失败任务已改为跳过`}。
           </p>
         )}
         {!!repair.error && <p className="text-red-600">{errorText(repair.error)}</p>}

@@ -1900,6 +1900,20 @@ async fn audit_finds_gaps_and_plans_repairs() {
             .await
             .unwrap();
     }
+    // 已推断退市的股票：退市前排队的日线任务返回 1002，补不回来
+    sqlx::query("INSERT INTO ref.instrument (thscode, ticker, name, asset_type, exchange, first_seen, last_seen, delisted_on) VALUES ('601059.SH', '601059', '退市股', 'stock', 'SH', $1, $1, $2)")
+        .bind(d1 - chrono::Duration::days(30))
+        .bind(d1)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO ops.task (run_id, dataset_id, part_key, params, status, last_api_code, last_error, finished_at) VALUES ($1, 'a_share.bar_1d', $2, $3, 'dead', 1002, '不可重试错误（code=Some(1002)，http=Some(200)）：Unknown thscode: 601059.SH', now())")
+        .bind(backfill)
+        .bind(format!("thscode=601059.SH|{d1}..{d1}"))
+        .bind(json!({"vars": {"thscode": "601059.SH"}}))
+        .execute(pool)
+        .await
+        .unwrap();
 
     let h = niulai::sync::audit::health(&engine).await.unwrap();
     let dragon: Vec<&str> = h
@@ -1952,8 +1966,8 @@ async fn audit_finds_gaps_and_plans_repairs() {
     assert!(!s.runs.is_empty());
     assert_eq!(s.retried, 1);
     assert_eq!(
-        s.cleared, 2,
-        "节假日和超出一年的任务本来就没有数据，改为跳过"
+        s.cleared, 3,
+        "节假日、超出一年和已退市证券的任务本来就没有数据，改为跳过"
     );
     let h = niulai::sync::audit::health(&engine).await.unwrap();
     assert!(

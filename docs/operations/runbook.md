@@ -75,7 +75,7 @@ FROM ops.task WHERE status = 'dead' GROUP BY 1, 2, 3 ORDER BY 4 DESC;
 | --- | --- | --- |
 | 已错过 | 只有当天值的数据，供应商已经到了下一个交易日 | 补不回来；有 `recover_with` 的由兜底补偿补 |
 | 1002（提示不是交易日）、1003 `date must be within one year` | 日期是节假日，或排队期间超出一年 | 执行前会自动跳过；已经失败的点「立即补齐」改为跳过，见 [过期的日期](../architecture/sync_pipeline.md#stale_dates) |
-| 1002 `Unknown thscode` | 证券已退市，或接口不支持这类证券 | 确认后忽略；一类证券都不支持时在 `universe` 或 `filter` 中排除 |
+| 1002 `Unknown thscode`、3004 `does not support market data` | 证券已退市，或接口不支持这类证券 | 已推断退市的证券，点「立即补齐」（或等每日自动补偿）改为跳过；没有退市时确认后忽略，一类证券都不支持时在 `universe` 或 `filter` 中排除 |
 | 1003 其他 | 窗口过长、分页过大 | 调整 `window_days`、`paging.size` |
 | 2001、2003 | API Key 无效或无权限 | 在 <https://fuyao.aicubes.cn/admin/> 确认后在「设置」中更换；来自环境变量时改 `HITHINK_FINANCE_API_KEY` 后重启 |
 | 2004 | 同花顺 AI 客户端专用接口 | 关闭该数据集 |

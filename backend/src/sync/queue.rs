@@ -78,6 +78,21 @@ pub async fn skip_dead(pool: &PgPool, task_id: i64, why: &str) -> anyhow::Result
         > 0)
 }
 
+/// 已推断退市的证券（`ref.instrument.delisted_on`）供应商不再认这个代码（1002）或不再给行情（3004），
+/// 它们留下的 dead 任务补不回来，收口为 skipped。证券重新出现时 delisted_on 会被清空，不受影响
+pub async fn skip_dead_delisted(pool: &PgPool) -> anyhow::Result<u64> {
+    Ok(sqlx::query(
+        "UPDATE ops.task t SET status = 'skipped', locked_by = NULL,
+                last_error = '证券已于 ' || i.delisted_on || ' 退市，之后没有数据'
+         FROM ref.instrument i
+         WHERE t.status = 'dead' AND t.last_api_code IN (1002, 3004)
+           AND i.thscode = t.params->'vars'->>'thscode' AND i.delisted_on IS NOT NULL",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected())
+}
+
 /// 将补偿允许重试的 dead 任务重新排队；任务状态迁移集中在队列模块。
 pub async fn requeue_dead_for_repair(
     conn: &mut PgConnection,
