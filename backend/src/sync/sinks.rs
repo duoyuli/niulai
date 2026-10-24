@@ -380,6 +380,10 @@ async fn security(
             .bind(today)
             .execute(&mut *conn)
             .await?;
+        sqlx::query("UPDATE ref.instrument SET delisted_on = last_seen + 1, updated_at = now() WHERE asset_type = 'stock' AND last_seen < $1 AND delisted_on IS NULL")
+            .bind(today)
+            .execute(&mut *conn)
+            .await?;
     }
     Ok(n as usize)
 }

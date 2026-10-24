@@ -150,7 +150,7 @@ raw 记录、类型化 sink 和游标在同一个任务事务中写入；事务�
 | `postprocess` | `try_complete` 把运行置为终态的同一条条件 UPDATE 中写入，带后处理的租约 `claimed_at` | 结束运行的执行者接着做后处理；它出错或进程中途退出、租约（5 分钟）过期后，维护组件抢占并重做（`run::claim_stale_postprocess`，重算是幂等的） |
 | `ready` | 后处理做完，带上准确的 `price_changed` | 应用事件编排器（`bootstrap`） |
 
-应用层只消费 `ready` 的事件，所以不会在复权重算之前用旧价格生成建议。没有任务的运行直接写 `ready`；升级前写入、没有阶段的旧标记按 `ready` 处理。
+应用层只消费 `ready` 的事件，所以不会在复权重算之前用旧价格生成建议。没有任务的运行直接写 `ready`。
 
 **应用层处理。** 编排器收到 `SyncRunCompleted`（或每分钟的 `MaintenanceTick`）后，读出全部 `ready` 的事件一起处理：
 

@@ -57,7 +57,7 @@
 | --- | --- | --- |
 | `ref.security` | `meta.tickers`（只取 `asset_type = 'a-share'`） | 证券主表。`board` 按代码段推导：BJ 为 `bse`，300、301 开头为 `chinext`，688、689 开头为 `star`，其余为 `main`。退市推断见 [证券生命周期](../domains/market_data_rules.md#security_lifecycle) |
 | `ref.etf_security` | `meta.tickers`（只取 `asset_type = 'fund-etf'`） | ETF 独立主表。保存 ETF 的代码、名称、交易所、上市和退市状态，不套用股票板块和 ST 历史。 |
-| `ref.instrument` | `ref.security`、`ref.etf_security` | 跨资产路由目录。`asset_type` 为 `stock` 或 `etf`，供自选、账户和 API 找到对应的数据表和交易规则；行情事实仍保存在各自数据域。 |
+| `ref.instrument` | `meta.tickers`（和 `ref.security`、`ref.etf_security` 在同一次写入里显式写，退市推断也同时更新；没有触发器同步） | 跨资产路由目录。`asset_type` 为 `stock` 或 `etf`，供自选、账户和 API 找到对应的数据表和交易规则；行情事实仍保存在各自数据域。 |
 | `ref.security_name_hist` | 同上 | 简称变化区间；`is_st` 由简称是否包含 `ST` 生成 |
 | `ref.trading_day` | `a_share.calendar`；运行结束后的计算 | `source` 为 `api`（供应商日历）或 `derived`（从行情推导） |
 | `ref.index_info` | `index.ths_catalog`（带分类）、`meta.tickers`（`a-share-index`，只补缺少的条目） | `category`：industry、cn_concept、region、tszs 来自目录；`ths`、`exchange` 是按代码后缀推断的；`unknown` 表示只在成分查询中出现过 |

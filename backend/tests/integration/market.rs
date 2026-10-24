@@ -539,6 +539,7 @@ async fn authoritative_limit_pool_drives_market_overview() {
         .await
         .unwrap();
     }
+    mirror_stocks(&db.pool).await;
     // 最后一天：600001 涨 10%（在涨停池里，5 连板）；600002 是主板 ST 涨 7%，自算按 5% 会误判成涨停；
     // 600003 盘中冲到涨停价、收盘回落（自算会判成炸板）；600004 是 ST 跌 7%（自算按 5% 会误判成跌停）
     five_bars(

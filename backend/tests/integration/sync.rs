@@ -598,6 +598,7 @@ async fn data_check_stops_at_delisting_date() {
     .execute(&pool)
     .await
     .unwrap();
+    mirror_stocks(&pool).await;
     sqlx::query("INSERT INTO ref.trading_day SELECT d::date, 'api' FROM generate_series('2026-01-05'::date, '2026-01-16'::date, '1 day') d WHERE extract(isodow FROM d) < 6")
         .execute(&pool)
         .await
@@ -856,6 +857,7 @@ async fn audit_finds_gaps_and_plans_repairs() {
         .execute(pool)
         .await
         .unwrap();
+    mirror_stocks(pool).await;
     let run: i64 = sqlx::query_scalar("INSERT INTO ops.run (kind, trade_date, status) VALUES ('incremental', $1, 'partial') RETURNING run_id").bind(d1).fetch_one(pool).await.unwrap();
     for (ds, status, err) in [
         ("a_share.snapshot", "done", ""),

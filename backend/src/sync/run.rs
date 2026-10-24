@@ -195,7 +195,6 @@ pub async fn planned_since_runs(pool: &PgPool) -> anyhow::Result<Vec<i64>> {
 // - `ready`：后处理做完了，带上准确的 `price_changed`，应用层可以消费；
 // 应用层处理完后按运行编号逐个确认（删除标记）。`claimed_at` 是后处理的租约：结束运行的执行者先占着，
 // 它中途退出或出错时，维护在租约过期后接手重做（后处理是幂等的全量重算）。
-// 没有 `stage` 的旧标记（升级前写入的）按 `ready` 处理。
 
 /// 后处理的租约：超过这么久还停在 `postprocess` 的事件由维护接手
 const POSTPROCESS_LEASE: &str = "5 minutes";
@@ -205,8 +204,7 @@ pub async fn claim_stale_postprocess(pool: &PgPool) -> anyhow::Result<Vec<i64>> 
     Ok(sqlx::query_scalar(
         "UPDATE ops.run SET params = jsonb_set(params, '{sync_event_pending,claimed_at}', to_jsonb(now()), true)
          WHERE params->'sync_event_pending'->>'stage' = 'postprocess'
-           AND coalesce((params->'sync_event_pending'->>'claimed_at')::timestamptz, finished_at, '-infinity')
-               < now() - $1::interval
+           AND (params->'sync_event_pending'->>'claimed_at')::timestamptz < now() - $1::interval
          RETURNING run_id",
     )
     .bind(POSTPROCESS_LEASE)
@@ -243,9 +241,9 @@ pub struct ReadyEvent {
 /// 可以由应用层消费的同步完成事件，按运行编号排序
 pub async fn ready_sync_events(pool: &PgPool) -> anyhow::Result<Vec<ReadyEvent>> {
     Ok(sqlx::query_as(
-        "SELECT run_id, coalesce((params->'sync_event_pending'->>'price_changed')::boolean, true) AS price_changed
+        "SELECT run_id, (params->'sync_event_pending'->>'price_changed')::boolean AS price_changed
          FROM ops.run WHERE params ? 'sync_event_pending'
-           AND coalesce(params->'sync_event_pending'->>'stage', 'ready') = 'ready'
+           AND params->'sync_event_pending'->>'stage' = 'ready'
          ORDER BY run_id",
     )
     .fetch_all(pool)
@@ -256,7 +254,7 @@ pub async fn ready_sync_events(pool: &PgPool) -> anyhow::Result<Vec<ReadyEvent>>
 pub async fn ack_sync_events(pool: &PgPool, run_ids: &[i64]) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE ops.run SET params = params - 'sync_event_pending'
-         WHERE run_id = ANY($1) AND coalesce(params->'sync_event_pending'->>'stage', 'ready') = 'ready'",
+         WHERE run_id = ANY($1) AND params->'sync_event_pending'->>'stage' = 'ready'",
     )
     .bind(run_ids)
     .execute(pool)

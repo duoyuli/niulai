@@ -328,6 +328,7 @@ pub async fn synthetic_stock(pool: &PgPool) {
         .execute(pool)
         .await
         .unwrap();
+    mirror_stocks(pool).await;
     sqlx::query(
         "INSERT INTO mkt.stock_bar_1d (thscode, trade_date, open, high, low, close, volume, amount, run_id)
          SELECT '600000.SH', d, c, c * 1.01, c * 0.99, c, v, v * c, $1
@@ -337,6 +338,18 @@ pub async fn synthetic_stock(pool: &PgPool) {
                          CASE WHEN i = 120 THEN 9000000 ELSE 1000000 END AS v) x",
     )
     .bind(run_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// 测试直接写了 `ref.security` 的股票，像同步那样也写进 `ref.instrument`（分析、账户和接口都读它）
+pub async fn mirror_stocks(pool: &PgPool) {
+    sqlx::query(
+        "INSERT INTO ref.instrument (thscode, ticker, name, asset_type, exchange, board, list_date, first_seen, last_seen, delisted_on)
+         SELECT thscode, ticker, name, 'stock', exchange, board, list_date, first_seen, last_seen, delisted_on FROM ref.security
+         ON CONFLICT (thscode) DO NOTHING",
+    )
     .execute(pool)
     .await
     .unwrap();

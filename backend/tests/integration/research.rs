@@ -28,6 +28,8 @@ async fn factor_research_end_to_end() {
          SELECT format('%s.SZ', lpad(k::text, 6, '0')), lpad(k::text, 6, '0'), format('测试%s', k), 'SZ', 'main',
                 '2010-01-04', '2024-01-01', '2025-08-29'
          FROM generate_series(1, 80) k",
+        "INSERT INTO ref.instrument (thscode, ticker, name, asset_type, exchange, board, list_date, first_seen, last_seen)
+         SELECT thscode, ticker, name, 'stock', exchange, board, list_date, first_seen, last_seen FROM ref.security",
         "INSERT INTO ref.index_info (thscode, name, category, first_seen, last_seen) VALUES
            ('881001.TI', '行业甲', 'industry', '2024-01-01', '2025-08-29'),
            ('881002.TI', '行业乙', 'industry', '2024-01-01', '2025-08-29')",
