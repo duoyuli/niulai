@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: backend-dependency-health
+expected_outcome: |
+  一份针对 backend/src 全部顶层模块的中文架构评审报告：给出模块依赖关系（含是否存在依赖环、稳定性方向），基于代码证据指出边界问题并排序，同时指出值得保持的结构，不修改代码。

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: advice-module-review
+expected_outcome: |
+  一份针对 backend/src/advice 的中文架构评审报告：读过相关架构文档和 ADR，基于具体代码位置给出按严重程度排序的发现，每条有原则、位置、代价（变更场景）和建议，并且不把项目有意的取舍当作违反，不修改代码。

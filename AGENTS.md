@@ -16,6 +16,7 @@ A 股股票和交易所 ETF 诊断工作台：Rust 后端在 `backend/`，React 
 - `#[utoipa::path]` 的每个响应都写 `description`；`ToSchema` 类型名在整个 API 中唯一（重名会被静默覆盖）。
 - `frontend/src/api/generated/` 由 orval 生成，不手改；前端依赖精确锁版本，不放宽「发布满 3 天才安装」的策略。
 - API Key、数据库密码不写进代码、日志、文档或提交。
+- 架构评审、设计评审、检查模块边界或依赖方向时使用 `architecture-review` skill，按其中的原则和报告模板输出。
 - 改代码时同步更新相关文档。中文文档遵循 tech-doc-style-chinese：中文与英文、数字之间加空格，引号用「」，一段一行。
 
 ## Project Doc gate

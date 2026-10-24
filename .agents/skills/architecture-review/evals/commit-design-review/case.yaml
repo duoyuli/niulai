@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: commit-design-review
+expected_outcome: |
+  一份针对提交 9f96c70 的中文架构评审报告：聚焦这次改动引入或加重的结构问题（前后端都覆盖），区分新问题与既有问题，每条发现有具体位置和变更场景，不修改代码。
