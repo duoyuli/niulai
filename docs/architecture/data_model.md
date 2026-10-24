@@ -7,7 +7,7 @@
 
 | Schema | 职责 | 主要对象 |
 | --- | --- | --- |
-| `ops` | 同步框架和研究运行状态 | `dataset`（注册表）、`run`（运行）、`task`（任务队列）、`cursor`（进度游标）、`api_call`（调用日志）、`scheduler`（调度状态）、`derived_version`（派生数据版本）、`backtest_run`（因子研究的运行清单和结果）、`bar_gap`、`data_check`（数据核检的缺口和结果），视图 `v_progress`、`v_universe`，函数 `ms_to_cn_date`、`requeue_stale` |
+| `ops` | 同步框架和研究运行状态 | `dataset`（注册表）、`run`（运行）、`task`（任务队列）、`cursor`（进度游标）、`api_call`（调用日志）、`scheduler`（调度状态）、`derived_version`（派生数据版本）、`backtest_run`（因子研究的运行清单和结果）、`bar_gap`、`data_check`（数据核检的缺口和结果），视图 `v_progress`、`v_universe`、`v_unresolved_dead`（还没解决的失败任务：`dead` 且同一分区之后没有成功过），函数 `ms_to_cn_date`、`requeue_stale` |
 | `raw` | 供应商原始数据 | `record`（通用记录库）、`record_version`（修订历史），函数 `upsert_records` |
 | `ref` | 参考数据 | `security`、`etf_security`、`instrument`、`instrument_history`、`security_name_hist`、`trading_day`、`index_info`、`index_member` |
 | `mkt` | 行情与公司行动 | `stock_bar_1d`、`etf_bar_1d`、`index_bar_1d`、`corp_action`、`adj_segment`（复权分段），视图 `adj_event_effective`（同一除权日取舍后的有效事件）、四个复权视图、分析价格 `v_analysis_bar`（股票和 ETF 的未复权价与前复权价，见 [分析价格](../domains/price_adjustment.md#analysis_bars)）和本地有日线的日期 `v_bar_date`，重算存储过程 `rebuild_adj_segment` |
@@ -80,7 +80,7 @@
 - `ops.api_call`：每次 HTTP 尝试一行，含状态码、供应商 `code`、`request_id`、延迟。表声明为按 `called_at` 的范围分区，但只有默认分区；超过 30 天的行定期清理，见 [定期清理](sync_pipeline.md#retention)。
 - `ops.bar_gap`、`ops.data_check`：数据核检发现的日线缺口（`open` 还缺、`suspended` 确认停牌，补上了就删掉）和每次核检的结果，见 [数据核检](sync_pipeline.md#data_check)。
 - `ops.scheduler`：定时作业最近一次触发的日期和时刻：`daily`（每日同步，也用于判断要不要补发）、`weekly`（按触发时刻 `fired_at` 判断每周时刻有没有触发过）、`monthly`、`repair`（每个交易日一次的兜底补偿）、`data_check`（每周一次的数据核检）、`adj_rebuild`（回补期间定期重算复权）、`prune`（每天一次的 [定期清理](sync_pipeline.md#retention)）、`advice_prune`（每天一次清理被取代的建议），见 [定时调度](sync_pipeline.md#scheduling)。
-- `ops.derived_version`：派生数据最近一次变化的时刻。包含 `adj_factor`（复权因子重算完成后更新）、`limit_pool`（权威涨跌停池任务写入后更新）和 `factor_input`（因子的非价格输入：财报、行业成分、证券信息写入后更新）三行；进程内缓存和 Redis 缓存都把相关的时刻放进键里，版本变了旧结果不再命中，见 [ADR：计算在 Rust 中做](../decisions/indicator_compute.md) 和 [ADR：涨跌停以供应商的权威名单为准](../decisions/authoritative_limits.md)。
+- `ops.derived_version`：派生数据最近一次变化的时刻。包含 `adj_factor`（复权因子重算完成后更新）、`limit_pool`（权威涨跌停池任务写入后更新）和 `factor_input`（因子的非价格输入：财报、行业成分、证券信息写入后更新）三行；进程内缓存和 Redis 缓存都把相关的时刻放进键里，版本变了旧结果不再命中（读取和更新在 `analysis/versions.rs`，`adj_factor` 由同步层重算复权后直接更新），见 [ADR：计算在 Rust 中做](../decisions/indicator_compute.md) 和 [ADR：涨跌停以供应商的权威名单为准](../decisions/authoritative_limits.md)。
 - `ops.v_progress`：按运行和数据集汇总任务状态，API 的运行详情使用它。
 
 <a id="migrations"></a>

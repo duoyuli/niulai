@@ -229,11 +229,21 @@ async fn current_id(
     .await
 }
 
-/// 为所有账户生成最新交易日的建议。`replace` 为 true 时（同步刚完成，行情、涨跌停池或因子输入有变化）
-/// 连已有的一起重新生成，但用户已经处理过某一条（执行或不做）的保留，免得建议在手上变了。
+/// [`refresh_all`] 要为哪些账户生成
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refresh {
+    /// 只补还没有最新交易日建议的账户（维护、刚建账户、刚部署）
+    MissingOnly,
+    /// 数据变了（同步刚完成，行情、涨跌停池或因子输入有变化）：连已有的一起重新生成，
+    /// 但用户已经处理过某一条（执行或不做）的保留，免得建议在手上变了
+    ReplaceUntouched,
+}
+
+/// 为所有账户生成最新交易日的建议，范围见 [`Refresh`]。
 /// 因子排名缓存按数据版本失效（见 [`ranking`]），这里不用清。某个账户生成失败时转成它的重算待办
 /// （[`account::stale::defer`]），由 [`regen`] 重试，不影响其他账户，也不让调用方把同步事件一直挂着
-pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> {
+pub async fn refresh_all(pool: &PgPool, mode: Refresh) -> anyhow::Result<usize> {
+    let replace = mode == Refresh::ReplaceUntouched;
     if !replace {
         let Some(trade_date) = crate::analysis::market::resolve_date(pool, None).await? else {
             return Ok(0);
@@ -290,13 +300,8 @@ pub async fn refresh_all(pool: &PgPool, replace: bool) -> anyhow::Result<usize> 
 /// 执行循环每分钟调一次：还没有最新交易日建议的账户补上（例如刚建账户、刚部署），每天清理一次被取代的建议。
 /// 同步还在运行时日线可能只有一部分，等它结束后由同步完成事件统一生成
 pub async fn maintain(pool: &PgPool) -> anyhow::Result<()> {
-    let syncing: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM ops.run WHERE kind = 'incremental' AND status = 'running')",
-    )
-    .fetch_one(pool)
-    .await?;
-    if !syncing {
-        refresh_all(pool, false).await?;
+    if !crate::readiness::incremental_sync_running(pool).await? {
+        refresh_all(pool, Refresh::MissingOnly).await?;
     }
     prune_if_due(pool).await
 }

@@ -14,6 +14,18 @@ use super::auth::CurrentUser;
 use crate::auth::{self, Role, User};
 use crate::error::{ApiError, ApiResult};
 
+impl From<crate::auth::UserError> for ApiError {
+    fn from(e: crate::auth::UserError) -> Self {
+        use crate::auth::UserError;
+        match e {
+            UserError::Invalid(m) => ApiError::BadRequest(m),
+            UserError::Taken(_) => ApiError::Conflict(e.to_string()),
+            UserError::NotFound => ApiError::NotFound(e.to_string()),
+            UserError::Internal(e) => ApiError::Internal(e),
+        }
+    }
+}
+
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_users, add_user))

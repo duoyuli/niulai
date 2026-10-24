@@ -49,13 +49,6 @@ fn hint(key: &str) -> String {
     format!("••••{tail}")
 }
 
-/// 是否已经规划过回补（任何一次）
-pub async fn backfill_planned(pool: &sqlx::PgPool) -> sqlx::Result<bool> {
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ops.run WHERE kind = 'backfill')")
-        .fetch_one(pool)
-        .await
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
     #[error(
@@ -108,7 +101,7 @@ pub async fn configure_api_key(engine: &Engine, key: &str) -> Result<Option<i64>
     engine.client.set_api_key(Some(key.to_string()));
     tracing::info!("API Key 已在网页上配置");
 
-    if backfill_planned(&engine.pool).await? {
+    if crate::sync::run::backfill_planned(&engine.pool).await? {
         return Ok(None);
     }
     let priorities: Vec<String> = INITIAL_PRIORITIES.iter().map(|p| p.to_string()).collect();

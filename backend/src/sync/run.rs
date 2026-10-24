@@ -232,10 +232,18 @@ pub async fn mark_sync_event_ready(
     Ok(())
 }
 
-/// 可以由应用层消费的同步完成事件：(运行编号, 行情或公司行动是否有变化)
-pub async fn ready_sync_events(pool: &PgPool) -> anyhow::Result<Vec<(i64, bool)>> {
+/// 一个可以由应用层消费的同步完成事件
+#[derive(Clone, Copy, Debug, PartialEq, Eq, sqlx::FromRow)]
+pub struct ReadyEvent {
+    pub run_id: i64,
+    /// 行情或公司行动有变化（复权已经重算）
+    pub price_changed: bool,
+}
+
+/// 可以由应用层消费的同步完成事件，按运行编号排序
+pub async fn ready_sync_events(pool: &PgPool) -> anyhow::Result<Vec<ReadyEvent>> {
     Ok(sqlx::query_as(
-        "SELECT run_id, coalesce((params->'sync_event_pending'->>'price_changed')::boolean, true)
+        "SELECT run_id, coalesce((params->'sync_event_pending'->>'price_changed')::boolean, true) AS price_changed
          FROM ops.run WHERE params ? 'sync_event_pending'
            AND coalesce(params->'sync_event_pending'->>'stage', 'ready') = 'ready'
          ORDER BY run_id",
@@ -254,6 +262,35 @@ pub async fn ack_sync_events(pool: &PgPool, run_ids: &[i64]) -> anyhow::Result<(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// 这些运行里，列出的数据集、或写入列出的表（`datasets.yaml` 的 sink）的数据集，有没有成功写入变化。
+/// 应用层据此判断哪些派生数据要失效，不用自己查任务表
+pub async fn wrote_changes(
+    pool: &PgPool,
+    run_ids: &[i64],
+    datasets: &[&str],
+    tables: &[&str],
+) -> anyhow::Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM ops.task t
+           WHERE t.run_id = ANY($1) AND t.status = 'done' AND t.changed > 0
+             AND (t.dataset_id = ANY($2)
+                  OR t.dataset_id IN (SELECT dataset_id FROM ops.dataset WHERE spec->'sink' ?| $3)))",
+    )
+    .bind(run_ids)
+    .bind(datasets)
+    .bind(tables)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// 是否规划过历史回补（任何一次）：首次登录引导据此判断还要不要发起
+pub async fn backfill_planned(pool: &PgPool) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ops.run WHERE kind = 'backfill')")
+        .fetch_one(pool)
+        .await
 }
 
 pub async fn planned_since_marks(

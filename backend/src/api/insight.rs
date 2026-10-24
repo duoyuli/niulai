@@ -9,8 +9,8 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::AppState;
-use crate::analysis::limit_pool::CacheVersions;
 use crate::analysis::market::{self, Overview, SectorStrength};
+use crate::analysis::versions::CacheVersions;
 use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> OpenApiRouter<AppState> {

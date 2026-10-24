@@ -10,7 +10,7 @@
 
 ## 键与失效
 
-缓存键使用 `niulai:v1:` 前缀，并包含 `ops.derived_version` 中 `adj_factor`、`limit_pool` 的时间戳（`CacheVersions::market_token`）、交易日和接口参数，由 `cache::derived_key` 统一生成。接口和预热都通过 `Cache::cached_json` / `warm_json` 读写：先读缓存，没有再计算并回填，Redis 故障只记调试日志，键格式、TTL 和降级只在 `backend/src/cache.rs` 一处。行情或权威涨跌停池发生变化时，新的版本自然生成新键；旧键由 Redis TTL 和 `allkeys-lru` 回收，不执行影响业务数据的删除操作。默认 TTL 为 15 分钟。
+缓存键使用 `niulai:v1:` 前缀，并包含 `ops.derived_version` 中 `adj_factor`、`limit_pool` 的时间戳（`analysis::versions::CacheVersions::market_token`）、交易日和接口参数，由 `cache::derived_key` 统一生成。接口和预热都通过 `Cache::cached_json` / `warm_json` 读写：先读缓存，没有再计算并回填，Redis 故障只记调试日志，键格式、TTL 和降级只在 `backend/src/cache.rs` 一处。行情或权威涨跌停池发生变化时，新的版本自然生成新键；旧键由 Redis TTL 和 `allkeys-lru` 回收，不执行影响业务数据的删除操作。默认 TTL 为 15 分钟。
 
 ## 页面预热
 

@@ -9,8 +9,8 @@ use sqlx::PgPool;
 use crate::account::rules::Rules;
 use crate::analysis::compute;
 use crate::analysis::factor_lab::{self, Prep, Spec};
-use crate::analysis::limit_pool::CacheVersions;
 use crate::analysis::universe::Universe;
+use crate::analysis::versions::CacheVersions;
 
 /// 交易日是当月最后一个交易日（下一个交易日在下个月）
 pub fn month_end(trade_date: NaiveDate, next_date: NaiveDate) -> bool {

@@ -41,6 +41,10 @@ mod architecture {
     use std::path::{Path, PathBuf};
 
     fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        if dir.is_file() {
+            out.push(dir.to_path_buf());
+            return;
+        }
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() {
@@ -68,7 +72,25 @@ mod architecture {
     #[test]
     fn modules_only_depend_downward() {
         // (模块, 不允许引用的模块)：同步层只发布事实，分析不知道账户，账户不知道建议，业务层不依赖接口和进程编排
-        let rules: [(&str, &[&str]); 4] = [
+        let business: &[&str] = &[
+            "auth",
+            "sync",
+            "analysis",
+            "account",
+            "advice",
+            "api",
+            "bootstrap",
+            "server",
+        ];
+        let rules: [(&str, &[&str]); 11] = [
+            // 基础模块不依赖任何业务模块
+            ("error.rs", business),
+            ("cache.rs", business),
+            ("instrument.rs", business),
+            ("readiness.rs", business),
+            ("scheduling.rs", business),
+            ("time.rs", business),
+            ("config.rs", business),
             (
                 "sync",
                 &[
@@ -119,6 +141,41 @@ mod architecture {
         assert!(
             violations.is_empty(),
             "依赖方向不对：\n{}",
+            violations.join("\n")
+        );
+    }
+
+    #[test]
+    fn sync_state_tables_are_read_only_through_sync_and_readiness() {
+        // 运行、任务和数据集注册表属于同步层：其他模块通过 sync 的函数或 readiness 读取，
+        // 不各自写 SQL。api/sync.rs 是同步管理页的读取接口，属于同步的一部分
+        let allowed = ["sync", "readiness.rs", "api/sync.rs", "bin", "lib.rs"];
+        let mut files = vec![];
+        rust_files(&src(), &mut files);
+        let mut violations = vec![];
+        for file in files {
+            let rel = file
+                .strip_prefix(src())
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if allowed
+                .iter()
+                .any(|a| rel == *a || rel.starts_with(&format!("{a}/")))
+            {
+                continue;
+            }
+            for (n, line) in code_lines(&file) {
+                for table in ["ops.task", "ops.run ", "ops.dataset"] {
+                    if line.contains(table) {
+                        violations.push(format!("{rel}:{n} 直接查询 {}", table.trim()));
+                    }
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "同步状态表只由同步层和 readiness 读取：\n{}",
             violations.join("\n")
         );
     }

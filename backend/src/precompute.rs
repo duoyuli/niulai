@@ -9,8 +9,8 @@ use std::time::Duration;
 use sqlx::PgPool;
 use tokio::sync::watch;
 
-use crate::analysis::limit_pool::CacheVersions;
 use crate::analysis::market::{self, OverviewCache};
+use crate::analysis::versions::CacheVersions;
 use crate::analysis::{compute, hotspots};
 use crate::cache::{Cache, derived_key};
 

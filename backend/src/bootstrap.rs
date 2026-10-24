@@ -3,7 +3,9 @@
 use sqlx::PgPool;
 use tokio::sync::{mpsc, watch};
 
+use crate::advice::Refresh;
 use crate::analysis::compute::{self, Budget};
+use crate::analysis::versions::{self, Derived};
 use crate::analysis::{factor_lab, limit_pool};
 use crate::config::Settings;
 use crate::sync::events::DomainEvent;
@@ -57,8 +59,8 @@ pub async fn replay_ready_events(pool: &PgPool) {
     if ready.is_empty() {
         return;
     }
-    let run_ids: Vec<i64> = ready.iter().map(|(id, _)| *id).collect();
-    let price_changed = ready.iter().any(|(_, changed)| *changed);
+    let run_ids: Vec<i64> = ready.iter().map(|e| e.run_id).collect();
+    let price_changed = ready.iter().any(|e| e.price_changed);
     match handle_runs(pool, &run_ids, price_changed).await {
         Ok(()) => {
             if let Err(e) = crate::sync::run::ack_sync_events(pool, &run_ids).await {
@@ -72,14 +74,20 @@ pub async fn replay_ready_events(pool: &PgPool) {
 }
 
 async fn handle_runs(pool: &PgPool, run_ids: &[i64], price_changed: bool) -> anyhow::Result<()> {
-    let pool_changed =
-        bump_if_changed(pool, "limit_pool", run_ids, &limit_pool::DATASETS, &[]).await?;
+    let pool_changed = bump_if_changed(
+        pool,
+        Derived::LimitPool,
+        run_ids,
+        &limit_pool::DATASETS,
+        &[],
+    )
+    .await?;
     if pool_changed {
         tracing::info!(?run_ids, "权威涨跌停池有变化，市场概况的缓存已失效");
     }
     let inputs_changed = bump_if_changed(
         pool,
-        "factor_input",
+        Derived::FactorInput,
         run_ids,
         &factor_lab::INPUT_DATASETS,
         &factor_lab::INPUT_TABLES,
@@ -89,36 +97,26 @@ async fn handle_runs(pool: &PgPool, run_ids: &[i64], price_changed: bool) -> any
         tracing::info!(?run_ids, "财报、行业或证券信息有变化，因子排名的缓存已失效");
     }
     if price_changed || pool_changed || inputs_changed {
-        compute::run(Budget::Background, crate::advice::refresh_all(pool, true)).await?;
+        compute::run(
+            Budget::Background,
+            crate::advice::refresh_all(pool, Refresh::ReplaceUntouched),
+        )
+        .await?;
     }
     Ok(())
 }
 
-/// 这些运行里，列出的数据集或写入列出的表的数据集有没有写入变化；有就更新 `ops.derived_version` 的 `name` 行
+/// 这些运行里，列出的数据集或写入列出的表的数据集有没有写入变化；有就更新对应的派生数据版本
 async fn bump_if_changed(
     pool: &PgPool,
-    name: &str,
+    which: Derived,
     run_ids: &[i64],
     datasets: &[&str],
     tables: &[&str],
 ) -> anyhow::Result<bool> {
-    let changed: bool = sqlx::query_scalar(
-        "SELECT EXISTS (
-           SELECT 1 FROM ops.task t
-           WHERE t.run_id = ANY($1) AND t.status = 'done' AND t.changed > 0
-             AND (t.dataset_id = ANY($2)
-                  OR t.dataset_id IN (SELECT dataset_id FROM ops.dataset WHERE spec->'sink' ?| $3)))",
-    )
-    .bind(run_ids)
-    .bind(datasets)
-    .bind(tables)
-    .fetch_one(pool)
-    .await?;
+    let changed = crate::sync::run::wrote_changes(pool, run_ids, datasets, tables).await?;
     if changed {
-        sqlx::query("UPDATE ops.derived_version SET updated_at = now() WHERE name = $1")
-            .bind(name)
-            .execute(pool)
-            .await?;
+        versions::bump(pool, which).await?;
     }
     Ok(changed)
 }

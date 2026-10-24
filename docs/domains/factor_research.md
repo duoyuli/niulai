@@ -1,6 +1,6 @@
 # 因子研究
 
-本文说明横截面因子研究的口径：因子目录与取值、数据的时点规则、因子检验的统计量、挑选偏差的估计，以及多因子组合回测的交易规则。代码在 `backend/src/analysis/factors.rs`（因子目录与逐只证券的取值）、`factor_lab.rs`（读取面板、检验、组合模拟）、`research.rs`（Deflated Sharpe、PBO）和 `research_run.rs`（一次研究运行：类型化配置、执行、运行记录和试验次数），接口在 `backend/src/api/research.rs`（只把查询参数转换成配置），页面是 `/research`。为什么从单只股票的买卖信号转向横截面因子，见 [ADR：用横截面因子研究检验选股方法](../decisions/cross_sectional_factors.md)。
+本文说明横截面因子研究的口径：因子目录与取值、数据的时点规则、因子检验的统计量、挑选偏差的估计，以及多因子组合回测的交易规则。代码在 `backend/src/analysis/factors.rs`（因子目录与逐只证券的取值）、`factor_lab.rs`（读取面板、检验、组合模拟）、`research.rs`（Deflated Sharpe、PBO）、`fundamentals.rs`（财报的数据集 ID，与个股基本面接口共用）和 `research_run.rs`（一次研究运行：类型化配置、执行、运行记录和试验次数），接口在 `backend/src/api/research.rs`（只把查询参数转换成配置），页面是 `/research`。为什么从单只股票的买卖信号转向横截面因子，见 [ADR：用横截面因子研究检验选股方法](../decisions/cross_sectional_factors.md)。
 
 ## 章节导航
 

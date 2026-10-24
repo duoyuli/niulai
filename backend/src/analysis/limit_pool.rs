@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::NaiveDate;
 use sqlx::PgPool;
 
 /// 涨停池：历史最深（2020-07-22 起），同时用作权威交易日历
@@ -66,48 +66,5 @@ impl DayLimits {
             up: Some(up_rows.into_iter().flatten().collect()),
             down,
         })
-    }
-}
-
-/// 缓存用的数据版本（`ops.derived_version`）：依赖的那几行中任一更新，结果就不再命中。
-/// - `adj_factor`：复权价（行情或公司行动有变化、重算复权之后）；
-/// - `limit_pool`：权威涨跌停池；
-/// - `factor_input`：因子排名的非价格输入（财报、行业成分、证券名称和 ST），迁移 20261023000003 加入。
-///
-/// 升级前的库里查不到的行按 None 处理。多个进程各自的缓存都按这些版本失效，不依赖进程内的清空调用
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct CacheVersions {
-    pub adj_factor: Option<DateTime<Utc>>,
-    pub limit_pool: Option<DateTime<Utc>>,
-    pub factor_input: Option<DateTime<Utc>>,
-}
-
-impl CacheVersions {
-    pub async fn load(pool: &PgPool) -> sqlx::Result<Self> {
-        let rows: Vec<(String, DateTime<Utc>)> =
-            sqlx::query_as("SELECT name, updated_at FROM ops.derived_version WHERE name = ANY($1)")
-                .bind(&["adj_factor", "limit_pool", "factor_input"][..])
-                .fetch_all(pool)
-                .await?;
-        let mut v = Self::default();
-        for (name, at) in rows {
-            match name.as_str() {
-                "adj_factor" => v.adj_factor = Some(at),
-                "limit_pool" => v.limit_pool = Some(at),
-                "factor_input" => v.factor_input = Some(at),
-                _ => {}
-            }
-        }
-        Ok(v)
-    }
-
-    /// 页面结果（市场概况、今日热点、板块排名）的版本：复权价和涨跌停池
-    pub fn market_token(&self) -> String {
-        format!("adj={:?}:limit={:?}", self.adj_factor, self.limit_pool)
-    }
-
-    /// 因子排名的版本：复权价和因子的非价格输入
-    pub fn factor_token(&self) -> String {
-        format!("adj={:?}:input={:?}", self.adj_factor, self.factor_input)
     }
 }

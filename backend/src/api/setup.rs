@@ -51,7 +51,7 @@ async fn get_setup(State(s): State<AppState>) -> ApiResult<Json<SetupStatus>> {
         }),
         api_key_hint: status.map(|(_, h)| h),
         api_key_url: setup::API_KEY_URL,
-        backfill_planned: setup::backfill_planned(&s.pool).await?,
+        backfill_planned: crate::sync::run::backfill_planned(&s.pool).await?,
     }))
 }
 

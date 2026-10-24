@@ -98,11 +98,8 @@ pub async fn handler(State(s): State<AppState>, headers: HeaderMap) -> Response 
     if !ok {
         return (StatusCode::UNAUTHORIZED, "监控指标的令牌不对\n").into_response();
     }
-    let pending: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM ops.task WHERE status IN ('pending', 'failed')")
-            .fetch_one(&s.pool)
-            .await
-            .unwrap_or(-1);
+    // 数据库暂时查不到时报 -1，指标接口本身不失败
+    let pending = crate::sync::queue::backlog(&s.pool).await.unwrap_or(-1);
     let body = format(
         &s.metrics,
         super::system::current_version(),

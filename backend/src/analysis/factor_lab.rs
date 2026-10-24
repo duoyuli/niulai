@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 
 use super::costs::{Costs, order_blocked};
 use super::factors::{self, FactorCategory, FactorId, FundamentalSnapshot, PriceFactors, Report};
+use super::fundamentals::{BALANCE, CASHFLOW, INCOME};
 use super::market::calendar_days_for;
 use super::prices;
 use super::research::{self, RiskMetrics};
@@ -29,9 +30,6 @@ pub const INPUT_TABLES: [&str; 4] = [
     "ref.security",
     "ref.etf_security",
 ];
-const INCOME: &str = "a_share.income_q";
-const BALANCE: &str = "a_share.balance_q";
-const CASHFLOW: &str = "a_share.cashflow_q";
 
 /// 组合回测的基准：全市场等权（含分红）
 pub const EQUAL_WEIGHT_NAME: &str = "全市场等权（含分红）";

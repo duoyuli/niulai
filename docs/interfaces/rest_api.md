@@ -41,7 +41,7 @@
 | `PUT /setup/api-key` | 验证并保存 API Key，立即生效 | 请求体 `{api_key}`；见 [首次登录引导](#setup) |
 | `GET /securities` | 证券列表（股票和交易所 ETF，结果带 `asset_type`，取值是 `stock` 或 `etf`，各接口一致） | `q`（代码或名称片段）、`board`；`limit` 默认 50、最大 500；`offset` |
 | `GET /securities/{thscode}` | 证券详情：简称历史、本地日线的范围和根数 | 不存在时返回 404 |
-| `GET /securities/{thscode}/fundamentals` | 股票的最近估值历史、三张报表和财务指标；ETF 返回行情范围、供应商前复权标记和基金资料；股票报表同时返回披露日期 | `limit` 默认 90、最大 365（ETF 忽略） |
+| `GET /securities/{thscode}/fundamentals` | 股票的最近估值历史、三张报表和财务指标；ETF 返回行情范围、供应商前复权标记和基金资料；股票报表同时返回披露日期（按上海时间换算，和因子研究推断财报可用日的口径一致）。读取和供应商字段解析在 `analysis/fundamentals.rs` | `limit` 默认 90、最大 365（ETF 忽略） |
 | `GET /securities/{thscode}/bars` | 个股或 ETF 日线 | `adjust`（见 [复权参数](#adjust_param)；ETF 只支持 `none` / `qfq` / `hfq`）、`start`、`end`；`limit` 默认 500、最大 10,000，返回范围内**最近**的 N 根，按日期升序 |
 | `GET /research/factors` | 因子目录：口径、类别（价量或财务）、预期方向和依据 | 见 [因子目录](../domains/factor_research.md#catalog) |
 | `GET /research/factor-test` | 因子检验：RankIC、分组收益、多空、换手、衰减、因子相关性、PBO 和 Deflated Sharpe；两个以上因子时额外检验等权合成 | `factors`（必填，逗号分隔的因子 ID）、`start` 默认结束日前 5 年、`end`，区间 90 天到 8 年；`horizon` 5、10 或 20（默认 5）；`quantiles` 3 到 10（默认 5）；`neutralize` 默认 true；`exclude_small_pct` 0 到 50；股票池参数 `boards`、`exclude_st`、`min_price`、`min_amount`、`min_listed_days`；规则见 [因子检验](../domains/factor_research.md#test) |

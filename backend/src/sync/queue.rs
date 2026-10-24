@@ -102,10 +102,10 @@ pub async fn requeue_dead_for_repair(
         "UPDATE ops.task t SET status = 'pending', attempts = 0, not_before = now(),
                 finished_at = NULL, priority = 50 + t.priority % 50, repairs = t.repairs + 1
          WHERE t.task_id IN (
-           SELECT max(x.task_id) FROM ops.task x
-           WHERE x.status = 'dead' AND x.last_error LIKE '可重试错误%'
+           SELECT max(x.task_id) FROM ops.v_unresolved_dead x
+           WHERE x.last_error LIKE '可重试错误%'
              AND NOT EXISTS (SELECT 1 FROM ops.task o WHERE o.dataset_id = x.dataset_id AND o.part_key = x.part_key
-                               AND (o.status IN ('pending', 'running', 'failed') OR (o.task_id > x.task_id AND o.status IN ('done', 'empty'))))
+                               AND o.status IN ('pending', 'running', 'failed'))
            GROUP BY x.dataset_id, x.part_key)
            AND t.repairs < $1",
     )
@@ -113,6 +113,15 @@ pub async fn requeue_dead_for_repair(
     .execute(conn)
     .await?
     .rows_affected())
+}
+
+/// 等待执行的任务数（含等待重试的），监控指标用
+pub async fn backlog(pool: &PgPool) -> anyhow::Result<i64> {
+    Ok(
+        sqlx::query_scalar("SELECT count(*) FROM ops.task WHERE status IN ('pending', 'failed')")
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 impl TaskQueue {

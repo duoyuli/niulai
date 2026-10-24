@@ -142,9 +142,7 @@ async fn list_datasets(State(s): State<AppState>) -> ApiResult<Json<Vec<DatasetS
          LEFT JOIN LATERAL (
            SELECT max(finished_at) FILTER (WHERE status IN ('done', 'empty')) last_done_at,
                   count(*) FILTER (WHERE status IN ('pending', 'running', 'failed')) open,
-                  count(*) FILTER (WHERE status = 'dead' AND NOT EXISTS (
-                    SELECT 1 FROM ops.task o WHERE o.dataset_id = x.dataset_id AND o.part_key = x.part_key
-                      AND o.task_id > x.task_id AND o.status IN ('done', 'empty'))) dead
+                  (SELECT count(*) FROM ops.v_unresolved_dead u WHERE u.dataset_id = d.dataset_id) dead
            FROM ops.task x WHERE x.dataset_id = d.dataset_id) t ON true
          LEFT JOIN LATERAL (
            SELECT count(*) total, count(*) FILTER (WHERE y.status NOT IN ('pending', 'running', 'failed')) done

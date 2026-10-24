@@ -49,4 +49,4 @@
 <a id="tests"></a>
 ## 测试
 
-`backend/tests/integration.rs` 的 `market_hot_groups_truncates_and_explains_missing_data` 写 `raw.record` 行验证：连板分组和组内排序、`thscode` 为空时按 `ticker` 补、每组和列表截断到 50 只、总数不受截断影响、日期是截止日期、没有数据时 `available` 为 `false` 且 `note` 说明原因、日期格式不对时返回 400、普通用户可以访问。这些测试只在设置了 `NIULAI_TEST_DATABASE_URL` 时运行，见 [本地运行](../operations/runbook.md#testing)。
+`backend/tests/integration/market.rs` 的 `market_hot_groups_truncates_and_explains_missing_data` 写 `raw.record` 行验证：连板分组和组内排序、`thscode` 为空时按 `ticker` 补、每组和列表截断到 50 只、总数不受截断影响、日期是截止日期、没有数据时 `available` 为 `false` 且 `note` 说明原因、日期格式不对时返回 400、普通用户可以访问。这些测试只在设置了 `NIULAI_TEST_DATABASE_URL` 时运行，见 [本地运行](../operations/runbook.md#testing)。

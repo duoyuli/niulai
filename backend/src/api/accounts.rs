@@ -544,7 +544,7 @@ async fn advice_response(
 ) -> ApiResult<AdviceResponse> {
     let advice = advice::load(&s.pool, id, date).await?;
     let latest_bar = crate::analysis::market::resolve_date(&s.pool, None).await?;
-    let core_left = crate::sync::audit::core_backfill_left(&s.pool).await?;
+    let core_left = crate::readiness::core_backfill_left(&s.pool).await?;
     let waiting = match (&advice, latest_bar) {
         (Some(_), _) => None,
         (None, _) if core_left > 0 => Some(crate::sync::audit::data_status(&s.pool).await?.message),

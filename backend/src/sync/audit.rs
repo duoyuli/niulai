@@ -272,10 +272,7 @@ fn explain(err: &str) -> String {
 pub async fn failures(pool: &PgPool, registry: &Registry) -> anyhow::Result<Vec<FailureGroup>> {
     let rows: Vec<(String, i64, String, Option<DateTime<Utc>>)> = sqlx::query_as(
         "SELECT t.dataset_id, count(*), min(t.last_error), max(t.finished_at)
-         FROM ops.task t
-         WHERE t.status = 'dead'
-           AND NOT EXISTS (SELECT 1 FROM ops.task o WHERE o.dataset_id = t.dataset_id AND o.part_key = t.part_key
-                             AND o.task_id > t.task_id AND o.status IN ('done', 'empty'))
+         FROM ops.v_unresolved_dead t
          GROUP BY t.dataset_id, left(coalesce(t.last_error, ''), 24)
          ORDER BY 2 DESC",
     )
@@ -294,13 +291,6 @@ pub async fn failures(pool: &PgPool, registry: &Registry) -> anyhow::Result<Vec<
         .collect())
 }
 
-/// 核心数据：写入个股日线和公司行动的数据集（启动时由注册表算出）。首页的大盘统计、因子排名和运营建议都靠它们
-/// 核心数据的首次回补还剩多少个任务；0 表示核心数据已经齐了。回补期间日线只有一部分股票、一部分年份，
-/// 这时生成的运营建议和大盘统计不可信，所以运营建议等它完成再生成（见 `advice::inputs::shared`）
-pub async fn core_backfill_left(pool: &PgPool) -> anyhow::Result<i64> {
-    crate::readiness::core_backfill_left(pool).await
-}
-
 /// 普通用户也能看的数据状态：核心数据齐没齐、首次回补的进度
 #[derive(Serialize, ToSchema, Debug)]
 pub struct DataStatus {
@@ -315,7 +305,8 @@ pub struct DataStatus {
 }
 
 pub async fn data_status(pool: &PgPool) -> anyhow::Result<DataStatus> {
-    let core_left = core_backfill_left(pool).await?;
+    // 核心数据（个股日线、公司行动）的首次回补没完成时，日线只有一部分股票、一部分年份，运营建议先不生成
+    let core_left = crate::readiness::core_backfill_left(pool).await?;
     let backfill = backfill(pool).await?;
     let per_hour: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM ops.api_call WHERE called_at > now() - interval '1 hour'",

@@ -58,8 +58,7 @@ pub async fn prune(pool: &PgPool) -> anyhow::Result<Pruned> {
         "DELETE FROM ops.task WHERE task_id IN (
            SELECT d.task_id FROM ops.task d
            WHERE d.status = 'dead' AND coalesce(d.finished_at, d.created_at) < now() - make_interval(days => $1)
-             AND EXISTS (SELECT 1 FROM ops.task o WHERE o.dataset_id = d.dataset_id AND o.part_key = d.part_key
-                           AND o.task_id > d.task_id AND o.status IN ('done', 'empty'))
+             AND d.task_id NOT IN (SELECT task_id FROM ops.v_unresolved_dead)
            LIMIT $2)",
         TASK_KEEP_DAYS,
     )

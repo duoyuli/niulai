@@ -230,7 +230,7 @@ pub struct OverviewCache {
     entries: std::sync::Mutex<Vec<OverviewEntry>>,
 }
 
-/// (交易日, 数据版本 [`super::limit_pool::CacheVersions::market_token`], 结果)
+/// (交易日, 数据版本 [`super::versions::CacheVersions::market_token`], 结果)
 type OverviewEntry = (NaiveDate, String, Overview);
 
 impl OverviewCache {
@@ -242,7 +242,7 @@ impl OverviewCache {
         let Some(date) = resolve_date(pool, date).await? else {
             return Ok(None);
         };
-        let version = super::limit_pool::CacheVersions::load(pool)
+        let version = super::versions::CacheVersions::load(pool)
             .await?
             .market_token();
         if let Some(hit) = self
