@@ -1,10 +1,10 @@
-/** 因子研究：先检验因子有没有预测力（RankIC、分组收益、挑选偏差），再用多个因子合成打分做组合回测。
+/** 因子研究：先检验因子有没有预测力（信息系数 RankIC、分组收益、挑选偏差），再用多个因子合成打分做组合回测。
  * 规则见 docs/domains/factor_research.md */
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import type {
-  FactorInfo,
+  FactorId,
   FactorPortfolioParams,
   FactorPortfolioResult,
   FactorTestParams,
@@ -14,13 +14,16 @@ import type {
 import {
   getFactorPortfolioQueryKey,
   getFactorTestQueryKey,
-  useFactorCatalog,
+  getListPresetsQueryKey,
   useFactorPortfolio,
   useFactorTest,
+  useSavePreset,
 } from "../api/generated/research/research";
 import { EquityChart } from "../components/EquityChart";
 import { type Line, MultiLineChart, quantileColors } from "../components/FactorCharts";
+import { FactorPicker } from "../components/FactorPicker";
 import { TaskRunning, useElapsedSeconds } from "../components/longTask";
+import { RangePicker, rangeQuery } from "../components/RangePicker";
 import { CostFields, costParams, LogToggle, NumberField, RulesNote } from "../components/researchFields";
 import {
   Badge,
@@ -28,14 +31,14 @@ import {
   Card,
   Empty,
   ErrorState,
-  HelpTip,
+  errorText,
   inputClass,
   PageHeader,
-  QueryView,
   Segmented,
   Spinner,
   Stat,
   Table,
+  Term,
 } from "../components/ui";
 import { useSearchState } from "../hooks/useSearchState";
 import {
@@ -45,25 +48,31 @@ import {
   fmtProb,
   formatFactors,
   parseFactors,
-  toggleFactor,
   verdictTone,
 } from "../lib/factors";
-import { fmtBig, fmtInt, fmtPercent, rangeStart, upDownClass } from "../lib/format";
+import { fmtBig, fmtInt, fmtPercent, upDownClass } from "../lib/format";
 
 const TABS = [
-  { value: "test", label: "因子检验", hint: "单个因子有没有预测力：RankIC、分组收益、挑选偏差" },
-  { value: "portfolio", label: "多因子组合", hint: "多个因子合成打分，定期持有得分最高的一批股票" },
+  { value: "test", label: "① 因子检验", hint: "每个因子单独打分，看它有没有预测力" },
+  { value: "portfolio", label: "② 多因子组合", hint: "几个因子合成一个分数，模拟定期持有得分最高的一批股票" },
 ] as const;
 
-const TEST_RANGES = [
-  { value: "3", label: "3 年" },
-  { value: "5", label: "5 年" },
-  { value: "8", label: "8 年" },
-] as const;
-const PORTFOLIO_RANGES = [
+/** 两个标签各自回答的问题，显示在标签下面 */
+const TAB_INTRO = {
+  test: "第一步：逐个体检因子。每个勾选的因子单独给全市场排名，看排名靠前的股票之后是否真的涨得更多，因子之间互不影响；不算交易成本，也不是一个能直接用的选股方案。",
+  portfolio:
+    "第二步：把几个有效的因子合成一个选股方案。勾选的因子按权重合成一个分数，模拟每隔一段时间买入得分最高的若干只、扣掉交易成本，看这套方案能赚多少。调好后可以存成预设，在账户设置里一键套用。",
+} as const;
+
+/** 持有只数和缓冲区：组合回测的参数，套用自己保存的预设时一起改 */
+const HOLDING = { top: "30", buffer: "0.5" };
+
+/** 计算区间的快捷选项；更长或更早的区间在日期框里选，因子检验最长 8 年、组合回测最长 5 年 */
+const RANGES = [
+  { value: "3m", label: "3 个月" },
+  { value: "6m", label: "6 个月" },
   { value: "1", label: "1 年" },
   { value: "3", label: "3 年" },
-  { value: "5", label: "5 年" },
 ] as const;
 const HORIZONS = [
   { value: "5", label: "5 日", hint: "每周取样一次，看之后 5 个交易日的收益" },
@@ -76,6 +85,9 @@ const REBALANCES = [
   { value: "20", label: "每月" },
   { value: "60", label: "每季" },
 ] as const;
+const NEUTRALIZE_HELP =
+  "把行业和公司大小对因子的影响扣掉，只留下因子自己的部分。比如波动率低的股票多是银行、公用事业和大盘股，不中性化时「波动率」选出来的大半是这几类，赚赔的其实是行业和大小盘的涨跌。做法是每个取样日把因子值对行业和规模（20 日平均成交额的对数）回归，用残差代替原值。规模因子本身只扣行业";
+
 const SMALL = [
   { value: "0", label: "不剔除" },
   { value: "30", label: "剔除最小 30%", hint: "按成交额剔除最小的 30%：小盘股里有一部分是壳价值，不是因子带来的收益" },
@@ -87,20 +99,28 @@ const ON_OFF = [
 
 export function ResearchPage() {
   const [s, set] = useSearchState({ tab: "test", f: DEFAULT_FACTORS });
+  const [, setHolding] = useSearchState(HOLDING);
   const picks = parseFactors(s.f);
+  const portfolio = s.tab === "portfolio";
   return (
     <>
       <PageHeader
         title="因子研究"
-        desc="均线金叉这类单只股票的买卖信号，在 A 股扣掉成本后很难赚钱。专业做法是每天给全市场股票按某个特征（因子）打分排名，先检验排名靠前的股票之后是否真的涨得更多，再把几个有效的因子合起来，定期持有得分最高的一批。"
+        desc="因子是用来给股票打分的可量化特征，例如过去 20 日的波动率、单季利润增速。因子检验在每个取样日按因子给全市场股票排名，衡量排名与之后收益的相关程度；多因子组合把多个因子按权重合成一个得分，模拟定期持有得分最高的一批股票，并计入交易成本。"
       />
       <Card>
         <div className="flex flex-col gap-3">
           <Segmented value={s.tab as "test" | "portfolio"} options={TABS} onChange={(tab) => set({ tab })} />
+          <p className="text-xs text-zinc-500">{TAB_INTRO[portfolio ? "portfolio" : "test"]}</p>
           <FactorPicker
             picks={picks}
             onChange={(next) => set({ f: formatFactors(next) })}
-            weights={s.tab === "portfolio"}
+            onPreset={(p) => {
+              set({ f: formatFactors(p.factors) });
+              if (p.top_n !== undefined) setHolding({ top: String(p.top_n), buffer: String(p.buffer ?? 0.5) });
+            }}
+            presets={portfolio}
+            weights={portfolio}
           />
         </div>
       </Card>
@@ -111,100 +131,9 @@ export function ResearchPage() {
       ) : s.tab === "portfolio" ? (
         <PortfolioPanel picks={picks} />
       ) : (
-        <TestPanel picks={picks} />
+        <TestPanel picks={picks} onCompose={(f) => set({ tab: "portfolio", f: formatFactors(f) })} />
       )}
     </>
-  );
-}
-
-/** 按类别列出因子，点一下选中或取消；组合模式下每个选中的因子可以填权重 */
-function FactorPicker({
-  picks,
-  onChange,
-  weights,
-}: {
-  picks: FactorWeight[];
-  onChange: (p: FactorWeight[]) => void;
-  weights: boolean;
-}) {
-  const catalog = useFactorCatalog({ query: { staleTime: Number.POSITIVE_INFINITY } });
-  return (
-    <QueryView query={catalog}>
-      {(items) => (
-        <div className="flex flex-col gap-3">
-          {(
-            [
-              ["price_volume", "价量因子（只用日线）"],
-              ["fundamental", "财务因子（按法定披露截止日才使用，避免偷看未来）"],
-            ] as const
-          ).map(([cat, title]) => (
-            <div key={cat} className="flex flex-col gap-1.5">
-              <span className="text-xs text-zinc-500">{title}</span>
-              <div className="flex flex-wrap gap-2">
-                {items
-                  .filter((f) => f.category === cat)
-                  .map((f) => (
-                    <FactorChip
-                      key={f.id}
-                      f={f}
-                      pick={picks.find((p) => p.id === f.id)}
-                      weights={weights}
-                      onToggle={() => onChange(toggleFactor(picks, f.id))}
-                      onWeight={(w) => onChange(picks.map((p) => (p.id === f.id ? { ...p, weight: w } : p)))}
-                    />
-                  ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </QueryView>
-  );
-}
-
-function FactorChip({
-  f,
-  pick,
-  weights,
-  onToggle,
-  onWeight,
-}: {
-  f: FactorInfo;
-  pick?: FactorWeight;
-  weights: boolean;
-  onToggle: () => void;
-  onWeight: (w: number) => void;
-}) {
-  const on = pick !== undefined;
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-sm ${
-        on ? "border-accent bg-accent/5" : "border-zinc-200 dark:border-zinc-700"
-      }`}
-    >
-      <button type="button" onClick={onToggle} className="inline-flex items-center gap-1" title={f.description}>
-        <span className={on ? "text-accent" : "text-zinc-400"}>{on ? "✓" : "+"}</span>
-        {f.name}
-        <span className="text-xs text-zinc-400">{f.higher_is_better ? "越大越好" : "越小越好"}</span>
-      </button>
-      <HelpTip label={`${f.name}的说明`}>
-        <b>{f.description}。</b>
-        <br />
-        {f.rationale}
-      </HelpTip>
-      {on && weights && (
-        <input
-          aria-label={`${f.name}的权重`}
-          className={`${inputClass} num ml-1 w-14 px-1.5 py-0.5 text-xs`}
-          defaultValue={pick.weight}
-          title="权重：作用在按预期方向统一后的得分上，负数表示反过来用"
-          onBlur={(e) => {
-            const w = Number(e.target.value);
-            if (Number.isFinite(w) && w !== pick.weight) onWeight(w);
-          }}
-        />
-      )}
-    </span>
   );
 }
 
@@ -269,11 +198,11 @@ function RunBar({
   );
 }
 
-function TestPanel({ picks }: { picks: FactorWeight[] }) {
-  const [s, set] = useSearchState({ range: "5", h: "5", q: "5", n: "1", small: "0" });
+function TestPanel({ picks, onCompose }: { picks: FactorWeight[]; onCompose: (f: FactorWeight[]) => void }) {
+  const [s, set] = useSearchState({ range: "3", from: "", to: "", h: "5", q: "5", n: "1", small: "0" });
   const form: FactorTestParams = {
     factors: formatFactors(picks, false),
-    start: rangeStart(s.range),
+    ...rangeQuery(s),
     horizon: Number(s.h),
     quantiles: Number(s.q),
     neutralize: s.n === "1",
@@ -287,8 +216,8 @@ function TestPanel({ picks }: { picks: FactorWeight[] }) {
     <>
       <Card>
         <div className="flex flex-wrap items-end gap-4">
-          <Labeled label="看过去多久">
-            <Segmented value={s.range} options={TEST_RANGES} onChange={(range) => set({ range })} />
+          <Labeled label="计算区间（最长 8 年）">
+            <RangePicker value={s} ranges={RANGES} onChange={set} />
           </Labeled>
           <Labeled label="持有期">
             <Segmented value={s.h} options={HORIZONS} onChange={(h) => set({ h })} />
@@ -303,7 +232,7 @@ function TestPanel({ picks }: { picks: FactorWeight[] }) {
               onChange={(q) => set({ q })}
             />
           </Labeled>
-          <Labeled label="中性化">
+          <Labeled label="中性化" help={NEUTRALIZE_HELP}>
             <Segmented value={s.n} options={ON_OFF} onChange={(n) => set({ n })} />
           </Labeled>
           <Labeled label="小盘股">
@@ -317,7 +246,7 @@ function TestPanel({ picks }: { picks: FactorWeight[] }) {
           hasRun={m.run !== null}
           onStart={() => m.start(query.refetch)}
           onCancel={m.cancel}
-          estimate="全市场 5 年通常 20 到 40 秒；含财务因子时更久"
+          estimate="区间越长越慢：全市场 5 年通常 20 到 40 秒；含财务因子时更久"
         />
       </Card>
       {m.run !== null &&
@@ -326,7 +255,7 @@ function TestPanel({ picks }: { picks: FactorWeight[] }) {
             <ErrorState error={query.error} onRetry={() => query.refetch()} />
           </Card>
         ) : query.data !== undefined ? (
-          <TestResult data={query.data} />
+          <TestResult data={query.data} onCompose={onCompose} />
         ) : running ? null : (
           <Card>
             <Spinner />
@@ -336,8 +265,8 @@ function TestPanel({ picks }: { picks: FactorWeight[] }) {
         items={[
           "每隔「持有期」个交易日取样一次：当天收盘时给股票池里的每只股票算因子值，下一个交易日开盘买入、持有期结束后的开盘卖出，用前复权价算收益。买入日停牌或一字涨停的股票不计入，卖出日一字跌停顺延。",
           "因子值先去极值（中位数 ± 3 倍稳健标准差），再标准化；选择中性化时对同花顺行业和规模（20 日平均成交额的对数）回归取残差。规模因子本身只做行业中性化。",
-          "RankIC 是因子排名和之后收益排名的相关系数，A 股里单个因子稳定在 0.03 以上就算有用。t 值按 Harvey、Liu、Zhu 的建议要达到 3 才算显著：因子被试得越多，偶然显著的就越多。",
-          "过拟合概率（PBO）用组合对称交叉验证估计：把时间切成 8 段，枚举一半做样本内、一半做样本外，样本内最好的候选在样本外排到后一半的比例。Deflated Sharpe 是考虑挑选次数之后真实 Sharpe 大于 0 的概率。",
+          "信息系数（RankIC）是因子排名和之后收益排名的相关系数，A 股里单个因子稳定在 0.03 以上就算有用。t 值衡量平均信息系数离 0 有多远，按 Harvey、Liu、Zhu 的建议要达到 3 才算显著：因子被试得越多，偶然显著的就越多。",
+          "过拟合概率（PBO）用组合对称交叉验证估计：把时间切成 8 段，枚举一半做样本内、一半做样本外，样本内最好的候选在样本外排到后一半的比例。真实有效的概率（Deflated Sharpe，校正夏普比率）是考虑挑选次数之后真实夏普比率大于 0 的概率。",
           "财务因子按法定披露截止日（一季报 4 月底、半年报 8 月底、三季报 10 月底、年报次年 4 月底）之后才使用；供应商的报告日期会被之后的报告覆盖，不能直接用。",
           "已知偏差：本地没有开始采集之前就退市的股票（幸存者偏差，结果偏乐观）；行业用当前归属；没有历史股本，用成交额代替市值。",
         ]}
@@ -346,16 +275,17 @@ function TestPanel({ picks }: { picks: FactorWeight[] }) {
   );
 }
 
-function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
+/** 参数名和控件；help 是参数名后面小问号里的说明 */
+function Labeled({ label, help, children }: { label: string; help?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1 text-xs text-zinc-500">
-      <span>{label}</span>
+      {help ? <Term help={help}>{label}</Term> : <span>{label}</span>}
       {children}
     </div>
   );
 }
 
-function TestResult({ data }: { data: FactorTestResult }) {
+function TestResult({ data, onCompose }: { data: FactorTestResult; onCompose: (f: FactorWeight[]) => void }) {
   const [selected, setSelected] = useState(0);
   const f = data.factors[Math.min(selected, data.factors.length - 1)];
   const o = data.overfit;
@@ -375,13 +305,33 @@ function TestResult({ data }: { data: FactorTestResult }) {
           <thead>
             <tr>
               <th>因子</th>
-              <th title="排名和之后收益排名的相关系数，按预期方向，正数表示符合预期">RankIC</th>
-              <th title="RankIC 均值 ÷ 标准差：越大越稳定">ICIR</th>
-              <th title="RankIC 均值的 t 值，3 以上才算显著">t 值</th>
-              <th title="RankIC 为正的期数占比">胜率</th>
-              <th title="最好一组减最差一组的年化收益，不含交易成本">多空年化</th>
-              <th title="最好一组相对股票池平均的年化超额，不含交易成本">最好组超额</th>
-              <th title="最好一组每期换掉的比例，越高交易成本越大">换手</th>
+              <th>
+                <Term help="RankIC：每期因子排名和之后收益排名的相关系数，这里是各期平均。按预期方向统一，正数表示符合预期；A 股里单个因子稳定在 0.03 以上就算有用">
+                  信息系数
+                </Term>
+              </th>
+              <th>
+                <Term help="ICIR：信息系数的均值 ÷ 标准差。越大说明每期的预测力越稳定，不是靠少数几期撑起来的">
+                  IC 稳定性
+                </Term>
+              </th>
+              <th>
+                <Term help="统计检验里的 t 统计量：平均信息系数离 0 有多远。3 以上才算显著，越大越不像偶然">t 值</Term>
+              </th>
+              <th>
+                <Term help="信息系数为正的期数占比">胜率</Term>
+              </th>
+              <th>
+                <Term help="多空组合：买最好一组、卖空最差一组的年化收益，不含交易成本。A 股个股不能随意卖空，这个数只用来衡量因子的区分能力">
+                  多空年化
+                </Term>
+              </th>
+              <th>
+                <Term help="最好一组相对股票池平均的年化超额收益，不含交易成本">最好组超额</Term>
+              </th>
+              <th>
+                <Term help="最好一组每期换掉的股票比例，越高交易成本越大">换手</Term>
+              </th>
               <th>结论</th>
             </tr>
           </thead>
@@ -413,8 +363,9 @@ function TestResult({ data }: { data: FactorTestResult }) {
           </tbody>
         </Table>
         <p className="mt-3 text-xs text-zinc-500">
-          点一行看它的分组净值、IC 衰减；收益都不含交易成本，换手越高实际越打折。
+          点一行看它的分组净值、预测力衰减；收益都不含交易成本，换手越高实际越打折。
         </p>
+        <ComposeBar data={data} onCompose={onCompose} />
       </Card>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title={`${f.name}：各组净值`} className="lg:col-span-2">
@@ -423,12 +374,16 @@ function TestResult({ data }: { data: FactorTestResult }) {
         <Card title="挑选偏差">
           <div className="grid grid-cols-2 gap-4">
             <Stat
-              label="过拟合概率 PBO"
+              label={
+                <Term help="PBO（Probability of Backtest Overfitting）：把历史切成多段反复交叉验证，看前一半时间里最好的候选，到后一半时间里排到下半区的比例。高说明是从噪声里挑出来的">
+                  过拟合概率
+                </Term>
+              }
               value={fmtProb(o.pbo)}
               sub={o.pbo === null || o.pbo === undefined ? "至少两个候选才能估计" : "越低越好，高于 50% 说明在挑噪声"}
             />
             <Stat
-              label="Deflated Sharpe"
+              label={<Term help={DEFLATED_SHARPE_HELP}>真实有效的概率</Term>}
               value={fmtProb(o.deflated_sharpe)}
               sub={o.best ? `最好的候选「${o.best}」扣除挑选次数后，真实有效的概率；95% 以上才可信` : undefined}
             />
@@ -436,7 +391,11 @@ function TestResult({ data }: { data: FactorTestResult }) {
           <p className="mt-3 text-xs text-zinc-500">
             本次比较 {o.candidates} 个候选（各因子的多空组合）；这类检验已试过 {data.manifest.trial_count} 组不同配置。
           </p>
-          <h3 className="mt-4 mb-1 text-xs font-medium text-zinc-500">IC 衰减（不同持有期的 RankIC）</h3>
+          <h3 className="mt-4 mb-1 text-xs font-medium text-zinc-500">
+            <Term help="IC 衰减：同一个因子在不同持有期下的信息系数。下降得慢说明因子的预测力能维持较久">
+              预测力衰减（不同持有期的信息系数）
+            </Term>
+          </h3>
           <div className="flex gap-3 text-sm">
             {f.decay.map((d) => (
               <span key={d.horizon} className="num">
@@ -444,11 +403,33 @@ function TestResult({ data }: { data: FactorTestResult }) {
               </span>
             ))}
           </div>
-          <p className="mt-1 text-xs text-zinc-500">持有期越长 RankIC 仍高，说明因子衰减慢，可以少调仓、省成本。</p>
+          <p className="mt-1 text-xs text-zinc-500">持有期越长信息系数仍高，说明因子衰减慢，可以少调仓、省成本。</p>
         </Card>
       </div>
       {data.factors.length > 1 && <Correlation data={data} />}
     </>
+  );
+}
+
+/** 检验完带着因子去第二步：默认只带显著且方向符合预期的因子 */
+function ComposeBar({ data, onCompose }: { data: FactorTestResult; onCompose: (f: FactorWeight[]) => void }) {
+  const single = data.factors.filter((x) => x.id !== null && x.id !== undefined);
+  const good = single.filter((x) => x.significant && x.consistent);
+  const pick = (xs: typeof single) => xs.map((x) => ({ id: x.id as string, weight: 1 }));
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-800">
+      <span>下一步：</span>
+      {good.length > 0 ? (
+        <button type="button" className={buttonClass()} onClick={() => onCompose(pick(good))}>
+          用 {good.length} 个有效因子做组合回测
+        </button>
+      ) : (
+        <span>这次没有显著且方向符合预期的因子。</span>
+      )}
+      <button type="button" className={buttonClass("ghost")} onClick={() => onCompose(pick(single))}>
+        用全部 {single.length} 个因子做组合回测
+      </button>
+    </div>
   );
 }
 
@@ -524,14 +505,18 @@ function Correlation({ data }: { data: FactorTestResult }) {
   );
 }
 
+const DEFLATED_SHARPE_HELP =
+  "Deflated Sharpe（校正夏普比率）：同样的数据试过很多组参数后，总有几组碰巧好看。这个数按试过的次数打折，估计真实夏普比率大于 0 的概率；95% 以上才可信";
+
 const PORTFOLIO_COSTS = { capital: "1000000", commission: "2.5", minFee: "5", stamp: "0.5", slippage: "10" };
 
 function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
   const [s, set] = useSearchState({
     range: "3",
+    from: "",
+    to: "",
     reb: "20",
-    top: "30",
-    buffer: "0.5",
+    ...HOLDING,
     n: "1",
     small: "0",
     log: "",
@@ -539,7 +524,7 @@ function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
   });
   const form: FactorPortfolioParams = {
     factors: formatFactors(picks),
-    start: rangeStart(s.range),
+    ...rangeQuery(s),
     rebalance: Number(s.reb),
     top_n: Number(s.top) || 30,
     buffer: Number(s.buffer),
@@ -555,8 +540,8 @@ function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
     <>
       <Card>
         <div className="flex flex-wrap items-end gap-4">
-          <Labeled label="看过去多久">
-            <Segmented value={s.range} options={PORTFOLIO_RANGES} onChange={(range) => set({ range })} />
+          <Labeled label="计算区间（最长 5 年）">
+            <RangePicker value={s} ranges={RANGES} onChange={set} />
           </Labeled>
           <Labeled label="多久调仓一次">
             <Segmented value={s.reb} options={REBALANCES} onChange={(reb) => set({ reb })} />
@@ -575,7 +560,7 @@ function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
             onCommit={(buffer) => set({ buffer })}
             width="w-16"
           />
-          <Labeled label="中性化">
+          <Labeled label="中性化" help={NEUTRALIZE_HELP}>
             <Segmented value={s.n} options={ON_OFF} onChange={(n) => set({ n })} />
           </Labeled>
           <Labeled label="小盘股">
@@ -590,8 +575,9 @@ function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
           hasRun={m.run !== null}
           onStart={() => m.start(query.refetch)}
           onCancel={m.cancel}
-          estimate="全市场 3 年通常 20 到 40 秒"
+          estimate="区间越长越慢：全市场 3 年通常 20 到 40 秒"
         />
+        <SavePreset picks={picks} topN={Number(s.top) || 30} buffer={Number(s.buffer)} />
       </Card>
       {m.run !== null &&
         (query.error && !running ? (
@@ -611,11 +597,62 @@ function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
           "持有得分最高的若干只；已持有的股票排名还在缓冲区以内时继续持有。下一个交易日开盘先卖后买，新买的每只投入「账户总值 ÷ 持有只数」和「现金 ÷ 待买只数」中较小的一个。",
           "卖出遇到停牌、一字跌停时顺延；买入遇到停牌、一字涨停时顺延，到下一次调仓时取消。之后再没有日线的股票按最后收盘价了结。收益按前复权价计算（相当于分红再投资），允许零股。",
           "佣金（含最低佣金）、印花税、滑点照常扣除。资金少、持有只数多时，最低佣金会明显拖累收益，所以这里默认用 100 万。",
-          "基准是全市场等权（含分红），和组合回测相同。Deflated Sharpe 按这类回测已经试过的配置数打折：试得越多，偶然好看的结果越多。",
+          "基准是全市场等权（含分红），和组合回测相同。真实有效的概率（Deflated Sharpe）按这类回测已经试过的配置数打折：试得越多，偶然好看的结果越多。",
           "已知偏差：没有开始采集之前就退市的股票（幸存者偏差，结果偏乐观）；行业用当前归属；没有历史股本，用成交额代替市值。",
         ]}
       />
     </>
+  );
+}
+
+/** 把当前的因子和权重、持有只数、缓冲区存成预设，账户设置里一键套用；同名覆盖 */
+function SavePreset({ picks, topN, buffer }: { picks: FactorWeight[]; topN: number; buffer: number }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState("");
+  const [saved, setSaved] = useState("");
+  const save = useSavePreset({
+    mutation: {
+      onSuccess: (p) => {
+        setSaved(p.name);
+        setName("");
+        void qc.invalidateQueries({ queryKey: getListPresetsQueryKey() });
+      },
+    },
+  });
+  const submit = () => {
+    if (!name.trim()) return;
+    setSaved("");
+    save.mutate({
+      data: {
+        name: name.trim(),
+        factors: picks.map((p) => ({ factor: p.id as FactorId, weight: p.weight })),
+        top_n: topN,
+        buffer,
+      },
+    });
+  };
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-4 text-xs text-zinc-500 dark:border-zinc-800">
+      <span>保存为预设：</span>
+      <input
+        aria-label="预设名"
+        className={`${inputClass} w-48 py-1 text-xs`}
+        maxLength={30}
+        placeholder="起个名字，例如：稳健 30 只"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && submit()}
+      />
+      <button type="button" className={buttonClass("ghost")} disabled={!name.trim() || save.isPending} onClick={submit}>
+        保存
+      </button>
+      <span>
+        存下 {picks.length} 个因子和权重、持有 {topN} 只、缓冲区 {buffer}
+        ；同名会覆盖。账户设置和这里的「我的预设」都能一键套用。
+      </span>
+      {saved && <span className="text-emerald-600">已保存「{saved}」</span>}
+      {save.error && <span className="text-red-500">{errorText(save.error)}</span>}
+    </div>
   );
 }
 
@@ -660,17 +697,25 @@ function PortfolioResultView({
           <Stat
             label="最多亏过"
             value={<span className="text-down">{fmtPercent(-m.max_drawdown)}</span>}
-            sub={`Sharpe ${fmtNum(m.risk.sharpe)}`}
+            sub={
+              <Term help="夏普比率（Sharpe）：年化收益 ÷ 年化波动，每承担一份波动换来多少收益。1 以上算不错">
+                夏普比率 {fmtNum(m.risk.sharpe)}
+              </Term>
+            }
           />
           <Stat
-            label="信息比率"
+            label={
+              <Term help="信息比率（IR）：年化超额收益 ÷ 跟踪误差，衡量相对基准多赚的部分稳不稳。跟踪误差是相对基准的超额收益的年化波动">
+                信息比率
+              </Term>
+            }
             value={fmtNum(m.information_ratio)}
             sub={`跟踪误差 ${fmtPercent(m.tracking_error, 1).replace("+", "")}；0.5 以上算不错`}
           />
           <Stat
-            label="真实有效的概率"
+            label={<Term help={DEFLATED_SHARPE_HELP}>真实有效的概率</Term>}
             value={fmtProb(data.deflated_sharpe)}
-            sub={`Deflated Sharpe，已按试过的 ${data.manifest.trial_count} 组配置打折；95% 以上才可信`}
+            sub={`已按试过的 ${data.manifest.trial_count} 组配置打折；95% 以上才可信`}
           />
         </div>
         <p className="mt-3 text-xs text-zinc-500">
@@ -691,7 +736,9 @@ function PortfolioResultView({
               <tr>
                 <th>排名</th>
                 <th>股票</th>
-                <th title="合成得分，标准化后的值，越大越好">得分</th>
+                <th>
+                  <Term help="合成得分：各因子标准化后按权重加权平均，越大越好">得分</Term>
+                </th>
                 <th>组合里已持有</th>
               </tr>
             </thead>

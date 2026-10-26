@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { formatFactors, parseFactors, planResearchLink, toggleFactor, verdictTone } from "./factors";
+import {
+  FACTOR_PRESETS,
+  formatFactors,
+  matchesPreset,
+  parseFactors,
+  planResearchLink,
+  toggleFactor,
+  verdictTone,
+} from "./factors";
 
 describe("factor selection", () => {
   it("parses ids with optional weights", () => {
@@ -48,5 +56,29 @@ describe("planResearchLink", () => {
     expect(q.get("f")).toBe("volatility,accruals:0.5");
     expect(q.get("top")).toBe("30");
     expect(q.get("buffer")).toBe("1.5");
+  });
+});
+
+describe("matchesPreset", () => {
+  const e = FACTOR_PRESETS[0]?.factors ?? [];
+  it("同样的因子、权重都是 1 才算匹配，顺序无关", () => {
+    expect(
+      matchesPreset(
+        [...e].reverse().map((id) => ({ id, weight: 1 })),
+        e,
+      ),
+    ).toBe(true);
+    expect(
+      matchesPreset(
+        e.map((id, i) => ({ id, weight: i === 0 ? 2 : 1 })),
+        e,
+      ),
+    ).toBe(false);
+    expect(
+      matchesPreset(
+        e.slice(1).map((id) => ({ id, weight: 1 })),
+        e,
+      ),
+    ).toBe(false);
   });
 });

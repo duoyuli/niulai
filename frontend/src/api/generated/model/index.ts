@@ -62,6 +62,8 @@ export * from './factorPortfolioParams';
 export * from './factorPortfolioPoint';
 export * from './factorPortfolioResult';
 export * from './factorPortfolioSummary';
+export * from './factorPreset';
+export * from './factorPresetInput';
 export * from './factorRebalance';
 export * from './factorTestOutcome';
 export * from './factorTestParams';

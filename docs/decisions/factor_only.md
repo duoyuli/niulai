@@ -1,6 +1,6 @@
 # ADR：只保留多因子选股
 
-- 状态：已采纳（accepted），2026-10-23。取代 [ADR：选股策略使用 JSON 定义](strategy_design.md)、[ADR：信号是起了名字的条件](custom_signals.md) 和 [ADR：账户的每日调仓建议](account_advice.md)，部分取代 [ADR：用横截面因子研究检验选股方法](cross_sectional_factors.md) 决策第 1 条和 [ADR：界面按任务组织](ui_by_task.md) 中「策略」导航项。
+- 状态：已采纳（accepted），2026-10-23；决策第 5 条中「账户里不能增删因子」已被 [ADR：账户里可以编辑因子](account_factor_editing.md) 取代。取代 [ADR：选股策略使用 JSON 定义](strategy_design.md)、[ADR：信号是起了名字的条件](custom_signals.md) 和 [ADR：账户的每日调仓建议](account_advice.md)，部分取代 [ADR：用横截面因子研究检验选股方法](cross_sectional_factors.md) 决策第 1 条和 [ADR：界面按任务组织](ui_by_task.md) 中「策略」导航项。
 - 当前实现：[账户与调仓建议](../domains/accounts.md)、[因子研究](../domains/factor_research.md)、[REST API](../interfaces/rest_api.md#endpoints)、前端 `/accounts` 和 `/research`。
 
 ## 背景

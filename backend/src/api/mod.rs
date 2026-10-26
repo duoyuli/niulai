@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod auth;
+pub mod factor_presets;
 pub mod insight;
 pub mod market;
 pub mod metrics;
@@ -68,7 +69,7 @@ pub struct AppState {
         (name = "market", description = "证券、日线、指数与市场环境"),
         (name = "watchlist", description = "自选股"),
         (name = "accounts", description = "我的账户、持仓与每日调仓建议"),
-        (name = "research", description = "因子研究：因子检验与多因子组合回测"),
+        (name = "research", description = "因子研究：因子检验、多因子组合回测与因子预设"),
         (name = "sync", description = "数据集与同步运行"),
     )
 )]
@@ -189,6 +190,7 @@ fn routes() -> OpenApiRouter<AppState> {
         .merge(watchlist::routes())
         .merge(accounts::routes())
         .merge(research::routes())
+        .merge(factor_presets::routes())
         .merge(sync::routes())
 }
 

@@ -111,7 +111,7 @@ async fn factor_research_end_to_end() {
     );
     assert_eq!(liquidity["consistent"], false);
     // 财务因子按截止日推断可用日后有值
-    assert!(by_name("ROE（TTM）")["periods"].as_u64().unwrap() > 0);
+    assert!(by_name("净资产收益率")["periods"].as_u64().unwrap() > 0);
     assert!(v["overfit"]["pbo"].is_number(), "{}", v["overfit"]);
     assert_eq!(v["manifest"]["trial_count"], 1);
 
@@ -344,5 +344,81 @@ async fn factor_research_end_to_end() {
         .await
         .unwrap();
     assert_ne!(fresh, ranked, "利润增速等财务因子没有数据了，排名应当变化");
+    db.drop().await;
+}
+
+/// 因子预设：同名覆盖、按用户隔离、参数校验和删除
+#[tokio::test]
+async fn factor_presets_per_user() {
+    let Some(db) = TestDb::create().await else {
+        eprintln!("未设置 NIULAI_TEST_DATABASE_URL，跳过");
+        return;
+    };
+    let app = niulai::api::router(
+        Engine::new(
+            bare_settings("http://127.0.0.1:1", Some("test")),
+            db.pool.clone(),
+        )
+        .await
+        .unwrap(),
+    );
+    let admin = login(&app, "admin", "secret-pass").await.unwrap();
+    call_as(
+        &app,
+        Some(&admin),
+        "POST",
+        "/api/v1/users",
+        Some(json!({"username": "mama", "password": "mama-pass-1"})),
+    )
+    .await;
+    let mama = login(&app, "mama", "mama-pass-1").await.unwrap();
+    let save = |cookie: String, body: Value| {
+        let app = app.clone();
+        async move {
+            call_as(
+                &app,
+                Some(&cookie),
+                "PUT",
+                "/api/v1/research/presets",
+                Some(body),
+            )
+            .await
+        }
+    };
+    let preset = |name: &str, top_n: u32| {
+        json!({"name": name, "factors": [{"factor": "volatility", "weight": 1.0}, {"factor": "roe", "weight": 0.5}],
+               "top_n": top_n, "buffer": 1.0})
+    };
+
+    let (r, v) = save(admin.clone(), preset("稳健", 30)).await;
+    assert_eq!(r.status(), StatusCode::OK, "{v}");
+    assert_eq!(v["factors"][1]["factor"], "roe");
+    // 同名（不区分大小写）覆盖，不新增
+    let (r, v) = save(admin.clone(), preset(" 稳健 ", 20)).await;
+    assert_eq!(r.status(), StatusCode::OK, "{v}");
+    let (_, list) = call_as(&app, Some(&admin), "GET", "/api/v1/research/presets", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["top_n"], 20);
+    // 持有只数和账户规则同样限制在 5 到 50；没有因子、名字为空都不行
+    for bad in [
+        preset("太多", 60),
+        json!({"name": "空", "factors": [], "top_n": 30, "buffer": 1.0}),
+        preset("", 30),
+    ] {
+        let (r, _) = save(admin.clone(), bad).await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    }
+    // 别人看不到，也删不掉
+    let (_, list) = call_as(&app, Some(&mama), "GET", "/api/v1/research/presets", None).await;
+    assert!(list.as_array().unwrap().is_empty());
+    let id = v["preset_id"].as_i64().unwrap();
+    let uri = format!("/api/v1/research/presets/{id}");
+    call_as(&app, Some(&mama), "DELETE", &uri, None).await;
+    let (_, list) = call_as(&app, Some(&admin), "GET", "/api/v1/research/presets", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    let (r, _) = call_as(&app, Some(&admin), "DELETE", &uri, None).await;
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    let (_, list) = call_as(&app, Some(&admin), "GET", "/api/v1/research/presets", None).await;
+    assert!(list.as_array().unwrap().is_empty());
     db.drop().await;
 }

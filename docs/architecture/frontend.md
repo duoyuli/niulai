@@ -20,11 +20,11 @@
 | `src/pages/` | 每个页面一个文件 |
 | `src/components/ui.tsx` | 通用组件：卡片、表格、标签、分段按钮、加载与错误状态 |
 | `src/components/Layout.tsx`、`VersionBadge.tsx` | 页头、登录与配置检查；版本号、一键升级和升级进度 |
-| `src/components/PriceChart.tsx`、`EquityChart.tsx` | K 线和成交量；因子组合回测的总值曲线（组合与基准） |
-| `src/components/RangePicker.tsx` | K 线的起止日期框和快捷区间 |
-| `src/components/FactorCharts.tsx`、`researchFields.tsx`、`src/lib/factors.ts` | 因子研究的多曲线图（各组净值）；交易成本、数字输入、规则说明和坐标切换；选中因子和权重在 URL 里的写法、结论的颜色、账户规则到组合回测的链接 |
+| `src/components/PriceChart.tsx`、`EquityChart.tsx`、`src/lib/movingAverage.ts` | K 线、快慢均线和成交量；因子组合回测的总值曲线（组合与基准） |
+| `src/components/RangePicker.tsx` | K 线和因子研究的起止日期框与快捷区间 |
+| `src/components/FactorCharts.tsx`、`FactorPicker.tsx`、`researchFields.tsx`、`src/lib/factors.ts` | 因子研究的多曲线图（各组净值）；预设卡片和按类别选因子、填权重（因子研究页和账户调仓规则共用，见 [因子预设](../domains/accounts.md#presets)）；交易成本、数字输入、规则说明和坐标切换；选中因子和权重在 URL 里的写法、结论的颜色、账户规则到组合回测的链接 |
 | `src/components/longTask.tsx` | 长任务的等待秒数和取消 |
-| `src/components/AdviceView.tsx`、`RulesForm.tsx`、`PositionsEditor.tsx`、`AccountEquityChart.tsx`、`TodayAccounts.tsx` | 账户：调仓建议和理由（后台重新生成时轮询）、调仓规则（因子带方向，持有只数、缓冲区、留现金、追高上限、ST）、持仓录入与粘贴识别、净值曲线、首页的账户卡片 |
+| `src/components/AdviceView.tsx`、`RulesForm.tsx`、`PositionsEditor.tsx`、`AccountEquityChart.tsx`、`TodayAccounts.tsx` | 账户：调仓建议和理由（后台重新生成时轮询）、调仓规则（可增删因子、填权重，持有只数、缓冲区、留现金、追高上限、ST）、持仓录入与粘贴识别、净值曲线、首页的账户卡片 |
 | `src/components/UserMenu.tsx`、`AdminOnly.tsx`、`RouteError.tsx` | 用户名的悬浮菜单；管理员页面的拦截说明；页面出错时的兜底 |
 | `src/components/DataCheck.tsx`、`ChainProgress.tsx` | 同步页的数据核检卡片；一次同步的进度条，同步记录和同步详情共用（页面之间不互相引用组件） |
 | `src/components/SecuritySearch.tsx`、`WatchButton.tsx` | 股票搜索框；收藏星标 |
@@ -47,7 +47,7 @@
 | `/accounts` | 我的账户：每个账户一张卡片（总资产、当日盈亏、现金、持仓只数、下个交易日的运营建议、核对提醒） | `GET /accounts` |
 | `/accounts/new` | 新建账户，两步：名字（页面说明一句选股方法）；现金和持仓（`PositionsEditor`，可粘贴，可跳过）。规则用默认值，以后在设置里调 | `POST /accounts`、`POST /accounts/{id}/positions/parse`、`PUT /accounts/{id}/positions` |
 | `/accounts/:id` | 一个账户，四个标签：运营（下个交易日的买卖建议、执行、不做、理由和提醒）；持仓；记录；设置（账户名称和备注、调仓规则、费率；规则里有到因子研究组合回测的链接）。保存后建议在后台重新生成，运营标签显示「正在更新」并自动刷新 | `GET /accounts/{id}` 及其下的 `advice`、`trades`、`review` 等 |
-| `/research` | 因子研究：选因子（组合模式下可填权重），「因子检验」看 RankIC、分组净值、IC 衰减、挑选偏差和因子相关性，「多因子组合」看净值、超额、信息比率、Deflated Sharpe 和最新得分前列；参数写在 URL，点「开始计算」才算，可以取消 | `GET /research/factors`、`/research/factor-test`、`/research/factor-portfolio` |
+| `/research` | 因子研究，两个标签是先后两步：「① 因子检验」逐个体检因子（不显示预设、不填权重，结果下面可以把有效因子带到第二步），「② 多因子组合」把因子合成一个选股方案（可套用预设、填权重、保存为预设）。「因子检验」看 RankIC、分组净值、IC 衰减、挑选偏差和因子相关性，「多因子组合」看净值、超额、信息比率、Deflated Sharpe 和最新得分前列；参数写在 URL，点「开始计算」才算，可以取消 | `GET /research/factors`、`/research/factor-test`、`/research/factor-portfolio` |
 | `/watchlist` | 自选：最新收盘、当日和近 20 日涨跌，可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
 | `/securities/:thscode` | 证券（股票或 ETF）：页头是最新价、收藏、上市日期和本地日线范围。先是 K 线，再是基本面；股票的基本面显示估值历史、最近一期三张报表和财务指标，并标出披露日期；ETF 显示「ETF 基本资料」（最新收盘、单位净值、基金规模、管理费、管理人、历史日线根数、最新日期和价格口径），K 线只提供不复权、前复权、后复权，价格按供应商前复权口径保存 | `GET /securities/{thscode}`、`/fundamentals`、`/bars` |
 | `/hot` | 今日热点：顶部是涨停、跌停、炸板家数、最高连板和封板率；下面按连板高度分组列出涨停股（涨停原因、封单额、首次涨停时间）、跌停和炸板；日期框可往回看，没有同步时显示白话空态。不加主导航项，从首页卡片进入 | `GET /market/hot` |
@@ -80,8 +80,10 @@
 - **红涨绿跌：** 上涨、买入用红色，下跌、卖出用绿色。颜色令牌是 `src/index.css` 中的 `up`、`down`，数值的涨跌颜色统一用 `upDownClass`。
 - **价格是字符串：** 后端的价格和成交额是十进制字符串，只在展示和画图时转成数字。
 - **复权口径：** K 线默认等比前复权（`qfq`），按钮上写明「等比」和「同花顺」。因子和收益都按等比前复权计算。
-- **K 线区间：** `RangePicker` 是一个起止日期框（两头都包含）加快捷区间 1 月到全部。点快捷区间把日期填进框里（结束日期是今天，「全部」从最早的日线开始），改日期就是自定义区间（`range=custom&from=&to=`）。起点早于最早日线的快捷区间置灰：个股按本地最早的日线，指数和板块从 2022-01-04 开始。
+- **K 线区间：** `RangePicker` 是一个起止日期框（两头都包含）加快捷区间 1 月到全部。点快捷区间把日期填进框里（结束日期是今天，「全部」从最早的日线开始），改日期就是自定义区间（`range=custom&from=&to=`）。起点早于最早日线的快捷区间置灰：个股按本地最早的日线，指数和板块从 2022-01-04 开始。因子研究的「因子检验」和「多因子组合」用同一个组件选计算区间，快捷区间是 3 个月、6 个月、1 年、3 年，默认 3 年；后端要求区间至少 60 天，最长分别是 8 年和 5 年。
 - **在图上框选：** 在 K 线上按住鼠标左右拖动，松开后放大到这段（只在已加载的 K 线里放大），图下有「还原」；平移用滚轮缩放后拖动底部时间轴，触屏仍可拖动平移。
+- **K 线均线：** 个股和指数的 K 线默认画快线 15 日、慢线 30 日两条简单移动平均（收盘价，口径跟随所选复权），周期在日期区间那一行的右侧改（K 线图组件通过 `maSlot` 渲染到页面留出的位置），范围 2 到 250 个交易日，写在 URL 的 `ma1`、`ma2`。周期短的是快线、长的是慢线，按周期判断，不按第几条；颜色按行情软件的习惯：快线黄色、慢线紫色，深色模式调亮。快线上穿慢线（金叉）在 K 线下方标红色「买」，下穿（死叉）在上方标绿色「卖」，可以关掉；前一天快线不高于慢线、当天高于才算上穿，下穿同理（`crosses`）。为了让均线从区间第一天就有值，请求日线时把开始日期再往前推（按最长那条均线换算成自然日，留出长假余量，`src/lib/movingAverage.ts`），多取的日线只用来算均线，不显示；「全部」区间不往前推，开头几天没有均线。
+- **名词说明：** 页面上的英文术语有通用中文名时显示中文（例如「信息系数」「夏普比率」「净资产收益率」），英文缩写放进说明里；没有合适中文的保留原文。需要解释的名词后面放小问号（`ui.tsx` 的 `HelpTip`，带文字时用 `Term`），鼠标悬停、键盘聚焦或点击都能展开，点别处、按 Esc 或滚动时收起；说明框用 fixed 定位，放在横向滚动的表格里也不会被裁掉。表单项的 `hint` 也显示成小问号，不再只靠浏览器的 `title` 提示。
 - **URL 参数：** 搜索词、复权口径、区间、因子研究的参数等写在查询参数里，刷新或分享后保持；等于默认值的参数不写入 URL。
 - **大数和时间：** 成交额、成交量用「万」「亿」，成交量单位是股；时间按上海时间显示，见 [时区](../interfaces/configuration.md#time_zone)。
 - **长任务要点按钮才算：** 因子检验和多因子组合这类要算全市场几年日线的操作，改参数不会自动重算，点按钮才开始；计算中显示已等待秒数和「取消」，取消会中断请求，改参数时保留上一次的结果并提示参数已改。实现见 `src/components/longTask.tsx`。

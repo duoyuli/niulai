@@ -12,7 +12,7 @@ export type FactorTestParams = {
  */
 factors: string;
 /**
- * 开始日，默认结束日前 5 年；区间最长 8 年
+ * 开始日，默认结束日前 5 年；区间 60 天到 8 年
  * @nullable
  */
 start?: string | null;

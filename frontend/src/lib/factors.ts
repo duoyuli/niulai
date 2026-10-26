@@ -5,6 +5,51 @@ import type { Tone } from "./labels";
 /** 默认选中的因子：A 股文献里较稳健的价量因子，不需要财务数据 */
 export const DEFAULT_FACTORS = "reversal,idio_vol,max_return,liquidity,abnormal_turnover";
 
+/** 预设的多因子组合：点一下替换当前选择，权重都是 1（按各因子的预期方向合成）。
+ * 只写思路，不写回测数字；组合 E 与后端 `Rules::default` 相同 */
+export const FACTOR_PRESETS: readonly { id: string; name: string; desc: string; factors: readonly string[] }[] = [
+  {
+    id: "e",
+    name: "低波动 + 盈利质量 + 小盘",
+    desc: "账户的默认规则（研究记录里的组合 E）：挑波动小、利润在增长、利润里现金含量高的小公司",
+    factors: ["volatility", "idio_vol", "profit_growth", "accruals", "liquidity"],
+  },
+  {
+    id: "price",
+    name: "短期价量",
+    desc: "只用日线：最近跌得多、走势平稳、没有暴涨、成交没有突然放大的小盘股。换手较高",
+    factors: ["reversal", "idio_vol", "max_return", "liquidity", "abnormal_turnover"],
+  },
+  {
+    id: "price_fundamental",
+    name: "价量 + 财务",
+    desc: "研究记录里的组合 B：价量因子避开追涨和过热，再加两个换手低的财务因子",
+    factors: ["momentum", "idio_vol", "max_return", "abnormal_turnover", "profit_growth", "accruals"],
+  },
+  {
+    id: "low_vol",
+    name: "低波动防守",
+    desc: "只挑走势平稳、没有暴涨的股票，不看公司大小",
+    factors: ["volatility", "idio_vol", "max_return"],
+  },
+  {
+    id: "quality",
+    name: "盈利质量",
+    desc: "只看财报：净资产收益率高、利润在增长、利润里现金含量高。调仓少",
+    factors: ["roe", "profit_growth", "accruals"],
+  },
+];
+
+/** 当前选择是否正好是某个预设（同样的因子，权重都是 1） */
+export function matchesPreset(picks: FactorWeight[], factors: readonly string[]): boolean {
+  return picks.length === factors.length && picks.every((p) => p.weight === 1 && factors.includes(p.id));
+}
+
+/** 两组因子和权重是否相同，顺序无关 */
+export function sameFactors(a: FactorWeight[], b: FactorWeight[]): boolean {
+  return a.length === b.length && a.every((x) => b.some((y) => y.id === x.id && y.weight === x.weight));
+}
+
 export interface FactorWeight {
   id: string;
   weight: number;

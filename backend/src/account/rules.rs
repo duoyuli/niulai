@@ -62,34 +62,45 @@ impl Rules {
 
     /// 参数是否在合理范围内
     pub fn validate(&self) -> Result<(), String> {
-        if self.factors.is_empty() || self.factors.len() > 12 {
-            return Err("至少 1 个因子，最多 12 个".into());
-        }
-        let mut seen = std::collections::HashSet::new();
-        if self.factors.iter().any(|f| !seen.insert(f.factor)) {
-            return Err("因子不能重复".into());
-        }
-        if self
-            .factors
-            .iter()
-            .any(|f| !f.weight.is_finite() || f.weight == 0.0 || f.weight.abs() > 10.0)
-        {
-            return Err("因子权重应是 -10 到 10 之间、不为 0 的数".into());
-        }
-        if !(5..=50).contains(&self.top_n) {
-            return Err("持有只数应在 5 到 50 之间".into());
-        }
-        let range = |v: f64, lo: f64, hi: f64, what: &str| {
-            if v.is_finite() && (lo..=hi).contains(&v) {
-                Ok(())
-            } else {
-                Err(format!("{what}应在 {lo} 到 {hi} 之间"))
-            }
-        };
-        range(self.buffer, 0.0, 2.0, "缓冲区")?;
+        validate_factors(&self.factors)?;
+        validate_holding(self.top_n, self.buffer)?;
         range(self.min_cash_pct, 0.0, 90.0, "保留现金（%）")?;
         range(self.chase_limit_pct, 0.0, 20.0, "追高上限（%）")?;
         Ok(())
+    }
+}
+
+/// 因子和权重：1 到 12 个不重复的因子，权重在 -10 到 10 之间且不为 0。账户规则和因子预设共用
+pub fn validate_factors(factors: &[FactorWeight]) -> Result<(), String> {
+    if factors.is_empty() || factors.len() > 12 {
+        return Err("至少 1 个因子，最多 12 个".into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    if factors.iter().any(|f| !seen.insert(f.factor)) {
+        return Err("因子不能重复".into());
+    }
+    if factors
+        .iter()
+        .any(|f| !f.weight.is_finite() || f.weight == 0.0 || f.weight.abs() > 10.0)
+    {
+        return Err("因子权重应是 -10 到 10 之间、不为 0 的数".into());
+    }
+    Ok(())
+}
+
+/// 持有只数 5 到 50，缓冲区 0 到 2。账户规则和因子预设共用
+pub fn validate_holding(top_n: u32, buffer: f64) -> Result<(), String> {
+    if !(5..=50).contains(&top_n) {
+        return Err("持有只数应在 5 到 50 之间".into());
+    }
+    range(buffer, 0.0, 2.0, "缓冲区")
+}
+
+fn range(v: f64, lo: f64, hi: f64, what: &str) -> Result<(), String> {
+    if v.is_finite() && (lo..=hi).contains(&v) {
+        Ok(())
+    } else {
+        Err(format!("{what}应在 {lo} 到 {hi} 之间"))
     }
 }
 

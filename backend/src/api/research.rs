@@ -153,6 +153,9 @@ fn parse_factors(s: &str) -> ApiResult<(Vec<FactorId>, Vec<f64>)> {
     Ok((ids, weights))
 }
 
+/// 最短区间：页面的「3 个月」从今天往前推，结束日落在最新交易日时可能只剩 80 多天
+const MIN_RANGE_DAYS: i64 = 60;
+
 /// 结束日（默认本地最新交易日）和开始日（默认结束日前 years 年），并检查最长区间
 async fn range(
     s: &AppState,
@@ -171,8 +174,10 @@ async fn range(
     if (end - start).num_days() > 366 * max_years {
         return Err(ApiError::BadRequest(format!("区间最长 {max_years} 年")));
     }
-    if (end - start).num_days() < 90 {
-        return Err(ApiError::BadRequest("区间至少 90 天".into()));
+    if (end - start).num_days() < MIN_RANGE_DAYS {
+        return Err(ApiError::BadRequest(format!(
+            "区间至少 {MIN_RANGE_DAYS} 天"
+        )));
     }
     Ok((start, end))
 }
@@ -216,7 +221,7 @@ fn costs(q: &FactorPortfolioQuery) -> ApiResult<Costs> {
 pub struct FactorTestQuery {
     /// 逗号分隔的因子 ID，例如 `reversal,idio_vol,roe`；两个以上时额外检验等权合成
     pub factors: String,
-    /// 开始日，默认结束日前 5 年；区间最长 8 年
+    /// 开始日，默认结束日前 5 年；区间 60 天到 8 年
     pub start: Option<NaiveDate>,
     pub end: Option<NaiveDate>,
     /// 持有期（交易日）：5、10 或 20，默认 5；取样间隔等于持有期，前后两期不重叠
@@ -295,7 +300,7 @@ async fn factor_test(
 pub struct FactorPortfolioQuery {
     /// 逗号分隔的因子，可带权重：`reversal:1,idio_vol:1,roe:0.5`。权重作用在按预期方向统一后的得分上
     pub factors: String,
-    /// 开始日，默认结束日前 3 年；区间最长 5 年
+    /// 开始日，默认结束日前 3 年；区间 60 天到 5 年
     pub start: Option<NaiveDate>,
     pub end: Option<NaiveDate>,
     /// 每隔几个交易日调仓，5 到 60，默认 20（约一个月）

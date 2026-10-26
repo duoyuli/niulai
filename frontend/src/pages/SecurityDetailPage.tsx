@@ -1,4 +1,5 @@
 import { keepPreviousData } from "@tanstack/react-query";
+import { useState } from "react";
 import { useParams } from "react-router";
 import { useGetSecurity, useSecurityBars, useSecurityFundamentals } from "../api/generated/market/market";
 import { PriceChart } from "../components/PriceChart";
@@ -8,6 +9,7 @@ import { WatchButton } from "../components/WatchButton";
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtBig, fmtInt, fmtPercent, fmtPrice, toNumber, upDownClass } from "../lib/format";
 import { ADJUSTS, type Adjust, ASSET_TYPES, BOARDS, financialIndicatorName } from "../lib/labels";
+import { DEFAULT_MA, fetchStart, maPeriod } from "../lib/movingAverage";
 
 export function SecurityDetailPage() {
   const { thscode = "" } = useParams();
@@ -277,19 +279,24 @@ function ChartCard({
     range: "3",
     from: "",
     to: "",
+    ...DEFAULT_MA,
   });
+  const ma = [maPeriod(s.ma1, DEFAULT_MA.ma1), maPeriod(s.ma2, DEFAULT_MA.ma2)];
+  const [maSlot, setMaSlot] = useState<HTMLDivElement | null>(null);
   const adjustOptions = assetType === "etf" ? ADJUSTS.filter((x) => ["none", "qfq", "hfq"].includes(x.value)) : ADJUSTS;
   const adjust = (assetType === "etf" && !["none", "qfq", "hfq"].includes(s.adjust) ? "qfq" : s.adjust) as Adjust;
   const { start, end } = rangeQuery(s);
   const bars = useSecurityBars(
     thscode,
-    { adjust, start, end, limit: 10000 },
+    { adjust, start: fetchStart(start, ma), end, limit: 10000 },
     { query: { placeholderData: keepPreviousData } },
   );
   return (
     <Card title="K 线">
-      <div className="mb-3">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <RangePicker value={s} earliest={earliest} loading={bars.isPlaceholderData} onChange={set} />
+        {/* 均线控件由 K 线图渲染到这里 */}
+        <div ref={setMaSlot} className="ml-auto" />
       </div>
       {bars.error ? (
         <ErrorState error={bars.error} onRetry={() => bars.refetch()} />
@@ -298,7 +305,13 @@ function ChartCard({
       ) : bars.data.bars.length === 0 ? (
         <Empty>本地还没有这只股票的日线，可能仍在回补中</Empty>
       ) : (
-        <PriceChart bars={bars.data.bars} />
+        <PriceChart
+          bars={bars.data.bars}
+          ma={ma}
+          onMa={(i, n) => set(i === 0 ? { ma1: String(n) } : { ma2: String(n) })}
+          showFrom={start}
+          maSlot={maSlot}
+        />
       )}
       <details className="mt-3 text-sm">
         <summary className="cursor-pointer text-zinc-500 select-none">价格口径</summary>

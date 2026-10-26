@@ -1,5 +1,5 @@
 import { clsx } from "clsx";
-import type { ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/fetcher";
 import type { Tone } from "../lib/labels";
 
@@ -147,28 +147,99 @@ export function Segmented<V extends string>({
   );
 }
 
-/** 小问号：鼠标移上去（或用键盘聚焦）显示一段说明 */
+/** 小问号：鼠标移上去、键盘聚焦或点一下显示一段说明；点别处、按 Esc 或滚动页面时收起。
+ * 说明框用 fixed 定位，放在会横向滚动的表格里也不会被裁掉 */
 export function HelpTip({ children, label = "说明" }: { children: ReactNode; label?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<CSSProperties | null>(null);
+  const [pinned, setPinned] = useState(false);
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const width = Math.min(320, window.innerWidth * 0.8);
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+    // 下方放不下时放到上方
+    setPos(
+      r.bottom + 200 > window.innerHeight
+        ? { left, width, bottom: window.innerHeight - r.top, paddingBottom: 4 }
+        : { left, width, top: r.bottom, paddingTop: 4 },
+    );
+  };
+  const hide = () => {
+    setPinned(false);
+    setPos(null);
+  };
+  const open = pos !== null;
+  useEffect(() => {
+    if (!open) return;
+    const hide = () => {
+      setPinned(false);
+      setPos(null);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) hide();
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && hide();
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
+    };
+  }, [open]);
   return (
-    <span className="group relative inline-flex align-middle">
+    // biome-ignore lint/a11y/noStaticElementInteractions: 悬停只是辅助，键盘和点击由里面的按钮处理
+    <span
+      ref={ref}
+      className="relative inline-flex align-middle"
+      onMouseEnter={show}
+      onMouseLeave={() => !pinned && setPos(null)}
+    >
       <button
         type="button"
         aria-label={label}
+        aria-expanded={open}
         className="ml-1 flex size-4 cursor-help items-center justify-center rounded-full border border-zinc-300 text-[10px] leading-none text-zinc-500 hover:border-zinc-500 hover:text-zinc-800 dark:border-zinc-600 dark:hover:text-zinc-200"
+        onFocus={show}
+        onBlur={() => !pinned && setPos(null)}
+        onClick={(e) => {
+          // 在 label 里时不要把点击转给输入框
+          e.preventDefault();
+          if (pinned) hide();
+          else {
+            show();
+            setPinned(true);
+          }
+        }}
       >
         ?
       </button>
-      <span
-        role="tooltip"
-        className="invisible absolute top-full left-0 z-30 mt-1 w-80 max-w-[80vw] rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-relaxed font-normal text-zinc-700 opacity-0 shadow-lg transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-      >
-        {children}
-      </span>
+      {pos && (
+        <span role="tooltip" className="fixed z-50 block" style={pos}>
+          <span className="block rounded-lg border border-zinc-200 bg-white p-3 text-left text-xs leading-relaxed font-normal whitespace-normal text-zinc-700 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+            {children}
+          </span>
+        </span>
+      )}
     </span>
   );
 }
 
-/** 表单项：标签和控件。hint 是一句简短提示（鼠标悬停）；help 是较长的说明，显示成标签后面的小问号 */
+/** 带小问号的文字，用在表头、指标名等处：名词后面跟一段说明 */
+export function Term({ children, help }: { children: ReactNode; help: ReactNode }) {
+  return (
+    <span className="inline-flex items-center whitespace-nowrap">
+      {children}
+      <HelpTip label={typeof children === "string" ? `${children}的说明` : undefined}>{help}</HelpTip>
+    </span>
+  );
+}
+
+/** 表单项：标签和控件。hint 是一句简短提示，help 是较长的说明，都显示成标签后面的小问号 */
 export function Field({
   label,
   children,
@@ -183,10 +254,9 @@ export function Field({
   return (
     // biome-ignore lint/a11y/noLabelWithoutControl: 控件通过 children 传入
     <label className="flex flex-col gap-1 text-xs text-zinc-500">
-      <span title={hint} className="inline-flex items-center">
+      <span className="inline-flex items-center">
         {label}
-        {hint && <span className="ml-1 cursor-help text-zinc-400">ⓘ</span>}
-        {help && <HelpTip>{help}</HelpTip>}
+        {(help ?? hint) && <HelpTip label={`${label}的说明`}>{help ?? hint}</HelpTip>}
       </span>
       {children}
     </label>
@@ -204,7 +274,7 @@ export function Table({ children }: { children: ReactNode }) {
   );
 }
 
-export function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
+export function Stat({ label, value, sub }: { label: ReactNode; value: ReactNode; sub?: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-xs text-zinc-500">{label}</span>

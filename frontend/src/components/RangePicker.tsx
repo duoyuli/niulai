@@ -26,16 +26,19 @@ function shownDates(r: ChartRange, earliest: string | null | undefined, today: s
 
 /** 时间区间：一个起止日期框（两头都包含），旁边是快捷区间。
  * 点快捷区间会把起止日期填进框里；在框里改日期就是自定义区间，快捷区间不再高亮。
- * earliest 是本地最早的日线日期：起点早于它的快捷区间看到的和「全部」一样，置灰，避免点了没有变化 */
+ * earliest 是本地最早的日线日期：起点早于它的快捷区间看到的和「全部」一样，置灰，避免点了没有变化。
+ * ranges 是快捷区间，默认是 K 线图用的一组 */
 export function RangePicker({
   value,
   earliest,
   loading,
+  ranges = CHART_RANGES,
   onChange,
 }: {
   value: ChartRange;
   earliest?: string | null;
   loading?: boolean;
+  ranges?: readonly { value: string; label: string }[];
   onChange: (patch: Partial<ChartRange>) => void;
 }) {
   const today = todayCn();
@@ -50,7 +53,7 @@ export function RangePicker({
         onChange={(from, to) => onChange({ range: "custom", from, to })}
       />
       <div className="flex flex-wrap gap-0.5">
-        {CHART_RANGES.map((o) => {
+        {ranges.map((o) => {
           const start = rangeStart(o.value, today);
           const disabled = o.value !== "all" && !!earliest && !!start && start <= earliest;
           const active = value.range === o.value;

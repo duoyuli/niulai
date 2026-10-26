@@ -8,17 +8,21 @@ import { Badge, Card, Empty, ErrorState, inputClass, PageHeader, QueryView, Spin
 import { useSearchState } from "../hooks/useSearchState";
 import { fmtInt } from "../lib/format";
 import { INDEX_CATEGORIES } from "../lib/labels";
+import { DEFAULT_MA, fetchStart, maPeriod } from "../lib/movingAverage";
 
 /** 供应商的指数和板块日线从这一天开始 */
 const INDEX_EARLIEST = "2022-01-04";
 
 export function IndexDetailPage() {
   const { thscode = "" } = useParams();
-  const [s, set] = useSearchState({ range: "3", from: "", to: "" });
+  const [s, set] = useSearchState({ range: "3", from: "", to: "", ...DEFAULT_MA });
+  const ma = [maPeriod(s.ma1, DEFAULT_MA.ma1), maPeriod(s.ma2, DEFAULT_MA.ma2)];
+  const range = rangeQuery(s);
+  const [maSlot, setMaSlot] = useState<HTMLDivElement | null>(null);
   const info = useListIndices({ q: thscode }, { query: { select: (rows) => rows.find((r) => r.thscode === thscode) } });
   const bars = useIndexBars(
     thscode,
-    { ...rangeQuery(s), limit: 10000 },
+    { start: fetchStart(range.start, ma), end: range.end, limit: 10000 },
     { query: { placeholderData: keepPreviousData } },
   );
   const members = useIndexMembers(thscode);
@@ -42,7 +46,11 @@ export function IndexDetailPage() {
       />
       <Card title="日 K 线">
         <div className="mb-3 flex flex-col gap-2">
-          <RangePicker value={s} earliest={INDEX_EARLIEST} loading={bars.isPlaceholderData} onChange={set} />
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <RangePicker value={s} earliest={INDEX_EARLIEST} loading={bars.isPlaceholderData} onChange={set} />
+            {/* 均线控件由 K 线图渲染到这里 */}
+            <div ref={setMaSlot} className="ml-auto" />
+          </div>
           <p className="text-xs text-zinc-500">指数没有除权，不需要复权。供应商的指数日线从 2022-01-04 开始。</p>
         </div>
         {bars.error ? (
@@ -52,7 +60,14 @@ export function IndexDetailPage() {
         ) : bars.data.bars.length === 0 ? (
           <Empty>本地还没有这个指数的日线</Empty>
         ) : (
-          <PriceChart bars={bars.data.bars} height={400} />
+          <PriceChart
+            bars={bars.data.bars}
+            height={400}
+            ma={ma}
+            onMa={(i, n) => set(i === 0 ? { ma1: String(n) } : { ma2: String(n) })}
+            showFrom={range.start}
+            maSlot={maSlot}
+          />
         )}
       </Card>
       <Card title="当前成分股">

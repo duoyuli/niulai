@@ -12,7 +12,7 @@ export type FactorPortfolioParams = {
  */
 factors: string;
 /**
- * 开始日，默认结束日前 3 年；区间最长 5 年
+ * 开始日，默认结束日前 3 年；区间 60 天到 5 年
  * @nullable
  */
 start?: string | null;

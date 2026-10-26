@@ -1,7 +1,7 @@
 import { Link } from "react-router";
-import type { Rules } from "../api/generated/model";
-import { useFactorCatalog } from "../api/generated/research/research";
+import type { FactorId, Rules } from "../api/generated/model";
 import { planResearchLink } from "../lib/factors";
+import { FactorPicker } from "./FactorPicker";
 import { Field, inputClass } from "./ui";
 
 /** 已持有的股票排名在这个名次以内时继续拿 */
@@ -19,6 +19,10 @@ export function rulesText(r: Rules): string[] {
   ];
 }
 
+/** 选择组件的因子写法换成账户规则的写法 */
+const toRules = (picks: { id: string; weight: number }[]) =>
+  picks.map((p) => ({ factor: p.id as FactorId, weight: p.weight }));
+
 type NumKey = "top_n" | "buffer" | "min_cash_pct" | "chase_limit_pct";
 const FIELDS: { key: NumKey; label: string }[] = [
   { key: "top_n", label: "持有几只（5 到 50）" },
@@ -29,28 +33,27 @@ const FIELDS: { key: NumKey; label: string }[] = [
 
 /** 账户的调仓规则：参与排名的因子（带方向）、持有只数、缓冲区、留现金、追高上限和 ST。规则见 docs/domains/accounts.md#rules */
 export function RulesForm({ value, onChange }: { value: Rules; onChange: (r: Rules) => void }) {
-  const catalog = useFactorCatalog({ query: { staleTime: Number.POSITIVE_INFINITY } });
-  const label = (id: string, weight: number) => {
-    const f = catalog.data?.find((x) => x.id === id);
-    if (!f) return id;
-    // 权重为负时反过来用
-    return `${f.name}${f.higher_is_better === weight > 0 ? "高" : "低"}`;
-  };
   const set = (patch: Partial<Rules>) => onChange({ ...value, ...patch });
   return (
     <div className="flex flex-col gap-4">
       <section>
         <h3 className="text-sm font-medium">参与排名的因子</h3>
-        <ul className="mt-2 flex flex-wrap gap-2 text-sm">
-          {value.factors.map((f) => (
-            <li key={f.factor} className="rounded bg-zinc-100 px-2 py-0.5 dark:bg-zinc-800">
-              {label(f.factor, f.weight)}
-              {f.weight !== 1 && <span className="ml-1 text-xs text-zinc-500">× {f.weight}</span>}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-2">
+          <FactorPicker
+            picks={value.factors.map((f) => ({ id: f.factor, weight: f.weight }))}
+            onChange={(picks) => set({ factors: toRules(picks) })}
+            onPreset={(p) =>
+              set({
+                factors: toRules(p.factors),
+                ...(p.top_n !== undefined && { top_n: p.top_n, buffer: p.buffer ?? 0 }),
+              })
+            }
+            weights
+          />
+        </div>
+        {value.factors.length === 0 && <p className="mt-2 text-xs text-red-500">至少选一个因子</p>}
         <p className="mt-2 text-xs text-zinc-500">
-          股票池、去极值和行业、规模中性化与因子研究的默认值相同。
+          套用自己保存的预设时，持有只数和缓冲区也一起改。选中的因子后面可以填权重（负数表示反过来用）。股票池、去极值和行业、规模中性化与因子研究的默认值相同。
           <Link className="ml-1 text-accent hover:underline" to={planResearchLink(value)}>
             在因子研究里回测这组规则
           </Link>

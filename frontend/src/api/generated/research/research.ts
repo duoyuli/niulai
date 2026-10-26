@@ -6,16 +6,20 @@
  * OpenAPI spec version: 0.1.0
  */
 import {
+  useMutation,
   useQuery
 } from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
   DefinedUseQueryResult,
+  MutationFunction,
   QueryClient,
   QueryFunction,
   QueryKey,
   UndefinedInitialDataOptions,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult
 } from '@tanstack/react-query';
@@ -25,6 +29,8 @@ import type {
   FactorInfo,
   FactorPortfolioParams,
   FactorPortfolioResult,
+  FactorPreset,
+  FactorPresetInput,
   FactorTestParams,
   FactorTestResult
 } from '../model';
@@ -365,3 +371,263 @@ export function useFactorCatalog<TData = Awaited<ReturnType<typeof factorCatalog
 
 
 
+export const getListPresetsUrl = () => {
+
+
+
+
+  return `/api/v1/research/presets`
+}
+
+/**
+ * @summary 当前用户保存的预设，最近改过的在前
+ */
+export const listPresets = async ( options?: Parameters<typeof apiFetch>[1]): Promise<FactorPreset[]> => {
+
+  return apiFetch<FactorPreset[]>(getListPresetsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPresetsQueryKey = () => {
+    return [
+    `/api/v1/research/presets`
+    ] as const;
+    }
+
+
+export const getListPresetsQueryOptions = <TData = Awaited<ReturnType<typeof listPresets>>, TError = unknown>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPresets>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPresetsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPresets>>> = ({ signal }) => listPresets({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPresets>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPresetsQueryResult = NonNullable<Awaited<ReturnType<typeof listPresets>>>
+export type ListPresetsQueryError = unknown
+
+
+export function useListPresets<TData = Awaited<ReturnType<typeof listPresets>>, TError = unknown>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPresets>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPresets>>,
+          TError,
+          Awaited<ReturnType<typeof listPresets>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPresets<TData = Awaited<ReturnType<typeof listPresets>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPresets>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPresets>>,
+          TError,
+          Awaited<ReturnType<typeof listPresets>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPresets<TData = Awaited<ReturnType<typeof listPresets>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPresets>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary 当前用户保存的预设，最近改过的在前
+ */
+
+export function useListPresets<TData = Awaited<ReturnType<typeof listPresets>>, TError = unknown>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPresets>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPresetsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+export const getSavePresetUrl = () => {
+
+
+
+
+  return `/api/v1/research/presets`
+}
+
+/**
+ * @summary 保存一个预设；同名时覆盖
+ */
+export const savePreset = async (factorPresetInput: FactorPresetInput, options?: Parameters<typeof apiFetch>[1]): Promise<FactorPreset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return apiFetch<FactorPreset>(getSavePresetUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(factorPresetInput)
+  }
+);}
+
+
+
+
+
+export const getSavePresetMutationKey = () => ['savePreset'] as const;
+
+export const getSavePresetMutationOptions = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof savePreset>>, TError,SavePresetMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof savePreset>>, TError,SavePresetMutationVariables, TContext> => {
+
+const mutationKey = getSavePresetMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof savePreset>>, SavePresetMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  savePreset(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SavePresetMutationResult = NonNullable<Awaited<ReturnType<typeof savePreset>>>
+    export type SavePresetMutationBody = FactorPresetInput
+    export type SavePresetMutationError = ErrorBody
+    export type SavePresetMutationVariables = {data: FactorPresetInput}
+
+    /**
+ * @summary 保存一个预设；同名时覆盖
+ */
+export const useSavePreset = <TError = ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof savePreset>>, TError,SavePresetMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof savePreset>>,
+        TError,
+        SavePresetMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSavePresetMutationOptions(options), queryClient);
+    }
+    export const getDeletePresetUrl = (presetId: number,) => {
+
+
+
+
+  return `/api/v1/research/presets/${presetId}`
+}
+
+/**
+ * @summary 删除一个预设（不存在或不属于当前用户时也返回成功）
+ */
+export const deletePreset = async (presetId: number, options?: Parameters<typeof apiFetch>[1]): Promise<void> => {
+
+  return apiFetch<void>(getDeletePresetUrl(presetId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeletePresetMutationKey = () => ['deletePreset'] as const;
+
+export const getDeletePresetMutationOptions = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePreset>>, TError,DeletePresetMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deletePreset>>, TError,DeletePresetMutationVariables, TContext> => {
+
+const mutationKey = getDeletePresetMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePreset>>, DeletePresetMutationVariables> = (props) => {
+          const {presetId} = props ?? {};
+
+          return  deletePreset(presetId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeletePresetMutationResult = NonNullable<Awaited<ReturnType<typeof deletePreset>>>
+
+    export type DeletePresetMutationError = unknown
+    export type DeletePresetMutationVariables = {presetId: number}
+
+    /**
+ * @summary 删除一个预设（不存在或不属于当前用户时也返回成功）
+ */
+export const useDeletePreset = <TError = unknown,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePreset>>, TError,DeletePresetMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deletePreset>>,
+        TError,
+        DeletePresetMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeletePresetMutationOptions(options), queryClient);
+    }

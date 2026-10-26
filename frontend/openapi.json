@@ -1970,7 +1970,7 @@
           {
             "name": "start",
             "in": "query",
-            "description": "开始日，默认结束日前 3 年；区间最长 5 年",
+            "description": "开始日，默认结束日前 3 年；区间 60 天到 5 年",
             "required": false,
             "schema": {
               "type": [
@@ -2238,7 +2238,7 @@
           {
             "name": "start",
             "in": "query",
-            "description": "开始日，默认结束日前 5 年；区间最长 8 年",
+            "description": "开始日，默认结束日前 5 年；区间 60 天到 8 年",
             "required": false,
             "schema": {
               "type": [
@@ -2420,6 +2420,94 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/research/presets": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "当前用户保存的预设，最近改过的在前",
+        "operationId": "list_presets",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FactorPreset"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "research"
+        ],
+        "summary": "保存一个预设；同名时覆盖",
+        "operationId": "save_preset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FactorPresetInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactorPreset"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "名字、因子或持有参数不合法，或预设太多",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/research/presets/{preset_id}": {
+      "delete": {
+        "tags": [
+          "research"
+        ],
+        "summary": "删除一个预设（不存在或不属于当前用户时也返回成功）",
+        "operationId": "delete_preset",
+        "parameters": [
+          {
+            "name": "preset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已删除"
           }
         }
       }
@@ -5409,6 +5497,77 @@
             "type": "number",
             "format": "double",
             "description": "年化单边换手：每年买入金额 ÷ 平均账户总值"
+          }
+        }
+      },
+      "FactorPreset": {
+        "type": "object",
+        "required": [
+          "preset_id",
+          "name",
+          "factors",
+          "top_n",
+          "buffer",
+          "updated_at"
+        ],
+        "properties": {
+          "buffer": {
+            "type": "number",
+            "format": "double"
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorWeight"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "preset_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "top_n": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "FactorPresetInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "factors",
+          "top_n",
+          "buffer"
+        ],
+        "properties": {
+          "buffer": {
+            "type": "number",
+            "format": "double",
+            "description": "缓冲区，0 到 2"
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorWeight"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "1 到 30 个字；同名（不区分大小写）时覆盖原来的"
+          },
+          "top_n": {
+            "type": "integer",
+            "format": "int32",
+            "description": "持有只数，5 到 50（和账户规则相同）",
+            "minimum": 0
           }
         }
       },
@@ -8436,7 +8595,7 @@
     },
     {
       "name": "research",
-      "description": "因子研究：因子检验与多因子组合回测"
+      "description": "因子研究：因子检验、多因子组合回测与因子预设"
     },
     {
       "name": "sync",
