@@ -42,12 +42,14 @@ import {
 } from "../components/ui";
 import { useSearchState } from "../hooks/useSearchState";
 import {
+  BUFFER_HELP,
   DEFAULT_FACTORS,
   type FactorWeight,
   fmtNum,
   fmtProb,
   formatFactors,
   parseFactors,
+  TOP_N_HELP,
   verdictTone,
 } from "../lib/factors";
 import { fmtBig, fmtInt, fmtPercent, upDownClass } from "../lib/format";
@@ -548,14 +550,14 @@ function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
           </Labeled>
           <NumberField
             label="持有几只"
-            hint="5 到 100。只数越多越接近因子本身的表现，单只股票的偶然涨跌影响越小"
+            hint={`${TOP_N_HELP}。可以填 5 到 100，要套用到账户时不超过 50`}
             value={s.top}
             onCommit={(top) => set({ top })}
             width="w-16"
           />
           <NumberField
             label="缓冲区"
-            hint="已持有的股票排名还在 持有只数 ×（1 + 缓冲区）以内时不卖，减少来回换手。0 到 2"
+            hint={BUFFER_HELP}
             value={s.buffer}
             onCommit={(buffer) => set({ buffer })}
             width="w-16"
@@ -594,7 +596,7 @@ function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
       <RulesNote
         items={[
           "每到调仓日收盘，给股票池里的股票按选中因子的合成得分排名：各因子先标准化并统一成「越大越好」，再按权重加权平均（至少一半权重的因子有值才参与）。",
-          "持有得分最高的若干只；已持有的股票排名还在缓冲区以内时继续持有。下一个交易日开盘先卖后买，新买的每只投入「账户总值 ÷ 持有只数」和「现金 ÷ 待买只数」中较小的一个。",
+          "持有得分最高的若干只；已持有的股票排名还在「持有只数 ×（1 + 缓冲区）」以内时继续持有，掉出才卖。下一个交易日开盘先卖后买，新买的每只投入「账户总值 ÷ 持有只数」和「现金 ÷ 待买只数」中较小的一个。",
           "卖出遇到停牌、一字跌停时顺延；买入遇到停牌、一字涨停时顺延，到下一次调仓时取消。之后再没有日线的股票按最后收盘价了结。收益按前复权价计算（相当于分红再投资），允许零股。",
           "佣金（含最低佣金）、印花税、滑点照常扣除。资金少、持有只数多时，最低佣金会明显拖累收益，所以这里默认用 100 万。",
           "基准是全市场等权（含分红），和组合回测相同。真实有效的概率（Deflated Sharpe）按这类回测已经试过的配置数打折：试得越多，偶然好看的结果越多。",

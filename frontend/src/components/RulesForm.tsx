@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import type { FactorId, Rules } from "../api/generated/model";
-import { planResearchLink } from "../lib/factors";
+import { BUFFER_HELP, planResearchLink, TOP_N_HELP } from "../lib/factors";
 import { FactorPicker } from "./FactorPicker";
 import { Field, inputClass } from "./ui";
 
@@ -24,9 +24,9 @@ const toRules = (picks: { id: string; weight: number }[]) =>
   picks.map((p) => ({ factor: p.id as FactorId, weight: p.weight }));
 
 type NumKey = "top_n" | "buffer" | "min_cash_pct" | "chase_limit_pct";
-const FIELDS: { key: NumKey; label: string }[] = [
-  { key: "top_n", label: "持有几只（5 到 50）" },
-  { key: "buffer", label: "缓冲区（0 到 2）" },
+const FIELDS: { key: NumKey; label: string; help?: string }[] = [
+  { key: "top_n", label: "持有几只（5 到 50）", help: TOP_N_HELP },
+  { key: "buffer", label: "缓冲区（0 到 2）", help: BUFFER_HELP },
   { key: "min_cash_pct", label: "至少留现金（%）" },
   { key: "chase_limit_pct", label: "追高上限：开盘比参考价高（%）" },
 ];
@@ -63,7 +63,7 @@ export function RulesForm({ value, onChange }: { value: Rules; onChange: (r: Rul
         <h3 className="text-sm font-medium">持仓和保护</h3>
         <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {FIELDS.map((f) => (
-            <Field key={f.key} label={f.label}>
+            <Field key={f.key} label={f.label} help={f.help}>
               <input
                 className={inputClass}
                 inputMode="decimal"

@@ -125,7 +125,7 @@
 
 账户设置和因子研究的「多因子组合」用同一个因子选择组件（`frontend/src/components/FactorPicker.tsx`），分两步：上面一块是一键套用的预设，下面逐个选因子。预设用白底卡片，因子用带勾的标签，形状不同，避免把两者混淆。点预设会替换整个因子选择。「因子检验」是逐个体检因子，不显示预设，也不填权重。
 
-- **内置预设：** 写在前端 `src/lib/factors.ts` 的 `FACTOR_PRESETS`，因子等权，只写思路，不写回测数字。第一个是组合 E，与后端 `Rules::default` 相同，改默认规则时两处一起改。
+- **内置预设：** 写在前端 `src/lib/factors.ts` 的 `FACTOR_PRESETS`，因子等权，描述只讲选股逻辑，不写来历和回测数字。第一个是组合 E，与后端 `Rules::default` 相同，改默认规则时两处一起改。
 - **我的预设：** 在「多因子组合」里点「保存为预设」，把当前的因子和权重、持有只数、缓冲区按名字存进 `app.factor_preset`，每个用户各自一份，同名（不区分大小写）覆盖，最多 50 个。校验和账户规则共用 `validate_factors`、`validate_holding`，所以存下的预设一定能套到账户上。套用时因子、持有只数和缓冲区一起改；内置预设只改因子。删除预设不影响已经用它设置过的账户。接口见 [REST API](../interfaces/rest_api.md#endpoints) 的 `/research/presets`。
 
 <a id="ranking"></a>

@@ -6,36 +6,36 @@ import type { Tone } from "./labels";
 export const DEFAULT_FACTORS = "reversal,idio_vol,max_return,liquidity,abnormal_turnover";
 
 /** 预设的多因子组合：点一下替换当前选择，权重都是 1（按各因子的预期方向合成）。
- * 只写思路，不写回测数字；组合 E 与后端 `Rules::default` 相同 */
+ * 描述只讲选股逻辑，不写来历和回测数字；第一个与后端 `Rules::default` 相同 */
 export const FACTOR_PRESETS: readonly { id: string; name: string; desc: string; factors: readonly string[] }[] = [
   {
     id: "e",
     name: "低波动 + 盈利质量 + 小盘",
-    desc: "账户的默认规则（研究记录里的组合 E）：挑波动小、利润在增长、利润里现金含量高的小公司",
+    desc: "挑选同时满足这几点的公司：最近一个月股价涨跌平稳；最新一个季度的利润比去年同期多；利润是实打实收到的现金，不是账面上的应收款；公司规模偏小（用成交额衡量）。平稳的股票回撤小，利润增长且质量高的公司基本面好，小公司长期涨得比大公司多",
     factors: ["volatility", "idio_vol", "profit_growth", "accruals", "liquidity"],
   },
   {
     id: "price",
     name: "短期价量",
-    desc: "只用日线：最近跌得多、走势平稳、没有暴涨、成交没有突然放大的小盘股。换手较高",
+    desc: "只看股价和成交量：挑最近一周跌得多的股票（A 股短期涨多了容易跌回去，跌多了容易涨回来），同时要求它最近一个月走势平稳、没有出现过单日暴涨、规模偏小、最近几天成交没有突然放大。这些指标变化快，持仓换得比较勤",
     factors: ["reversal", "idio_vol", "max_return", "liquidity", "abnormal_turnover"],
   },
   {
     id: "price_fundamental",
     name: "价量 + 财务",
-    desc: "研究记录里的组合 B：价量因子避开追涨和过热，再加两个换手低的财务因子",
+    desc: "股价方面，挑最近一个月没怎么涨、走势平稳、没有出现过单日暴涨、成交没有突然放大的股票，避开追涨和炒作过热的；财报方面，再要求最新一个季度利润比去年同期增长、利润是实打实收到的现金。财报指标变化慢，能让持仓换得少一些",
     factors: ["momentum", "idio_vol", "max_return", "abnormal_turnover", "profit_growth", "accruals"],
   },
   {
     id: "low_vol",
     name: "低波动防守",
-    desc: "只挑走势平稳、没有暴涨的股票，不看公司大小",
+    desc: "只看股价涨跌是否平稳：挑最近一个月每天涨跌幅度小、扣掉大盘整体涨跌后自身波动也小、没有出现过单日暴涨的股票。不看公司大小，也不看财报",
     factors: ["volatility", "idio_vol", "max_return"],
   },
   {
     id: "quality",
     name: "盈利质量",
-    desc: "只看财报：净资产收益率高、利润在增长、利润里现金含量高。调仓少",
+    desc: "只看财报：挑用股东的钱赚钱效率高（最近一年的净利润 ÷ 净资产高）、最新一个季度利润比去年同期增长快、利润是实打实收到的现金的公司。财报每个季度才更新一次，持仓换得少",
     factors: ["roe", "profit_growth", "accruals"],
   },
 ];
@@ -49,6 +49,12 @@ export function matchesPreset(picks: FactorWeight[], factors: readonly string[])
 export function sameFactors(a: FactorWeight[], b: FactorWeight[]): boolean {
   return a.length === b.length && a.every((x) => b.some((y) => y.id === x.id && y.weight === x.weight));
 }
+
+/** 持有只数和缓冲区的说明：因子研究的组合回测和账户的调仓规则共用 */
+export const TOP_N_HELP =
+  "每次调仓买入合成得分排名最靠前的这么多只，每只大致占总资产的同样比例。只数越多，越接近因子本身的平均表现，单只股票的意外涨跌影响越小；只数越少，单只股票的分量越重";
+export const BUFFER_HELP =
+  "用来减少不必要的买卖。已经持有的股票，只要排名还在「持有只数 ×（1 + 缓冲区）」以内就继续拿着，掉出这个名次才卖；新买入的仍然只从前「持有只数」名里挑。例如持有 30 只、缓冲区 0.5：只买前 30 名，已持有的掉到第 45 名以后才卖。缓冲区为 0 时，掉出前 30 名就卖，每次调仓换得最多、交易成本最高；越大换得越少，但会多拿一些排名已经下滑的股票。可以填 0 到 2";
 
 export interface FactorWeight {
   id: string;

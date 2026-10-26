@@ -10,11 +10,12 @@ import type { FactorId } from './factorId';
 
 export interface FactorInfo {
   category: FactorCategory;
+  /** 怎么算、数值大小代表什么，白话，带例子 */
   description: string;
   /** A 股历史研究中数值越大、后续收益越高为真；合成和分组的「好的一端」按它定方向 */
   higher_is_better: boolean;
   id: FactorId;
   name: string;
-  /** 为什么可能有效（或无效）的白话依据 */
+  /** 方向的依据：为什么数值大（或小）的股票之后可能涨得更多，白话，不重复「越大越好」 */
   rationale: string;
 }

@@ -240,16 +240,18 @@ function FactorChip({
         onClick={onToggle}
         disabled={locked}
         className="inline-flex items-center gap-1 disabled:cursor-not-allowed"
-        title={locked ? "至少保留一个因子：先选上别的因子，再取消这个" : f.description}
+        title={locked ? "至少保留一个因子：先选上别的因子，再取消这个" : undefined}
       >
         <span className={on ? "text-accent" : "text-zinc-400"}>{on ? "✓" : "+"}</span>
         {f.name}
         <span className="text-xs text-zinc-400">{f.higher_is_better ? "越大越好" : "越小越好"}</span>
       </button>
       <HelpTip label={`${f.name}的说明`}>
-        <b>{f.description}。</b>
+        <b>怎么算：</b>
+        {f.description}。
         <br />
-        {f.rationale}
+        <b>{f.higher_is_better ? "越大越好" : "越小越好"}：</b>
+        {f.rationale}。
       </HelpTip>
       {on && weights && (
         <input

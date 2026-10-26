@@ -4316,12 +4316,12 @@
       },
       "BackupStatus": {
         "type": "object",
-        "description": "每日备份的情况，来自升级助手写的 `backup` 文件",
+        "description": "备份的情况，来自升级助手写的 `backup` 文件",
         "properties": {
           "count": {
             "type": "integer",
             "format": "int32",
-            "description": "一共保留了几份",
+            "description": "一共保留了几份；只留最新一份，正常是 1，刚做完新备份、旧的还没删时可能短暂是 2",
             "minimum": 0
           },
           "error": {
@@ -4335,7 +4335,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/BackupFile",
-                "description": "最近一份每日备份；还没有时为空"
+                "description": "最近一份备份（每日或升级前）；还没有时为空"
               },
               {
                 "type": "null"
@@ -5178,7 +5178,8 @@
             "$ref": "#/components/schemas/FactorCategory"
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "description": "怎么算、数值大小代表什么，白话，带例子"
           },
           "higher_is_better": {
             "type": "boolean",
@@ -5192,7 +5193,7 @@
           },
           "rationale": {
             "type": "string",
-            "description": "为什么可能有效（或无效）的白话依据"
+            "description": "方向的依据：为什么数值大（或小）的股票之后可能涨得更多，白话，不重复「越大越好」"
           }
         }
       },
@@ -8445,7 +8446,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/BackupStatus",
-                "description": "内置数据库的每日备份（升级助手做）；没有启用升级助手、或不是管理员时为空"
+                "description": "内置数据库的备份（升级助手每天和升级前各做一次，只留最新一份）；没有启用升级助手、或不是管理员时为空"
               },
               {
                 "type": "null"
