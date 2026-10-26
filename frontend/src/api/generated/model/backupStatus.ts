@@ -8,11 +8,11 @@
 import type { BackupFile } from './backupFile';
 
 /**
- * 每日备份的情况，来自升级助手写的 `backup` 文件
+ * 备份的情况，来自升级助手写的 `backup` 文件
  */
 export interface BackupStatus {
   /**
-     * 一共保留了几份
+     * 一共保留了几份；只留最新一份，正常是 1，刚做完新备份、旧的还没删时可能短暂是 2
      * @minimum 0
      */
   count?: number;

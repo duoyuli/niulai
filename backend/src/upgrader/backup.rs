@@ -2,7 +2,8 @@
 //!
 //! - 在 postgres 容器里先 `pg_dump -Fc` 到临时文件，再用 `pg_restore --list` 读一遍，读得通才传出来，
 //!   写到 `.tmp` 文件、检查文件头后改名：backups/ 里只会有完整、读得出来的备份。
-//! - 每日备份在上海时间 BACKUP_AT 之后做（服务那时没在运行就在启动后补做），保留最近 DAILY_KEEP 份；升级前的保留最近 UPGRADE_KEEP 份。
+//! - 每日备份在上海时间 BACKUP_AT 之后做（服务那时没在运行就在启动后补做）。不分每日和升级前，backups/ 里只留最新的一份：
+//!   新的一份校验通过、写好之后才删旧的，避免备份把磁盘占满。
 //! - 结果写进共享目录的 `backup`，niulai 在版本号弹窗里显示最近一次备份，太久没有成功时提醒管理员。
 
 use std::path::{Path, PathBuf};
@@ -18,8 +19,6 @@ use super::docker::Docker;
 const BACKUP_AT: (u32, u32) = (3, 30);
 pub const DAILY_PREFIX: &str = "niulai-daily-";
 pub const UPGRADE_PREFIX: &str = "niulai-before-";
-const DAILY_KEEP: usize = 7;
-const UPGRADE_KEEP: usize = 3;
 /// 失败后隔多久再试
 const RETRY: Duration = Duration::from_secs(3600);
 
@@ -54,19 +53,26 @@ pub async fn dump(docker: &Docker, pg_id: &str, file: &Path) -> anyhow::Result<u
     Ok(std::fs::metadata(file)?.len())
 }
 
-/// 只保留某一类备份中最新的 keep 份（按修改时间：升级前备份的文件名里有版本号，按名字排不准）
-pub fn prune(dir: &Path, prefix: &str, keep: usize) {
-    let mut files = list(dir, prefix);
+/// 只留最新的一份备份，每日和升级前的一起算（按修改时间：升级前备份的文件名里有版本号，按名字排不准）。
+/// 在新备份写好之后调用，所以删掉的都是更旧的
+pub fn keep_latest(dir: &Path) {
+    let mut files = all(dir);
     files.sort_by_key(|p| {
         (
             std::fs::metadata(p).and_then(|m| m.modified()).ok(),
             p.clone(),
         )
     });
-    let n = files.len().saturating_sub(keep);
-    for f in &files[..n] {
+    for f in &files[..files.len().saturating_sub(1)] {
         let _ = std::fs::remove_file(f);
     }
+}
+
+/// 两类备份的全部文件
+fn all(dir: &Path) -> Vec<PathBuf> {
+    let mut files = list(dir, DAILY_PREFIX);
+    files.extend(list(dir, UPGRADE_PREFIX));
+    files
 }
 
 fn list(dir: &Path, prefix: &str) -> Vec<PathBuf> {
@@ -82,22 +88,23 @@ fn list(dir: &Path, prefix: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// 文件名中的时间：niulai-daily-20261018-033000.dump → 2026-10-18 03:30:00
-fn time_of(path: &Path, prefix: &str) -> Option<NaiveDateTime> {
-    let name = path.file_name()?.to_str()?;
-    let stamp = name.strip_prefix(prefix)?.strip_suffix(".dump")?;
+/// 文件名末尾的时间：niulai-daily-20261018-033000.dump、niulai-before-2026.10.18-20261018-100000.dump
+/// → 2026-10-18 03:30:00、2026-10-18 10:00:00
+fn time_of(path: &Path) -> Option<NaiveDateTime> {
+    let stem = path.file_name()?.to_str()?.strip_suffix(".dump")?;
+    let stamp = stem.get(stem.len().checked_sub(15)?..)?;
     NaiveDateTime::parse_from_str(stamp, "%Y%m%d-%H%M%S").ok()
 }
 
-/// 最近一份每日备份的时间（上海时间）
-pub fn latest_daily(dir: &Path) -> Option<NaiveDateTime> {
+/// 最近一份备份（每日或升级前）的时间（上海时间）。升级前刚备份过，当天就不用再做每日备份
+pub fn latest(dir: &Path) -> Option<NaiveDateTime> {
     newest(dir).map(|(_, t)| t)
 }
 
 fn newest(dir: &Path) -> Option<(PathBuf, NaiveDateTime)> {
-    list(dir, DAILY_PREFIX)
+    all(dir)
         .into_iter()
-        .filter_map(|p| time_of(&p, DAILY_PREFIX).map(|t| (p, t)))
+        .filter_map(|p| time_of(&p).map(|t| (p, t)))
         .max_by_key(|(_, t)| *t)
 }
 
@@ -125,7 +132,7 @@ impl Daily {
             return;
         }
         let now = crate::time::now_cn();
-        if !due(now, latest_daily(dir)) {
+        if !due(now, latest(dir)) {
             return;
         }
         let file = dir.join(format!(
@@ -141,7 +148,7 @@ impl Daily {
         match res {
             Ok(size) => {
                 self.failed_at = None;
-                prune(dir, DAILY_PREFIX, DAILY_KEEP);
+                keep_latest(dir);
                 tracing::info!(file = %file.display(), size, seconds = started.elapsed().as_secs(), "每日备份完成");
                 write_status(dir, status, None);
             }
@@ -154,11 +161,7 @@ impl Daily {
     }
 }
 
-pub fn keep_upgrade_backups(dir: &Path) {
-    prune(dir, UPGRADE_PREFIX, UPGRADE_KEEP);
-}
-
-/// 状态文件：最近一份每日备份（文件名、大小、时间）和一共几份，以及最近一次失败的原因（成功后清空）。
+/// 状态文件：最近一份备份（文件名、大小、时间）和一共几份，以及最近一次失败的原因（成功后清空）。
 /// niulai 看不到部署目录，只能读它（见 api::system）
 pub fn write_status(dir: &Path, status: &Path, error: Option<&str>) {
     let latest = newest(dir).map(|(p, t)| {
@@ -166,7 +169,7 @@ pub fn write_status(dir: &Path, status: &Path, error: Option<&str>) {
         let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         json!({ "file": format!("backups/{name}"), "size": size, "at": crate::time::cn_to_utc(t).timestamp() })
     });
-    let body = json!({ "latest": latest, "count": list(dir, DAILY_PREFIX).len(), "error": error, "checked_at": chrono::Utc::now().timestamp() });
+    let body = json!({ "latest": latest, "count": all(dir).len(), "error": error, "checked_at": chrono::Utc::now().timestamp() });
     let tmp = status.with_extension("tmp");
     let _ = std::fs::write(&tmp, body.to_string()).and_then(|_| std::fs::rename(&tmp, status));
 }
@@ -201,25 +204,35 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_newest_and_reads_times() {
+    fn keeps_only_the_newest_backup_of_either_kind() {
         let dir = std::env::temp_dir().join(format!("niulai-backup-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        let base = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_790_000_000);
+        let write = |name: String, secs: u64| {
+            let path = dir.join(name);
+            std::fs::write(&path, "x").unwrap();
+            let f = std::fs::File::options().write(true).open(&path).unwrap();
+            f.set_modified(base + Duration::from_secs(secs)).unwrap();
+        };
         for d in 10..=20 {
-            std::fs::write(
-                dir.join(format!("{DAILY_PREFIX}202610{d}-033000.dump")),
-                "x",
-            )
-            .unwrap();
+            write(format!("{DAILY_PREFIX}202610{d}-033000.dump"), d);
         }
-        std::fs::write(
-            dir.join(format!("{UPGRADE_PREFIX}2026.10.18-20261018-100000.dump")),
-            "x",
-        )
-        .unwrap();
-        prune(&dir, DAILY_PREFIX, 3);
-        assert_eq!(list(&dir, DAILY_PREFIX).len(), 3);
-        assert_eq!(list(&dir, UPGRADE_PREFIX).len(), 1, "升级前的备份不受影响");
-        assert_eq!(latest_daily(&dir), Some(t("2026-10-20 03:30")));
+        // 升级前的备份比最新的每日备份还新：它留下，每日的全删
+        write(
+            format!("{UPGRADE_PREFIX}2026.10.20-20261020-100000.dump"),
+            30,
+        );
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+        keep_latest(&dir);
+        assert_eq!(list(&dir, DAILY_PREFIX).len(), 0);
+        assert_eq!(list(&dir, UPGRADE_PREFIX).len(), 1);
+        assert!(dir.join("notes.txt").exists(), "不是备份的文件不动");
+        assert_eq!(latest(&dir), Some(t("2026-10-20 10:00")));
+        // 第二天的每日备份写好后，升级前的那份也删掉
+        write(format!("{DAILY_PREFIX}20261021-033000.dump"), 40);
+        keep_latest(&dir);
+        assert_eq!(all(&dir).len(), 1);
+        assert_eq!(latest(&dir), Some(t("2026-10-21 03:30")));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

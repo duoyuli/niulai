@@ -204,7 +204,7 @@ niulai 每 6 小时查一次 GitHub 上的版本标签（`NIULAI_UPDATE_REPO`，
 upgrader 收到请求后依次执行，每一步的状态和说明写在 `status` 的 `steps` 中，版本号弹窗里显示进度条和步骤（收起后进度保留）：
 1. **下载新版本**，显示百分比和 MB。失败且本机没有这个镜像时什么都不改。
 2. **更新升级助手**：用新镜像重建自己，进度写在 `handoff` 交给新的 upgrader 继续。新版本的部署迁移只有新版本知道，所以先换掉自己；换不成时由当前的继续。
-3. **备份数据库**：用内置数据库时在 postgres 容器中 `pg_dump` 并校验，写到 `backups/niulai-before-<版本>-<时间>.dump`（保留最近 3 份，见 [备份与恢复](#backup_restore)）。失败时不升级。
+3. **备份数据库**：用内置数据库时在 postgres 容器中 `pg_dump` 并校验，写到 `backups/niulai-before-<版本>-<时间>.dump`（写好后删掉更旧的备份，只留这一份，见 [备份与恢复](#backup_restore)）。失败时不升级。
 4. **部署迁移**：做完新版本带来的、还没做过的 [部署迁移](#deploy_migrations)。失败时恢复原样，不升级。
 5. **启动新版本**：`.env` 的 `NIULAI_IMAGE` 改成新版本，停止旧容器（最多 2 分钟），按它的配置用新镜像建新容器，最多等 5 分钟变成 `healthy`（页面显示已等多久），成功后删掉旧容器；失败时换回旧容器并改回 `.env`。新版本可能已经执行了数据库迁移，旧版本起不来时用第 3 步的备份恢复。
 
@@ -281,13 +281,14 @@ docker compose up -d
 <a id="backup_restore"></a>
 ### 备份与恢复
 
-**自动备份：** 启用了一键升级（upgrader）、用内置数据库时，升级助手每天上海时间 3:30 之后备份一次（服务那时没在运行就在启动后补做；超过 30 小时没有备份时不等到点），写到部署目录的 `backups/niulai-daily-<时间>.dump`，保留最近 7 份；升级前的备份 `niulai-before-<版本>-<时间>.dump` 保留最近 3 份（每份大约是数据目录的十分之一，留意磁盘空间）。每份都在 postgres 容器中先导出、用 `pg_restore --list` 读一遍，读得通才写进 `backups/`，所以那里只有完整的备份。失败一小时后重试。版本号弹窗显示最近一次备份；超过 36 小时没有成功时，管理员的每个页面顶部都有提醒。实现在 `backend/src/upgrader/backup.rs`。
+**自动备份：** 启用了一键升级（upgrader）、用内置数据库时，升级助手每天上海时间 3:30 之后备份一次（服务那时没在运行就在启动后补做；超过 30 小时没有备份时不等到点），写到部署目录的 `backups/niulai-daily-<时间>.dump`；升级前也备份一次，写到 `niulai-before-<版本>-<时间>.dump`。为了不把磁盘占满，两类一起算只留最新的一份：新备份校验通过、写好之后才删更旧的，所以任何时候至少有一份完整备份，刚写完时短暂有两份。升级前刚备份过时，当天不再做每日备份（「最近一次备份」不分类型）。每份都在 postgres 容器中先导出、用 `pg_restore --list` 读一遍，读得通才写进 `backups/`，所以那里只有完整的备份。只留一份意味着本机只能恢复到最近一次备份的状态，更早的版本要靠下面的异地副本保留。失败一小时后重试。版本号弹窗显示最近一次备份；超过 36 小时没有成功时，管理员的每个页面顶部都有提醒。实现在 `backend/src/upgrader/backup.rs`。
 
 **异地副本：** 备份和数据库在同一块磁盘上，防不了坏盘、误删部署目录、重装系统。在宿主机上用 crontab 把 `backups/` 同步到另一台机器或对象存储，例如：
 
 ```bash
-# 每天 5 点把 backups/ 同步到对象存储（先用 rclone config 配置好名为 remote 的存储）
-0 5 * * * rclone sync /opt/niulai/backups remote:niulai-backups --include 'niulai-*.dump'
+# 每天 5 点把新备份复制到对象存储（先用 rclone config 配置好名为 remote 的存储）。
+# 用 copy 不用 sync：本机只留一份，sync 会把远端的历史备份一起删掉；远端的保留期在对象存储的生命周期规则里设
+0 5 * * * rclone copy /opt/niulai/backups remote:niulai-backups --include 'niulai-*.dump'
 ```
 
 **手动备份与恢复：** 在部署目录执行（源码部署对 `DATABASE_URL` 指向的库执行同样的 `pg_dump`、`psql`、`pg_restore`；源码部署没有自动备份，用 crontab 定时执行下面的备份命令）。

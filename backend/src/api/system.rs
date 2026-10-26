@@ -67,16 +67,16 @@ pub struct VersionInfo {
     /// 两个版本之间改了什么（GitHub 对比页面）
     pub changes_url: Option<String>,
     pub upgrade: UpgradeStatus,
-    /// 内置数据库的每日备份（升级助手做）；没有启用升级助手、或不是管理员时为空
+    /// 内置数据库的备份（升级助手每天和升级前各做一次，只留最新一份）；没有启用升级助手、或不是管理员时为空
     pub backup: Option<BackupStatus>,
 }
 
-/// 每日备份的情况，来自升级助手写的 `backup` 文件
+/// 备份的情况，来自升级助手写的 `backup` 文件
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq)]
 pub struct BackupStatus {
-    /// 最近一份每日备份；还没有时为空
+    /// 最近一份备份（每日或升级前）；还没有时为空
     pub latest: Option<BackupFile>,
-    /// 一共保留了几份
+    /// 一共保留了几份；只留最新一份，正常是 1，刚做完新备份、旧的还没删时可能短暂是 2
     #[serde(default)]
     pub count: u32,
     /// 最近一次失败的原因；成功后清空

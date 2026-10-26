@@ -267,12 +267,12 @@ function UpgradeProgress({ u, target }: { u: UpgradeStatus; target?: string | nu
 
 const backupTime = (b: BackupStatus) => (b.latest ? new Date(b.latest.at * 1000).toISOString() : null);
 
-/** 版本号弹窗里的一行：最近一次每日备份 */
+/** 版本号弹窗里的一行：最近一次备份（每日或升级前） */
 function BackupLine({ b }: { b: BackupStatus }) {
   return (
     <div className={clsx("text-xs", b.stale || b.error ? "text-amber-700 dark:text-amber-400" : "text-zinc-500")}>
       <p>
-        数据库每日备份：
+        数据库备份：
         {b.latest
           ? `最近一次 ${fmtAgo(backupTime(b))}（${(b.latest.size / 2 ** 20).toFixed(0)} MB），共保留 ${b.count} 份`
           : "还没有"}
@@ -285,14 +285,14 @@ function BackupLine({ b }: { b: BackupStatus }) {
   );
 }
 
-/** 管理员页头下的提醒：超过 36 小时没有成功的每日备份 */
+/** 管理员页头下的提醒：超过 36 小时没有成功的备份 */
 export function BackupAlert() {
   const q = useVersion(undefined, { query: { staleTime: 60_000 } });
   const b = q.data?.backup;
   if (!b || !(b.stale || b.error)) return null;
   return (
     <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-      数据库{b.latest ? `已经 ${fmtAgo(backupTime(b)).replace("前", "")}没有成功备份` : "还没有每日备份"}
+      数据库{b.latest ? `已经 ${fmtAgo(backupTime(b)).replace("前", "")}没有成功备份` : "还没有备份"}
       {b.error ? `，上次失败：${b.error}` : ""}。点页头的版本号看详情，或执行 docker compose logs upgrader。
     </p>
   );

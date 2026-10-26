@@ -514,7 +514,7 @@ impl Upgrade<'_> {
             .await
     }
 
-    /// 备份内置数据库到部署目录的 backups/，返回文件名。升级前的备份保留最近几份
+    /// 备份内置数据库到部署目录的 backups/，返回文件名。写好之后删掉更旧的备份，只留这一份
     async fn backup(&self, label: &str) -> anyhow::Result<String> {
         let pg = self.find("postgres").await?;
         let dir = self.deploy.join("backups");
@@ -525,7 +525,7 @@ impl Upgrade<'_> {
             crate::time::now_cn().format("%Y%m%d-%H%M%S")
         ));
         backup::dump(self.docker, pg["Id"].as_str().unwrap_or_default(), &file).await?;
-        backup::keep_upgrade_backups(&dir);
+        backup::keep_latest(&dir);
         let name = format!(
             "backups/{}",
             file.file_name().unwrap_or_default().to_string_lossy()
