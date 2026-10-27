@@ -9,6 +9,7 @@ import type { FactorPick } from './factorPick';
 import type { FactorPortfolioPoint } from './factorPortfolioPoint';
 import type { FactorPortfolioSummary } from './factorPortfolioSummary';
 import type { FactorRebalance } from './factorRebalance';
+import type { FactorTrade } from './factorTrade';
 
 export interface FactorPortfolioOutcome {
   equity: FactorPortfolioPoint[];
@@ -19,4 +20,6 @@ export interface FactorPortfolioOutcome {
   rebalances: FactorRebalance[];
   summary: FactorPortfolioSummary;
   thin_days: string[];
+  /** 全部成交，按日期排列；同一天先卖后买 */
+  trades: FactorTrade[];
 }

@@ -1166,6 +1166,35 @@ pub struct FactorRebalance {
     pub turnover: f64,
 }
 
+#[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum FactorTradeSide {
+    Buy,
+    Sell,
+    /// 之后再没有日线（退市或停牌到期末），按最后收盘价了结，不计费用
+    Liquidate,
+}
+
+/// 组合回测的一笔成交。价格是前复权价，和当时的实际成交价不同
+#[derive(Serialize, ToSchema, Clone, Debug)]
+pub struct FactorTrade {
+    pub date: NaiveDate,
+    pub thscode: String,
+    pub name: String,
+    pub side: FactorTradeSide,
+    /// 前复权成交价，含滑点
+    pub price: f64,
+    /// 成交金额，不含费用
+    pub amount: f64,
+    pub fee: f64,
+    /// 卖出和了结：卖出所得减去买入花费（都含费用）
+    pub profit: Option<f64>,
+    /// 卖出和了结：profit ÷ 买入花费
+    pub profit_pct: Option<f64>,
+    /// 卖出和了结：从买入到卖出经过的交易日数
+    pub held_days: Option<usize>,
+}
+
 #[derive(Serialize, ToSchema, Clone, Debug)]
 pub struct FactorPick {
     pub thscode: String,
@@ -1210,6 +1239,8 @@ pub struct FactorPortfolioOutcome {
     pub summary: FactorPortfolioSummary,
     pub equity: Vec<FactorPortfolioPoint>,
     pub rebalances: Vec<FactorRebalance>,
+    /// 全部成交，按日期排列；同一天先卖后买
+    pub trades: Vec<FactorTrade>,
     /// 最近一个取样日按合成得分排出的前 top_n 只
     pub picks: Vec<FactorPick>,
     pub picks_date: Option<NaiveDate>,
@@ -1219,6 +1250,9 @@ pub struct FactorPortfolioOutcome {
 struct Holding {
     units: f64,
     last: f64,
+    /// 买入花费，含费用
+    cost: f64,
+    bought_on: usize,
 }
 
 /// 多因子组合：每个取样日收盘按合成得分排名，持有前 top_n 只（带缓冲区），下一个交易日开盘调仓。
@@ -1244,6 +1278,26 @@ pub fn simulate(
     let mut skipped = 0usize;
     let mut equity: Vec<FactorPortfolioPoint> = vec![];
     let mut rebalances: Vec<FactorRebalance> = vec![];
+    let mut trades: Vec<FactorTrade> = vec![];
+    let trade =
+        |day: usize, s: u32, side, price: f64, amount: f64, fee: f64, h: Option<&Holding>| {
+            let code = &panel.stocks[s as usize].code;
+            let profit = h.map(|h| amount - fee - h.cost);
+            FactorTrade {
+                date: panel.calendar[day],
+                thscode: code.clone(),
+                name: names.get(code).cloned().unwrap_or_default(),
+                side,
+                price,
+                amount,
+                fee,
+                profit,
+                profit_pct: h
+                    .zip(profit)
+                    .and_then(|(h, v)| (h.cost > 0.0).then(|| v / h.cost)),
+                held_days: h.map(|h| day - h.bought_on),
+            }
+        };
     let mut picks: Vec<FactorPick> = vec![];
     let mut picks_date = None;
     let mut bench_level = 1.0;
@@ -1263,17 +1317,37 @@ pub fn simulate(
                 let h = &held[&s];
                 match series.at(day) {
                     Some(i) if series.bars[i].flags & BLOCK_SELL == 0 => {
-                        let amount = h.units * f64::from(series.bars[i].q_open) * (1.0 - slip);
+                        let price = f64::from(series.bars[i].q_open) * (1.0 - slip);
+                        let amount = h.units * price;
                         let fee = p.costs.commission(amount)
                             + amount * (p.costs.transfer_fee_rate + stamp);
                         cash += amount - fee;
                         fees += fee;
+                        trades.push(trade(
+                            day,
+                            s,
+                            FactorTradeSide::Sell,
+                            price,
+                            amount,
+                            fee,
+                            Some(h),
+                        ));
                         done.push(s);
                     }
                     Some(_) => {}
                     // 之后再没有日线：退市或停牌到期末，按最后收盘价了结，不计费用
                     None if series.from(day) >= series.bars.len() => {
-                        cash += h.units * h.last;
+                        let amount = h.units * h.last;
+                        cash += amount;
+                        trades.push(trade(
+                            day,
+                            s,
+                            FactorTradeSide::Liquidate,
+                            h.last,
+                            amount,
+                            0.0,
+                            Some(h),
+                        ));
                         done.push(s);
                     }
                     None => {}
@@ -1309,11 +1383,22 @@ pub fn simulate(
                             cash -= amount + fee;
                             fees += fee;
                             bought += amount;
+                            trades.push(trade(
+                                day,
+                                s,
+                                FactorTradeSide::Buy,
+                                price,
+                                amount,
+                                fee,
+                                None,
+                            ));
                             held.insert(
                                 s,
                                 Holding {
                                     units: amount / price,
                                     last: f64::from(series.bars[i].q_open),
+                                    cost: amount + fee,
+                                    bought_on: day,
                                 },
                             );
                         }
@@ -1482,6 +1567,7 @@ pub fn simulate(
         },
         equity,
         rebalances,
+        trades,
         picks,
         picks_date,
         thin_days: (first..=last)
@@ -1653,6 +1739,21 @@ mod tests {
             out.rebalances
         );
         assert!(s.fees > 0.0);
+        // 成交记录和汇总一致：费用合计、买入只数
+        let fee_sum: f64 = out.trades.iter().map(|t| t.fee).sum();
+        assert!((fee_sum - s.fees).abs() < 1e-6);
+        let first_buys = out
+            .trades
+            .iter()
+            .filter(|t| t.date == out.equity[1].date && t.side == FactorTradeSide::Buy)
+            .count();
+        assert_eq!(first_buys, 10);
+        assert!(
+            out.trades
+                .iter()
+                .filter(|t| t.side != FactorTradeSide::Buy)
+                .all(|t| t.profit.is_some() && t.held_days.is_some_and(|d| d > 0))
+        );
     }
 
     #[test]
@@ -1674,6 +1775,13 @@ mod tests {
         let out = simulate(&panel, &p, &HashMap::new()).unwrap();
         assert_eq!(out.equity[1].positions, 4);
         assert_eq!(out.equity[2].positions, 5);
+        // 顺延的买单记在实际成交的那一天
+        let code = &panel.stocks[top].code;
+        let first = out.trades.iter().find(|t| &t.thscode == code).unwrap();
+        assert_eq!(
+            (first.date, first.side),
+            (out.equity[2].date, FactorTradeSide::Buy)
+        );
         assert!(
             out.equity
                 .iter()

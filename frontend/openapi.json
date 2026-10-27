@@ -5274,6 +5274,7 @@
           "summary",
           "equity",
           "rebalances",
+          "trades",
           "picks",
           "thin_days"
         ],
@@ -5313,6 +5314,13 @@
               "type": "string",
               "format": "date"
             }
+          },
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorTrade"
+            },
+            "description": "全部成交，按日期排列；同一天先卖后买"
           }
         }
       },
@@ -5905,6 +5913,80 @@
             "type": "string"
           }
         }
+      },
+      "FactorTrade": {
+        "type": "object",
+        "description": "组合回测的一笔成交。价格是前复权价，和当时的实际成交价不同",
+        "required": [
+          "date",
+          "thscode",
+          "name",
+          "side",
+          "price",
+          "amount",
+          "fee"
+        ],
+        "properties": {
+          "amount": {
+            "type": "number",
+            "format": "double",
+            "description": "成交金额，不含费用"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "fee": {
+            "type": "number",
+            "format": "double"
+          },
+          "held_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "卖出和了结：从买入到卖出经过的交易日数",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number",
+            "format": "double",
+            "description": "前复权成交价，含滑点"
+          },
+          "profit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "卖出和了结：卖出所得减去买入花费（都含费用）"
+          },
+          "profit_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "卖出和了结：profit ÷ 买入花费"
+          },
+          "side": {
+            "$ref": "#/components/schemas/FactorTradeSide"
+          },
+          "thscode": {
+            "type": "string"
+          }
+        }
+      },
+      "FactorTradeSide": {
+        "type": "string",
+        "enum": [
+          "buy",
+          "sell",
+          "liquidate"
+        ]
       },
       "FactorWeight": {
         "type": "object",

@@ -47,7 +47,7 @@
 | `/accounts` | 我的账户：每个账户一张卡片（总资产、当日盈亏、现金、持仓只数、下个交易日的运营建议、核对提醒） | `GET /accounts` |
 | `/accounts/new` | 新建账户，两步：名字（页面说明一句选股方法）；现金和持仓（`PositionsEditor`，可粘贴，可跳过）。规则用默认值，以后在设置里调 | `POST /accounts`、`POST /accounts/{id}/positions/parse`、`PUT /accounts/{id}/positions` |
 | `/accounts/:id` | 一个账户，四个标签：运营（下个交易日的买卖建议、执行、不做、理由和提醒）；持仓；记录；设置（账户名称和备注、调仓规则、费率；规则里有到因子研究组合回测的链接）。保存后建议在后台重新生成，运营标签显示「正在更新」并自动刷新 | `GET /accounts/{id}` 及其下的 `advice`、`trades`、`review` 等 |
-| `/research` | 因子研究，两个标签是先后两步：「① 因子检验」逐个体检因子（不显示预设、不填权重，结果下面可以把有效因子带到第二步），「② 多因子组合」把因子合成一个选股方案（可套用预设、填权重、保存为预设）。「因子检验」看 RankIC、分组净值、IC 衰减、挑选偏差和因子相关性，「多因子组合」看净值、超额、信息比率、Deflated Sharpe 和最新得分前列；参数写在 URL，点「开始计算」才算，可以取消 | `GET /research/factors`、`/research/factor-test`、`/research/factor-portfolio` |
+| `/research` | 因子研究，两个标签是先后两步：「① 因子检验」逐个体检因子（不显示预设、不填权重，结果下面可以把有效因子带到第二步），「② 多因子组合」把因子合成一个选股方案（可套用预设、填权重、保存为预设）。「因子检验」看 RankIC、分组净值、IC 衰减、挑选偏差和因子相关性，「多因子组合」看净值、超额、信息比率、Deflated Sharpe、成交记录（可按买卖方向和股票筛选，卖出带盈亏和持有天数）和最新得分前列；参数写在 URL，点「开始计算」才算，可以取消 | `GET /research/factors`、`/research/factor-test`、`/research/factor-portfolio` |
 | `/watchlist` | 自选：最新收盘、当日和近 20 日涨跌，可搜索添加 | `GET /watchlist`、`PUT` / `DELETE /watchlist/{thscode}`、`GET /securities` |
 | `/securities/:thscode` | 证券（股票或 ETF）：页头是最新价、收藏、上市日期和本地日线范围。先是 K 线，再是基本面；股票的基本面显示估值历史、最近一期三张报表和财务指标，并标出披露日期；ETF 显示「ETF 基本资料」（最新收盘、单位净值、基金规模、管理费、管理人、历史日线根数、最新日期和价格口径），K 线只提供不复权、前复权、后复权，价格按供应商前复权口径保存 | `GET /securities/{thscode}`、`/fundamentals`、`/bars` |
 | `/hot` | 今日热点：顶部是涨停、跌停、炸板家数、最高连板和封板率；下面按连板高度分组列出涨停股（涨停原因、封单额、首次涨停时间）、跌停和炸板；日期框可往回看，没有同步时显示白话空态。不加主导航项，从首页卡片进入 | `GET /market/hot` |

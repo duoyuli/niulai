@@ -70,6 +70,8 @@ export * from './factorTestParams';
 export * from './factorTestPoint';
 export * from './factorTestResult';
 export * from './factorTestStats';
+export * from './factorTrade';
+export * from './factorTradeSide';
 export * from './factorWeight';
 export * from './failureGroup';
 export * from './fees';

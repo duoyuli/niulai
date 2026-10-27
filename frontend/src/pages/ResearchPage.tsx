@@ -10,6 +10,8 @@ import type {
   FactorTestParams,
   FactorTestResult,
   FactorTestStats,
+  FactorTrade,
+  FactorTradeSide,
 } from "../api/generated/model";
 import {
   getFactorPortfolioQueryKey,
@@ -52,7 +54,7 @@ import {
   TOP_N_HELP,
   verdictTone,
 } from "../lib/factors";
-import { fmtBig, fmtInt, fmtPercent, upDownClass } from "../lib/format";
+import { fmtBig, fmtInt, fmtPercent, fmtPrice, upDownClass } from "../lib/format";
 
 const TABS = [
   { value: "test", label: "① 因子检验", hint: "每个因子单独打分，看它有没有预测力" },
@@ -729,6 +731,7 @@ function PortfolioResultView({
           <LogToggle log={log} onLog={onLog} note={`蓝线是因子组合，灰线是${m.benchmark_name}。`} />
         </div>
       </Card>
+      <TradeHistory trades={data.trades} />
       <Card title={data.picks_date ? `${data.picks_date} 收盘后得分最高的 ${data.picks.length} 只` : "最新得分"}>
         {data.picks.length === 0 ? (
           <Empty>最近一个交易日没有足够的股票参与排名</Empty>
@@ -763,5 +766,142 @@ function PortfolioResultView({
         <p className="mt-3 text-xs text-zinc-500">只是按历史规律排出的名单，不是买卖建议；历史表现不代表未来。</p>
       </Card>
     </>
+  );
+}
+
+const SIDE_LABEL: Record<FactorTradeSide, { label: string; tone: "bad" | "ok" | "muted" }> = {
+  buy: { label: "买入", tone: "bad" },
+  sell: { label: "卖出", tone: "ok" },
+  liquidate: { label: "了结", tone: "muted" },
+};
+const SIDE_FILTERS = [
+  { value: "all", label: "全部" },
+  { value: "buy", label: "买入" },
+  { value: "sell", label: "卖出", hint: "含按最后收盘价了结的" },
+] as const;
+const TRADE_PAGE = 50;
+
+function signedBig(v: number | null | undefined): string {
+  return v === null || v === undefined ? "—" : `${v > 0 ? "+" : ""}${fmtBig(v)}`;
+}
+
+/** 组合回测的成交记录：最新的在前，可以按买卖方向和股票筛选 */
+function TradeHistory({ trades }: { trades: FactorTrade[] }) {
+  const [side, setSide] = useState<(typeof SIDE_FILTERS)[number]["value"]>("all");
+  const [keyword, setKeyword] = useState("");
+  const [shown, setShown] = useState(TRADE_PAGE);
+  const closed = trades.filter((t) => t.side !== "buy");
+  const wins = closed.filter((t) => (t.profit ?? 0) > 0).length;
+  const realized = closed.reduce((sum, t) => sum + (t.profit ?? 0), 0);
+  const rows = useMemo(() => {
+    const k = keyword.trim().toUpperCase();
+    return trades
+      .filter((t) => side === "all" || (side === "buy" ? t.side === "buy" : t.side !== "buy"))
+      .filter((t) => !k || t.thscode.includes(k) || t.name.toUpperCase().includes(k))
+      .reverse();
+  }, [trades, side, keyword]);
+  return (
+    <Card
+      title={`成交记录（${fmtInt(trades.length)} 笔）`}
+      extra={
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            aria-label="按股票筛选"
+            className={`${inputClass} w-40 py-1 text-xs`}
+            placeholder="股票名称或代码"
+            value={keyword}
+            onChange={(e) => {
+              setKeyword(e.target.value);
+              setShown(TRADE_PAGE);
+            }}
+          />
+          <Segmented
+            value={side}
+            options={SIDE_FILTERS}
+            onChange={(v) => {
+              setSide(v);
+              setShown(TRADE_PAGE);
+            }}
+          />
+        </div>
+      }
+    >
+      <p className="mb-3 text-xs text-zinc-500">
+        买入 {fmtInt(trades.length - closed.length)} 笔，卖出 {fmtInt(closed.length)} 笔
+        {closed.length > 0 && (
+          <>
+            ；卖出的里面赚钱的 {fmtInt(wins)} 笔（{Math.round((wins / closed.length) * 100)}%），合计{" "}
+            <span className={upDownClass(realized)}>{signedBig(realized)} 元</span>
+          </>
+        )}
+        。区间结束时还拿着的股票不在卖出里，它们的盈亏算在最终市值中。
+      </p>
+      {rows.length === 0 ? (
+        <Empty>{trades.length === 0 ? "区间内没有成交" : "没有符合条件的成交"}</Empty>
+      ) : (
+        <Table>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>操作</th>
+              <th>股票</th>
+              <th>
+                <Term help="前复权价：把之后的分红送转折算进去的价格，和当时行情软件上的实际价格不同，但算出的涨跌幅一致。已含滑点">
+                  成交价
+                </Term>
+              </th>
+              <th>金额（元）</th>
+              <th>费用（元）</th>
+              <th>
+                <Term help="卖出所得减去当初买入的花费，买卖两边的佣金、印花税、过户费都已扣除">盈亏（元）</Term>
+              </th>
+              <th>持有</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, shown).map((t) => (
+              <tr key={`${t.date}-${t.thscode}-${t.side}`}>
+                <td className="num">{t.date}</td>
+                <td>
+                  <Badge tone={SIDE_LABEL[t.side].tone}>{SIDE_LABEL[t.side].label}</Badge>
+                </td>
+                <td>
+                  <Link to={`/securities/${t.thscode}`} className="hover:text-accent">
+                    {t.name || t.thscode} <span className="text-xs text-zinc-400">{t.thscode}</span>
+                  </Link>
+                </td>
+                <td className="num">{fmtPrice(t.price)}</td>
+                <td className="num">{fmtBig(t.amount)}</td>
+                <td className="num">{t.fee > 0 ? fmtNum(t.fee, 0) : "—"}</td>
+                <td className={`num ${upDownClass(t.profit)}`}>
+                  {t.profit === null || t.profit === undefined ? (
+                    "—"
+                  ) : (
+                    <>
+                      {signedBig(t.profit)}
+                      <span className="ml-1 text-xs">（{fmtPercent(t.profit_pct)}）</span>
+                    </>
+                  )}
+                </td>
+                <td className="num">{t.held_days === null || t.held_days === undefined ? "—" : `${t.held_days} 天`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+      {rows.length > shown && (
+        <div className="mt-3 flex items-center gap-3 text-xs text-zinc-500">
+          <button type="button" className={buttonClass("ghost")} onClick={() => setShown(shown + TRADE_PAGE * 4)}>
+            再显示 {Math.min(TRADE_PAGE * 4, rows.length - shown)} 笔
+          </button>
+          <span>
+            已显示 {fmtInt(shown)} / {fmtInt(rows.length)} 笔
+          </span>
+        </div>
+      )}
+      <p className="mt-3 text-xs text-zinc-500">
+        「持有」是交易日数。「了结」是之后再没有日线（退市或一直停牌到区间结束）的股票，按最后收盘价算钱，不收费用。
+      </p>
+    </Card>
   );
 }
