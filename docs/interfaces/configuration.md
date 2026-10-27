@@ -5,13 +5,17 @@
 <a id="sources"></a>
 ## 配置来源
 
-优先级从低到高：
+`Settings::load` 管理的应用配置优先级从低到高：
 
 1. 内置默认值。
-2. `.env` 文件：从当前目录开始，依次查找 `.env` 和 `backend/.env`，找不到就到上一级目录继续找，一共查 3 层（当前目录和往上两层）。所以在仓库根目录或 `backend/` 下运行都能读到 `backend/.env`。
+2. `.env` 文件：从当前目录开始，依次查找 `.env` 和 `backend/.env`，找不到就到上一级目录继续找，一共查 3 层（当前目录和往上两层）。只读取找到的第一个文件，不合并多份；更近的 `.env` 会使 `backend/.env` 不再被读取。
 3. 进程环境变量，覆盖 `.env` 中的同名项。
 
 `.env` 每行是 `KEY=VALUE`；忽略空行和 `#` 开头的注释，去掉值两侧的引号。模板是 `backend/.env.example`。`.env` 含密码和 API Key，不提交到版本库；生产环境用部署平台的环境变量或密钥管理注入。
+
+应用解析器不执行 shell，不展开 `$VAR` 或 `${VAR}`，也不处理行尾注释；不要在实际值后面追加说明。Compose 自己的 `.env` 解析和容器环境注入是另一层机制，不能与应用解析器混为一谈。
+
+以下变量直接读取进程环境，不经过 `Settings::load` 的文件映射：`RUST_LOG`、`NIULAI_LOG_FORMAT`、`NIULAI_METRICS_TOKEN`、`HOSTNAME` 及测试连接变量。仅写入源码部署的 `backend/.env` 不会使它们生效；需要在启动终端 `export` 或由进程管理器注入。日志在 `Settings::load` 之前初始化，监控令牌在首次指标请求时读取后缓存。Docker 中 `niulai` 的 `env_file: .env` 会把部署文件注入进程环境，所以日志和指标变量可放在 `deploy/.env`；修改后执行 `docker compose up -d niulai` 重建应用容器，单纯 `restart` 不更新容器环境。不要把含密钥的 `docker compose config` 完整输出贴进日志或报告，可用 `config --quiet` 检查格式。
 
 <a id="time_zone"></a>
 ## 时区
@@ -32,15 +36,15 @@
 | 变量 | 必填 | 默认值 | 含义 |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | 是 | — | PostgreSQL 连接串，例如 `postgres://user:pass@127.0.0.1:5432/niulai`。需要 PostgreSQL 16 或以上 |
-| `REDIS_URL` | 否 | 无 | Redis 共享读取缓存，例如 `redis://127.0.0.1:6379`。未配置或暂时不可用时回退到进程内缓存和 PostgreSQL；缓存内容可以随时删除 |
+| `REDIS_URL` | 否 | 无 | Redis 共享读取缓存，例如 `redis://127.0.0.1:6379`。空值按未配置处理；合法地址连接或读写失败时降级到进程内缓存和 PostgreSQL，但 URL 格式无效会使 `serve` 启动失败 |
 | `HITHINK_FINANCE_API_KEY` | 否 | — | 同花顺金融数据服务 API Key（在 <https://fuyao.aicubes.cn/admin/> 生成）。一般不设置，在网页的首次登录引导中配置，保存在数据库；设置后优先使用它，网页上不能修改，见 [ADR：API Key 在首次登录引导中配置](../decisions/api_key_setup.md)。空值按未设置处理 |
 | `NIULAI_ADMIN_USER` | 否 | `niulai` | 第一个管理员的用户名。只在第一次启动、第一个管理员还没有密码时用一次，之后在网页上管理用户，见 [登录与权限](rest_api.md#auth) |
 | `NIULAI_ADMIN_PASSWORD` | 否 | `niulai` | 第一个管理员的初始密码，同样只用一次；之后修改它没有效果，密码在网页「我的」页面改。用默认值时启动日志有警告，登录后页面顶部提醒修改 |
 | `NIULAI_UPGRADE_DIR` | 否 | 无；Docker 部署的 `compose.yml` 中是 `/upgrade` | 与 upgrader 容器共享的目录，为空时不能一键升级，见 [一键升级](../operations/runbook.md#one_click_upgrade) |
 | `NIULAI_UPDATE_REPO` | 否 | `duoyuli/niulai` | 到哪个 GitHub 仓库查新版本；设为空时不检查 |
-| `NIULAI_METRICS_TOKEN` | 否 | 无 | 设置后启用 `GET /api/v1/metrics`（Prometheus 文本格式），请求要带 `Authorization: Bearer <令牌>`（不接受写在网址里）；不设置时接口返回 404。令牌只在启动时读一次，见 [监控指标](../operations/runbook.md#metrics) |
+| `NIULAI_METRICS_TOKEN` | 否 | 无 | 只读进程环境；非空时启用 `GET /api/v1/metrics`，校验 `Authorization: Bearer <令牌>`，不接受 URL 参数。首次指标请求读取后缓存，变更需重启进程；未设置或全为空白时返回 404，见 [监控指标](../operations/runbook.md#metrics) |
 | `NIULAI_API_BIND` | 否 | `127.0.0.1:8080` | API 监听地址；Docker 镜像中默认 `0.0.0.0:8080` |
-| `NIULAI_API_TIMEOUT_S` | 否 | `300` | API 请求最长执行秒数；因子检验、组合回测等长任务仍支持前端取消 |
+| `NIULAI_API_TIMEOUT_S` | 否 | `300` | HTTP 超时层的秒数，覆盖排队和处理；超时返回 408。不是同步 CPU 段的强制中止期限，见 [研究排错](../domains/factor_research.md#troubleshooting) |
 | `NIULAI_DATASETS_PATH` | 否 | 依次查找 `config/datasets.yaml`、`backend/config/datasets.yaml` | 数据集注册表路径；Docker 镜像中是 `/app/config/datasets.yaml` |
 | `NIULAI_DB_MAX_CONNECTIONS` | 否 | `20` | 数据库连接池上限；API、同步和后台计算共用连接池，资源较小的机器可以调低 |
 | `NIULAI_WORKER_CONCURRENCY` | 否 | `3` | 单个进程同时执行的同步任务数，必须大于 0 |
@@ -49,12 +53,15 @@
 | `NIULAI_VENDOR_BASE_URL` | 否 | `https://fuyao.aicubes.cn` | 供应商地址 |
 | `NIULAI_WEB_DIR` | 否 | 无；Docker 镜像中是 `/app/web` | 前端构建产物目录（`frontend/dist`）。配置后 `niulai serve` 同时提供前端页面，见 [由 niulai serve 提供](../architecture/frontend.md#serving) |
 | `NIULAI_SCHEDULER_ENABLED` | 否 | `true` | 是否在 `niulai serve` 中运行定时调度；`--no-scheduler` 效果相同。同步时间在同步页上设置，见 [定时调度](../architecture/sync_pipeline.md#scheduling) |
-| `RUST_LOG` | 否 | `info,sqlx=warn,tower_http=info` | 日志级别 |
-| `NIULAI_LOG_FORMAT` | 否 | 文本 | 设为 `json` 时输出结构化日志；Docker 镜像中默认 `json` |
+| `RUST_LOG` | 否 | `info,sqlx=warn,tower_http=info` | 只读进程环境的日志过滤级别 |
+| `NIULAI_LOG_FORMAT` | 否 | 文本 | 只读进程环境；设为 `json` 时输出结构化日志，Docker 镜像中默认 `json` |
 | `HOSTNAME` | 否 | `local` | 用于生成执行者标识（`ops.task.locked_by`） |
 | `NIULAI_TEST_DATABASE_URL` | 仅测试 | — | 集成测试使用的、有建库权限的连接串，见 [运维手册](../operations/runbook.md#testing) |
+| `NIULAI_REDIS_TEST_URL` | 仅测试 | — | 显式执行被忽略的 Redis 往返测试时使用；不控制服务运行时的缓存地址 |
 
 启动时校验：缺少 `DATABASE_URL`、并发或限速为 0，都会让程序报错退出。同步时间保存在数据库（`app.setting` 的 `sync_schedule`），在同步页修改时校验，不在启动时检查。没有 API Key 不是错误：服务照常启动，同步暂停，直到在网页上配置。
+
+数据库连接获取超时固定为 10 秒，每个连接设置 `statement_timeout = '120s'`，均在 `backend/src/db.rs` 中定义；不是环境变量，也不随 `NIULAI_API_TIMEOUT_S` 改变。`niulai openapi` 不加载应用配置、不连数据库；`niulai upgrader` 使用自己的 CLI 参数和部署文件，不走 `Settings::load`。
 
 <a id="deploy_env"></a>
 ## 部署配置
@@ -68,9 +75,9 @@ Docker 部署的全部配置写在 `deploy/.env` 中，模板 `deploy/.env.examp
 | `NIULAI_LISTEN_ADDR`、`NIULAI_PORT` | `127.0.0.1`、`8080` | niulai 在宿主机上监听的地址和端口；端口被占用时改 `NIULAI_PORT`，要从其他机器访问时把地址改成 `0.0.0.0` |
 | `POSTGRES_PASSWORD` | `niulai` | 内置数据库的密码，要与 `DATABASE_URL` 中的一致；只在第一次启动（创建数据目录）之前修改才生效 |
 | `POSTGRES_DATA` | `./data/postgres` | 内置数据库的数据目录，默认在部署目录下，见 [数据目录](../operations/runbook.md#data_dir) |
-| `REDIS_URL` | `redis://redis:6379` | Compose 内置 Redis 的地址；只保存可重建的页面结果 |
+| `REDIS_URL` | `redis://redis:6379` | 未定义时 Compose 使用内置 Redis 地址；要关闭共享缓存必须显式写 `REDIS_URL=`，仅删除这一行仍会启用默认地址。Redis 容器不会随配置清空而自动删除 |
 
-`DATABASE_URL` 默认是 `postgres://niulai:niulai@postgres:5432/niulai`，指向同一个 Compose 中的内置数据库。容器内的监听地址、前端目录和数据集配置路径由镜像固定（`NIULAI_API_BIND=0.0.0.0:8080`、`NIULAI_WEB_DIR`、`NIULAI_DATASETS_PATH`），不要在 `.env` 中修改。
+`DATABASE_URL` 由部署示例提供，指向同一个 Compose 中的内置数据库，程序本身没有默认连接串。容器内的监听地址、前端目录和数据集配置路径由镜像提供默认值（`NIULAI_API_BIND=0.0.0.0:8080`、`NIULAI_WEB_DIR=/app/web`、`NIULAI_DATASETS_PATH=/app/config/datasets.yaml`）。部署文件的环境变量仍能覆盖这些值，但不要为修改宿主机端口而改容器监听地址；宿主机只改 `NIULAI_LISTEN_ADDR` 和 `NIULAI_PORT`，否则映射和健康检查可能不再匹配。
 
 <a id="config_files"></a>
 ## 配置文件

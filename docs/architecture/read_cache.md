@@ -8,6 +8,8 @@
 
 未配置 Redis 时，服务继续使用已有的进程内缓存和 PostgreSQL。Redis 连接或读写失败也只记录调试或告警日志，并回退到数据库计算，不能让页面请求因为缓存故障失败。
 
+降级针对合法 Redis URL 的连接和读写故障。URL 本身无法解析时，`Cache::new` 返回错误，`niulai serve` 启动失败；先修正地址或清空配置，不要把格式错误误判为运行期可降级故障。因子检验和组合回测不使用这个共享缓存。
+
 ## 键与失效
 
 缓存键使用 `niulai:v1:` 前缀，并包含 `ops.derived_version` 中 `adj_factor`、`limit_pool` 的时间戳（`analysis::versions::CacheVersions::market_token`）、交易日和接口参数，由 `cache::derived_key` 统一生成。接口和预热都通过 `Cache::cached_json` / `warm_json` 读写：先读缓存，没有再计算并回填，Redis 故障只记调试日志，键格式、TTL 和降级只在 `backend/src/cache.rs` 一处。行情或权威涨跌停池发生变化时，新的版本自然生成新键；旧键由 Redis TTL 和 `allkeys-lru` 回收，不执行影响业务数据的删除操作。默认 TTL 为 15 分钟。
@@ -18,4 +20,4 @@
 
 ## 部署
 
-Docker Compose 默认启动一个无持久化的 Redis 容器，使用 `REDIS_URL=redis://redis:6379`。Redis 是加速层，删除其容器或清空数据不会影响 PostgreSQL；服务器资源不足时可以去掉 `REDIS_URL`，服务仍然可用但首次读取会重新计算。
+Docker Compose 默认启动一个无持久化的 Redis 容器，使用 `REDIS_URL=redis://redis:6379`。Redis 是加速层，删除其容器或清空数据不会影响 PostgreSQL。关闭共享缓存时，在部署 `.env` 中显式写 `REDIS_URL=` 并执行 `docker compose up -d niulai`；仅删除这一行会回到 Compose 的默认 Redis 地址。此操作不停止 Redis 容器，也不关闭其他进程内缓存。源码部署可以不设置 `REDIS_URL`，同样回退到原有读取路径，见 [部署配置](../interfaces/configuration.md#deploy_env)。

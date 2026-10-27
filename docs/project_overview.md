@@ -16,7 +16,7 @@ niulai 是面向 A 股股票和交易所 ETF 的研究和调仓工作台。数�
 | 优先级 P0–P3 | P0 当前功能必需；P1 A 股相关、建议积累；P2 其他资产；P3 低价值或按需。未显式配置时 P0、P1 开启，P2、P3 关闭 |
 | 同步计划 | 数据集多久同步一次：每日收盘后、每周、每月、财报季、不自动同步，见 [定时调度](architecture/sync_pipeline.md#scheduling) |
 | 运行（run）/ 任务（task） | 运行是一次同步批次（`ops.run`），有依赖的数据集分几批（波次）执行，每批一个运行；任务是一个请求单元（`ops.task`），例如某只股票的一个 10 年窗口 |
-| 通用记录库 | `raw.record`：所有数据集的记录都以供应商原始字段（JSONB）保存在这里 |
+| 通用记录库 | `raw.record`：默认保留数据集的供应商原始字段（JSONB）；`store_record: false` 的大体量日线和快照只写类型化表 |
 | 类型化表 / sink | `ref`、`mkt`、`fin` 下有明确列类型的表，例如日线、公司行动；数据集通过 `sink` 投影到这些表 |
 | 公司行动 / 复权 | 分红、送转股、配股会让除权除息日的价格断崖；复权消除断崖，本项目的标准口径是等比复权，见 [复权](domains/price_adjustment.md) |
 | 快照 | 全市场当前行情的一次截取（`a_share.snapshot`），收盘后取快照最快得到当天日线 |
@@ -54,4 +54,4 @@ niulai 是面向 A 股股票和交易所 ETF 的研究和调仓工作台。数�
 | `niulai upgrader` | 一键升级助手，在 Docker 部署的 upgrader 容器中运行，不连数据库，见 [一键升级](operations/runbook.md#one_click_upgrade) |
 | 其他子命令 | 运维命令，执行完就退出：迁移（`migrate`）、校验并同步数据集注册表（`registry`）、规划运行（`plan`）、立即发起每日增量（`daily`）、在前台执行任务（`work`）、数据核检（`check`）、重算复权（`recompute`）、查看状态（`status`）、列出用户和重置密码（`user`）、导出 OpenAPI（`openapi`），见 `niulai --help` |
 
-数据、任务队列和进度都在 PostgreSQL 中，不依赖其他服务。同一时刻只有一个进程执行同步任务，限速在进程内，见 [ADR：单进程服务](decisions/single_process_service.md)。
+PostgreSQL 保存业务数据、任务队列、运行状态和进度，是服务的持久化事实来源。同步还依赖供应商 HTTP 接口；Redis 是可选的页面读取缓存，失效时可回退到 PostgreSQL。数据库不可用时服务不能就绪，同一时刻只有一个进程执行同步任务，限速在进程内，见 [ADR：单进程服务](decisions/single_process_service.md)。

@@ -13,13 +13,54 @@
 <a id="local_setup"></a>
 ## 本地运行
 
-前提：Rust 1.99.0（`backend/rust-toolchain.toml` 自动选择）；PostgreSQL 16 或以上（本机开发用 dev-infra 的 `dev-postgresql`，库名 `niulai`）；前端需要 Node.js 24 和 pnpm 12。
+前提：Rust 1.99.0（`backend/rust-toolchain.toml` 自动选择）；PostgreSQL 16 或以上，并准备一个有建库权限的开发连接；前端需要 Node.js 24 和 pnpm 12。仓库没有要求使用特定的 Docker Compose 项目名、容器名或本地基础设施工具。
 
 1. `cp .env.example .env`，填写 `DATABASE_URL`。API Key 可以留空，启动后在网页上配置。
 2. `niulai serve`：启动时执行迁移。预期日志出现「niulai 服务已启动」，`curl http://127.0.0.1:8080/api/v1/ready` 返回 `{"status":"ready"}`。
 3. 前端（在 `frontend/` 下）：`pnpm install`，`pnpm dev`，打开 <http://localhost:5173/>。`/api` 转发到 `127.0.0.1:8080`，后端在别处时用 `NIULAI_API_URL=http://主机:端口 pnpm dev`。后端接口变更后按 [接口客户端](../architecture/frontend.md#api_client) 重新生成。
 
 `niulai serve` 在一个进程里运行 API、任务执行和调度，`--no-api`、`--no-worker`、`--no-scheduler` 关闭其中一部分。同一时刻只能有一个进程执行任务：`serve` 运行时再执行 `niulai work` 会报错退出；反过来，`work` 运行时启动的 `serve` 先只提供 API，`work` 退出后自动接手执行任务。
+
+<a id="api_smoke"></a>
+## API 最小调用
+
+这组步骤用于确认页面或研究接口的登录链路，不代表数据已经回补完成。先在 `backend/` 目录启动 `niulai serve`，或在 Docker 部署目录启动 Compose；`BASE_URL` 写服务地址，不要把密码、Cookie 或 API Key 写入 shell 历史以外的文档和日志。
+
+1. 设置地址和 Cookie 文件路径：
+
+   ```bash
+   export BASE_URL=http://127.0.0.1:8080
+   export COOKIE_JAR="${TMPDIR:-/tmp}/niulai-cookie.txt"
+   ```
+
+2. 使用第一个管理员或已经创建的用户登录。请求体字段名保持 API 原样；`password` 是当前接口的密码字段。
+
+   ```bash
+   curl --fail-with-body --silent --show-error --cookie-jar "$COOKIE_JAR" \
+     -H 'Content-Type: application/json' \
+     -d '{"username":"<用户名>","password":"<密码>"}' \
+     "$BASE_URL/api/v1/auth/login"
+   ```
+
+   预期返回 200 并写入 `niulai_session` Cookie。不要把 `COOKIE_JAR` 内容提交或粘贴到工单；登录失败返回 401，连续输错达到限制后返回 429。
+
+3. 验证进程和数据库连接，再验证登录状态：
+
+   ```bash
+   curl --fail-with-body --silent --show-error "$BASE_URL/api/v1/health"
+   curl --fail-with-body --silent --show-error "$BASE_URL/api/v1/ready"
+   curl --fail-with-body --silent --show-error --cookie "$COOKIE_JAR" \
+     "$BASE_URL/api/v1/auth/me"
+   ```
+
+   `/health` 只说明进程能响应，`/ready` 只执行数据库 `SELECT 1`；两者都不证明行情、财报或供应商 Key 已准备好。`/auth/me` 需要有效登录。
+
+4. 使用完毕后退出并删除本地 Cookie 文件：
+
+   ```bash
+   curl --silent --show-error --cookie "$COOKIE_JAR" -X POST "$BASE_URL/api/v1/auth/logout"
+   rm -f "$COOKIE_JAR"
+   ```
 
 <a id="backfill"></a>
 ## 首次回补
@@ -63,7 +104,7 @@ FROM ops.api_call WHERE called_at > now() - interval '10 minutes';
 
 -- 按错误汇总还没解决的失败任务
 SELECT dataset_id, last_api_code, left(last_error, 80) AS error, count(*)
-FROM ops.task WHERE status = 'dead' GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+FROM ops.v_unresolved_dead GROUP BY 1, 2, 3 ORDER BY 4 DESC;
 ```
 
 <a id="failure_handling"></a>
@@ -153,7 +194,7 @@ git push origin v2026.10.18
 <a id="health_monitoring"></a>
 ### 探活与告警
 
-`GET /api/v1/health` 不需要登录（免登录的只有 `/health`、`/ready`、`/auth/login`、`/auth/logout` 和接口规范本身，见 [哪些接口要登录](../interfaces/rest_api.md#auth)），返回 `{"status":"ok"}`。它只说明进程还在，不查数据库；`GET /api/v1/ready` 也不需要登录，能连上数据库才返回 200，用来区分「服务停了」和「数据库有问题」。
+`GET /api/v1/health` 不需要登录（免登录的还有 `/ready`、`/auth/login`、`/auth/logout`、`/openapi.json` 和 `/metrics`，见 [哪些接口要登录](../interfaces/rest_api.md#auth)），返回 `{"status":"ok"}`。它只说明进程还在，不查数据库；`GET /api/v1/ready` 也不需要登录，只执行数据库 `SELECT 1`，用来区分「服务停了」和「数据库不可用」。`/metrics` 默认关闭，启用后使用独立的 Bearer 令牌。
 
 用部署在服务器之外的监控服务定期请求对外地址，失败时发通知。例如每分钟请求 `https://niulai.liduoyu.site/api/v1/health`，连续 3 次超时或返回非 200 就告警：
 
@@ -174,7 +215,7 @@ git push origin v2026.10.18
 | `niulai_up`、`niulai_info`、`niulai_uptime_seconds` | 进程在运行、运行的版本、已运行的秒数 |
 | `niulai_http_requests_total`、`niulai_http_errors_total` | 处理过的 API 请求数、其中返回 5xx 的 |
 | `niulai_http_request_duration_seconds_sum` / `_count` | 请求累计耗时和次数，除一下就是平均耗时 |
-| `niulai_sync_pending_tasks` | 等待执行的任务数（含等待重试的）；长期不为 0 说明同步卡住了 |
+| `niulai_sync_pending_tasks` | 队列中等待执行或等待重试的任务数；需要结合任务完成数、`not_before`、运行状态和日志判断是否卡住，历史回补期间长期大于 0 是正常的；数据库查询失败时指标值为 `-1` |
 | `niulai_db_pool_connections`、`niulai_db_pool_idle` | 连接池的连接数和空闲数 |
 
 Prometheus 的抓取配置由使用方保存，不放在本仓库；例如 `scrape_configs: [{job_name: niulai, scheme: https, metrics_path: /api/v1/metrics, authorization: {credentials: <令牌>}, static_configs: [{targets: ["niulai.example.com"]}]}]`。没有 Prometheus 时用 `curl -H "Authorization: Bearer $NIULAI_METRICS_TOKEN" https://niulai.example.com/api/v1/metrics` 也能看。

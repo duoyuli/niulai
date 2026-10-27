@@ -2,20 +2,29 @@
 
 本文说明 `niulai serve` 对外提供的 REST API：通用约定、登录与权限、接口清单、复权参数和错误格式。字段级的定义以 OpenAPI 规范为准（`GET /api/v1/openapi.json`，或运行 `niulai openapi`），本文只记录跨接口的约定和不容易从规范看出的行为。实现在 `backend/src/api/`。
 
+## 章节导航
+
+- [通用约定](#conventions)：路径、超时、数值类型和研究 GET 的副作用。
+- [接口清单](#endpoints)：查找方法、参数和范围；实际登录调用见 [运维手册](../operations/runbook.md#api_smoke)。
+- [登录与权限](#auth)、[首次登录引导](#setup)：确认 Cookie、角色和供应商 Key 的不同用途。
+- [复权参数](#adjust_param)、[错误格式](#errors)、[OpenAPI](#openapi)：实现客户端和排错。
+
 <a id="conventions"></a>
 ## 通用约定
 
-- 所有接口都在 `/api/v1` 下，响应是 JSON。默认监听 `127.0.0.1:8080`（`NIULAI_API_BIND`）。同一端口的其他路径是前端页面（配置了 `NIULAI_WEB_DIR` 时），未匹配的 `/api/` 路径返回 JSON 404，见 [由 niulai serve 提供](../architecture/frontend.md#serving)。
+- 所有接口都在 `/api/v1` 下，业务成功响应通常是 JSON；204 没有正文，`/metrics` 是文本，其他例外见 [错误格式](#errors)。默认监听 `127.0.0.1:8080`（`NIULAI_API_BIND`）。配置 `NIULAI_WEB_DIR` 后，同一端口还提供页面，未匹配的 `/api/` 路径由页面 fallback 返回 JSON 404；未配置页面目录时使用框架默认 404，见 [由 niulai serve 提供](../architecture/frontend.md#serving)。
 - **要先登录**：除健康检查、登录/退出、OpenAPI 和监控指标外，所有接口都要带登录 Cookie，否则返回 401；普通用户调用管理员接口返回 403，见 [登录与权限](#auth)。默认只监听本机端口（`127.0.0.1:8080`），见 [部署](../operations/runbook.md#deployment)。
 - 请求标识：每个响应都带 `x-request-id` 头。请求中带了这个头时沿用，否则生成一个 UUID；日志中的 `request_id` 与它一致。
-- 超时：单个请求超过 `NIULAI_API_TIMEOUT_S` 返回 408，默认是 300 秒。可取消的因子检验和组合回测仍由前端提供取消操作。
+- 超时层使用 `NIULAI_API_TIMEOUT_S`，默认 300 秒，返回 408；请求排队时间也在其中。同步 CPU 段没有立即中止保证；前端取消只是取消请求，不保证服务端计算立即停止或已写入记录回滚，见 [研究排错](../domains/factor_research.md#troubleshooting)。
 - 数值格式：
   - 未复权价格和成交额是十进制字符串，保留数据库中的精度，例如 `"1312.9700"`、`"7537706223.71"`。
   - 复权价格也是字符串，保留 6 位小数。
   - 成交量是整数（股）。
   - 均线、复权因子是 JSON 数字（浮点）。
+  - 因子研究结果不采用价格字符串约定：`summary`、`equity`、`trades` 中的价格、金额、费用和比率是 JSON 数字；不可计算的可选统计量为 `null`，比率 0.1 表示 10%。
 - 日期是 `yyyy-MM-dd`，按 Asia/Shanghai 解释；时间（如 `started_at`）是 UTC 的 RFC 3339 字符串。
-- 按数量取数的列表接口（例如 `limit`、`days` 参数）都有上限，超出上限的参数会被截到上限；自选股等用户自己维护的列表不截断。
+- 分页查询的 `limit` 通常会截到上限；不要据此推断所有数值参数都截断。例如板块 `days`、研究的 `top_n`、日期范围越界会返回 400。自选股等用户维护的列表按各自契约返回。
+- 研究计算虽然使用 GET，成功返回前会写入 `ops.backtest_run`，不是无副作用查询。不要用于健康检查、定时刷新或无条件自动重试；完整调用和持久化边界见 [因子研究](../domains/factor_research.md#usage)。
 
 <a id="endpoints"></a>
 ## 接口清单
@@ -23,7 +32,7 @@
 | 方法与路径 | 说明 | 主要参数与上限 |
 | --- | --- | --- |
 | `GET /health` | 存活检查 | — |
-| `GET /ready` | 就绪检查，能连上数据库时返回 200 | — |
+| `GET /ready` | 执行 `SELECT 1` 成功时返回 200 和 `{"status":"ready"}` | 不检查数据覆盖、供应商、Redis 或研究是否可运行；数据库查询失败通常为 500 |
 | `GET /metrics` | Prometheus 文本格式的监控指标（进程、请求、队列、连接池）；默认关闭 | 设置 `NIULAI_METRICS_TOKEN` 后启用，请求要带 `Authorization: Bearer <令牌>`（不接受写在网址里）；没有设置时返回 404，令牌不对返回 401；见 [监控指标](../operations/runbook.md#metrics) |
 | `POST /auth/login` | 登录，成功时设置登录 Cookie | 请求体 `{username, password}`，用户名不区分大小写；连续输错 5 次后返回 429；见 [登录与权限](#auth) |
 | `POST /auth/logout` | 退出登录，清除 Cookie；返回 204 | — |
@@ -46,7 +55,7 @@
 | `GET /research/factors` | 因子目录：口径、类别（价量或财务）、预期方向和依据 | 见 [因子目录](../domains/factor_research.md#catalog) |
 | `GET /research/factor-test` | 因子检验：RankIC、分组收益、多空、换手、衰减、因子相关性、PBO 和 Deflated Sharpe；两个以上因子时额外检验等权合成 | `factors`（必填，逗号分隔的因子 ID）、`start` 默认结束日前 5 年、`end`，区间 60 天到 8 年；`horizon` 5、10 或 20（默认 5）；`quantiles` 3 到 10（默认 5）；`neutralize` 默认 true；`exclude_small_pct` 0 到 50；股票池参数 `boards`、`exclude_st`、`min_price`、`min_amount`、`min_listed_days`；规则见 [因子检验](../domains/factor_research.md#test) |
 | `GET /research/factor-portfolio` | 多因子组合回测：定期按合成得分持有前若干只，返回净值、超额、信息比率、换手、Deflated Sharpe、每一笔成交和最新得分前列 | `factors`（必填，可带权重，例如 `reversal:1,idio_vol:0.5`）、`start` 默认结束日前 3 年、`end`，区间 60 天到 5 年；`rebalance` 5 到 60（默认 20）；`top_n` 5 到 100（默认 30）；`buffer` 0 到 2（默认 0.5）；`capital` 默认 100 万、范围 1000 到 100 亿；成本 `commission_rate`（默认 0.00025）、`min_commission`（默认 5，0 到 100）、`stamp_tax_rate`（默认 0.0005）、`transfer_fee_rate`（默认 0），费率都在 0 到 0.01 之间，`slippage_bps` 默认 10、最大 500；股票池和预处理参数同因子检验；规则见 [多因子组合回测](../domains/factor_research.md#portfolio) |
-| `GET /research/presets`、`PUT /research/presets`、`DELETE /research/presets/{preset_id}` | 当前用户的因子预设：列出（最近改过的在前）、保存（同名覆盖）、删除 | 保存的请求体 `name`（1 到 30 个字）、`factors`（`[{factor, weight}]`，同账户规则）、`top_n`（5 到 50）、`buffer`（0 到 2）；每个用户最多 50 个；规则见 [因子预设](../domains/accounts.md#presets) |
+| `GET /research/presets`、`PUT /research/presets`、`DELETE /research/presets/{preset_id}` | 当前用户的因子预设：列出（最近改过的在前）、保存（同名覆盖）、删除；当前中间件仅放行管理员的保存和删除，普通用户这两项返回 403 | 保存的请求体 `name`（1 到 30 个字）、`factors`（`[{factor, weight}]`，同账户规则）、`top_n`（5 到 50）、`buffer`（0 到 2）；每个用户最多 50 个；权限意图待确认，见 [因子预设](../domains/accounts.md#presets) |
 | `GET /market/overview` | 市场概况：涨跌家数、涨跌停数、涨跌幅中位数、站上 20 日均线的比例 | `date` 默认最新交易日；规则见 [市场环境](../domains/market_data_rules.md#market) |
 | `GET /market/sectors` | 板块强弱排名 | `category`（`industry` 默认 / `cn_concept`）、`days` 默认 5、范围 1 到 60、`date`；规则见 [市场环境](../domains/market_data_rules.md#market) |
 | `GET /market/hot` | 今日热点：权威涨停池按连板高度分组、跌停、炸板、封板率等统计；普通用户可看 | `date` 是截止日期，默认最新交易日；每组和每个列表最多 50 只，全部家数在 `*_total`；数据按交易日同步，这一天的数据还没同步时 `available` 为 `false`、`note` 用白话说明原因；口径和空态见 [今日热点](../domains/hotspots.md) |
@@ -126,7 +135,7 @@
 <a id="errors"></a>
 ## 错误格式
 
-错误响应体是 `{"code": "...", "message": "..."}`：
+业务错误由 `ApiError` 返回 `{"code": "...", "message": "..."}`：
 
 | HTTP 状态 | `code` | 含义 |
 | --- | --- | --- |
@@ -141,10 +150,13 @@
 
 查询参数格式错误（例如日期不是 `yyyy-MM-dd`）由框架直接返回 400，请求体 JSON 的结构不对（例如账户规则里有未知的因子）返回 422，响应体都是纯文本。
 
+超时层返回 408，不经过 `ApiError`，不保证有 JSON 错误正文；`/metrics` 的 404、401 也是纯文本。客户端应先读取 HTTP 状态，再兼容 JSON、纯文本和空响应，不应对全部响应无条件解析 JSON。`x-request-id` 用于关联服务日志，不包含登录凭据。
+
 <a id="openapi"></a>
 ## OpenAPI 与前端类型
 
 - 规范版本是 OpenAPI 3.1，由 utoipa 从 Rust 代码生成，路径相对于 `/api/v1`。
 - 新增或修改接口时，同时更新 `#[utoipa::path]` 注解，并在所属模块的 `routes()` 中用 `routes!` 注册。新增接口模块时，还要在 `backend/src/api/mod.rs` 的 `routes()` 中合并它；HTTP 路由和 OpenAPI 规范都从这一处生成。只用 `Router::route` 注册的路由不会出现在规范中。
+- 当前 `/metrics` 和 `/openapi.json` 就是直接注册的例外，不列入导出的业务路径清单。认证、角色拒绝和超时来自中间件，各业务注解也不一定枚举它们；客户端还需遵守本文的跨接口约定。研究响应的 `summary`、`trades` 等字段因 `serde(flatten)` 位于顶层，不在 `outcome` 子对象里。
 - 每个响应都要写 `description`（OpenAPI 3.1 的要求），否则 orval 校验规范时失败。
 - 前端用 orval 根据规范生成 TypeScript 类型和 TanStack Query hooks，更新步骤见 [接口客户端](../architecture/frontend.md#api_client)。

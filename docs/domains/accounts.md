@@ -123,6 +123,8 @@
 <a id="presets"></a>
 ## 因子预设
 
+**当前权限限制（待确认）：** handler 按 `CurrentUser` 隔离预设，但 `api/auth.rs` 的 `MEMBER_WRITES` 尚未包含 `PUT /research/presets` 和 `DELETE /research/presets/{preset_id}`。普通用户能读取自己的预设、使用研究 GET 和编辑账户规则，但保存、删除预设会返回 403；目前只有管理员能完成这两项写入。以下是预设的存储与套用语义，不表示普通用户已经获得预设写权限。页面提供保存入口与中间件限制的设计意图尚待确认。
+
 账户设置和因子研究的「多因子组合」用同一个因子选择组件（`frontend/src/components/FactorPicker.tsx`），分两步：上面一块是一键套用的预设，下面逐个选因子。预设用白底卡片，因子用带勾的标签，形状不同，避免把两者混淆。点预设会替换整个因子选择。「因子检验」是逐个体检因子，不显示预设，也不填权重。
 
 - **内置预设：** 写在前端 `src/lib/factors.ts` 的 `FACTOR_PRESETS`，因子等权，描述只讲选股逻辑，不写来历和回测数字。第一个是组合 E，与后端 `Rules::default` 相同，改默认规则时两处一起改。
