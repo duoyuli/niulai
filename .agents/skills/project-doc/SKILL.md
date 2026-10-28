@@ -18,7 +18,7 @@ description: 与代码协同构建、阅读、维护和审计分层工程文档�
 
 若项目指令声明了 Project Doc gate，但根索引与初始化备忘录均不存在，立即停止仓库任务并报告配置不完整。首次创建完整文档库需要用户明确提出要求。
 
-<a id="reading-and-context-reuse"></a>
+<a id="reading_and_context_reuse"></a>
 ## 阅读与上下文复用（Reading and context reuse）
 
 - 在仓库的会话首个任务中完整阅读根 `index.md`。后续任务、子任务、文件编辑与交付均复用该内容。仅在后两条规则所述条件下重新阅读。该复用规则同样适用于 skill 说明、参考协议、分类索引和文档正文。
@@ -31,7 +31,7 @@ description: 与代码协同构建、阅读、维护和审计分层工程文档�
 
 - 首次创建或恢复：阅读 [references/bootstrap_workflow.md](references/bootstrap_workflow.md)、[references/library_protocol.md](references/library_protocol.md) 和 [references/anchor_protocol.md](references/anchor_protocol.md)，然后使用 `assets/` 中的模板。
 - 随代码同步维护：阅读 [references/library_protocol.md](references/library_protocol.md)。遇到、新增、移动或删除锚点时，同时阅读 [references/anchor_protocol.md](references/anchor_protocol.md)。
-- 一致性审计：阅读文档库协议和锚点协议，然后检查索引、正文、代码和引用。获得授权时修复问题；未获授权时仅报告问题。
+- 一致性审计：阅读文档库协议和锚点协议，先运行不带 `--changed` 的 `scripts/check_library.py` 得到结构问题清单，再人工核对正文事实、锚点放置和覆盖。获得授权时修复问题；未获授权时仅报告问题。
 - 基于文档解答问题：阅读或复用根索引、匹配的分类索引及必要章节。
 
 ## 保持一致性
@@ -41,7 +41,7 @@ description: 与代码协同构建、阅读、维护和审计分层工程文档�
 3. 根据实现、调用方、测试、配置、提交历史和用户目标，确定代码应当遵循的规范。
 4. 参考 [references/library_protocol.md](references/library_protocol.md) 决定是新增章节、创建文档、更新、移动、合并、删除，还是保持内容不变。
 5. 获得修改授权后，在同一次变更中维护代码、文档正文、各层级索引、锚点和普通链接。
-6. 利用既有仓库工具、`rg`、针对性阅读与 Git diff 检查受影响的文档结构与引用。将最终检查限定在任务范围内。把重新阅读索引和全库审计留给专门的审计任务。代码变更所需的测试照常运行。
+6. 在仓库根目录运行 `python3 <skill_dir>/scripts/check_library.py --changed`，机械检查受影响的索引链接、成员命名、章节 ID 和锚点；再用针对性阅读与 Git diff 核对脚本无法判断的内容（事实是否正确、锚点是否放在实现规则的代码旁）。把重新阅读索引和全库审计留给专门的审计任务。代码变更所需的测试照常运行。
 7. 报告变更了哪些文档。若没有受影响的文档，在回复中说明已评估文档影响。
 
 ## 不变量
@@ -53,7 +53,7 @@ description: 与代码协同构建、阅读、维护和审计分层工程文档�
 - 记录需要跳出局部代码才能理解的知识。局部实现细节、机械重构、生成代码、临时方案以及仅凭单个符号即可明确的事实，保留在代码或方案文件中。
 - 当文档与代码不一致时，在决定修改哪一方之前先核实设计意图。若关键歧义未能解决，向用户请示。
 - 在只读任务中仅报告问题并等待修复授权。在文档维护过程中，行为变更仅限于用户授权的范围。
-- 仅在被明确要求时，才创建项目特定的验证脚本、CI 以及文档影响声明。
+- 仅在被明确要求时，才创建项目特定的验证脚本、CI 以及文档影响声明。skill 自带的 `scripts/check_library.py` 不属于项目文件，直接运行即可，不要复制进仓库。
 
 ## 集成要求
 
