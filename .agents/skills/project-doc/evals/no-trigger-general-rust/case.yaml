@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: no-trigger-general-rust
+expected_outcome: |
+  与仓库无关的通用问题：不加载 project-doc，不读 docs/，直接回答。
+source:
+  kind: head
+  base: 6e05023d513e

@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: replay-backup-retention
+expected_outcome: |
+  备份保留规则改为只留最新一份后，同步 runbook 的备份与恢复章节。
+source:
+  kind: replay
+  commit: e44e4560a8e7
+  base: da509b57faf7
+  apply: e44e4560a8e7

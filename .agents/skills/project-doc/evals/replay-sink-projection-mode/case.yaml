@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: replay-sink-projection-mode
+expected_outcome: |
+  新增 sink_mode 字段后同步更新 dataset_registry.md 的字段表和新增数据集步骤（历史上 1 分钟后另提交补文档）。
+source:
+  kind: replay
+  commit: 0403eea6a0c9
+  base: 1bae9da0aed3
+  apply: 0403eea6a0c9
+  gold: 246031316ff3

@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: multi-commit-review-fixes
+expected_outcome: |
+  工作区里混着十几项架构评审修复，按主题拆成多个提交时，每个影响文档的主题都同步文档：费率口径（accounts.md、backtest.md）、sink_mode（dataset_registry.md）、超时配置（configuration.md）。
+source:
+  kind: replay
+  commit: 909a5db01aa7
+  base: 80cbc1f11f8b
+  apply: 909a5db01aa7
+  gold: cbb052193b5c 246031316ff3 909a5db01aa7

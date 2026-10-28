@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: anchor-default-rules
+expected_outcome: |
+  修改带 @project-doc 锚点的 Rules::default 后，同步 accounts.md#rules 的默认值表和由默认值推出的「前 N 名」。
+source:
+  kind: head
+  base: 6e05023d513e

@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: replay-portfolio-trade-history
+expected_outcome: |
+  组合回测返回逐笔成交、研究页展示后，同步 frontend.md#pages、factor_research.md#portfolio 和 rest_api.md#endpoints。
+source:
+  kind: replay
+  commit: 6e05023d513e
+  base: 52cb6290134b
+  apply: 6e05023d513e

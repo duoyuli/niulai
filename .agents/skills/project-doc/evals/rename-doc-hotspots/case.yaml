@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: rename-doc-hotspots
+expected_outcome: |
+  把 hotspots.md 改名为 market_hotspots.md，同步分类索引、普通链接和代码锚点，check_library 无新增问题。
+source:
+  kind: head
+  base: 6e05023d513e

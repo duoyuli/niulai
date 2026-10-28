@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: replay-account-backtest-fees
+expected_outcome: |
+  提交前发现账户规则回测的费率口径变了，同步改 accounts.md#rules_backtest 和 backtest.md#calibers（历史上漏改，cbb0521 事后补上）。
+source:
+  kind: replay
+  commit: fe2f308520d9
+  base: 80cbc1f11f8b
+  apply: fe2f308520d9
+  gold: cbb052193b5c

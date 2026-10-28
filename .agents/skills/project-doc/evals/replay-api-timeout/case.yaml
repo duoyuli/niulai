@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: replay-api-timeout
+expected_outcome: |
+  实现可配置的 API 超时，并在 configuration.md 的配置项表中加入 NIULAI_API_TIMEOUT_S。
+source:
+  kind: replay
+  commit: 909a5db01aa7
+  base: e9a5150c2ffb

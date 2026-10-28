@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: readonly-fee-question
+expected_outcome: |
+  只读问答：基于文档或代码答对费用口径，不修改文件，根索引最多读一次。
+source:
+  kind: head
+  base: 6e05023d513e

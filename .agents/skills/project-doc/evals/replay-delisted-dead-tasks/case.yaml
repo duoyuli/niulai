@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: replay-delisted-dead-tasks
+expected_outcome: |
+  修复步骤跳过已退市证券的死任务后，同步 sync_pipeline.md#audit 和 runbook 的失败处理。
+source:
+  kind: replay
+  commit: a63ebec6257f
+  base: 62d639de2d5c
+  apply: a63ebec6257f

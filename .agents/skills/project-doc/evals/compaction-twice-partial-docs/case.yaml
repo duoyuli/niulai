@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: compaction-twice-partial-docs
+expected_outcome: |
+  第二次压缩后，摘要只说同步过一份文档；agent 仍按路由找到并更新 rest_api.md 的 GET /datasets，而不是直接提交。
+source:
+  kind: replay
+  commit: 07a8e48095a2
+  base: 07fb2bc405e5
+  apply: 07a8e48095a2

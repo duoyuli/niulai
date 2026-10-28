@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: new-dataset-qdii-quota
+expected_outcome: |
+  新增只写 raw.record 的数据集：只改 datasets.yaml，并同步数据目录的条目、数量统计和分类索引中的数量；不改 sinks.rs 和迁移。
+source:
+  kind: head
+  base: 6e05023d513e
+  gold: HEAD 中现有的 fund.qdii_quota 条目与数据目录

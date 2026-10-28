@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: compaction-continue-datasets-list
+expected_outcome: |
+  压缩后继续收尾时恢复文档路由，更新 rest_api.md 的 GET /datasets 说明，并在改文档前重新读取索引或目标章节。
+source:
+  kind: replay
+  commit: 07a8e48095a2
+  base: 07fb2bc405e5
+  apply: 07a8e48095a2
