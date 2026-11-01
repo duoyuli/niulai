@@ -89,7 +89,7 @@ async fn factor_research_end_to_end() {
 
     let (s, v) = call(&app, "GET", "/api/v1/research/factors", None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(v.as_array().unwrap().len(), 12);
+    assert_eq!(v.as_array().unwrap().len(), 15);
 
     let (s, v) = call(
         &app,
