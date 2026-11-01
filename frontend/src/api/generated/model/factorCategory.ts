@@ -12,4 +12,5 @@ export type FactorCategory = typeof FactorCategory[keyof typeof FactorCategory];
 export const FactorCategory = {
   price_volume: 'price_volume',
   fundamental: 'fundamental',
+  valuation: 'valuation',
 } as const;

@@ -11,6 +11,7 @@ export type FactorId = typeof FactorId[keyof typeof FactorId];
 
 export const FactorId = {
   momentum: 'momentum',
+  residual_momentum: 'residual_momentum',
   reversal: 'reversal',
   momentum12m: 'momentum12m',
   volatility: 'volatility',
@@ -22,4 +23,6 @@ export const FactorId = {
   roe: 'roe',
   profit_growth: 'profit_growth',
   accruals: 'accruals',
+  gross_profitability: 'gross_profitability',
+  earnings_yield: 'earnings_yield',
 } as const;

@@ -5,48 +5,114 @@ import type { Tone } from "./labels";
 /** 默认选中的因子：A 股文献里较稳健的价量因子，不需要财务数据 */
 export const DEFAULT_FACTORS = "reversal,idio_vol,max_return,liquidity,abnormal_turnover";
 
-/** 预设的多因子组合：点一下替换当前选择，权重都是 1（按各因子的预期方向合成）。
+export type BuiltinFactorPreset = { id: string; name: string; desc: string; factors: readonly FactorWeight[] };
+
+/** 预设的多因子组合：点一下替换当前选择，按各因子的预期方向合成。
  * 描述只讲选股逻辑，不写来历和回测数字；第一个与后端 `Rules::default` 相同 */
-export const FACTOR_PRESETS: readonly { id: string; name: string; desc: string; factors: readonly string[] }[] = [
+export const FACTOR_PRESETS: readonly BuiltinFactorPreset[] = [
   {
     id: "e",
     name: "低波动 + 盈利质量 + 小盘",
     desc: "挑选同时满足这几点的公司：最近一个月股价涨跌平稳；最新一个季度的利润比去年同期多；利润是实打实收到的现金，不是账面上的应收款；公司规模偏小（用成交额衡量）。平稳的股票回撤小，利润增长且质量高的公司基本面好，小公司长期涨得比大公司多",
-    factors: ["volatility", "idio_vol", "profit_growth", "accruals", "liquidity"],
+    factors: [
+      { id: "volatility", weight: 1 },
+      { id: "idio_vol", weight: 1 },
+      { id: "profit_growth", weight: 1 },
+      { id: "accruals", weight: 1 },
+      { id: "liquidity", weight: 1 },
+    ],
   },
   {
     id: "price",
     name: "短期价量",
     desc: "只看股价和成交量：挑最近一周跌得多的股票（A 股短期涨多了容易跌回去，跌多了容易涨回来），同时要求它最近一个月走势平稳、没有出现过单日暴涨、规模偏小、最近几天成交没有突然放大。这些指标变化快，持仓换得比较勤",
-    factors: ["reversal", "idio_vol", "max_return", "liquidity", "abnormal_turnover"],
+    factors: [
+      { id: "reversal", weight: 1 },
+      { id: "idio_vol", weight: 1 },
+      { id: "max_return", weight: 1 },
+      { id: "liquidity", weight: 1 },
+      { id: "abnormal_turnover", weight: 1 },
+    ],
   },
   {
     id: "price_fundamental",
     name: "价量 + 财务",
     desc: "股价方面，挑最近一个月没怎么涨、走势平稳、没有出现过单日暴涨、成交没有突然放大的股票，避开追涨和炒作过热的；财报方面，再要求最新一个季度利润比去年同期增长、利润是实打实收到的现金。财报指标变化慢，能让持仓换得少一些",
-    factors: ["momentum", "idio_vol", "max_return", "abnormal_turnover", "profit_growth", "accruals"],
+    factors: [
+      { id: "momentum", weight: 1 },
+      { id: "idio_vol", weight: 1 },
+      { id: "max_return", weight: 1 },
+      { id: "abnormal_turnover", weight: 1 },
+      { id: "profit_growth", weight: 1 },
+      { id: "accruals", weight: 1 },
+    ],
   },
   {
     id: "low_vol",
     name: "低波动防守",
     desc: "只看股价涨跌是否平稳：挑最近一个月每天涨跌幅度小、扣掉大盘整体涨跌后自身波动也小、没有出现过单日暴涨的股票。不看公司大小，也不看财报",
-    factors: ["volatility", "idio_vol", "max_return"],
+    factors: [
+      { id: "volatility", weight: 1 },
+      { id: "idio_vol", weight: 1 },
+      { id: "max_return", weight: 1 },
+    ],
   },
   {
     id: "quality",
     name: "盈利质量",
     desc: "只看财报：挑用股东的钱赚钱效率高（最近一年的净利润 ÷ 净资产高）、最新一个季度利润比去年同期增长快、利润是实打实收到的现金的公司。财报每个季度才更新一次，持仓换得少",
-    factors: ["roe", "profit_growth", "accruals"],
+    factors: [
+      { id: "roe", weight: 1 },
+      { id: "profit_growth", weight: 1 },
+      { id: "accruals", weight: 1 },
+    ],
+  },
+  {
+    id: "mechanism_balanced",
+    name: "机制分组均衡",
+    desc: "低风险、盈利增长、现金质量和规模代理各占一组，避免低波动因子因有多个指标而重复占权",
+    factors: [
+      { id: "volatility", weight: 0.5 },
+      { id: "idio_vol", weight: 0.5 },
+      { id: "profit_growth", weight: 1 },
+      { id: "accruals", weight: 1 },
+      { id: "liquidity", weight: 1 },
+    ],
+  },
+  {
+    id: "reversal_quality",
+    name: "反转 + 盈利质量",
+    desc: "用短期反转和低特质波动过滤炒作，再加入低彩票特征、利润增长和现金质量",
+    factors: [
+      { id: "reversal", weight: 1 },
+      { id: "idio_vol", weight: 1 },
+      { id: "max_return", weight: 0.75 },
+      { id: "profit_growth", weight: 1 },
+      { id: "accruals", weight: 0.75 },
+      { id: "liquidity", weight: 0.5 },
+    ],
+  },
+  {
+    id: "value_quality_risk",
+    name: "价值 + 质量 + 风险",
+    desc: "盈利收益率结合毛盈利、现金质量和低风险；估值数据不足的股票会自动缺失",
+    factors: [
+      { id: "earnings_yield", weight: 1 },
+      { id: "gross_profitability", weight: 1 },
+      { id: "accruals", weight: 1 },
+      { id: "idio_vol", weight: 0.75 },
+      { id: "residual_momentum", weight: 0.75 },
+    ],
   },
 ];
 
-/** 当前选择是否正好是某个预设（同样的因子，权重都是 1） */
-export function matchesPreset(picks: FactorWeight[], factors: readonly string[]): boolean {
-  return picks.length === factors.length && picks.every((p) => p.weight === 1 && factors.includes(p.id));
+/** 当前选择是否正好是某个预设，顺序无关 */
+export function matchesPreset(picks: FactorWeight[], factors: readonly FactorWeight[]): boolean {
+  return sameFactors(picks, factors);
 }
 
 /** 两组因子和权重是否相同，顺序无关 */
-export function sameFactors(a: FactorWeight[], b: FactorWeight[]): boolean {
+export function sameFactors(a: readonly FactorWeight[], b: readonly FactorWeight[]): boolean {
   return a.length === b.length && a.every((x) => b.some((y) => y.id === x.id && y.weight === x.weight));
 }
 

@@ -51,14 +51,15 @@ export function FactorPicker({
                     <PresetCard
                       key={p.id}
                       name={p.name}
-                      sub={`${p.factors.length} 个因子，等权`}
+                      sub={`${p.factors.length} 个因子${p.factors.some((f) => f.weight !== 1) ? " · 分组权重" : " · 等权"}`}
                       active={matchesPreset(picks, p.factors)}
-                      onApply={() => apply({ factors: p.factors.map((id) => ({ id, weight: 1 })) })}
+                      onApply={() => apply({ factors: p.factors.map((f) => ({ ...f })) })}
                       help={
                         <>
                           {p.desc}。
                           <br />
-                          因子：{names(p.factors)}
+                          因子：
+                          {p.factors.map((f) => `${names([f.id])}${f.weight === 1 ? "" : ` × ${f.weight}`}`).join("、")}
                         </>
                       }
                     />
@@ -73,6 +74,7 @@ export function FactorPicker({
                 [
                   ["price_volume", "价量因子（只用日线）"],
                   ["fundamental", "财务因子（按法定披露截止日才使用，避免偷看未来）"],
+                  ["valuation", "估值因子（按交易日估值快照使用）"],
                 ] as const
               ).map(([cat, title]) => (
                 <div key={cat} className="flex flex-col gap-1.5">

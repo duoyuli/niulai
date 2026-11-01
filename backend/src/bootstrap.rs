@@ -94,7 +94,10 @@ async fn handle_runs(pool: &PgPool, run_ids: &[i64], price_changed: bool) -> any
     )
     .await?;
     if inputs_changed {
-        tracing::info!(?run_ids, "财报、行业或证券信息有变化，因子排名的缓存已失效");
+        tracing::info!(
+            ?run_ids,
+            "财报、估值、行业或证券信息有变化，因子排名的缓存已失效"
+        );
     }
     if price_changed || pool_changed || inputs_changed {
         compute::run(

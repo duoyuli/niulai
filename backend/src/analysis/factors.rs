@@ -12,6 +12,7 @@ use super::prices::DailyBar;
 #[serde(rename_all = "snake_case")]
 pub enum FactorId {
     Momentum,
+    ResidualMomentum,
     Reversal,
     Momentum12m,
     Volatility,
@@ -23,6 +24,8 @@ pub enum FactorId {
     Roe,
     ProfitGrowth,
     Accruals,
+    GrossProfitability,
+    EarningsYield,
 }
 
 #[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,6 +35,8 @@ pub enum FactorCategory {
     PriceVolume,
     /// 财务：按披露截止日推断可用日
     Fundamental,
+    /// 估值：按交易日保存的估值快照
+    Valuation,
 }
 
 #[derive(Serialize, ToSchema, Clone, Copy)]
@@ -63,6 +68,14 @@ pub const CATALOG: &[FactorInfo] = &[
         category: FactorCategory::PriceVolume,
         higher_is_better: false,
         rationale: "在海外市场，近期涨得多的股票往往继续涨（动量效应）；A 股多数时期正好相反，最近一个月涨得多的股票之后反而偏弱",
+    },
+    FactorInfo {
+        id: FactorId::ResidualMomentum,
+        name: "市场残差动量",
+        description: "过去约一年到一个月前的个股收益，扣除同期全市场等权收益后的剩余部分。数值越大，说明个股相对市场的中期走势更强",
+        category: FactorCategory::PriceVolume,
+        higher_is_better: true,
+        rationale: "中国市场普通长期动量不稳定，但扣除市场共同波动后，个股自身的趋势信息更容易和短期反转区分",
     },
     FactorInfo {
         id: FactorId::Momentum12m,
@@ -143,6 +156,22 @@ pub const CATALOG: &[FactorInfo] = &[
         category: FactorCategory::Fundamental,
         higher_is_better: false,
         rationale: "账面利润多、实际收到的现金少的公司，利润往往难以持续，之后容易出现业绩下修，股价收益偏低；利润有现金支撑的公司盈利质量更高",
+    },
+    FactorInfo {
+        id: FactorId::GrossProfitability,
+        name: "毛盈利 / 总资产",
+        description: "最近四个季度的营业收入减营业成本，再除以总资产。数值越大，说明公司用资产创造经营毛利的能力越强",
+        category: FactorCategory::Fundamental,
+        higher_is_better: true,
+        rationale: "经营层面的毛盈利比净利润更少受到融资结构和费用确认影响，可补充 ROE 的杠杆暴露",
+    },
+    FactorInfo {
+        id: FactorId::EarningsYield,
+        name: "盈利收益率",
+        description: "当日可用的市盈率 TTM 取倒数，即已知盈利相对股票价格的比例；负盈利或无效市盈率不计算。数值越大，代表相对盈利买得越便宜",
+        category: FactorCategory::Valuation,
+        higher_is_better: true,
+        rationale: "中国市场的价值效应更适合从盈利相对价格的角度刻画；盈利收益率还能与低风险、盈利质量因子区分",
     },
 ];
 
@@ -253,9 +282,13 @@ impl<'a> PriceFactors<'a> {
                     v.iter().sum::<f64>() / v.len() as f64
                 }
             }
-            FactorId::IdioVol | FactorId::Roe | FactorId::ProfitGrowth | FactorId::Accruals => {
-                f64::NAN
-            }
+            FactorId::ResidualMomentum
+            | FactorId::IdioVol
+            | FactorId::Roe
+            | FactorId::ProfitGrowth
+            | FactorId::Accruals
+            | FactorId::GrossProfitability
+            | FactorId::EarningsYield => f64::NAN,
         }
     }
 }
@@ -311,6 +344,8 @@ pub struct Report {
     pub equity: Option<f64>,
     pub assets: Option<f64>,
     pub operating_cash_flow: Option<f64>,
+    pub operating_income: Option<f64>,
+    pub operating_costs: Option<f64>,
 }
 
 impl Report {
@@ -347,6 +382,7 @@ pub struct FundamentalSnapshot {
     pub roe: f64,
     pub profit_growth: f64,
     pub accruals: f64,
+    pub gross_profitability: f64,
 }
 
 fn period_end(fy: i32, q: u8) -> NaiveDate {
@@ -396,6 +432,8 @@ pub fn fundamental_snapshots(mut reports: Vec<Report>) -> Vec<FundamentalSnapsho
         let (fy, q) = r.key();
         let np = ttm(fy, q, |r| r.parent_net_profit);
         let cfo = ttm(fy, q, |r| r.operating_cash_flow);
+        let revenue = ttm(fy, q, |r| r.operating_income);
+        let costs = ttm(fy, q, |r| r.operating_costs);
         let roe = match (np, r.equity) {
             (Some((v, _)), Some(e)) if e > 0.0 => v / e,
             _ => f64::NAN,
@@ -413,10 +451,18 @@ pub fn fundamental_snapshots(mut reports: Vec<Report>) -> Vec<FundamentalSnapsho
             }
             _ => f64::NAN,
         };
+        let gross_profitability = match (revenue, costs, r.assets) {
+            (Some((income, _)), Some((cost, _)), Some(assets)) if assets > 0.0 => {
+                (income - cost) / assets
+            }
+            _ => f64::NAN,
+        };
         let available = [
             Some(r.available()),
             np.map(|x| x.1),
             cfo.map(|x| x.1),
+            revenue.map(|x| x.1),
+            costs.map(|x| x.1),
             single(fy, q, |r| r.parent_net_profit).map(|x| x.1),
             single(fy - 1, q, |r| r.parent_net_profit).map(|x| x.1),
         ]
@@ -430,6 +476,7 @@ pub fn fundamental_snapshots(mut reports: Vec<Report>) -> Vec<FundamentalSnapsho
             roe,
             profit_growth: growth,
             accruals,
+            gross_profitability,
         });
     }
     out.sort_by_key(|s| (s.available, s.period_end));
@@ -454,6 +501,7 @@ pub fn fundamental_value(s: &FundamentalSnapshot, id: FactorId) -> f64 {
         FactorId::Roe => s.roe,
         FactorId::ProfitGrowth => s.profit_growth,
         FactorId::Accruals => s.accruals,
+        FactorId::GrossProfitability => s.gross_profitability,
         _ => f64::NAN,
     }
 }
@@ -476,6 +524,8 @@ mod tests {
             equity: Some(1000.0),
             assets: Some(2000.0),
             operating_cash_flow: Some(np / 2.0),
+            operating_income: Some(100.0),
+            operating_costs: Some(60.0),
         }
     }
 
@@ -505,6 +555,7 @@ mod tests {
         // TTM = 20 + 60 − 10 = 70；单季增速 = (20 − 10) / 10
         assert!((last.roe - 0.07).abs() < 1e-12);
         assert!((last.profit_growth - 1.0).abs() < 1e-12);
+        assert!((last.gross_profitability - 0.02).abs() < 1e-12);
         // 2025-04-25 当天还不能用（收盘后才知道），次日可以
         assert_ne!(
             fundamental_at(&snaps, d(2025, 4, 25)).unwrap().period_end,
@@ -560,6 +611,6 @@ mod tests {
         for f in CATALOG {
             assert_eq!(info(f.id).id, f.id);
         }
-        assert_eq!(CATALOG.len(), 12);
+        assert_eq!(CATALOG.len(), 15);
     }
 }

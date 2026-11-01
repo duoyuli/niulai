@@ -21,14 +21,15 @@ use crate::instrument::AssetType;
 
 /// 因子的非价格输入中只写 `raw.record` 的数据集：三张季度财报（[`load_fundamentals`]）
 pub const INPUT_DATASETS: [&str; 3] = [INCOME, BALANCE, CASHFLOW];
-/// 因子的非价格输入所在的类型化表（`datasets.yaml` 的 sink）：行业成分（[`load_industries`]），
+/// 因子的非价格输入所在的类型化表（`datasets.yaml` 的 sink）：行业成分（[`load_industries`]）、估值快照，
 /// 证券信息、名称和 ST（`securities::load`）。这些数据或 [`INPUT_DATASETS`] 有变化时，
 /// 应用层更新 `ops.derived_version` 的 `factor_input` 行，账户的因子排名据此失效；价格的变化由 `adj_factor` 表示
-pub const INPUT_TABLES: [&str; 4] = [
+pub const INPUT_TABLES: [&str; 5] = [
     "ref.index_member",
     "ref.index_info",
     "ref.security",
     "ref.etf_security",
+    "fin.valuation_1d",
 ];
 
 /// 组合回测的基准：全市场等权（含分红）
@@ -150,6 +151,15 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
     } else {
         HashMap::new()
     };
+    let valuations = if spec
+        .factors
+        .iter()
+        .any(|f| factors::info(*f).category == FactorCategory::Valuation)
+    {
+        load_valuations(pool, spec.start, spec.end).await?
+    } else {
+        HashMap::new()
+    };
     let nf = spec.factors.len();
     let mut evals = vec![
         EvalDay {
@@ -210,11 +220,17 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
             e.stocks.push(idx);
             e.size.push(pf.size(i));
             let fund = snaps.and_then(|s| factors::fundamental_at(s, bars[i].date));
+            let valuation = valuations
+                .get(code)
+                .and_then(|values| valuation_at(values, bars[i].date));
             for (fi, id) in spec.factors.iter().enumerate() {
                 let v = match factors::info(*id).category {
                     FactorCategory::Fundamental => {
                         fund.map_or(f64::NAN, |s| factors::fundamental_value(s, *id))
                     }
+                    FactorCategory::Valuation => valuation
+                        .filter(|pe| *pe > 0.0)
+                        .map_or(f64::NAN, |pe| 1.0 / pe),
                     FactorCategory::PriceVolume => pf.value(*id, i),
                 };
                 e.values[fi].push(v);
@@ -239,6 +255,48 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
         evals,
         &counts,
     )))
+}
+
+type ValuationRow = (String, NaiveDate, Option<f64>);
+
+async fn load_valuations(
+    pool: &PgPool,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> sqlx::Result<HashMap<String, Vec<(NaiveDate, f64)>>> {
+    let mut rows: Vec<ValuationRow> = sqlx::query_as(
+        "SELECT thscode, trade_date, pe_ttm::float8
+         FROM fin.valuation_1d
+         WHERE trade_date >= $1 AND trade_date <= $2
+         ORDER BY thscode, trade_date",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?;
+    let prior: Vec<ValuationRow> = sqlx::query_as(
+        "SELECT DISTINCT ON (thscode) thscode, trade_date, pe_ttm::float8
+         FROM fin.valuation_1d
+         WHERE trade_date < $1
+         ORDER BY thscode, trade_date DESC",
+    )
+    .bind(start)
+    .fetch_all(pool)
+    .await?;
+    rows.extend(prior);
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let mut out: HashMap<String, Vec<(NaiveDate, f64)>> = HashMap::new();
+    for (code, date, pe) in rows {
+        if let Some(pe) = pe.filter(|v| v.is_finite() && *v > 0.0) {
+            out.entry(code).or_default().push((date, pe));
+        }
+    }
+    Ok(out)
+}
+
+fn valuation_at(values: &[(NaiveDate, f64)], date: NaiveDate) -> Option<f64> {
+    let n = values.partition_point(|(d, _)| *d <= date);
+    values.get(n.checked_sub(1)?).map(|(_, pe)| *pe)
 }
 
 /// 扫描之后的公共步骤：标记同步缺口日、算市场收益和特质波动率。测试用它从合成数据构造面板
@@ -295,7 +353,50 @@ pub fn finish(
             }
         }
     }
+    if let Some(fi) = panel
+        .factors
+        .iter()
+        .position(|f| *f == FactorId::ResidualMomentum)
+    {
+        for k in 0..panel.evals.len() {
+            let day = panel.eval_days[k];
+            for j in 0..panel.evals[k].stocks.len() {
+                let s = &panel.stocks[panel.evals[k].stocks[j] as usize];
+                let v = residual_momentum_at(s, day, &panel.market);
+                panel.evals[k].values[fi][j] = v;
+            }
+        }
+    }
     panel
+}
+
+/// 市场残差动量：过去 250 根个股收益减去同一日历区间的全市场等权收益，跳过最近 20 根日线。
+/// 这是一个价量因子，不能解释为行业残差动量；行业历史成分不足时不引入伪历史信息。
+fn residual_momentum_at(series: &Series, day: usize, market: &[f64]) -> f64 {
+    let Some(current) = series.at(day) else {
+        return f64::NAN;
+    };
+    let Some(end) = current.checked_sub(20) else {
+        return f64::NAN;
+    };
+    let Some(begin) = end.checked_sub(230) else {
+        return f64::NAN;
+    };
+    let start_day = series.bars[begin].day as usize;
+    let end_day = series.bars[end].day as usize;
+    let start = f64::from(series.bars[begin].q_close);
+    let finish = f64::from(series.bars[end].q_close);
+    if !(start > 0.0 && finish > 0.0) {
+        return f64::NAN;
+    }
+    let mut market_level = 1.0;
+    for r in market.get(start_day + 1..=end_day).into_iter().flatten() {
+        if !r.is_finite() {
+            return f64::NAN;
+        }
+        market_level *= 1.0 + r;
+    }
+    finish / start - market_level
 }
 
 fn idio_at(s: &Series, i: usize, market: &[f64]) -> f64 {
@@ -339,7 +440,15 @@ async fn load_industries(pool: &PgPool) -> sqlx::Result<HashMap<String, u16>> {
     Ok(out)
 }
 
-type IncomeRow = (String, i32, String, Option<i64>, Option<f64>);
+type IncomeRow = (
+    String,
+    i32,
+    String,
+    Option<i64>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+);
 type BalanceRow = (String, i32, String, Option<f64>, Option<f64>);
 type CashRow = (String, i32, String, Option<f64>);
 
@@ -350,7 +459,8 @@ async fn load_fundamentals(
 ) -> sqlx::Result<HashMap<String, Vec<FundamentalSnapshot>>> {
     let income: Vec<IncomeRow> = sqlx::query_as(
         "SELECT thscode, (payload->>'fiscal_year')::int, payload->>'fiscal_period',
-                (payload->>'report_date_ms')::bigint, (payload->>'parent_holder_net_profit')::float8
+                (payload->>'report_date_ms')::bigint, (payload->>'parent_holder_net_profit')::float8,
+                (payload->>'operating_income')::float8, (payload->>'operating_costs')::float8
          FROM raw.record WHERE dataset_id = $2 AND thscode IS NOT NULL
            AND (payload->>'fiscal_year')::int >= $1",
     )
@@ -386,7 +496,7 @@ async fn load_fundamentals(
         _ => None,
     };
     let mut reports: HashMap<(String, i32, u8), Report> = HashMap::new();
-    for (code, fy, fp, ms, np) in income {
+    for (code, fy, fp, ms, np, operating_income, operating_costs) in income {
         let Some(q) = quarter(&fp) else { continue };
         let report_date = ms.and_then(crate::time::ms_to_cn_date);
         reports.insert(
@@ -399,6 +509,8 @@ async fn load_fundamentals(
                 equity: None,
                 assets: None,
                 operating_cash_flow: None,
+                operating_income,
+                operating_costs,
             },
         );
     }
@@ -1580,6 +1692,45 @@ pub fn simulate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn valuation_uses_the_latest_snapshot_on_or_before_date() {
+        let values = vec![(day(2), 20.0), (day(10), 10.0)];
+        assert_eq!(valuation_at(&values, day(1)), None);
+        assert_eq!(valuation_at(&values, day(5)), Some(20.0));
+        assert_eq!(valuation_at(&values, day(10)), Some(10.0));
+    }
+
+    #[test]
+    fn residual_momentum_uses_only_the_completed_12_to_1_month_window() {
+        let bars: Vec<CBar> = (0..300)
+            .map(|i| CBar {
+                day: i,
+                flags: IN_UNIVERSE,
+                q_open: 100.0 + i as f32,
+                q_close: 100.0 + i as f32,
+            })
+            .collect();
+        let series = Series {
+            code: "TEST".into(),
+            industry: None,
+            bars,
+        };
+        let market = vec![0.0; 300];
+        let before = residual_momentum_at(&series, 299, &market);
+        assert!(before.is_finite() && before > 0.0);
+        let mut extended = series.clone();
+        extended.bars.push(CBar {
+            day: 300,
+            flags: IN_UNIVERSE,
+            q_open: 10_000.0,
+            q_close: 10_000.0,
+        });
+        assert_eq!(
+            before.to_bits(),
+            residual_momentum_at(&extended, 299, &market).to_bits()
+        );
+    }
 
     fn day(i: usize) -> NaiveDate {
         NaiveDate::from_ymd_opt(2024, 1, 1).unwrap() + chrono::Duration::days(i as i64)

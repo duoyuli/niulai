@@ -5030,7 +5030,8 @@
         "type": "string",
         "enum": [
           "price_volume",
-          "fundamental"
+          "fundamental",
+          "valuation"
         ]
       },
       "FactorConfig": {
@@ -5150,6 +5151,7 @@
         "type": "string",
         "enum": [
           "momentum",
+          "residual_momentum",
           "reversal",
           "momentum12m",
           "volatility",
@@ -5160,7 +5162,9 @@
           "illiquidity",
           "roe",
           "profit_growth",
-          "accruals"
+          "accruals",
+          "gross_profitability",
+          "earnings_yield"
         ]
       },
       "FactorInfo": {

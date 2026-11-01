@@ -62,23 +62,13 @@ describe("planResearchLink", () => {
 describe("matchesPreset", () => {
   const e = FACTOR_PRESETS[0]?.factors ?? [];
   it("同样的因子、权重都是 1 才算匹配，顺序无关", () => {
+    expect(matchesPreset([...e].reverse(), e)).toBe(true);
     expect(
       matchesPreset(
-        [...e].reverse().map((id) => ({ id, weight: 1 })),
-        e,
-      ),
-    ).toBe(true);
-    expect(
-      matchesPreset(
-        e.map((id, i) => ({ id, weight: i === 0 ? 2 : 1 })),
+        e.map((f, i) => ({ ...f, weight: i === 0 ? 2 : 1 })),
         e,
       ),
     ).toBe(false);
-    expect(
-      matchesPreset(
-        e.slice(1).map((id) => ({ id, weight: 1 })),
-        e,
-      ),
-    ).toBe(false);
+    expect(matchesPreset(e.slice(1), e)).toBe(false);
   });
 });
