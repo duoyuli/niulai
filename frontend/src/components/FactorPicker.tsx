@@ -16,6 +16,7 @@ export interface PresetChoice {
   factors: FactorWeight[];
   top_n?: number;
   buffer?: number;
+  max_price?: number;
 }
 
 /** 分两步：上面是一键套用的预设（内置的和自己保存的），下面逐个选因子。

@@ -25,4 +25,6 @@ export const FactorId = {
   accruals: 'accruals',
   gross_profitability: 'gross_profitability',
   earnings_yield: 'earnings_yield',
+  dividend_yield: 'dividend_yield',
+  profit_stability: 'profit_stability',
 } as const;

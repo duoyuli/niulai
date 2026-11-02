@@ -15,6 +15,8 @@ pub struct Universe {
     pub exclude_st: bool,
     /// 最低股价（元，未复权收盘价）
     pub min_price: Option<f64>,
+    /// 最高股价（元，未复权收盘价）
+    pub max_price: Option<f64>,
     /// 最低成交额（元）
     pub min_amount: Option<f64>,
     /// 上市满多少个交易日（按本地日线根数）
@@ -27,6 +29,7 @@ impl Default for Universe {
             boards: vec![],
             exclude_st: true,
             min_price: Some(2.0),
+            max_price: None,
             min_amount: Some(5e7),
             min_listed_days: Some(60),
         }
@@ -41,6 +44,7 @@ impl Universe {
             && (self.boards.is_empty() || self.boards.contains(&meta.board))
             && !(self.exclude_st && st_on(meta, st, b.date))
             && self.min_price.is_none_or(|p| b.close >= p)
+            && self.max_price.is_none_or(|p| b.close < p)
             && self.min_amount.is_none_or(|a| b.amount >= a)
             && meta.delisted_on.is_none_or(|d| b.date < d)
             && self.min_listed_days.is_none_or(|d| i + 1 >= d as usize)
@@ -67,6 +71,9 @@ impl Universe {
         }
         if let Some(p) = self.min_price {
             out.push(format!("股价不低于 {p} 元"));
+        }
+        if let Some(p) = self.max_price {
+            out.push(format!("股价低于 {p} 元"));
         }
         if let Some(a) = self.min_amount {
             let text = if a >= 1e8 {

@@ -5,7 +5,13 @@ import type { Tone } from "./labels";
 /** 默认选中的因子：A 股文献里较稳健的价量因子，不需要财务数据 */
 export const DEFAULT_FACTORS = "reversal,idio_vol,max_return,liquidity,abnormal_turnover";
 
-export type BuiltinFactorPreset = { id: string; name: string; desc: string; factors: readonly FactorWeight[] };
+export type BuiltinFactorPreset = {
+  id: string;
+  name: string;
+  desc: string;
+  factors: readonly FactorWeight[];
+  max_price?: number;
+};
 
 /** 预设的多因子组合：点一下替换当前选择，按各因子的预期方向合成。
  * 描述只讲选股逻辑，不写来历和回测数字；第一个与后端 `Rules::default` 相同 */
@@ -102,6 +108,18 @@ export const FACTOR_PRESETS: readonly BuiltinFactorPreset[] = [
       { id: "accruals", weight: 1 },
       { id: "idio_vol", weight: 0.75 },
       { id: "residual_momentum", weight: 0.75 },
+    ],
+  },
+  {
+    id: "high_dividend_stable_low_price",
+    name: "高股息 + 稳定盈利 + 低价",
+    desc: "只研究 2 元以上、10 元以下的股票，优先选择过去 12 个月现金股息率高、持续盈利且利润波动较小的公司",
+    max_price: 10,
+    factors: [
+      { id: "dividend_yield", weight: 1 },
+      { id: "profit_stability", weight: 1 },
+      { id: "accruals", weight: 0.5 },
+      { id: "idio_vol", weight: 0.5 },
     ],
   },
 ];

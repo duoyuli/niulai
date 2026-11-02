@@ -24,12 +24,13 @@ pub const INPUT_DATASETS: [&str; 3] = [INCOME, BALANCE, CASHFLOW];
 /// 因子的非价格输入所在的类型化表（`datasets.yaml` 的 sink）：行业成分（[`load_industries`]）、估值快照，
 /// 证券信息、名称和 ST（`securities::load`）。这些数据或 [`INPUT_DATASETS`] 有变化时，
 /// 应用层更新 `ops.derived_version` 的 `factor_input` 行，账户的因子排名据此失效；价格的变化由 `adj_factor` 表示
-pub const INPUT_TABLES: [&str; 5] = [
+pub const INPUT_TABLES: [&str; 6] = [
     "ref.index_member",
     "ref.index_info",
     "ref.security",
     "ref.etf_security",
     "fin.valuation_1d",
+    "mkt.corp_action",
 ];
 
 /// 组合回测的基准：全市场等权（含分红）
@@ -160,6 +161,11 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
     } else {
         HashMap::new()
     };
+    let dividends = if spec.factors.contains(&FactorId::DividendYield) {
+        load_dividends(pool, spec.start, spec.end).await?
+    } else {
+        HashMap::new()
+    };
     let nf = spec.factors.len();
     let mut evals = vec![
         EvalDay {
@@ -223,6 +229,10 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
             let valuation = valuations
                 .get(code)
                 .and_then(|values| valuation_at(values, bars[i].date));
+            let dividend_yield = dividends
+                .get(code)
+                .map(|values| dividend_yield_at(values, bars[i].date, bars[i].close))
+                .unwrap_or(f64::NAN);
             for (fi, id) in spec.factors.iter().enumerate() {
                 let v = match factors::info(*id).category {
                     FactorCategory::Fundamental => {
@@ -232,6 +242,11 @@ pub async fn load(pool: &PgPool, spec: &Spec) -> anyhow::Result<Option<Panel>> {
                         .filter(|pe| *pe > 0.0)
                         .map_or(f64::NAN, |pe| 1.0 / pe),
                     FactorCategory::PriceVolume => pf.value(*id, i),
+                };
+                let v = if *id == FactorId::DividendYield {
+                    dividend_yield
+                } else {
+                    v
                 };
                 e.values[fi].push(v);
             }
@@ -297,6 +312,46 @@ async fn load_valuations(
 fn valuation_at(values: &[(NaiveDate, f64)], date: NaiveDate) -> Option<f64> {
     let n = values.partition_point(|(d, _)| *d <= date);
     values.get(n.checked_sub(1)?).map(|(_, pe)| *pe)
+}
+
+type DividendRow = (String, NaiveDate, f64);
+
+async fn load_dividends(
+    pool: &PgPool,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> sqlx::Result<HashMap<String, Vec<(NaiveDate, f64)>>> {
+    let from = start - chrono::Duration::days(366);
+    let rows: Vec<DividendRow> = sqlx::query_as(
+        "SELECT thscode, ex_date, cash_div::float8
+         FROM mkt.adj_event_effective
+         WHERE ex_date >= $1 AND ex_date <= $2 AND cash_div > 0
+         ORDER BY thscode, ex_date",
+    )
+    .bind(from)
+    .bind(end)
+    .fetch_all(pool)
+    .await?;
+    let mut out: HashMap<String, Vec<(NaiveDate, f64)>> = HashMap::new();
+    for (code, date, cash_div) in rows {
+        if cash_div.is_finite() && cash_div > 0.0 {
+            out.entry(code).or_default().push((date, cash_div));
+        }
+    }
+    Ok(out)
+}
+
+fn dividend_yield_at(values: &[(NaiveDate, f64)], date: NaiveDate, close: f64) -> f64 {
+    if close <= 0.0 {
+        return f64::NAN;
+    }
+    let from = date - chrono::Duration::days(365);
+    let total: f64 = values
+        .iter()
+        .filter(|(d, _)| *d > from && *d <= date)
+        .map(|(_, v)| *v)
+        .sum();
+    total / close
 }
 
 /// 扫描之后的公共步骤：标记同步缺口日、算市场收益和特质波动率。测试用它从合成数据构造面板
@@ -1699,6 +1754,13 @@ mod tests {
         assert_eq!(valuation_at(&values, day(1)), None);
         assert_eq!(valuation_at(&values, day(5)), Some(20.0));
         assert_eq!(valuation_at(&values, day(10)), Some(10.0));
+    }
+
+    #[test]
+    fn dividend_yield_uses_the_trailing_year_and_unadjusted_price() {
+        let values = vec![(day(1), 0.4), (day(200), 0.6), (day(400), 1.0)];
+        let y = dividend_yield_at(&values, day(400), 20.0);
+        assert!((y - 0.08).abs() < 1e-12);
     }
 
     #[test]

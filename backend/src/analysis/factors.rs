@@ -26,6 +26,8 @@ pub enum FactorId {
     Accruals,
     GrossProfitability,
     EarningsYield,
+    DividendYield,
+    ProfitStability,
 }
 
 #[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
@@ -173,6 +175,22 @@ pub const CATALOG: &[FactorInfo] = &[
         higher_is_better: true,
         rationale: "中国市场的价值效应更适合从盈利相对价格的角度刻画；盈利收益率还能与低风险、盈利质量因子区分",
     },
+    FactorInfo {
+        id: FactorId::DividendYield,
+        name: "现金股息率",
+        description: "过去约 12 个月每股现金分红之和 ÷ 当日未复权收盘价。只计已经除权的现金分红，数值越大代表现金回报越高",
+        category: FactorCategory::Valuation,
+        higher_is_better: true,
+        rationale: "现金分红是可观察的股东回报，但高股息也可能来自股价下跌，因此必须和盈利稳定性一起使用",
+    },
+    FactorInfo {
+        id: FactorId::ProfitStability,
+        name: "盈利稳定性",
+        description: "最近几期可用 TTM 归母净利润的正值比例和波动程度综合得分；持续盈利且波动较小的公司得分更高",
+        category: FactorCategory::Fundamental,
+        higher_is_better: true,
+        rationale: "高股息如果靠一次性收益或周期高点支撑，持续性较差；稳定盈利可以过滤一部分股息陷阱",
+    },
 ];
 
 pub fn info(id: FactorId) -> &'static FactorInfo {
@@ -288,7 +306,9 @@ impl<'a> PriceFactors<'a> {
             | FactorId::ProfitGrowth
             | FactorId::Accruals
             | FactorId::GrossProfitability
-            | FactorId::EarningsYield => f64::NAN,
+            | FactorId::EarningsYield
+            | FactorId::DividendYield
+            | FactorId::ProfitStability => f64::NAN,
         }
     }
 }
@@ -383,6 +403,8 @@ pub struct FundamentalSnapshot {
     pub profit_growth: f64,
     pub accruals: f64,
     pub gross_profitability: f64,
+    pub ttm_profit: f64,
+    pub profit_stability: f64,
 }
 
 fn period_end(fy: i32, q: u8) -> NaiveDate {
@@ -457,6 +479,7 @@ pub fn fundamental_snapshots(mut reports: Vec<Report>) -> Vec<FundamentalSnapsho
             }
             _ => f64::NAN,
         };
+        let ttm_profit = np.map_or(f64::NAN, |x| x.0);
         let available = [
             Some(r.available()),
             np.map(|x| x.1),
@@ -477,7 +500,27 @@ pub fn fundamental_snapshots(mut reports: Vec<Report>) -> Vec<FundamentalSnapsho
             profit_growth: growth,
             accruals,
             gross_profitability,
+            ttm_profit,
+            profit_stability: f64::NAN,
         });
+    }
+    for i in 0..out.len() {
+        let begin = i.saturating_sub(3);
+        let window = &out[begin..=i];
+        if window.len() < 4 || window.iter().any(|s| !s.ttm_profit.is_finite()) {
+            continue;
+        }
+        let mean = window.iter().map(|s| s.ttm_profit).sum::<f64>() / window.len() as f64;
+        let positive =
+            window.iter().filter(|s| s.ttm_profit > 0.0).count() as f64 / window.len() as f64;
+        let scale = mean.abs().max(1e-9);
+        let sd = (window
+            .iter()
+            .map(|s| (s.ttm_profit - mean).powi(2))
+            .sum::<f64>()
+            / (window.len() - 1) as f64)
+            .sqrt();
+        out[i].profit_stability = positive / (1.0 + sd / scale);
     }
     out.sort_by_key(|s| (s.available, s.period_end));
     out
@@ -502,6 +545,7 @@ pub fn fundamental_value(s: &FundamentalSnapshot, id: FactorId) -> f64 {
         FactorId::ProfitGrowth => s.profit_growth,
         FactorId::Accruals => s.accruals,
         FactorId::GrossProfitability => s.gross_profitability,
+        FactorId::ProfitStability => s.profit_stability,
         _ => f64::NAN,
     }
 }
@@ -611,6 +655,6 @@ mod tests {
         for f in CATALOG {
             assert_eq!(info(f.id).id, f.id);
         }
-        assert_eq!(CATALOG.len(), 15);
+        assert_eq!(CATALOG.len(), 17);
     }
 }

@@ -12,6 +12,11 @@ export interface Universe {
   /** 排除当天处于 ST 的股票 */
   exclude_st: boolean;
   /**
+     * 最高股价（元，未复权收盘价）
+     * @nullable
+     */
+  max_price?: number | null;
+  /**
      * 最低成交额（元）
      * @nullable
      */

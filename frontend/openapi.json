@@ -2167,6 +2167,19 @@
             }
           },
           {
+            "name": "max_price",
+            "in": "query",
+            "description": "最高股价（元），严格低于该价格；默认不限制",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
             "name": "min_amount",
             "in": "query",
             "description": "最低当日成交额（元），默认 5000 万",
@@ -2339,6 +2352,19 @@
             "name": "min_price",
             "in": "query",
             "description": "最低股价（元），默认 2",
+            "required": false,
+            "schema": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          {
+            "name": "max_price",
+            "in": "query",
+            "description": "最高股价（元），严格低于该价格；默认不限制",
             "required": false,
             "schema": {
               "type": [
@@ -5164,7 +5190,9 @@
           "profit_growth",
           "accruals",
           "gross_profitability",
-          "earnings_yield"
+          "earnings_yield",
+          "dividend_yield",
+          "profit_stability"
         ]
       },
       "FactorInfo": {
@@ -8270,6 +8298,14 @@
           "exclude_st": {
             "type": "boolean",
             "description": "排除当天处于 ST 的股票"
+          },
+          "max_price": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "最高股价（元，未复权收盘价）"
           },
           "min_amount": {
             "type": [

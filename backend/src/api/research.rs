@@ -51,6 +51,7 @@ struct PoolQuery {
     boards: Option<String>,
     exclude_st: Option<bool>,
     min_price: Option<f64>,
+    max_price: Option<f64>,
     min_amount: Option<f64>,
     min_listed_days: Option<u32>,
 }
@@ -63,6 +64,7 @@ macro_rules! pool_query {
             boards: $q.boards.clone(),
             exclude_st: $q.exclude_st,
             min_price: $q.min_price,
+            max_price: $q.max_price,
             min_amount: $q.min_amount,
             min_listed_days: $q.min_listed_days,
         }
@@ -89,6 +91,7 @@ impl PoolQuery {
         }
         for (name, v) in [
             ("min_price", self.min_price),
+            ("max_price", self.max_price),
             ("min_amount", self.min_amount),
         ] {
             if let Some(v) = v
@@ -101,6 +104,7 @@ impl PoolQuery {
             boards,
             exclude_st: self.exclude_st.unwrap_or(true),
             min_price: self.min_price.or(d.min_price),
+            max_price: self.max_price,
             min_amount: self.min_amount.or(d.min_amount),
             min_listed_days: self.min_listed_days.or(d.min_listed_days),
         })
@@ -238,6 +242,8 @@ pub struct FactorTestQuery {
     pub exclude_st: Option<bool>,
     /// 最低股价（元），默认 2
     pub min_price: Option<f64>,
+    /// 最高股价（元），严格低于该价格；默认不限制
+    pub max_price: Option<f64>,
     /// 最低当日成交额（元），默认 5000 万
     pub min_amount: Option<f64>,
     /// 上市满多少个交易日，默认 60
@@ -326,6 +332,8 @@ pub struct FactorPortfolioQuery {
     pub exclude_st: Option<bool>,
     /// 最低股价（元），默认 2
     pub min_price: Option<f64>,
+    /// 最高股价（元），严格低于该价格；默认不限制
+    pub max_price: Option<f64>,
     /// 最低当日成交额（元），默认 5000 万
     pub min_amount: Option<f64>,
     /// 上市满多少个交易日，默认 60

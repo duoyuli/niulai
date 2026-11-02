@@ -58,6 +58,11 @@ exclude_st?: boolean | null;
  */
 min_price?: number | null;
 /**
+ * 最高股价（元），严格低于该价格；默认不限制
+ * @nullable
+ */
+max_price?: number | null;
+/**
  * 最低当日成交额（元），默认 5000 万
  * @nullable
  */

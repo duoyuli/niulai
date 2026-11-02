@@ -120,7 +120,7 @@ export function ResearchPage() {
             picks={picks}
             onChange={(next) => set({ f: formatFactors(next) })}
             onPreset={(p) => {
-              set({ f: formatFactors(p.factors) });
+              set({ f: formatFactors(p.factors), ...(p.max_price !== undefined && { maxp: String(p.max_price) }) });
               if (p.top_n !== undefined) setHolding({ top: String(p.top_n), buffer: String(p.buffer ?? 0.5) });
             }}
             presets={portfolio}
@@ -203,7 +203,7 @@ function RunBar({
 }
 
 function TestPanel({ picks, onCompose }: { picks: FactorWeight[]; onCompose: (f: FactorWeight[]) => void }) {
-  const [s, set] = useSearchState({ range: "3", from: "", to: "", h: "5", q: "5", n: "1", small: "0" });
+  const [s, set] = useSearchState({ range: "3", from: "", to: "", h: "5", q: "5", n: "1", small: "0", maxp: "" });
   const form: FactorTestParams = {
     factors: formatFactors(picks, false),
     ...rangeQuery(s),
@@ -211,6 +211,7 @@ function TestPanel({ picks, onCompose }: { picks: FactorWeight[]; onCompose: (f:
     quantiles: Number(s.q),
     neutralize: s.n === "1",
     exclude_small_pct: Number(s.small),
+    ...(s.maxp && { max_price: Number(s.maxp) }),
   };
   const m = useManualRun(form, getFactorTestQueryKey);
   const query = useFactorTest(m.run ?? form, { query: { ...QUERY_OPTIONS, enabled: m.run !== null } });
@@ -523,6 +524,7 @@ function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
     ...HOLDING,
     n: "1",
     small: "0",
+    maxp: "",
     log: "",
     ...PORTFOLIO_COSTS,
   });
@@ -534,6 +536,7 @@ function PortfolioPanel({ picks }: { picks: FactorWeight[] }) {
     buffer: Number(s.buffer),
     neutralize: s.n === "1",
     exclude_small_pct: Number(s.small),
+    ...(s.maxp && { max_price: Number(s.maxp) }),
     ...costParams(s),
   };
   const m = useManualRun(form, getFactorPortfolioQueryKey);
