@@ -752,6 +752,8 @@ struct Processed {
     stocks: Vec<u32>,
     /// columns[k][j]
     columns: Vec<Vec<f64>>,
+    /// 每只股票实际使用的绝对权重 / 总绝对权重；没有合成列时为空
+    effective_weight_coverage: Option<Vec<f64>>,
 }
 
 /// 预处理一个取样日：剔除小规模股票、逐列标准化并统一方向，再按权重合成（权重为空时不合成）
@@ -794,6 +796,7 @@ fn process(panel: &Panel, k: usize, prep: Prep, weights: &[f64]) -> Processed {
         .collect();
     if !weights.is_empty() {
         let total: f64 = weights.iter().map(|w| w.abs()).sum();
+        let mut effective_weight_coverage = vec![0.0; stocks.len()];
         let combined: Vec<f64> = (0..stocks.len())
             .map(|j| {
                 let (mut acc, mut used) = (0.0, 0.0);
@@ -804,8 +807,10 @@ fn process(panel: &Panel, k: usize, prep: Prep, weights: &[f64]) -> Processed {
                         used += w.abs();
                     }
                 }
+                let coverage = if total > 0.0 { used / total } else { 0.0 };
+                effective_weight_coverage[j] = coverage;
                 // 至少一半权重的因子有值才合成，避免只靠一个因子排出前几名
-                if total > 0.0 && used * 2.0 >= total {
+                if coverage >= 0.5 && used > 0.0 {
                     acc / used
                 } else {
                     f64::NAN
@@ -814,9 +819,20 @@ fn process(panel: &Panel, k: usize, prep: Prep, weights: &[f64]) -> Processed {
             .collect();
         let mut combined = combined;
         zscore(&mut combined);
-        columns.push(combined);
+        return Processed {
+            stocks,
+            columns: {
+                columns.push(combined);
+                columns
+            },
+            effective_weight_coverage: Some(effective_weight_coverage),
+        };
     }
-    Processed { stocks, columns }
+    Processed {
+        stocks,
+        columns,
+        effective_weight_coverage: None,
+    }
 }
 
 /// 最后一个取样日按合成得分从高到低排出的股票（代码、得分）；当天数据太少时为空。账户的多因子调仓用它
@@ -931,6 +947,15 @@ pub struct FactorTestStats {
     pub top_turnover: Option<f64>,
     /// 组序号与组收益的秩相关：1 表示从最差组到最好组单调上升
     pub monotonicity: Option<f64>,
+    /// 有效值覆盖的取样日数，以及每个取样日横截面中的平均有效比例
+    pub coverage_days: usize,
+    pub avg_coverage: Option<f64>,
+    pub min_coverage: Option<f64>,
+    /// 仅合成列有值：实际使用的绝对权重占总绝对权重的比例
+    pub avg_effective_weight_coverage: Option<f64>,
+    pub min_effective_weight_coverage: Option<f64>,
+    /// 仅合成列有值：股票-取样日中实际权重低于 100% 的比例
+    pub degraded_stock_ratio: Option<f64>,
     pub decay: Vec<FactorDecayPoint>,
     /// 方向与预期一致（RankIC 均值为正）
     pub consistent: bool,
@@ -962,6 +987,8 @@ pub struct FactorTestOutcome {
     pub factors: Vec<FactorTestStats>,
     /// 因子之间的平均横截面秩相关，行列顺序同 `factors`
     pub correlation: Vec<Vec<Option<f64>>>,
+    /// 每个相关系数使用的共同取样日数，行列顺序同 `factors`
+    pub correlation_observations: Vec<Vec<usize>>,
     pub overfit: FactorOverfit,
     /// 区间内因同步缺口跳过的交易日
     pub thin_days: Vec<NaiveDate>,
@@ -1020,6 +1047,14 @@ pub fn evaluate(panel: &Panel, p: &TestParams) -> Option<FactorTestOutcome> {
         turnover: Vec<f64>,
         stocks: Vec<f64>,
         decay: Vec<Vec<f64>>,
+        coverage_sum: f64,
+        coverage_min: f64,
+        coverage_days: usize,
+        effective_weight_sum: f64,
+        effective_weight_min: f64,
+        effective_weight_count: usize,
+        degraded_stock_count: usize,
+        total_stock_count: usize,
         points: Vec<FactorTestPoint>,
         prev_top: Option<HashSet<u32>>,
         nav: f64,
@@ -1035,6 +1070,14 @@ pub fn evaluate(panel: &Panel, p: &TestParams) -> Option<FactorTestOutcome> {
             turnover: vec![],
             stocks: vec![],
             decay: vec![vec![]; DECAY_HORIZONS.len()],
+            coverage_sum: 0.0,
+            coverage_min: 1.0,
+            coverage_days: 0,
+            effective_weight_sum: 0.0,
+            effective_weight_min: 1.0,
+            effective_weight_count: 0,
+            degraded_stock_count: 0,
+            total_stock_count: 0,
             points: vec![],
             prev_top: None,
             nav: 1.0,
@@ -1060,6 +1103,27 @@ pub fn evaluate(panel: &Panel, p: &TestParams) -> Option<FactorTestOutcome> {
                     .collect()
             })
             .collect();
+        for (a, col) in acc.iter_mut().zip(&pr.columns) {
+            if !col.is_empty() {
+                let finite = col.iter().filter(|v| v.is_finite()).count();
+                let coverage = finite as f64 / col.len() as f64;
+                a.coverage_sum += coverage;
+                a.coverage_min = a.coverage_min.min(coverage);
+                a.coverage_days += 1;
+            }
+        }
+        if let Some(ratios) = &pr.effective_weight_coverage {
+            let a = &mut acc[nf];
+            for ratio in ratios {
+                a.effective_weight_sum += *ratio;
+                a.effective_weight_min = a.effective_weight_min.min(*ratio);
+                a.effective_weight_count += 1;
+                a.total_stock_count += 1;
+                if *ratio < 1.0 - f64::EPSILON {
+                    a.degraded_stock_count += 1;
+                }
+            }
+        }
         for (col, a) in pr.columns.iter().zip(acc.iter_mut()) {
             let valid: Vec<usize> = (0..col.len())
                 .filter(|&j| col[j].is_finite() && fwd[j].is_finite())
@@ -1206,6 +1270,16 @@ pub fn evaluate(panel: &Panel, p: &TestParams) -> Option<FactorTestOutcome> {
                     .and_then(|(m, _)| annualize(m, periods_per_year)),
                 top_turnover: mean_std(&a.turnover).map(|x| x.0),
                 monotonicity: monotonicity.and_then(finite),
+                coverage_days: a.coverage_days,
+                avg_coverage: (a.coverage_days > 0)
+                    .then(|| a.coverage_sum / a.coverage_days as f64),
+                min_coverage: (a.coverage_days > 0).then_some(a.coverage_min),
+                avg_effective_weight_coverage: (id.is_none() && a.effective_weight_count > 0)
+                    .then(|| a.effective_weight_sum / a.effective_weight_count as f64),
+                min_effective_weight_coverage: (id.is_none() && a.effective_weight_count > 0)
+                    .then_some(a.effective_weight_min),
+                degraded_stock_ratio: (id.is_none() && a.total_stock_count > 0)
+                    .then(|| a.degraded_stock_count as f64 / a.total_stock_count as f64),
                 decay: DECAY_HORIZONS
                     .iter()
                     .zip(&a.decay)
@@ -1238,6 +1312,20 @@ pub fn evaluate(panel: &Panel, p: &TestParams) -> Option<FactorTestOutcome> {
         })
         .collect();
     let overfit = overfit(&stats, &days, panel);
+    let correlation_observations: Vec<Vec<usize>> = (0..ncol)
+        .map(|i| {
+            (0..ncol)
+                .map(|j| {
+                    if i == j {
+                        0
+                    } else {
+                        let (a, b) = (i.min(j), i.max(j));
+                        corr_n[a][b]
+                    }
+                })
+                .collect()
+        })
+        .collect();
     let thin_days = (panel.start_idx..panel.calendar.len())
         .filter(|d| panel.thin[*d])
         .map(|d| panel.calendar[d])
@@ -1249,6 +1337,7 @@ pub fn evaluate(panel: &Panel, p: &TestParams) -> Option<FactorTestOutcome> {
         quantiles: q,
         factors: stats,
         correlation,
+        correlation_observations,
         overfit,
         thin_days,
     })

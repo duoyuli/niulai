@@ -294,6 +294,8 @@ function TestResult({ data, onCompose }: { data: FactorTestResult; onCompose: (f
   const [selected, setSelected] = useState(0);
   const f = data.factors[Math.min(selected, data.factors.length - 1)];
   const o = data.overfit;
+  const composite = data.factors.find((x) => x.id === null || x.id === undefined);
+  const degraded = composite?.degraded_stock_ratio;
   if (!f) return null;
   return (
     <>
@@ -310,6 +312,11 @@ function TestResult({ data, onCompose }: { data: FactorTestResult; onCompose: (f
           <thead>
             <tr>
               <th>因子</th>
+              <th>
+                <Term help="普通因子显示取样日中有值股票的平均比例；等权合成显示实际使用的绝对权重比例。覆盖不足时，合成结果可能退化成另一套组合">
+                  有效覆盖
+                </Term>
+              </th>
               <th>
                 <Term help="RankIC：每期因子排名和之后收益排名的相关系数，这里是各期平均。按预期方向统一，正数表示符合预期；A 股里单个因子稳定在 0.03 以上就算有用">
                   信息系数
@@ -353,6 +360,10 @@ function TestResult({ data, onCompose }: { data: FactorTestResult; onCompose: (f
                     <span className="ml-1 text-xs text-zinc-400">（以上因子等权）</span>
                   ) : null}
                 </td>
+                <td className="num">
+                  {fmtProb(x.id === null || x.id === undefined ? x.avg_effective_weight_coverage : x.avg_coverage)}
+                  <span className="ml-1 text-xs text-zinc-400">/{x.coverage_days} 日</span>
+                </td>
                 <td className={`num ${upDownClass(x.rank_ic_mean)}`}>{fmtNum(x.rank_ic_mean, 3)}</td>
                 <td className="num">{fmtNum(x.rank_icir)}</td>
                 <td className="num">{fmtNum(x.rank_ic_t)}</td>
@@ -370,6 +381,12 @@ function TestResult({ data, onCompose }: { data: FactorTestResult; onCompose: (f
         <p className="mt-3 text-xs text-zinc-500">
           点一行看它的分组净值、预测力衰减；收益都不含交易成本，换手越高实际越打折。
         </p>
+        {degraded !== null && degraded !== undefined && degraded > 0 ? (
+          <p className="mt-2 text-xs text-amber-600">
+            等权合成有 {(degraded * 100).toFixed(1)}%
+            的股票-取样日没有使用全部因子权重；请结合覆盖率判断组合是否已经退化。
+          </p>
+        ) : null}
         <ComposeBar data={data} onCompose={onCompose} />
       </Card>
       <div className="grid gap-4 lg:grid-cols-3">
@@ -494,17 +511,27 @@ function Correlation({ data }: { data: FactorTestResult }) {
           {data.correlation.map((row, i) => (
             <tr key={data.factors[i]?.name ?? i}>
               <td className="text-xs text-zinc-500">{data.factors[i]?.name}</td>
-              {row.map((v, j) => (
-                <td key={data.factors[j]?.name ?? j} className="num text-center" style={{ background: cell(v) }}>
-                  {fmtNum(v)}
-                </td>
-              ))}
+              {row.map((v, j) => {
+                const observations = data.correlation_observations[i]?.[j] ?? 0;
+                return (
+                  <td
+                    key={data.factors[j]?.name ?? j}
+                    className="num text-center"
+                    style={{ background: cell(v) }}
+                    title={`${observations} 个共同取样日`}
+                  >
+                    {fmtNum(v)}
+                    {i !== j && <span className="ml-1 text-[10px] text-zinc-500">({observations})</span>}
+                  </td>
+                );
+              })}
             </tr>
           ))}
         </tbody>
       </Table>
       <p className="mt-3 text-xs text-zinc-500">
-        平均横截面秩相关（方向已统一）。两个因子相关性高于 0.7 时信息大量重复，合成时只留一个或降低权重。
+        平均横截面秩相关（方向已统一），括号内是共同取样日数。两个因子相关性高于 0.7
+        时信息大量重复，合成时只留一个或降低权重。
       </p>
     </Card>
   );

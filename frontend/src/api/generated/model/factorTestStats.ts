@@ -10,10 +10,27 @@ import type { FactorId } from './factorId';
 import type { FactorTestPoint } from './factorTestPoint';
 
 export interface FactorTestStats {
+  /** @nullable */
+  avg_coverage?: number | null;
+  /**
+     * 仅合成列有值：实际使用的绝对权重占总绝对权重的比例
+     * @nullable
+     */
+  avg_effective_weight_coverage?: number | null;
   avg_stocks: number;
   /** 方向与预期一致（RankIC 均值为正） */
   consistent: boolean;
+  /**
+     * 有效值覆盖的取样日数，以及每个取样日横截面中的平均有效比例
+     * @minimum 0
+     */
+  coverage_days: number;
   decay: FactorDecayPoint[];
+  /**
+     * 仅合成列有值：股票-取样日中实际权重低于 100% 的比例
+     * @nullable
+     */
+  degraded_stock_ratio?: number | null;
   higher_is_better: boolean;
   /**
      * RankIC 与预期方向一致的期数占比
@@ -30,6 +47,10 @@ export interface FactorTestStats {
   long_short_sharpe?: number | null;
   /** @nullable */
   long_short_t?: number | null;
+  /** @nullable */
+  min_coverage?: number | null;
+  /** @nullable */
+  min_effective_weight_coverage?: number | null;
   /**
      * 组序号与组收益的秩相关：1 表示从最差组到最好组单调上升
      * @nullable

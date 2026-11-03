@@ -11,6 +11,11 @@ import type { FactorTestStats } from './factorTestStats';
 export interface FactorTestOutcome {
   /** 因子之间的平均横截面秩相关，行列顺序同 `factors` */
   correlation: ((number | null)[])[];
+  /**
+     * 每个相关系数使用的共同取样日数，行列顺序同 `factors`
+     * @items.items.minimum 0
+     */
+  correlation_observations: number[][];
   end: string;
   factors: FactorTestStats[];
   /** @minimum 0 */

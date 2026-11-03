@@ -61,6 +61,18 @@ describe("planResearchLink", () => {
 
 describe("matchesPreset", () => {
   const e = FACTOR_PRESETS[0]?.factors ?? [];
+  it("包含研究阶段的基本面反转和特质动量预设", () => {
+    expect(FACTOR_PRESETS.map((p) => p.id)).toEqual(
+      expect.arrayContaining(["fundamental_reversal", "residual_momentum_quality"]),
+    );
+    expect(FACTOR_PRESETS.find((p) => p.id === "fundamental_reversal")?.factors.map((f) => f.id)).toContain(
+      "profit_growth",
+    );
+    expect(FACTOR_PRESETS.find((p) => p.id === "residual_momentum_quality")?.factors.map((f) => f.id)).toContain(
+      "residual_momentum",
+    );
+  });
+
   it("同样的因子、权重都是 1 才算匹配，顺序无关", () => {
     expect(matchesPreset([...e].reverse(), e)).toBe(true);
     expect(

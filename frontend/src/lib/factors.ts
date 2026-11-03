@@ -54,6 +54,30 @@ export const FACTOR_PRESETS: readonly BuiltinFactorPreset[] = [
     ],
   },
   {
+    id: "fundamental_reversal",
+    name: "基本面困境反转",
+    desc: "挑选最近一周明显下跌、但最新季度利润正在改善且现金质量较好的股票，再用毛盈利和低彩票特征过滤基本面恶化与短线炒作。适合先做研究实验，调仓周期应与短期反转信号匹配",
+    factors: [
+      { id: "reversal", weight: 1 },
+      { id: "profit_growth", weight: 1 },
+      { id: "accruals", weight: 0.75 },
+      { id: "max_return", weight: 0.75 },
+      { id: "gross_profitability", weight: 0.5 },
+    ],
+  },
+  {
+    id: "residual_momentum_quality",
+    name: "特质动量 + 景气质量",
+    desc: "挑选剥离市场共同波动后仍然走强、利润正在改善且经营质量较好的股票，同时过滤特质波动和成交过热。适合先做研究实验，趋势反转期需要重点观察回撤",
+    factors: [
+      { id: "residual_momentum", weight: 1 },
+      { id: "profit_growth", weight: 1 },
+      { id: "gross_profitability", weight: 0.75 },
+      { id: "idio_vol", weight: 0.75 },
+      { id: "abnormal_turnover", weight: 0.5 },
+    ],
+  },
+  {
     id: "low_vol",
     name: "低波动防守",
     desc: "只看股价涨跌是否平稳：挑最近一个月每天涨跌幅度小、扣掉大盘整体涨跌后自身波动也小、没有出现过单日暴涨的股票。不看公司大小，也不看财报",

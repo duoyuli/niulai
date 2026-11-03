@@ -5649,6 +5649,7 @@
           "quantiles",
           "factors",
           "correlation",
+          "correlation_observations",
           "overfit",
           "thin_days"
         ],
@@ -5666,6 +5667,17 @@
               }
             },
             "description": "因子之间的平均横截面秩相关，行列顺序同 `factors`"
+          },
+          "correlation_observations": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "description": "每个相关系数使用的共同取样日数，行列顺序同 `factors`"
           },
           "end": {
             "type": "string",
@@ -5775,6 +5787,7 @@
           "quantile_returns",
           "quantile_annual",
           "long_short_max_drawdown",
+          "coverage_days",
           "decay",
           "consistent",
           "significant",
@@ -5782,6 +5795,21 @@
           "points"
         ],
         "properties": {
+          "avg_coverage": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "avg_effective_weight_coverage": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "仅合成列有值：实际使用的绝对权重占总绝对权重的比例"
+          },
           "avg_stocks": {
             "type": "number",
             "format": "double"
@@ -5790,11 +5818,24 @@
             "type": "boolean",
             "description": "方向与预期一致（RankIC 均值为正）"
           },
+          "coverage_days": {
+            "type": "integer",
+            "description": "有效值覆盖的取样日数，以及每个取样日横截面中的平均有效比例",
+            "minimum": 0
+          },
           "decay": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/FactorDecayPoint"
             }
+          },
+          "degraded_stock_ratio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "仅合成列有值：股票-取样日中实际权重低于 100% 的比例"
           },
           "higher_is_better": {
             "type": "boolean"
@@ -5844,6 +5885,20 @@
             "format": "double"
           },
           "long_short_t": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "min_coverage": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "min_effective_weight_coverage": {
             "type": [
               "number",
               "null"

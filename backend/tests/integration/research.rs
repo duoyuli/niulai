@@ -110,8 +110,13 @@ async fn factor_research_end_to_end() {
         "{liquidity}"
     );
     assert_eq!(liquidity["consistent"], false);
-    // 财务因子按截止日推断可用日后有值
     assert!(by_name("净资产收益率")["periods"].as_u64().unwrap() > 0);
+    assert!(by_name("净资产收益率")["coverage_days"].as_u64().unwrap() > 20);
+    assert!(by_name("净资产收益率")["avg_coverage"].as_f64().unwrap() > 0.9);
+    let composite = by_name("等权合成");
+    assert!(composite["avg_effective_weight_coverage"].as_f64().unwrap() > 0.9);
+    assert!(composite["degraded_stock_ratio"].as_f64().unwrap() < 0.1);
+    assert!(v["correlation_observations"][0][1].as_u64().unwrap() > 20);
     assert!(v["overfit"]["pbo"].is_number(), "{}", v["overfit"]);
     assert_eq!(v["manifest"]["trial_count"], 1);
 
